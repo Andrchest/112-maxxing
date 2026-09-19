@@ -60,6 +60,7 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "scenario_version": "int",
             "session_mode": "SessionMode",
             "session_seed": "str",
+            "time_scale": "float",
             "role_chain": "list[RoleType]",
             "created_by_user_id": "uuid",
         },

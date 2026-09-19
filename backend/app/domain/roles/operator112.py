@@ -9,8 +9,8 @@ transition-triggered action ids (`open_handoff_preparation`, `back_to_interview`
 does not add one for them); the mapping below picks the closest existing permission — see this
 task's report, "HLD gaps".
 
-Guard callables (`guards={}` below) are not implemented — see `common/state_machine.py`'s module
-docstring.
+The state machine below is built with `OPERATOR_112_GUARDS` (`session/guards.py`), so every
+`guard_name` `OPERATOR_112_TRANSITIONS` references resolves to a real predicate.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from app.domain.enums import Operator112StageState, RoleType
 from app.domain.events.types import EventType
 from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
+from app.domain.session.guards import OPERATOR_112_GUARDS
 from app.domain.session.transitions import OPERATOR_112_TRANSITIONS
 
 _ANSWER = ActionDescriptor(
@@ -107,7 +108,7 @@ class Operator112Module:
             }
         )
         self.state_machine: StateMachine[Operator112StageState] = StateMachine(
-            OPERATOR_112_TRANSITIONS, {}
+            OPERATOR_112_TRANSITIONS, OPERATOR_112_GUARDS
         )
         self.visibility_policy = DataVisibilityPolicy(
             role_type=RoleType.OPERATOR_112,

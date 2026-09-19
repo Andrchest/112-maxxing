@@ -1,4 +1,5 @@
-"""In-memory fakes for the application ports: `FakeClock`, `InMemoryEventPublisher`.
+"""In-memory fakes for the application ports: `FakeClock`, `InMemoryEventPublisher`,
+`FakeInferenceReadiness`, `SequentialIdGenerator`.
 
 They exist so a test can pin time and inspect the realtime fan-out without PostgreSQL or Redis.
 Production wiring uses `app.infrastructure.clock.SystemClock` and
@@ -9,11 +10,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from app.application.ports.event_publisher import EventEnvelope
 from app.domain.common.ids import SessionId
 
-__all__ = ["FakeClock", "InMemoryEventPublisher"]
+__all__ = [
+    "FakeClock",
+    "FakeInferenceReadiness",
+    "InMemoryEventPublisher",
+    "SequentialIdGenerator",
+]
 
 
 class FakeClock:
@@ -73,3 +80,43 @@ class InMemoryEventPublisher:
             for published_session_id, envelope in self.published
             if published_session_id == session_id
         ]
+
+
+class FakeInferenceReadiness:
+    """An `InferenceReadiness` whose verdict a test sets.
+
+    TODO(E18): the real adapter over the inference health registry (D8). E5 ships this fake only,
+    so `require_inference_ready=True` is exercisable without an inference stack.
+    """
+
+    def __init__(self, ready: bool = True) -> None:
+        #: The verdict `is_ready()` returns; a test flips it between commands.
+        self.ready = ready
+        self.calls: int = 0
+
+    async def is_ready(self) -> bool:
+        """The pinned verdict."""
+        self.calls += 1
+        return self.ready
+
+
+class SequentialIdGenerator:
+    """An `IdGenerator` returning `<prefix>-0000…N`, so a use-case test can predict every id.
+
+    The ids are valid UUIDs built from a counter, never `uuid4`: two runs of the same use case
+    with a fresh generator produce the same aggregate, which is what makes a full-equality
+    assertion against a persisted round-trip possible.
+    """
+
+    def __init__(self, namespace: int = 0) -> None:
+        self._namespace = namespace
+        self._counter = 0
+        #: Every id handed out, in allocation order.
+        self.issued: list[UUID] = []
+
+    def new(self) -> UUID:
+        """The next id in the sequence."""
+        self._counter += 1
+        value = UUID(int=(self._namespace << 64) | self._counter, version=4)
+        self.issued.append(value)
+        return value

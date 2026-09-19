@@ -7,25 +7,39 @@ vendor SDK; `backend/tools/check_imports.py` enforces it.
 
 from __future__ import annotations
 
+from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.event_publisher import EventEnvelope, EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
+from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.id_generator import IdGenerator
+from app.application.ports.inference_readiness import InferenceReadiness
+from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.scenario_repository import (
     ScenarioRepository,
     StoredScenario,
     StoredScenarioVersion,
 )
+from app.application.ports.session_repository import SessionRepository
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.ports.world_truth_repository import WorldTruthRepository
 
 __all__ = [
+    "CallerBeliefRepository",
     "Clock",
     "EventEnvelope",
     "EventPublisher",
     "EventStore",
+    "HandoffRepository",
+    "IdGenerator",
+    "InferenceReadiness",
+    "OperatorCardRepository",
     "ScenarioRepository",
+    "SessionRepository",
     "StoredScenario",
     "StoredScenarioVersion",
     "UnitOfWork",
     "UnitOfWorkFactory",
+    "WorldTruthRepository",
     "envelope_of",
 ]

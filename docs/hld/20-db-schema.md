@@ -161,6 +161,7 @@ Pydantic model, never queried relationally.
 | `session_mode` | `text` | no | |
 | `state` | `text` | no | `'CREATED'` |
 | `session_seed` | `text` | no | |
+| `time_scale` *(additive, E5)* | `numeric(4,2)` | no | `1` |
 | `created_by_user_id` | `uuid` | no | |
 | `next_seq_no` | `bigint` | no | `1` |
 | `started_at` | `timestamptz` | yes | |
@@ -173,7 +174,13 @@ PK `(id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`
 FK `created_by_user_id → users(id) ON DELETE RESTRICT`.
 Index `ix_sessions_state (state)`, `ix_sessions_scenario_version (scenario_version_id)`.
 `CHECK (session_mode IN ('SINGLE_ROLE','FULL_CYCLE_SINGLE_TRAINEE','MULTI_TRAINEE','ASSESSMENT'))`,
-`CHECK (state IN ('CREATED','READY','ACTIVE','ROLE_TRANSITION','COMPLETED','ABORTED'))`.
+`CHECK (state IN ('CREATED','READY','ACTIVE','ROLE_TRANSITION','COMPLETED','ABORTED'))`,
+`CHECK (time_scale >= 0.1 AND time_scale <= 10)` *(additive, E5)*.
+
+`time_scale` is additive in E5: `openapi.yaml`'s `SessionCreateRequest` and `SessionDetail` both
+make it part of a session and `SimulationSession` carries it, so `simulation_sessions` is its home.
+It is `numeric`, not a float, because the API schema's `minimum: 0.1` / `maximum: 10` are decimal
+steps that must round-trip exactly (migration `0002_session_time_scale`).
 
 `started_at` + `paused_total_ms` is what sim time is recomputed from after a restart (D7, §42 test 13).
 

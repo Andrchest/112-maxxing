@@ -191,7 +191,7 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 
 | # | Event type | OPERATOR_112 | DDS | INSTRUCTOR | Redaction for trainee roles |
 |:--|:--|:--:|:--:|:--:|:--|
-| 1 | `SESSION_CREATED` | — | — | ✔ | contains `session_seed` and `scenario_version_id`; instructor-only |
+| 1 | `SESSION_CREATED` | — | — | ✔ | contains `session_seed`, `time_scale` (additive, E5) and `scenario_version_id`; instructor-only |
 | 2 | `SESSION_STARTED` | ✔ | ✔ | ✔ | — |
 | 3 | `ROLE_STAGE_STARTED` | ✔ | ✔ | ✔ | — |
 | 4 | `CALL_RINGING` | ✔ | — | ✔ | — |

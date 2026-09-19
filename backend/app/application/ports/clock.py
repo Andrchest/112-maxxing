@@ -3,10 +3,11 @@
 Two readings are needed by the event store and by the use cases above it:
 
 * `now()` — the wall-clock instant written to `session_events.timestamp_utc`, always timezone-aware
-  and UTC;
-* `monotonic_ms()` — a monotonically non-decreasing millisecond counter, from which a use case
-  derives a `DomainEvent.monotonic_offset_ms` (ms since `SESSION_STARTED`, D5) without ever calling
-  `time` itself.
+  and UTC. It is also the input to `app.application.timebase.session_offset_ms`, which is where an
+  event's `monotonic_offset_ms` comes from;
+* `monotonic_ms()` — a monotonically non-decreasing millisecond counter for measuring a latency
+  *inside one process* (the voice metrics of SPEC §31 / §40). Its origin is the process, so it dies
+  with the process and is **never** the source of an event offset (SPEC §39, D7).
 
 `app.domain` is forbidden from importing `time` at all and `app.application` never calls
 `datetime.now()`; both go through this port, so a test can make time deterministic by injecting
@@ -30,9 +31,13 @@ class Clock(Protocol):
         ...
 
     def monotonic_ms(self) -> int:
-        """A monotonically non-decreasing counter in milliseconds.
+        """A monotonically non-decreasing counter in milliseconds, for in-process latencies.
 
-        Its origin is arbitrary; only differences are meaningful. `monotonic_offset_ms` of an
-        event is `monotonic_ms()` minus the value taken at `SESSION_STARTED` (D5).
+        Its origin is arbitrary and belongs to the running process; only differences taken within
+        that one process are meaningful. Use it to measure how long something took — a voice
+        round-trip (SPEC §31) — and never to stamp an event: a session survives a backend restart
+        (SPEC §39, D7), which this counter does not, so an event's `monotonic_offset_ms` is
+        computed by `app.application.timebase.session_offset_ms` from `now()` and the session's
+        persisted `started_at`.
         """
         ...

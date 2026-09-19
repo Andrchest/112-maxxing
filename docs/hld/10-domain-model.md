@@ -45,9 +45,12 @@ backend/app/domain/
 │   ├── profile.py           CallerProfile
 │   └── emotion.py           EmotionState, EmotionRule, apply_emotion_rules
 ├── session/
-│   ├── session.py           SimulationSession, Incident, RoleStage, SessionParticipant
+│   ├── session.py           SimulationSession, Incident, RoleStage, SessionParticipant,
+│   │                        create_session
 │   ├── policy.py            SessionPolicy, SESSION_POLICIES
-│   └── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS
+│   ├── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS
+│   ├── guards.py            SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS
+│   └── machine.py           SESSION_STATE_MACHINE
 ├── roles/
 │   ├── module.py            Permission, ActionDescriptor, RoleModule
 │   ├── registry.py          ROLE_MODULES
@@ -69,7 +72,10 @@ backend/app/domain/
 │   ├── events.py            TimedEvent, ConditionalEvent, ActionTriggeredEvent,
 │   │                        SeededRandomEvent, WorldEventDefinition
 │   ├── rng.py               rng_for
-│   └── engine.py            WorldState, PendingAction, advance
+│   ├── engine.py            WorldState, PendingAction, ScheduledTrigger, FiredEvent, advance
+│   ├── apply.py             apply_effects
+│   ├── eta.py               EtaModel, ScenarioDefinedEta
+│   └── resource_movement.py advance_resources
 ├── scenario/
 │   ├── version.py           Scenario, ScenarioVersion
 │   ├── sections.py          WorldTruthSection, CallerKnowledgeSection, DisclosureRulesSection,
@@ -507,6 +513,7 @@ the DDS application service is constructed without a world-truth repository.
 | `eta` | `EtaProfile` | scenario-defined ETA/travel-time data |
 | `home_station_ru` | `str` | — |
 | `crew_size` | `int` | — |
+| `status_changed_at_offset_ms` | `int` (default `0`) | — (the moment `current_status` was entered) |
 
 `ResourceCapability` (str enum): `FIRE_SUPPRESSION`, `HIGH_RISE_ACCESS`, `LADDER_RESCUE`,
 `TECHNICAL_RESCUE`, `SMOKE_DIVING`, `BASIC_LIFE_SUPPORT`, `ADVANCED_LIFE_SUPPORT`, `BURN_CARE`,
@@ -581,7 +588,18 @@ class StateMachine(Generic[S]):
 absent, the actor/role is not allowed, or the guard returns `False` (SPEC §7, §42 test 8).
 `GuardContext` is a frozen value object carrying `actor: ActorRef`, `role_type: RoleType | None`,
 `now_ms: int`, `session: SimulationSession`, `stage: RoleStage`, and read-only projections the guards
-need (`card`, `assignment`, `resources`, `world_flags`). It never carries a repository.
+need (`card`, `assignment`, `resources`, `world_flags`). It never carries a repository. It also
+carries `runtime: GuardRuntime` — the frozen projection of the facts a pure guard cannot derive from
+the aggregate, which the application layer computes from the event log, the inference health
+registry and the transport ports: `scenario_valid`, `inference_ready`, `transport_ready`,
+`first_finalized_turn`, `call_connected`, `call_ended`, `resolution_condition_met` (all `bool`,
+default `false`) and `transition_started_ms: int | None` (default `null`). The defaults deny, so a
+guard whose runtime facts were never projected blocks its transition rather than allowing it.
+
+The guard *callables* named by `Transition.guard_name` live in `session/guards.py` as the three
+registries `SESSION_GUARDS`, `OPERATOR_112_GUARDS` and `DDS_GUARDS`, one per table above;
+`session/machine.py` wires the first into `SESSION_STATE_MACHINE` and each `RoleModule` wires its
+own (`EDDSModule`'s transition-less stub has no guard names to register).
 
 ### Session state machine — `SESSION_TRANSITIONS`
 
@@ -904,6 +922,29 @@ Each fired event emits `WORLD_EVENT_TRIGGERED`; each applied effect emits its ow
 (`WORLD_TRUTH_MUTATED`, `CALLER_BELIEF_MUTATED`, `NOTIFICATION_CREATED`, `RADIO_MESSAGE_CREATED`,
 `RESOURCE_STATUS_CHANGED`, `CALLER_EMOTION_CHANGED`).
 
+### `apply_effects` — `backend/app/domain/world/apply.py`
+
+`apply_effects(state, fired, now_ms)` is the pure state transition that follows `advance`: it turns
+the fired events into the new `WorldState` and the `DomainEvent`s above, `actor = SIMULATION`.
+`MutateWorldTruth`, `MutateCallerBelief`, `ChangeCallerEmotion` and `AlterResourceAvailability`
+change the corresponding copies (world truth and caller belief stay two independent objects, D3);
+`CreateNotification` and `CreateRadioMessage` only produce their events; `TriggerEvent` is already
+queued in `WorldState.scheduled`. `AlterResourceAvailability` fires
+`breakdown`/`repair`/`make_unavailable`/`make_available` through `RESOURCE_STATE_MACHINE` and an
+illegal one is skipped and reported, never raised; `eta_multiplier != 1` rescales the resource's
+`EtaProfile`. The scenario's `EmotionRule`s run here through `apply_emotion_rules` (§10.5) for each
+fired event's `WORLD_EVENT` trigger and for the tick's `SIM_TIME` trigger.
+
+### `advance_resources` — `backend/app/domain/world/resource_movement.py`
+
+`advance_resources(resources, now_ms, eta_model, *, assignment_resolved)` is the resource-movement
+scheduler D7 asks for: it fires every SIMULATION transition of §10.7's table that is already due,
+where a due time is `status_changed_at_offset_ms + <EtaModel duration>`, plus the
+availability-window `make_unavailable`/`make_available`. Several transitions may fire for one
+resource in one call when a long tick elapsed, each stamped with its own due time rather than with
+`now_ms`; resources are walked in ascending `resource_id` order and every firing emits
+`RESOURCE_STATUS_CHANGED`.
+
 ## 10.12 FactAccessGate (SPEC §21, D10)
 
 `backend/app/domain/facts/gate.py`
@@ -1033,7 +1074,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 
 | Event type | Actor type(s) | Payload keys (`name: type`) | Visible to |
 |:--|:--|:--|:--|
-| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `role_chain: list[RoleType]`, `created_by_user_id: uuid` | INSTRUCTOR |
+| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]`, `created_by_user_id: uuid` | INSTRUCTOR |
 | `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType` | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_STAGE_STARTED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `order_index: int`, `initial_state: str`, `participant_user_id: uuid \| null` | OPERATOR_112, DDS, INSTRUCTOR |
 | `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |

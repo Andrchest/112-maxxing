@@ -25,11 +25,16 @@ pinned test failed), then removed again (the pinned test passed) — see the tas
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
+from uuid import UUID
 
 import pytest
+from app.application.sessions import AbortSession, CreateSession, StartSession
+from app.application.testing.fakes import FakeClock, FakeInferenceReadiness
+from app.domain.common.actors import ActorRef as SessionActorRef
 from app.domain.common.errors import InvalidTransitionError
+from app.domain.common.ids import ScenarioVersionId, SessionId, UserId
 from app.domain.common.state_machine import (
     ActorRef,
     GuardContext,
@@ -46,11 +51,16 @@ from app.domain.enums import (
     RoleType,
     SessionState,
 )
+from app.domain.session.session import SimulationSession
 from app.domain.session.transitions import (
     DDS_TRANSITIONS,
     OPERATOR_112_TRANSITIONS,
     SESSION_TRANSITIONS,
 )
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.integration.sessions.test_create_session import command
 
 # ---------------------------------------------------------------------------------------------
 # Shared machinery
@@ -153,3 +163,147 @@ def test_pinned_illegal_transitions_raise(
         f"{machine_name}: {state!r} -{trigger}-> is in the table — "
         "this pinned case is no longer illegal"
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# The same invariant through the E5 use cases (SPEC §42 item 8, E5 acceptance row)
+# ---------------------------------------------------------------------------------------------
+#
+# The tests above prove the *tables* reject what they do not list. These prove the property that
+# actually protects the database: an invalid command reaching a real use case, over real
+# PostgreSQL, raises `InvalidTransitionError` and appends **no** event — the `session_events` row
+# count is identical before and after every rejected command.
+
+# The session-lifecycle fixtures live in `tests/integration/sessions/conftest.py`; they are
+# re-exported here by name rather than through `pytest_plugins`, which cannot register a module
+# that is already loaded as a real conftest. `clean_database` is deliberately NOT re-exported —
+# it is autouse over there, and the four table-driven tests above must stay database-free; the
+# local `clean_sessions_db` below is its explicitly requested twin.
+from tests.integration.sessions import conftest as _session_fixtures  # noqa: E402
+
+abort_session = _session_fixtures.abort_session
+clock = _session_fixtures.clock
+create_session = _session_fixtures.create_session
+demo_version_id = _session_fixtures.demo_version_id
+ids = _session_fixtures.ids
+inference = _session_fixtures.inference
+instructor = _session_fixtures.instructor
+publisher = _session_fixtures.publisher
+session_factory = _session_fixtures.session_factory
+start_session = _session_fixtures.start_session
+trainee = _session_fixtures.trainee
+unit_of_work = _session_fixtures.unit_of_work
+users = _session_fixtures.users
+
+
+@pytest.fixture
+async def clean_sessions_db(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
+    """Empty the schema before and after one test (the non-autouse twin of `clean_database`)."""
+    statement = text("TRUNCATE TABLE users, scenarios RESTART IDENTITY CASCADE")
+    async with migrated_engine.begin() as connection:
+        await connection.execute(statement)
+    yield
+    async with migrated_engine.begin() as connection:
+        await connection.execute(statement)
+
+
+async def _event_count(engine: AsyncEngine, session_id: SessionId) -> int:
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT count(*) FROM session_events WHERE session_id = :id"),
+            {"id": UUID(str(session_id))},
+        )
+        return int(result.scalar_one())
+
+
+@pytest.fixture
+async def active_session(
+    clean_sessions_db: None,
+    create_session: CreateSession,
+    start_session: StartSession,
+    demo_version_id: ScenarioVersionId,
+    instructor: SessionActorRef,
+    users: dict[str, UserId],
+) -> SimulationSession:
+    """One `ACTIVE` session: created, then started."""
+    created = await create_session(command(demo_version_id, instructor, users["trainee1"]))
+    return await start_session(created.id, instructor)
+
+
+@pytest.mark.integration
+async def test_starting_an_already_active_session_appends_nothing(
+    start_session: StartSession,
+    active_session: SimulationSession,
+    instructor: SessionActorRef,
+    migrated_engine: AsyncEngine,
+) -> None:
+    before = await _event_count(migrated_engine, active_session.id)
+    with pytest.raises(InvalidTransitionError) as excinfo:
+        await start_session(active_session.id, instructor)
+    assert excinfo.value.trigger == "start"
+    assert excinfo.value.from_state == SessionState.ACTIVE.value
+    assert await _event_count(migrated_engine, active_session.id) == before
+
+
+@pytest.mark.integration
+async def test_starting_an_aborted_session_appends_nothing(
+    start_session: StartSession,
+    abort_session: AbortSession,
+    active_session: SimulationSession,
+    instructor: SessionActorRef,
+    migrated_engine: AsyncEngine,
+) -> None:
+    await abort_session(active_session.id, instructor, "прервано")
+    before = await _event_count(migrated_engine, active_session.id)
+
+    with pytest.raises(InvalidTransitionError):
+        await start_session(active_session.id, instructor)
+    assert await _event_count(migrated_engine, active_session.id) == before
+
+
+@pytest.mark.integration
+async def test_a_trainee_may_not_start_a_session(
+    clean_sessions_db: None,
+    unit_of_work: Callable[..., object],
+    clock: FakeClock,
+    create_session: CreateSession,
+    demo_version_id: ScenarioVersionId,
+    instructor: SessionActorRef,
+    trainee: SessionActorRef,
+    migrated_engine: AsyncEngine,
+    users: dict[str, UserId],
+) -> None:
+    """`READY --start--> ACTIVE` is `allowed_actors={INSTRUCTOR}` (§10.8)."""
+    ready = await create_session(command(demo_version_id, instructor, users["trainee1"]))
+    before = await _event_count(migrated_engine, ready.id)
+
+    use_case = StartSession(
+        unit_of_work,  # type: ignore[arg-type]
+        clock,
+        FakeInferenceReadiness(ready=True),
+        require_inference_ready=False,
+    )
+    with pytest.raises(InvalidTransitionError) as excinfo:
+        await use_case(ready.id, trainee)
+
+    assert excinfo.value.trigger == "start"
+    assert await _event_count(migrated_engine, ready.id) == before
+    async with unit_of_work() as uow:  # type: ignore[operator]
+        reloaded = await uow.sessions.get(ready.id)
+    assert reloaded is not None and reloaded.state is SessionState.READY
+
+
+@pytest.mark.integration
+async def test_aborting_twice_appends_nothing_the_second_time(
+    abort_session: AbortSession,
+    active_session: SimulationSession,
+    instructor: SessionActorRef,
+    migrated_engine: AsyncEngine,
+) -> None:
+    await abort_session(active_session.id, instructor, "первый раз")
+    before = await _event_count(migrated_engine, active_session.id)
+
+    with pytest.raises(InvalidTransitionError) as excinfo:
+        await abort_session(active_session.id, instructor, "второй раз")
+    assert excinfo.value.trigger == "abort"
+    assert await _event_count(migrated_engine, active_session.id) == before

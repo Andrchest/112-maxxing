@@ -19,10 +19,11 @@ name reported in the error is `type(state).__name__` (e.g. `"SessionState"`); §
 signature takes only `(table, guards)`, so there is no separate `name` parameter to carry it.
 
 Guard *callables* (the predicates named by `Transition.guard_name`, e.g.
-`guard_stage_terminal_and_next_exists`) are not implemented in this module or wired into
-`RoleModule.state_machine`: every real guard inspects `GuardContext.session`/`stage`/`card`/
-`assignment`, which are aggregate/layer types this task does not own (`TODO(E5)`, see the task
-report).
+`guard_stage_terminal_and_next_exists`) live in `session/guards.py` and are wired into
+`session/machine.py`'s `SESSION_STATE_MACHINE` and into both implemented
+`RoleModule.state_machine`s. A guard is pure: every fact it cannot derive from the session
+aggregate itself arrives on `GuardContext.runtime` (`GuardRuntime` below), which the application
+layer projects from the event log, the health registry and the transport ports.
 """
 
 from __future__ import annotations
@@ -39,12 +40,49 @@ from app.domain.enums import ActorType, RoleType
 from app.domain.events.types import EventType
 
 
+class GuardRuntime(BaseModel):
+    """The facts a pure guard cannot derive from the session aggregate, projected for it (§10.8).
+
+    The application layer derives every field from the event log, the inference health registry or
+    a transport port and hands the result to the domain; the guards in `session/guards.py` only
+    read it. Every field defaults to the conservative value (`False` / `None`), so a default
+    `GuardRuntime` denies every runtime-dependent transition rather than accidentally allowing one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scenario_valid: bool = False
+    """`validate_scenario_version` passed for this session's `ScenarioVersion` (§10.15)."""
+
+    inference_ready: bool = False
+    """Every required inference component is `READY`, or `REQUIRE_INFERENCE_READY` is false (D8)."""
+
+    transport_ready: bool = False
+    """The `CallTransport` reports the caller joined the room (§10.8 `ring`)."""
+
+    first_finalized_turn: bool = False
+    """The first `ASR_FINAL` for this call has been appended (§10.8 `begin_interview`)."""
+
+    call_connected: bool = False
+    """A call is currently connected (`CALL_ANSWERED` appended, no `CALL_ENDED` after it)."""
+
+    call_ended: bool = False
+    """`CALL_ENDED` has been appended for this call (§10.8 `complete_stage`)."""
+
+    resolution_condition_met: bool = False
+    """The scenario's `expected_response.resolution_condition` evaluates true (§10.8)."""
+
+    transition_started_ms: int | None = None
+    """`monotonic_offset_ms` of the `ROLE_TRANSITION_STARTED` currently in effect, else `None`."""
+
+
 class GuardContext(BaseModel):
     """Read-only context passed to guard callables and to every `StateMachine` method (§10.8).
 
     Never carries a repository. `session`, `stage`, `card`, `assignment` are `Any` — see the
     module docstring; `resources` and `world_flags` are likewise loosely typed so this module
     stays import-clean of `dds/resources.py` and the (not yet existing) world-truth projection.
+    `runtime` carries the application-projected facts (`GuardRuntime`).
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -58,6 +96,7 @@ class GuardContext(BaseModel):
     assignment: Any = None
     resources: Mapping[str, Any] | None = None
     world_flags: Mapping[str, bool] = Field(default_factory=dict)
+    runtime: GuardRuntime = GuardRuntime()
 
 
 class Transition[S: Enum](BaseModel):

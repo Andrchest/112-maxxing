@@ -18,14 +18,28 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.event_publisher import EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
+from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.scenario_repository import ScenarioRepository
+from app.application.ports.session_repository import SessionRepository
+from app.application.ports.world_truth_repository import WorldTruthRepository
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import SessionEvent
+from app.infrastructure.persistence.caller_belief_repository import (
+    SqlAlchemyCallerBeliefRepository,
+)
 from app.infrastructure.persistence.event_store import SqlAlchemyEventStore
+from app.infrastructure.persistence.handoff_repository import SqlAlchemyHandoffRepository
+from app.infrastructure.persistence.operator_card_repository import (
+    SqlAlchemyOperatorCardRepository,
+)
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
+from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
+from app.infrastructure.persistence.world_truth_repository import SqlAlchemyWorldTruthRepository
 
 __all__ = ["SqlAlchemyUnitOfWork", "unit_of_work_factory"]
 
@@ -50,6 +64,11 @@ class SqlAlchemyUnitOfWork:
         self._session: AsyncSession | None = None
         self._event_store: SqlAlchemyEventStore | None = None
         self._scenarios: SqlAlchemyScenarioRepository | None = None
+        self._sessions: SqlAlchemySessionRepository | None = None
+        self._world_truth: SqlAlchemyWorldTruthRepository | None = None
+        self._caller_beliefs: SqlAlchemyCallerBeliefRepository | None = None
+        self._operator_cards: SqlAlchemyOperatorCardRepository | None = None
+        self._handoffs: SqlAlchemyHandoffRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -60,6 +79,11 @@ class SqlAlchemyUnitOfWork:
         self._session = session
         self._event_store = SqlAlchemyEventStore(session, self._clock, on_append=self._record)
         self._scenarios = SqlAlchemyScenarioRepository(session)
+        self._sessions = SqlAlchemySessionRepository(session)
+        self._world_truth = SqlAlchemyWorldTruthRepository(session)
+        self._caller_beliefs = SqlAlchemyCallerBeliefRepository(session)
+        self._operator_cards = SqlAlchemyOperatorCardRepository(session)
+        self._handoffs = SqlAlchemyHandoffRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -78,6 +102,11 @@ class SqlAlchemyUnitOfWork:
             self._session = None
             self._event_store = None
             self._scenarios = None
+            self._sessions = None
+            self._world_truth = None
+            self._caller_beliefs = None
+            self._operator_cards = None
+            self._handoffs = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -101,6 +130,36 @@ class SqlAlchemyUnitOfWork:
         if self._scenarios is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._scenarios
+
+    @property
+    def sessions(self) -> SessionRepository:
+        if self._sessions is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._sessions
+
+    @property
+    def world_truth(self) -> WorldTruthRepository:
+        if self._world_truth is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._world_truth
+
+    @property
+    def caller_beliefs(self) -> CallerBeliefRepository:
+        if self._caller_beliefs is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._caller_beliefs
+
+    @property
+    def operator_cards(self) -> OperatorCardRepository:
+        if self._operator_cards is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._operator_cards
+
+    @property
+    def handoffs(self) -> HandoffRepository:
+        if self._handoffs is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._handoffs
 
     # -- transaction --------------------------------------------------------------------------
 

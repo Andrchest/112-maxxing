@@ -53,6 +53,54 @@ class SqlAlchemyScenarioRepository:
             scenario_id=ScenarioId(UUID(str(row.id))), slug=row.slug, title_ru=row.title_ru
         )
 
+    async def get_scenario(self, scenario_id: ScenarioId) -> StoredScenario | None:
+        result = await self._session.execute(
+            sa.select(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru).where(
+                _SCENARIOS.c.id == UUID(str(scenario_id))
+            )
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return StoredScenario(
+            scenario_id=ScenarioId(UUID(str(row.id))), slug=row.slug, title_ru=row.title_ru
+        )
+
+    async def get_version(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> StoredScenarioVersion | None:
+        result = await self._session.execute(
+            sa.select(
+                _VERSIONS.c.id,
+                _VERSIONS.c.scenario_id,
+                _VERSIONS.c.version,
+                _VERSIONS.c.content_sha256,
+                _VERSIONS.c.locked_at,
+            ).where(_VERSIONS.c.id == UUID(str(scenario_version_id)))
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return StoredScenarioVersion(
+            scenario_version_id=ScenarioVersionId(UUID(str(row.id))),
+            scenario_id=ScenarioId(UUID(str(row.scenario_id))),
+            version=int(row.version),
+            content_sha256=row.content_sha256,
+            locked_at=row.locked_at,
+        )
+
+    async def get_version_document(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> Mapping[str, Any] | None:
+        """The stored `content` of a version — the full validated document (§20.2)."""
+        result = await self._session.execute(
+            sa.select(_VERSIONS.c.content).where(_VERSIONS.c.id == UUID(str(scenario_version_id)))
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return dict(row.content)
+
     async def add_scenario(self, scenario_id: ScenarioId, slug: str, title_ru: str) -> None:
         await self._session.execute(
             sa.insert(_SCENARIOS).values(id=UUID(str(scenario_id)), slug=slug, title_ru=title_ru)

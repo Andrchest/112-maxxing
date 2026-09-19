@@ -39,6 +39,11 @@ class SimulationSession(Base):
     session_mode = sa.Column(sa.Text(), nullable=False)
     state = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'CREATED'"))
     session_seed = sa.Column(sa.Text(), nullable=False)
+    #: Additive in E5: `openapi.yaml`'s `SessionCreateRequest`/`SessionDetail` both carry
+    #: `time_scale` and the domain aggregate holds it, so the session row is its home. `numeric`
+    #: (not float) because 0.1 steps must round-trip exactly; the CHECK mirrors the schema's
+    #: `minimum: 0.1` / `maximum: 10` (HLD §20.3, "(additive, E5)").
+    time_scale = sa.Column(sa.Numeric(4, 2), nullable=False, server_default=sa.text("1"))
     created_by_user_id = sa.Column(
         UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -54,6 +59,7 @@ class SimulationSession(Base):
         sa.Index("ix_sessions_scenario_version", "scenario_version_id"),
         sa.CheckConstraint(enum_check("session_mode", SessionMode), name="session_mode"),
         sa.CheckConstraint(enum_check("state", SessionState), name="state"),
+        sa.CheckConstraint("time_scale >= 0.1 AND time_scale <= 10", name="time_scale"),
     )
 
 

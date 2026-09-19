@@ -3,8 +3,9 @@
 `select_resource`, `deselect_resource`, `send_status_update` are non-transition commands
 (`ActionDescriptor.trigger = None`): resource selection fires on `RESOURCE_STATUS_TRANSITIONS`
 (`dds/resources.py`), a different machine than this module's `DDS_TRANSITIONS`, and a status
-update does not move the DDS stage at all. Guard callables (`guards={}` below) are not
-implemented — see `common/state_machine.py`'s module docstring.
+update does not move the DDS stage at all. The state machine below is built with `DDS_GUARDS`
+(`session/guards.py`), so every `guard_name` `DDS_TRANSITIONS` references resolves to a real
+predicate.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from app.domain.enums import DDSStageState, RoleType
 from app.domain.events.types import EventType
 from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
+from app.domain.session.guards import DDS_GUARDS
 from app.domain.session.transitions import DDS_TRANSITIONS
 
 _ACKNOWLEDGE = ActionDescriptor(
@@ -114,7 +116,7 @@ class DDSModule:
                 Permission.ACKNOWLEDGE_NOTIFICATION,
             }
         )
-        self.state_machine: StateMachine[DDSStageState] = StateMachine(DDS_TRANSITIONS, {})
+        self.state_machine: StateMachine[DDSStageState] = StateMachine(DDS_TRANSITIONS, DDS_GUARDS)
         self.visibility_policy = DataVisibilityPolicy(
             role_type=RoleType.DDS,
             sources=frozenset(

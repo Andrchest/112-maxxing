@@ -54,6 +54,36 @@ class ScenarioRepository(Protocol):
         """The `scenarios` row with this slug, or `None`."""
         ...
 
+    async def get_scenario(self, scenario_id: ScenarioId) -> StoredScenario | None:
+        """The `scenarios` row with this id, or `None`.
+
+        Session creation needs the owning scenario's `slug` for the `SESSION_CREATED` payload
+        (§10.13), and a version only knows its `scenario_id`.
+        """
+        ...
+
+    async def get_version(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> StoredScenarioVersion | None:
+        """The `scenario_versions` row with this id, or `None` (the session-creation read path).
+
+        `find_version` reads by `(scenario_id, version)`, which is the importer's key; a session
+        is created against a `scenario_version_id` and needs this by-id read.
+        """
+        ...
+
+    async def get_version_document(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> Mapping[str, Any] | None:
+        """The stored `content` of a version — the full validated document (§20.2), or `None`.
+
+        Session creation turns it back into a `ScenarioVersion` with
+        `ScenarioVersion.model_validate` and re-runs `validate_scenario_version` on the result;
+        there is exactly one parser in the system (`app.domain.scenario`) and this method feeds
+        it, it does not duplicate it.
+        """
+        ...
+
     async def add_scenario(self, scenario_id: ScenarioId, slug: str, title_ru: str) -> None:
         """Insert a `scenarios` row."""
         ...

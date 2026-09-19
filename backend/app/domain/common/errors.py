@@ -61,3 +61,29 @@ class GateError(DomainError):
 
 class ScoringEvidenceError(DomainError):
     """Raised when a `ScoreResult` with a nonzero `points_awarded` has zero evidence (§10.14)."""
+
+
+class PrefabHandoffRequiredError(DomainError):
+    """Raised by `create_session` (`session/session.py`, §10.10, D6) for a DDS-only `role_chain`
+    under a policy whose `requires_prefab_handoff_for_dds_only` is true when the scenario's
+    `expected_response.prefab_handoff` is absent: with no 112 stage ahead of it there is nothing
+    to produce the handoff the DDS stage starts from, so the session cannot exist at all.
+
+    `code` is the `ProblemCode` the API layer maps this to (`openapi.yaml`, `409`).
+    """
+
+    code = "PREFAB_HANDOFF_REQUIRED"
+
+    def __init__(self, message: str = "scenario has no expected_response.prefab_handoff") -> None:
+        super().__init__(message)
+
+
+class RoleChainLengthError(DomainError):
+    """Raised by `create_session` when `SessionPolicy.role_chain_length` is `"EXACTLY_ONE"` and
+    the scenario's `role_chain` does not hold exactly one entry (§10.10).
+
+    `openapi.yaml`'s `ProblemCode` enum is closed and has no dedicated member for this structural
+    rejection, so `code` is the generic `VALIDATION_ERROR` — see this task's report, "HLD gaps".
+    """
+
+    code = "VALIDATION_ERROR"
