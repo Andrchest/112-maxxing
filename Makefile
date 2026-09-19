@@ -24,6 +24,7 @@ boundaries:
 	$(UV) run python backend/tools/check_imports.py
 scenarios:
 	$(UV) run python -m app.tools.validate_scenarios scenarios/examples
+	$(UV) run python -m app.tools.export_scenario_schema --check
 test-backend: infra-up
 	$(UV) run pytest -q
 gate-backend: lint typecheck boundaries scenarios test-backend

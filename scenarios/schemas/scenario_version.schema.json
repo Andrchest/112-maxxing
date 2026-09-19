@@ -1,0 +1,2319 @@
+{
+  "$defs": {
+    "ActionCondition": {
+      "additionalProperties": false,
+      "description": "`{\"action\": {\"event_type\", \"op\", \"count\", \"within_ms\", \"payload_equals\"}}` (§10.11).",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Count"
+        },
+        "event_type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "op": {
+          "enum": [
+            "OCCURRED",
+            "NOT_OCCURRED",
+            "COUNT_GTE"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "payload_equals": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payload Equals"
+        },
+        "within_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Within Ms"
+        }
+      },
+      "required": [
+        "event_type",
+        "op"
+      ],
+      "title": "ActionCondition",
+      "type": "object"
+    },
+    "ActionTriggeredEvent": {
+      "additionalProperties": false,
+      "description": "Fires when a matching `SessionEvent` is appended (§30.6.3 #3).",
+      "properties": {
+        "caller_observable": {
+          "title": "Caller Observable",
+          "type": "boolean"
+        },
+        "delay_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Delay Ms",
+          "type": "integer"
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "ALTER_RESOURCE_AVAILABILITY": "#/$defs/AlterResourceAvailability",
+                "CHANGE_CALLER_EMOTION": "#/$defs/ChangeCallerEmotion",
+                "CREATE_NOTIFICATION": "#/$defs/CreateNotification",
+                "CREATE_RADIO_MESSAGE": "#/$defs/CreateRadioMessage",
+                "MUTATE_CALLER_BELIEF": "#/$defs/MutateCallerBelief",
+                "MUTATE_WORLD_TRUTH": "#/$defs/MutateWorldTruth",
+                "TRIGGER_EVENT": "#/$defs/TriggerEvent"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MutateWorldTruth"
+              },
+              {
+                "$ref": "#/$defs/MutateCallerBelief"
+              },
+              {
+                "$ref": "#/$defs/CreateNotification"
+              },
+              {
+                "$ref": "#/$defs/CreateRadioMessage"
+              },
+              {
+                "$ref": "#/$defs/AlterResourceAvailability"
+              },
+              {
+                "$ref": "#/$defs/TriggerEvent"
+              },
+              {
+                "$ref": "#/$defs/ChangeCallerEmotion"
+              }
+            ]
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "kind": {
+          "const": "ACTION_TRIGGERED",
+          "default": "ACTION_TRIGGERED",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_occurrences": {
+          "default": 1,
+          "title": "Max Occurrences",
+          "type": "integer"
+        },
+        "on_event_type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "payload_match": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payload Match"
+        },
+        "title_ru": {
+          "title": "Title Ru",
+          "type": "string"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id",
+        "title_ru",
+        "caller_observable",
+        "effects",
+        "on_event_type",
+        "payload_match"
+      ],
+      "title": "ActionTriggeredEvent",
+      "type": "object"
+    },
+    "AgeGroup": {
+      "enum": [
+        "CHILD",
+        "TEEN",
+        "ADULT",
+        "ELDERLY"
+      ],
+      "title": "AgeGroup",
+      "type": "string"
+    },
+    "AlterResourceAvailability": {
+      "additionalProperties": false,
+      "description": "`{kind: ALTER_RESOURCE_AVAILABILITY, resource_id, new_status, restore, eta_multiplier}`.",
+      "properties": {
+        "eta_multiplier": {
+          "default": 1.0,
+          "title": "Eta Multiplier",
+          "type": "number"
+        },
+        "kind": {
+          "const": "ALTER_RESOURCE_AVAILABILITY",
+          "default": "ALTER_RESOURCE_AVAILABILITY",
+          "title": "Kind",
+          "type": "string"
+        },
+        "new_status": {
+          "$ref": "#/$defs/ResourceStatus"
+        },
+        "resource_id": {
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "restore": {
+          "default": false,
+          "title": "Restore",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "resource_id",
+        "new_status"
+      ],
+      "title": "AlterResourceAvailability",
+      "type": "object"
+    },
+    "AvailableAfter": {
+      "additionalProperties": false,
+      "description": "Exactly one of `sim_time_ms`, `world_event_id`, `condition` (§10.4).",
+      "properties": {
+        "condition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sim_time_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sim Time Ms"
+        },
+        "world_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "World Event Id"
+        }
+      },
+      "title": "AvailableAfter",
+      "type": "object"
+    },
+    "CallerFactChange": {
+      "additionalProperties": false,
+      "description": "One fact's new caller-belief value inside a `MutateCallerBelief` effect (§10.11).",
+      "properties": {
+        "certainty": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Certainty",
+          "type": "number"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/KnowledgeState"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "knowledge",
+        "certainty"
+      ],
+      "title": "CallerFactChange",
+      "type": "object"
+    },
+    "CallerFactSpec": {
+      "additionalProperties": false,
+      "description": "`caller_knowledge.facts[fact_id]` (§30.2).\n\n`certainty` is deliberately *not* bounded here: §30.8 rule 9 owns the 0.0-1.0 range so that an\nout-of-range value is reported as `R09` alongside every other violation of the same file.",
+      "properties": {
+        "caller_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caller Value"
+        },
+        "certainty": {
+          "default": 1.0,
+          "title": "Certainty",
+          "type": "number"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/KnowledgeState"
+        }
+      },
+      "required": [
+        "knowledge"
+      ],
+      "title": "CallerFactSpec",
+      "type": "object"
+    },
+    "CallerKnowledgeSection": {
+      "additionalProperties": false,
+      "description": "`caller_knowledge` (§30.2).",
+      "properties": {
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CallerFactSpec"
+          },
+          "title": "Facts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "facts"
+      ],
+      "title": "CallerKnowledgeSection",
+      "type": "object"
+    },
+    "CallerProfileSection": {
+      "additionalProperties": false,
+      "description": "`caller_profile` (§30.3): every `CallerProfile` field plus the scenario's `emotion_rules`.\n\nSee the HLD-gap note at the top of this module.",
+      "properties": {
+        "age_group": {
+          "$ref": "#/$defs/AgeGroup"
+        },
+        "baseline_emotion": {
+          "$ref": "#/$defs/EmotionLabel"
+        },
+        "baseline_stress_level": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Baseline Stress Level",
+          "type": "number"
+        },
+        "confusion": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confusion",
+          "type": "number"
+        },
+        "cooperativeness": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Cooperativeness",
+          "type": "number"
+        },
+        "emotion_rules": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EmotionRule"
+          },
+          "title": "Emotion Rules",
+          "type": "array"
+        },
+        "identity_ru": {
+          "title": "Identity Ru",
+          "type": "string"
+        },
+        "interruption_tendency": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Interruption Tendency",
+          "type": "number"
+        },
+        "language": {
+          "title": "Language",
+          "type": "string"
+        },
+        "persona_whitelist_ru": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Persona Whitelist Ru",
+          "type": "array"
+        },
+        "relationship": {
+          "$ref": "#/$defs/CallerRelationship"
+        },
+        "speaking_rate": {
+          "maximum": 2.0,
+          "minimum": 0.5,
+          "title": "Speaking Rate",
+          "type": "number"
+        },
+        "verbosity": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Verbosity",
+          "type": "number"
+        },
+        "voice_id": {
+          "title": "Voice Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_ru",
+        "relationship",
+        "language",
+        "voice_id",
+        "age_group",
+        "baseline_emotion",
+        "cooperativeness",
+        "verbosity",
+        "confusion",
+        "interruption_tendency",
+        "speaking_rate",
+        "baseline_stress_level"
+      ],
+      "title": "CallerProfileSection",
+      "type": "object"
+    },
+    "CallerRelationship": {
+      "description": "SPEC §6 \"relationship to incident\".",
+      "enum": [
+        "VICTIM",
+        "WITNESS",
+        "NEIGHBOUR",
+        "RELATIVE",
+        "PASSERBY",
+        "OFFICIAL",
+        "UNKNOWN"
+      ],
+      "title": "CallerRelationship",
+      "type": "string"
+    },
+    "ChangeCallerEmotion": {
+      "additionalProperties": false,
+      "description": "`{kind: CHANGE_CALLER_EMOTION, set_emotion, stress_delta}` (§30.6.4).",
+      "properties": {
+        "kind": {
+          "const": "CHANGE_CALLER_EMOTION",
+          "default": "CHANGE_CALLER_EMOTION",
+          "title": "Kind",
+          "type": "string"
+        },
+        "set_emotion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmotionLabel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stress_delta": {
+          "default": 0.0,
+          "title": "Stress Delta",
+          "type": "number"
+        }
+      },
+      "required": [
+        "set_emotion"
+      ],
+      "title": "ChangeCallerEmotion",
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "The closed `Condition` structure (§10.11).\n\nExactly one of the combinators (`all`, `any`, `not`) or leaves (`fact`, `resource`, `stage`,\n`sim_time`, `action`) may be set on a given node. `not` is aliased to the field `not_` because\n`not` is a Python keyword.",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "all": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All"
+        },
+        "any": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any"
+        },
+        "fact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "not": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sim_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SimTimeCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Condition",
+      "type": "object"
+    },
+    "ConditionalEvent": {
+      "additionalProperties": false,
+      "description": "Fires when `condition` holds, re-checked each tick after `check_after_ms` (§30.6.3 #2).",
+      "properties": {
+        "caller_observable": {
+          "title": "Caller Observable",
+          "type": "boolean"
+        },
+        "check_after_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Check After Ms",
+          "type": "integer"
+        },
+        "condition": {
+          "$ref": "#/$defs/Condition"
+        },
+        "cooldown_ms": {
+          "default": 0,
+          "title": "Cooldown Ms",
+          "type": "integer"
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "ALTER_RESOURCE_AVAILABILITY": "#/$defs/AlterResourceAvailability",
+                "CHANGE_CALLER_EMOTION": "#/$defs/ChangeCallerEmotion",
+                "CREATE_NOTIFICATION": "#/$defs/CreateNotification",
+                "CREATE_RADIO_MESSAGE": "#/$defs/CreateRadioMessage",
+                "MUTATE_CALLER_BELIEF": "#/$defs/MutateCallerBelief",
+                "MUTATE_WORLD_TRUTH": "#/$defs/MutateWorldTruth",
+                "TRIGGER_EVENT": "#/$defs/TriggerEvent"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MutateWorldTruth"
+              },
+              {
+                "$ref": "#/$defs/MutateCallerBelief"
+              },
+              {
+                "$ref": "#/$defs/CreateNotification"
+              },
+              {
+                "$ref": "#/$defs/CreateRadioMessage"
+              },
+              {
+                "$ref": "#/$defs/AlterResourceAvailability"
+              },
+              {
+                "$ref": "#/$defs/TriggerEvent"
+              },
+              {
+                "$ref": "#/$defs/ChangeCallerEmotion"
+              }
+            ]
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "kind": {
+          "const": "CONDITIONAL",
+          "default": "CONDITIONAL",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_occurrences": {
+          "default": 1,
+          "title": "Max Occurrences",
+          "type": "integer"
+        },
+        "title_ru": {
+          "title": "Title Ru",
+          "type": "string"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id",
+        "title_ru",
+        "caller_observable",
+        "effects",
+        "condition"
+      ],
+      "title": "ConditionalEvent",
+      "type": "object"
+    },
+    "CreateNotification": {
+      "additionalProperties": false,
+      "description": "`{kind: CREATE_NOTIFICATION, audience_role, severity, title_ru, body_ru}` (§30.6.4).",
+      "properties": {
+        "audience_role": {
+          "$ref": "#/$defs/RoleType"
+        },
+        "body_ru": {
+          "title": "Body Ru",
+          "type": "string"
+        },
+        "kind": {
+          "const": "CREATE_NOTIFICATION",
+          "default": "CREATE_NOTIFICATION",
+          "title": "Kind",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/NotificationSeverity"
+        },
+        "title_ru": {
+          "title": "Title Ru",
+          "type": "string"
+        }
+      },
+      "required": [
+        "audience_role",
+        "severity",
+        "title_ru",
+        "body_ru"
+      ],
+      "title": "CreateNotification",
+      "type": "object"
+    },
+    "CreateRadioMessage": {
+      "additionalProperties": false,
+      "description": "`{kind: CREATE_RADIO_MESSAGE, from_callsign, to_role, text_ru, resource_id}` (§30.6.4).",
+      "properties": {
+        "from_callsign": {
+          "title": "From Callsign",
+          "type": "string"
+        },
+        "kind": {
+          "const": "CREATE_RADIO_MESSAGE",
+          "default": "CREATE_RADIO_MESSAGE",
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resource Id"
+        },
+        "text_ru": {
+          "title": "Text Ru",
+          "type": "string"
+        },
+        "to_role": {
+          "$ref": "#/$defs/RoleType"
+        }
+      },
+      "required": [
+        "from_callsign",
+        "to_role",
+        "text_ru",
+        "resource_id"
+      ],
+      "title": "CreateRadioMessage",
+      "type": "object"
+    },
+    "DisclosureFactSpec": {
+      "additionalProperties": false,
+      "description": "`disclosure_rules.facts[fact_id]` (§30.2).\n\n`aliases_ru` and `categories` reach the interpreter LLM inside the fact catalog; values never\ndo (D10) — this model carries no value-bearing field at all.",
+      "properties": {
+        "aliases_ru": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases Ru",
+          "type": "array"
+        },
+        "available_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AvailableAfter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "categories": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Categories",
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/DisclosurePolicy"
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "title": "DisclosureFactSpec",
+      "type": "object"
+    },
+    "DisclosurePolicy": {
+      "description": "SPEC §5, exact.",
+      "enum": [
+        "SPONTANEOUS",
+        "ON_ASK",
+        "ONLY_IF_EXPLICITLY_ASKED",
+        "NEVER_DISCLOSE"
+      ],
+      "title": "DisclosurePolicy",
+      "type": "string"
+    },
+    "DisclosureRulesSection": {
+      "additionalProperties": false,
+      "description": "`disclosure_rules` (§30.2).",
+      "properties": {
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DisclosureFactSpec"
+          },
+          "title": "Facts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "facts"
+      ],
+      "title": "DisclosureRulesSection",
+      "type": "object"
+    },
+    "EmotionLabel": {
+      "description": "SPEC §6.",
+      "enum": [
+        "CALM",
+        "WORRIED",
+        "FRIGHTENED",
+        "PANICKED",
+        "ANGRY",
+        "CONFUSED",
+        "APATHETIC"
+      ],
+      "title": "EmotionLabel",
+      "type": "string"
+    },
+    "EmotionRule": {
+      "additionalProperties": false,
+      "description": "`trigger -> delta`, scenario data (D4); applied in scenario declaration order (§10.5).",
+      "properties": {
+        "max_applications": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Applications"
+        },
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "set_emotion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmotionLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stress_delta": {
+          "default": 0.0,
+          "title": "Stress Delta",
+          "type": "number"
+        },
+        "trigger": {
+          "discriminator": {
+            "mapping": {
+              "EVENT_TYPE": "#/$defs/EventTypeTrigger",
+              "FACT_REVEALED": "#/$defs/FactRevealedTrigger",
+              "INTERRUPTION_COUNT": "#/$defs/InterruptionCountTrigger",
+              "SIM_TIME": "#/$defs/SimTimeTrigger",
+              "WORLD_EVENT": "#/$defs/WorldEventTrigger"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WorldEventTrigger"
+            },
+            {
+              "$ref": "#/$defs/EventTypeTrigger"
+            },
+            {
+              "$ref": "#/$defs/FactRevealedTrigger"
+            },
+            {
+              "$ref": "#/$defs/SimTimeTrigger"
+            },
+            {
+              "$ref": "#/$defs/InterruptionCountTrigger"
+            }
+          ],
+          "title": "Trigger"
+        }
+      },
+      "required": [
+        "rule_id",
+        "trigger"
+      ],
+      "title": "EmotionRule",
+      "type": "object"
+    },
+    "EtaProfile": {
+      "description": "The five ETA inputs `ScenarioDefinedEta` reads verbatim (§10.7).",
+      "properties": {
+        "on_scene_work_seconds": {
+          "title": "On Scene Work Seconds",
+          "type": "integer"
+        },
+        "return_time_seconds": {
+          "title": "Return Time Seconds",
+          "type": "integer"
+        },
+        "setup_seconds": {
+          "title": "Setup Seconds",
+          "type": "integer"
+        },
+        "travel_time_seconds": {
+          "title": "Travel Time Seconds",
+          "type": "integer"
+        },
+        "turnout_delay_seconds": {
+          "title": "Turnout Delay Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turnout_delay_seconds",
+        "travel_time_seconds",
+        "setup_seconds",
+        "on_scene_work_seconds",
+        "return_time_seconds"
+      ],
+      "title": "EtaProfile",
+      "type": "object"
+    },
+    "EvaluatorType": {
+      "description": "SPEC §28, exact ten.",
+      "enum": [
+        "FACT_OBTAINED",
+        "CARD_FIELD_CORRECT",
+        "CARD_FIELD_PRESENT",
+        "CARD_CONTRADICTION",
+        "SERVICE_SELECTION",
+        "DEADLINE",
+        "WORKFLOW_ACTION",
+        "RESOURCE_SELECTION",
+        "REQUIRED_STATUS_UPDATE",
+        "HANDOFF_COMPLETENESS"
+      ],
+      "title": "EvaluatorType",
+      "type": "string"
+    },
+    "EventType": {
+      "enum": [
+        "SESSION_CREATED",
+        "SESSION_STARTED",
+        "ROLE_STAGE_STARTED",
+        "CALL_RINGING",
+        "CALL_ANSWERED",
+        "USER_SPEECH_STARTED",
+        "USER_SPEECH_ENDED",
+        "ASR_PARTIAL",
+        "ASR_FINAL",
+        "CALLER_RESPONSE_PLANNED",
+        "CALLER_RESPONSE_GENERATED",
+        "CALLER_TTS_STARTED",
+        "CALLER_TTS_ENDED",
+        "CALLER_UTTERANCE_INTERRUPTED",
+        "CARD_FIELD_CHANGED",
+        "SERVICE_SELECTED",
+        "HANDOFF_CREATED",
+        "HANDOFF_RECEIVED",
+        "DDS_ACKNOWLEDGED",
+        "RESOURCE_SELECTED",
+        "RESOURCE_DISPATCHED",
+        "RESOURCE_STATUS_CHANGED",
+        "WORLD_EVENT_TRIGGERED",
+        "ROLE_STAGE_COMPLETED",
+        "SCORING_RULE_EVALUATED",
+        "SESSION_COMPLETED",
+        "MODEL_FALLBACK_USED",
+        "MODEL_ERROR",
+        "SESSION_ABORTED",
+        "STAGE_STATE_CHANGED",
+        "ROLE_TRANSITION_STARTED",
+        "ROLE_TRANSITION_COMPLETED",
+        "SERVICE_DESELECTED",
+        "RESOURCE_DESELECTED",
+        "DDS_STATUS_UPDATE_SENT",
+        "DDS_INCIDENT_CLOSED",
+        "NOTIFICATION_CREATED",
+        "NOTIFICATION_ACKNOWLEDGED",
+        "RADIO_MESSAGE_CREATED",
+        "WORLD_TRUTH_MUTATED",
+        "CALLER_BELIEF_MUTATED",
+        "CALLER_EMOTION_CHANGED",
+        "CALL_ENDED",
+        "DIALOGUE_INTERPRETED",
+        "FACT_GATE_EVALUATED",
+        "FACTS_DELIVERED",
+        "TRANSPORT_DISCONNECTED",
+        "TRANSPORT_RECONNECTED",
+        "INFERENCE_HEALTH_CHANGED"
+      ],
+      "title": "EventType",
+      "type": "string"
+    },
+    "EventTypeTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "event_type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "kind": {
+          "const": "EVENT_TYPE",
+          "default": "EVENT_TYPE",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_type"
+      ],
+      "title": "EventTypeTrigger",
+      "type": "object"
+    },
+    "ExpectedResponse": {
+      "additionalProperties": false,
+      "description": "`expected_response` (§30.5).\n\n`resolution_condition` is optional *in the model* so that its absence is reported as `R28`\ntogether with every other violation, rather than as a bare pydantic \"field required\".",
+      "properties": {
+        "min_units_by_service": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/ServiceType"
+          },
+          "title": "Min Units By Service",
+          "type": "object"
+        },
+        "optional_services": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ServiceType"
+          },
+          "title": "Optional Services",
+          "type": "array"
+        },
+        "prefab_handoff": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrefabHandoff"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "required_resource_capabilities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ResourceCapability"
+          },
+          "title": "Required Resource Capabilities",
+          "type": "array"
+        },
+        "required_services": {
+          "items": {
+            "$ref": "#/$defs/ServiceType"
+          },
+          "title": "Required Services",
+          "type": "array"
+        },
+        "resolution_condition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "required_services"
+      ],
+      "title": "ExpectedResponse",
+      "type": "object"
+    },
+    "FactCondition": {
+      "additionalProperties": false,
+      "description": "`{\"fact\": {\"fact_id\", \"layer\", \"op\", \"value\"}}` (§10.11).",
+      "properties": {
+        "fact_id": {
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "layer": {
+          "enum": [
+            "WORLD",
+            "CALLER"
+          ],
+          "title": "Layer",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "EQ",
+            "NEQ",
+            "GT",
+            "GTE",
+            "LT",
+            "LTE",
+            "IN",
+            "IS_NULL",
+            "IS_NOT_NULL"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "fact_id",
+        "layer",
+        "op"
+      ],
+      "title": "FactCondition",
+      "type": "object"
+    },
+    "FactRevealedTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "fact_id": {
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "FACT_REVEALED",
+          "default": "FACT_REVEALED",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_id"
+      ],
+      "title": "FactRevealedTrigger",
+      "type": "object"
+    },
+    "InterruptionCountTrigger": {
+      "additionalProperties": false,
+      "description": "Fires once the trainee has interrupted the caller at least `at_least` times (§10.5).",
+      "properties": {
+        "at_least": {
+          "title": "At Least",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "INTERRUPTION_COUNT",
+          "default": "INTERRUPTION_COUNT",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_least"
+      ],
+      "title": "InterruptionCountTrigger",
+      "type": "object"
+    },
+    "KnowledgeState": {
+      "description": "SPEC §5, exact.",
+      "enum": [
+        "KNOWN",
+        "UNKNOWN",
+        "INCORRECT_BELIEF",
+        "UNCERTAIN"
+      ],
+      "title": "KnowledgeState",
+      "type": "string"
+    },
+    "MutateCallerBelief": {
+      "additionalProperties": false,
+      "description": "Applied only if the owning event has `caller_observable = true` (D7).\n\nDropped with no trace by `advance` (E6) when that flag is false; this model itself imposes no\nsuch restriction — it only describes the shape.",
+      "properties": {
+        "changes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CallerFactChange"
+          },
+          "title": "Changes",
+          "type": "object"
+        },
+        "kind": {
+          "const": "MUTATE_CALLER_BELIEF",
+          "default": "MUTATE_CALLER_BELIEF",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "changes"
+      ],
+      "title": "MutateCallerBelief",
+      "type": "object"
+    },
+    "MutateWorldTruth": {
+      "additionalProperties": false,
+      "description": "`{kind: MUTATE_WORLD_TRUTH, changes: {fact_id: new_value}}` (§30.6.4).",
+      "properties": {
+        "changes": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Changes",
+          "type": "object"
+        },
+        "kind": {
+          "const": "MUTATE_WORLD_TRUTH",
+          "default": "MUTATE_WORLD_TRUTH",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "changes"
+      ],
+      "title": "MutateWorldTruth",
+      "type": "object"
+    },
+    "NotificationSeverity": {
+      "enum": [
+        "INFO",
+        "WARNING",
+        "CRITICAL"
+      ],
+      "title": "NotificationSeverity",
+      "type": "string"
+    },
+    "PrefabHandoff": {
+      "additionalProperties": false,
+      "description": "`expected_response.prefab_handoff` (§30.5, D6).\n\nRequired for a `role_chain` that starts at DDS; deliberately imperfect where the exercise\nwants it to be, so `card_values` is checked against `CARD_FIELDS` (rule 14) but never against\nworld truth.",
+      "properties": {
+        "card_values": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Card Values",
+          "type": "object"
+        },
+        "recipient_services": {
+          "items": {
+            "$ref": "#/$defs/ServiceType"
+          },
+          "title": "Recipient Services",
+          "type": "array"
+        }
+      },
+      "required": [
+        "recipient_services",
+        "card_values"
+      ],
+      "title": "PrefabHandoff",
+      "type": "object"
+    },
+    "ResourceAvailability": {
+      "description": "Scenario-defined availability window (§10.7).",
+      "properties": {
+        "available_from_ms": {
+          "default": 0,
+          "title": "Available From Ms",
+          "type": "integer"
+        },
+        "available_until_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available Until Ms"
+        },
+        "initial_status": {
+          "$ref": "#/$defs/ResourceStatus",
+          "default": "AVAILABLE"
+        }
+      },
+      "title": "ResourceAvailability",
+      "type": "object"
+    },
+    "ResourceCapability": {
+      "description": "§10.7, exact.",
+      "enum": [
+        "FIRE_SUPPRESSION",
+        "HIGH_RISE_ACCESS",
+        "LADDER_RESCUE",
+        "TECHNICAL_RESCUE",
+        "SMOKE_DIVING",
+        "BASIC_LIFE_SUPPORT",
+        "ADVANCED_LIFE_SUPPORT",
+        "BURN_CARE",
+        "PUBLIC_ORDER",
+        "TRAFFIC_CONTROL",
+        "AREA_CORDON",
+        "GAS_SHUTOFF",
+        "GAS_LEAK_DETECTION",
+        "POWER_SHUTOFF",
+        "WATER_SUPPLY",
+        "COMMAND_AND_CONTROL"
+      ],
+      "title": "ResourceCapability",
+      "type": "string"
+    },
+    "ResourceCondition": {
+      "additionalProperties": false,
+      "description": "`{\"resource\": {\"selector\", \"op\", \"status\", \"count\"}}` (§10.11).",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Count"
+        },
+        "op": {
+          "enum": [
+            "ANY_IS",
+            "ALL_ARE",
+            "NONE_IS",
+            "COUNT_GTE"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "selector": {
+          "$ref": "#/$defs/ResourceSelector"
+        },
+        "status": {
+          "$ref": "#/$defs/ResourceStatus"
+        }
+      },
+      "required": [
+        "selector",
+        "op",
+        "status"
+      ],
+      "title": "ResourceCondition",
+      "type": "object"
+    },
+    "ResourceSelector": {
+      "additionalProperties": false,
+      "description": "`{\"resource_id\": str} | {\"capability\": str} | {\"service_type\": str}` (§10.11).\n\nExactly one of the three keys, enforced the same way as `Condition` itself.",
+      "properties": {
+        "capability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Id"
+        },
+        "service_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Service Type"
+        }
+      },
+      "title": "ResourceSelector",
+      "type": "object"
+    },
+    "ResourceSpec": {
+      "additionalProperties": false,
+      "description": "One entry of `available_resources` (§30.4, SPEC §11).\n\nThe scenario-file shape of `EmergencyResource` (§10.7): no `current_status` (it comes from\n`availability.initial_status` at instantiation time) and `resource_id` is the scenario-local\nstring key, not the runtime `ResourceId` UUID.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/ResourceAvailability"
+        },
+        "callsign": {
+          "title": "Callsign",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/ResourceCapability"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "crew_size": {
+          "title": "Crew Size",
+          "type": "integer"
+        },
+        "eta": {
+          "$ref": "#/$defs/EtaProfile"
+        },
+        "home_station_ru": {
+          "title": "Home Station Ru",
+          "type": "string"
+        },
+        "name_ru": {
+          "title": "Name Ru",
+          "type": "string"
+        },
+        "resource_id": {
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "resource_type": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "service_type": {
+          "$ref": "#/$defs/ServiceType"
+        }
+      },
+      "required": [
+        "resource_id",
+        "service_type",
+        "resource_type",
+        "callsign",
+        "name_ru",
+        "home_station_ru",
+        "crew_size",
+        "capabilities",
+        "availability",
+        "eta"
+      ],
+      "title": "ResourceSpec",
+      "type": "object"
+    },
+    "ResourceStatus": {
+      "description": "SPEC §11.",
+      "enum": [
+        "AVAILABLE",
+        "SELECTED",
+        "DISPATCHED",
+        "EN_ROUTE",
+        "ON_SCENE",
+        "WORKING",
+        "RETURNING",
+        "OUT_OF_SERVICE",
+        "UNAVAILABLE"
+      ],
+      "title": "ResourceStatus",
+      "type": "string"
+    },
+    "ResourceType": {
+      "enum": [
+        "FIRE_ENGINE",
+        "LADDER_TRUCK",
+        "RESCUE_UNIT",
+        "AMBULANCE_UNIT",
+        "RESUSCITATION_UNIT",
+        "POLICE_PATROL",
+        "GAS_EMERGENCY_UNIT",
+        "UTILITY_CREW",
+        "FIRE_CHIEF_CAR"
+      ],
+      "title": "ResourceType",
+      "type": "string"
+    },
+    "RoleType": {
+      "description": "SPEC §1, §14.",
+      "enum": [
+        "OPERATOR_112",
+        "DDS",
+        "EDDS"
+      ],
+      "title": "RoleType",
+      "type": "string"
+    },
+    "ScoringCategory": {
+      "enum": [
+        "INFORMATION_GATHERING",
+        "CARD_QUALITY",
+        "SERVICE_ROUTING",
+        "TIMELINESS",
+        "WORKFLOW",
+        "RESOURCE_MANAGEMENT",
+        "COMMUNICATION"
+      ],
+      "title": "ScoringCategory",
+      "type": "string"
+    },
+    "ScoringRule": {
+      "additionalProperties": false,
+      "description": "One scenario-defined scoring rule (§10.14, §30.7).",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ScoringCategory"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "critical": {
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description_ru": {
+          "title": "Description Ru",
+          "type": "string"
+        },
+        "evaluator_type": {
+          "$ref": "#/$defs/EvaluatorType"
+        },
+        "max_points": {
+          "exclusiveMinimum": 0,
+          "title": "Max Points",
+          "type": "number"
+        },
+        "min_evidence": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Evidence",
+          "type": "integer"
+        },
+        "name_ru": {
+          "title": "Name Ru",
+          "type": "string"
+        },
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "name_ru",
+        "description_ru",
+        "category",
+        "max_points",
+        "critical",
+        "evaluator_type",
+        "config"
+      ],
+      "title": "ScoringRule",
+      "type": "object"
+    },
+    "SeededRandomEvent": {
+      "additionalProperties": false,
+      "description": "Draws from the session-seeded RNG every `check_every_ms` (§30.6.3 #4).",
+      "properties": {
+        "caller_observable": {
+          "title": "Caller Observable",
+          "type": "boolean"
+        },
+        "check_every_ms": {
+          "exclusiveMinimum": 0,
+          "title": "Check Every Ms",
+          "type": "integer"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "ALTER_RESOURCE_AVAILABILITY": "#/$defs/AlterResourceAvailability",
+                "CHANGE_CALLER_EMOTION": "#/$defs/ChangeCallerEmotion",
+                "CREATE_NOTIFICATION": "#/$defs/CreateNotification",
+                "CREATE_RADIO_MESSAGE": "#/$defs/CreateRadioMessage",
+                "MUTATE_CALLER_BELIEF": "#/$defs/MutateCallerBelief",
+                "MUTATE_WORLD_TRUTH": "#/$defs/MutateWorldTruth",
+                "TRIGGER_EVENT": "#/$defs/TriggerEvent"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MutateWorldTruth"
+              },
+              {
+                "$ref": "#/$defs/MutateCallerBelief"
+              },
+              {
+                "$ref": "#/$defs/CreateNotification"
+              },
+              {
+                "$ref": "#/$defs/CreateRadioMessage"
+              },
+              {
+                "$ref": "#/$defs/AlterResourceAvailability"
+              },
+              {
+                "$ref": "#/$defs/TriggerEvent"
+              },
+              {
+                "$ref": "#/$defs/ChangeCallerEmotion"
+              }
+            ]
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "kind": {
+          "const": "SEEDED_RANDOM",
+          "default": "SEEDED_RANDOM",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_occurrences": {
+          "default": 1,
+          "title": "Max Occurrences",
+          "type": "integer"
+        },
+        "probability": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Probability",
+          "type": "number"
+        },
+        "title_ru": {
+          "title": "Title Ru",
+          "type": "string"
+        },
+        "window_end_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Window End Ms"
+        },
+        "window_start_ms": {
+          "default": 0,
+          "title": "Window Start Ms",
+          "type": "integer"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id",
+        "title_ru",
+        "caller_observable",
+        "effects",
+        "probability",
+        "check_every_ms",
+        "window_end_ms",
+        "condition"
+      ],
+      "title": "SeededRandomEvent",
+      "type": "object"
+    },
+    "ServiceType": {
+      "description": "Russian System-112 receiving services.\n\n`UTILITY_EMERGENCY` is the only member the frame did not name; the demo needs a\nwrong-but-plausible fifth choice so that `SERVICE_SELECTION` scoring has something to\npenalise.",
+      "enum": [
+        "FIRE_RESCUE",
+        "POLICE",
+        "AMBULANCE",
+        "GAS_SERVICE",
+        "UTILITY_EMERGENCY",
+        "EDDS"
+      ],
+      "title": "ServiceType",
+      "type": "string"
+    },
+    "SimTimeCondition": {
+      "additionalProperties": false,
+      "description": "`{\"sim_time\": {\"op\", \"ms\"}}` (§10.11).",
+      "properties": {
+        "ms": {
+          "title": "Ms",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            "GTE",
+            "LT"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "ms"
+      ],
+      "title": "SimTimeCondition",
+      "type": "object"
+    },
+    "SimTimeTrigger": {
+      "additionalProperties": false,
+      "description": "Fires once the simulation has reached at least `at_ms` (§10.5).",
+      "properties": {
+        "at_ms": {
+          "title": "At Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "SIM_TIME",
+          "default": "SIM_TIME",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_ms"
+      ],
+      "title": "SimTimeTrigger",
+      "type": "object"
+    },
+    "StageCondition": {
+      "additionalProperties": false,
+      "description": "`{\"stage\": {\"role\", \"op\", \"state\"}}` (§10.11).",
+      "properties": {
+        "op": {
+          "enum": [
+            "IS",
+            "IS_NOT",
+            "REACHED"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "OPERATOR_112",
+            "DDS",
+            "EDDS"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "op",
+        "state"
+      ],
+      "title": "StageCondition",
+      "type": "object"
+    },
+    "TimedEvent": {
+      "additionalProperties": false,
+      "description": "Fires once the simulation clock passes `at_ms` (§30.6.3 #1).",
+      "properties": {
+        "at_ms": {
+          "minimum": 0,
+          "title": "At Ms",
+          "type": "integer"
+        },
+        "caller_observable": {
+          "title": "Caller Observable",
+          "type": "boolean"
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "ALTER_RESOURCE_AVAILABILITY": "#/$defs/AlterResourceAvailability",
+                "CHANGE_CALLER_EMOTION": "#/$defs/ChangeCallerEmotion",
+                "CREATE_NOTIFICATION": "#/$defs/CreateNotification",
+                "CREATE_RADIO_MESSAGE": "#/$defs/CreateRadioMessage",
+                "MUTATE_CALLER_BELIEF": "#/$defs/MutateCallerBelief",
+                "MUTATE_WORLD_TRUTH": "#/$defs/MutateWorldTruth",
+                "TRIGGER_EVENT": "#/$defs/TriggerEvent"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MutateWorldTruth"
+              },
+              {
+                "$ref": "#/$defs/MutateCallerBelief"
+              },
+              {
+                "$ref": "#/$defs/CreateNotification"
+              },
+              {
+                "$ref": "#/$defs/CreateRadioMessage"
+              },
+              {
+                "$ref": "#/$defs/AlterResourceAvailability"
+              },
+              {
+                "$ref": "#/$defs/TriggerEvent"
+              },
+              {
+                "$ref": "#/$defs/ChangeCallerEmotion"
+              }
+            ]
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "kind": {
+          "const": "TIMED",
+          "default": "TIMED",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_occurrences": {
+          "default": 1,
+          "title": "Max Occurrences",
+          "type": "integer"
+        },
+        "title_ru": {
+          "title": "Title Ru",
+          "type": "string"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id",
+        "title_ru",
+        "caller_observable",
+        "effects",
+        "at_ms"
+      ],
+      "title": "TimedEvent",
+      "type": "object"
+    },
+    "TriggerEvent": {
+      "additionalProperties": false,
+      "description": "`{kind: TRIGGER_EVENT, world_event_id, delay_ms}` (§30.6.4).",
+      "properties": {
+        "delay_ms": {
+          "default": 0,
+          "title": "Delay Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "TRIGGER_EVENT",
+          "default": "TRIGGER_EVENT",
+          "title": "Kind",
+          "type": "string"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id"
+      ],
+      "title": "TriggerEvent",
+      "type": "object"
+    },
+    "ValueType": {
+      "description": "Fact and card value typing.",
+      "enum": [
+        "STRING",
+        "INTEGER",
+        "FLOAT",
+        "BOOLEAN",
+        "ENUM",
+        "STRING_LIST"
+      ],
+      "title": "ValueType",
+      "type": "string"
+    },
+    "WorldEventTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "WORLD_EVENT",
+          "default": "WORLD_EVENT",
+          "title": "Kind",
+          "type": "string"
+        },
+        "world_event_id": {
+          "title": "World Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world_event_id"
+      ],
+      "title": "WorldEventTrigger",
+      "type": "object"
+    },
+    "WorldFactSpec": {
+      "additionalProperties": false,
+      "description": "`world_truth.facts[fact_id]` (§30.2).",
+      "properties": {
+        "enum_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enum Name"
+        },
+        "label_ru": {
+          "title": "Label Ru",
+          "type": "string"
+        },
+        "value_type": {
+          "$ref": "#/$defs/ValueType"
+        },
+        "world_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "World Value"
+        }
+      },
+      "required": [
+        "value_type",
+        "label_ru"
+      ],
+      "title": "WorldFactSpec",
+      "type": "object"
+    },
+    "WorldTruthSection": {
+      "additionalProperties": false,
+      "description": "`world_truth` (§30.2). `scene_summary_ru` is instructor-only prose (D10).",
+      "properties": {
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorldFactSpec"
+          },
+          "title": "Facts",
+          "type": "object"
+        },
+        "scene_summary_ru": {
+          "title": "Scene Summary Ru",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_summary_ru",
+        "facts"
+      ],
+      "title": "WorldTruthSection",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One immutable scenario version: exactly the SPEC §4 top-level keys (§10.15, §30.1).",
+  "properties": {
+    "available_resources": {
+      "items": {
+        "$ref": "#/$defs/ResourceSpec"
+      },
+      "title": "Available Resources",
+      "type": "array"
+    },
+    "caller_knowledge": {
+      "$ref": "#/$defs/CallerKnowledgeSection"
+    },
+    "caller_profile": {
+      "$ref": "#/$defs/CallerProfileSection"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "deterministic_seed": {
+      "title": "Deterministic Seed",
+      "type": "string"
+    },
+    "difficulty": {
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Difficulty",
+      "type": "integer"
+    },
+    "disclosure_rules": {
+      "$ref": "#/$defs/DisclosureRulesSection"
+    },
+    "expected_response": {
+      "$ref": "#/$defs/ExpectedResponse"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "role_chain": {
+      "items": {
+        "$ref": "#/$defs/RoleType"
+      },
+      "title": "Role Chain",
+      "type": "array"
+    },
+    "scenario_id": {
+      "format": "uuid",
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "scoring_rules": {
+      "items": {
+        "$ref": "#/$defs/ScoringRule"
+      },
+      "title": "Scoring Rules",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "world_events": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "ACTION_TRIGGERED": "#/$defs/ActionTriggeredEvent",
+            "CONDITIONAL": "#/$defs/ConditionalEvent",
+            "SEEDED_RANDOM": "#/$defs/SeededRandomEvent",
+            "TIMED": "#/$defs/TimedEvent"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TimedEvent"
+          },
+          {
+            "$ref": "#/$defs/ConditionalEvent"
+          },
+          {
+            "$ref": "#/$defs/ActionTriggeredEvent"
+          },
+          {
+            "$ref": "#/$defs/SeededRandomEvent"
+          }
+        ]
+      },
+      "title": "World Events",
+      "type": "array"
+    },
+    "world_truth": {
+      "$ref": "#/$defs/WorldTruthSection"
+    }
+  },
+  "required": [
+    "id",
+    "schema_version",
+    "scenario_id",
+    "version",
+    "title",
+    "description",
+    "difficulty",
+    "deterministic_seed",
+    "role_chain",
+    "world_truth",
+    "caller_profile",
+    "caller_knowledge",
+    "disclosure_rules",
+    "expected_response",
+    "available_resources",
+    "world_events",
+    "scoring_rules"
+  ],
+  "title": "ScenarioVersion",
+  "type": "object"
+}

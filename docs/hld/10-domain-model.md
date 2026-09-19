@@ -14,6 +14,7 @@ are Russian.
 ```
 backend/app/domain/
 ├── common/
+│   ├── actors.py            ActorRef
 │   ├── errors.py            DomainError, InvalidTransitionError, ScenarioValidationError,
 │   │                        CardFieldError, GateError, ScoringEvidenceError
 │   ├── ids.py               typed UUID aliases (SessionId, IncidentId, …)
@@ -48,7 +49,8 @@ backend/app/domain/
 │   ├── policy.py            SessionPolicy, SESSION_POLICIES
 │   └── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS
 ├── roles/
-│   ├── module.py            Permission, ActionDescriptor, RoleModule, ROLE_MODULES
+│   ├── module.py            Permission, ActionDescriptor, RoleModule
+│   ├── registry.py          ROLE_MODULES
 │   ├── visibility.py        VisibilitySource, DataVisibilityPolicy
 │   ├── operator112.py       Operator112Module
 │   ├── dds.py               DDSModule
@@ -443,6 +445,10 @@ Setting a field to its current value is a no-op: no revision, no event. Only `Ac
 | `notes.free_text` | STRING | Дополнительная информация | |
 | `recipients.services` | STRING_LIST (`ServiceType` names) | Службы-получатели | ✔ |
 | `recipients.comment` | STRING | Комментарий для служб | |
+
+`required_for_handoff` is `True` for exactly `incident.type`, `address.locality`,
+`address.street`, `address.house`, `caller.phone`, `description.text`, `flags.threat_to_life` and
+`recipients.services` — advisory only, a missing field never blocks a handoff (SPEC §10).
 
 `recipients.services` is mutated only through the dedicated service commands, which emit
 `SERVICE_SELECTED` / `SERVICE_DESELECTED` **in addition to** `CARD_FIELD_CHANGED`, so both the
@@ -985,7 +991,9 @@ with `completed = true` produces `FACTS_DELIVERED {fact_ids}`, and that event is
 
 ## 10.13 Event payload catalog (D5)
 
-`backend/app/domain/events/catalog.py`
+`backend/app/domain/events/session_event.py` (`SessionEvent`, `DomainEvent`) and
+`backend/app/domain/events/catalog.py` (`EventSpec`, `EVENT_PAYLOAD_CATALOG`) — per the §10.1
+module map, which wins over listing all four classes under `catalog.py` alone.
 
 ```python
 class SessionEvent(BaseModel):

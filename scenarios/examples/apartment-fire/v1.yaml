@@ -1,0 +1,348 @@
+# Demo scenario "Пожар в квартире" — HLD 30-scenario-format.md §30.9, SPEC §4-§6, §11, §12, §28.
+#
+# Identifiers, keys and enum members are English; every trainee- and caller-facing string
+# (`*_ru`) is Russian. Designed for a 10-15 minute run: ring -> answer -> the caller spontaneously
+# reports fire and smoke; the trainee must ask for the address, must ask *explicitly* whether
+# anyone is inside, gets a wrong floor (5 instead of 4) and a wrong electrical assessment from a
+# sincere caller, and can never obtain the fire source or the cause.
+id: 3f6c1a20-0e1a-4b1e-9d2a-0a7c5b2f1d11
+schema_version: 1
+scenario_id: 9c2a77bc-4e3d-4a1a-9a71-2cf0a1e4b501
+version: 1
+title: "Apartment fire, Smolensk, Nikolaeva 27"
+description: "Neighbour reports smoke from a ninth-floor block; one elderly resident is inside."
+difficulty: 3
+deterministic_seed: "apartment-fire-v1"
+role_chain: [OPERATOR_112, DDS]
+
+world_truth:
+  scene_summary_ru: >
+    Горит кухня в квартире 45 на 4-м этаже 9-этажного дома по улице Николаева, 27.
+    В квартире находится 78-летняя женщина. На балконе стоит газовый баллон.
+  facts:
+    incident.type:            { world_value: FIRE, value_type: ENUM, enum_name: IncidentType, label_ru: "Тип происшествия" }
+    incident.smoke_visible:   { world_value: true, value_type: BOOLEAN, label_ru: "Видно дым" }
+    incident.fire_source:     { world_value: KITCHEN, value_type: ENUM, enum_name: FireSource, label_ru: "Очаг возгорания" }
+    incident.cause:           { world_value: "неисправная электропроводка", value_type: STRING, label_ru: "Причина пожара" }
+    incident.floor_count:     { world_value: 9, value_type: INTEGER, label_ru: "Этажность дома" }
+    address.locality:         { world_value: "Смоленск", value_type: STRING, label_ru: "Населённый пункт" }
+    address.street:           { world_value: "улица Николаева", value_type: STRING, label_ru: "Улица" }
+    address.house:            { world_value: "27", value_type: STRING, label_ru: "Дом" }
+    address.entrance:         { world_value: "3", value_type: STRING, label_ru: "Подъезд" }
+    address.floor:            { world_value: 4, value_type: INTEGER, label_ru: "Этаж" }
+    address.apartment:        { world_value: "45", value_type: STRING, label_ru: "Квартира" }
+    address.landmark:         { world_value: "напротив продуктового магазина", value_type: STRING, label_ru: "Ориентир" }
+    caller.full_name:         { world_value: "Соколова Ирина Петровна", value_type: STRING, label_ru: "ФИО заявителя" }
+    caller.phone:             { world_value: "+79101234567", value_type: STRING, label_ru: "Телефон заявителя" }
+    people.victim_01.inside:  { world_value: true, value_type: BOOLEAN, label_ru: "Человек в квартире" }
+    people.victim_01.age:     { world_value: 78, value_type: INTEGER, label_ru: "Возраст пострадавшей" }
+    people.total_inside:      { world_value: 1, value_type: INTEGER, label_ru: "Человек в квартире, всего" }
+    hazards.gas_cylinder:     { world_value: true, value_type: BOOLEAN, label_ru: "Газовый баллон на балконе" }
+    hazards.electrical:       { world_value: true, value_type: BOOLEAN, label_ru: "Электроопасность" }
+
+caller_knowledge:
+  facts:
+    incident.type:            { caller_value: FIRE, knowledge: KNOWN }
+    incident.smoke_visible:   { caller_value: true, knowledge: KNOWN }
+    incident.fire_source:     { caller_value: null, knowledge: UNKNOWN }
+    incident.cause:           { caller_value: null, knowledge: UNKNOWN }
+    incident.floor_count:     { caller_value: 9, knowledge: KNOWN }
+    address.locality:         { caller_value: "Смоленск", knowledge: KNOWN }
+    address.street:           { caller_value: "улица Николаева", knowledge: KNOWN }
+    address.house:            { caller_value: "27", knowledge: KNOWN }
+    address.entrance:         { caller_value: "3", knowledge: KNOWN }
+    address.floor:            { caller_value: 5, knowledge: INCORRECT_BELIEF }
+    address.apartment:        { caller_value: "45", knowledge: KNOWN }
+    address.landmark:         { caller_value: "напротив магазина", knowledge: UNCERTAIN, certainty: 0.6 }
+    caller.full_name:         { caller_value: "Соколова Ирина Петровна", knowledge: KNOWN }
+    caller.phone:             { caller_value: "+79101234567", knowledge: KNOWN }
+    people.victim_01.inside:  { caller_value: true, knowledge: KNOWN }
+    people.victim_01.age:     { caller_value: 80, knowledge: UNCERTAIN, certainty: 0.4 }
+    people.total_inside:      { caller_value: 1, knowledge: UNCERTAIN, certainty: 0.5 }
+    hazards.gas_cylinder:     { caller_value: null, knowledge: UNKNOWN }
+    hazards.electrical:       { caller_value: false, knowledge: INCORRECT_BELIEF }
+
+disclosure_rules:
+  facts:
+    incident.type:            { policy: SPONTANEOUS, categories: [incident], aliases_ru: ["что случилось", "что происходит"] }
+    incident.smoke_visible:   { policy: SPONTANEOUS, categories: [incident], aliases_ru: ["дым", "задымление"] }
+    incident.fire_source:     { policy: NEVER_DISCLOSE, categories: [incident], aliases_ru: ["очаг", "что горит", "откуда горит"] }
+    incident.cause:           { policy: NEVER_DISCLOSE, categories: [incident], aliases_ru: ["причина", "из-за чего"] }
+    incident.floor_count:     { policy: ON_ASK, categories: [address], aliases_ru: ["сколько этажей", "этажность"] }
+    address.locality:         { policy: ON_ASK, categories: [address], aliases_ru: ["город", "населённый пункт"] }
+    address.street:           { policy: ON_ASK, categories: [address], aliases_ru: ["улица", "адрес"] }
+    address.house:            { policy: ON_ASK, categories: [address], aliases_ru: ["дом", "номер дома"] }
+    address.entrance:         { policy: ON_ASK, categories: [address], aliases_ru: ["подъезд"] }
+    address.floor:            { policy: ON_ASK, categories: [address], aliases_ru: ["этаж", "какой этаж"] }
+    address.apartment:        { policy: ON_ASK, categories: [address], aliases_ru: ["квартира", "номер квартиры"] }
+    address.landmark:         { policy: ON_ASK, categories: [address], aliases_ru: ["ориентир", "рядом с чем"] }
+    caller.full_name:         { policy: ON_ASK, categories: [caller], aliases_ru: ["как вас зовут", "фамилия", "представьтесь"] }
+    caller.phone:             { policy: ON_ASK, categories: [caller], aliases_ru: ["телефон", "номер телефона"] }
+    people.victim_01.inside:  { policy: ONLY_IF_EXPLICITLY_ASKED, categories: [people],
+                                aliases_ru: ["кто-то внутри", "остался ли кто", "есть ли люди в квартире"] }
+    people.victim_01.age:     { policy: ONLY_IF_EXPLICITLY_ASKED, categories: [people], aliases_ru: ["возраст", "сколько лет"] }
+    people.total_inside:      { policy: ON_ASK, categories: [people], aliases_ru: ["сколько человек", "сколько людей"] }
+    hazards.gas_cylinder:     { policy: ON_ASK, categories: [hazards], aliases_ru: ["баллон", "газ", "опасные предметы"],
+                                available_after: { world_event_id: gas_cylinder_hazard } }
+    hazards.electrical:       { policy: ON_ASK, categories: [hazards], aliases_ru: ["электричество", "проводка"] }
+
+caller_profile:
+  identity_ru: "Соседка Ирина Петровна из квартиры 41"
+  relationship: NEIGHBOUR
+  language: "ru-RU"
+  voice_id: "ru_female_adult_01"
+  age_group: ADULT
+  baseline_emotion: FRIGHTENED
+  cooperativeness: 0.8
+  verbosity: 0.5
+  confusion: 0.4
+  interruption_tendency: 0.3
+  speaking_rate: 1.15
+  baseline_stress_level: 0.6
+  persona_whitelist_ru: ["Ирина", "Петровна", "Соколова"]
+  emotion_rules:
+    - rule_id: panic_on_spread
+      trigger: { kind: WORLD_EVENT, world_event_id: fire_spreads }
+      set_emotion: PANICKED
+      stress_delta: 0.3
+      max_applications: 1
+    - rule_id: calm_after_dispatch
+      trigger: { kind: EVENT_TYPE, event_type: RESOURCE_DISPATCHED }
+      set_emotion: WORRIED
+      stress_delta: -0.2
+      max_applications: 1
+
+available_resources:
+  - { resource_id: ac1,    service_type: FIRE_RESCUE, resource_type: FIRE_ENGINE,        callsign: "АЦ-1",    name_ru: "Автоцистерна ПСЧ-1",              home_station_ru: "ПСЧ-1",        crew_size: 6, capabilities: [FIRE_SUPPRESSION, WATER_SUPPLY, SMOKE_DIVING], availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 30, travel_time_seconds: 150, setup_seconds: 30, on_scene_work_seconds: 240, return_time_seconds: 180 } }
+  - { resource_id: ac2,    service_type: FIRE_RESCUE, resource_type: FIRE_ENGINE,        callsign: "АЦ-2",    name_ru: "Автоцистерна ПСЧ-3",              home_station_ru: "ПСЧ-3",        crew_size: 6, capabilities: [FIRE_SUPPRESSION, WATER_SUPPLY],                availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 40, travel_time_seconds: 210, setup_seconds: 30, on_scene_work_seconds: 240, return_time_seconds: 210 } }
+  - { resource_id: al1,    service_type: FIRE_RESCUE, resource_type: LADDER_TRUCK,       callsign: "АЛ-1",    name_ru: "Автолестница ПСЧ-1",              home_station_ru: "ПСЧ-1",        crew_size: 3, capabilities: [HIGH_RISE_ACCESS, LADDER_RESCUE],               availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 40, travel_time_seconds: 180, setup_seconds: 60, on_scene_work_seconds: 240, return_time_seconds: 200 } }
+  - { resource_id: asa1,   service_type: FIRE_RESCUE, resource_type: RESCUE_UNIT,        callsign: "АСА-1",   name_ru: "Аварийно-спасательный автомобиль", home_station_ru: "ПСЧ-1",        crew_size: 4, capabilities: [TECHNICAL_RESCUE, SMOKE_DIVING],                availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 35, travel_time_seconds: 200, setup_seconds: 30, on_scene_work_seconds: 240, return_time_seconds: 200 } }
+  - { resource_id: nk1,    service_type: FIRE_RESCUE, resource_type: FIRE_CHIEF_CAR,     callsign: "НК-1",    name_ru: "Автомобиль начальника караула",    home_station_ru: "ПСЧ-1",        crew_size: 2, capabilities: [COMMAND_AND_CONTROL],                           availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 20, travel_time_seconds: 140, setup_seconds: 20, on_scene_work_seconds: 300, return_time_seconds: 160 } }
+  - { resource_id: smp11,  service_type: AMBULANCE,   resource_type: AMBULANCE_UNIT,     callsign: "СМП-11",  name_ru: "Бригада СМП №11",                 home_station_ru: "Подстанция 1", crew_size: 3, capabilities: [BASIC_LIFE_SUPPORT],                            availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 25, travel_time_seconds: 180, setup_seconds: 20, on_scene_work_seconds: 300, return_time_seconds: 200 } }
+  - { resource_id: smp12,  service_type: AMBULANCE,   resource_type: AMBULANCE_UNIT,     callsign: "СМП-12",  name_ru: "Бригада СМП №12",                 home_station_ru: "Подстанция 2", crew_size: 3, capabilities: [BASIC_LIFE_SUPPORT],                            availability: { available_from_ms: 120000, available_until_ms: null, initial_status: UNAVAILABLE }, eta: { turnout_delay_seconds: 25, travel_time_seconds: 260, setup_seconds: 20, on_scene_work_seconds: 300, return_time_seconds: 260 } }
+  - { resource_id: rb1,    service_type: AMBULANCE,   resource_type: RESUSCITATION_UNIT, callsign: "РБ-1",    name_ru: "Реанимационная бригада",          home_station_ru: "Подстанция 1", crew_size: 4, capabilities: [ADVANCED_LIFE_SUPPORT, BURN_CARE],              availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 30, travel_time_seconds: 230, setup_seconds: 25, on_scene_work_seconds: 300, return_time_seconds: 230 } }
+  - { resource_id: pps204, service_type: POLICE,      resource_type: POLICE_PATROL,      callsign: "ППС-204", name_ru: "Патруль ППС 204",                 home_station_ru: "ОП №1",        crew_size: 2, capabilities: [PUBLIC_ORDER, AREA_CORDON],                     availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 15, travel_time_seconds: 160, setup_seconds: 15, on_scene_work_seconds: 360, return_time_seconds: 160 } }
+  - { resource_id: dps31,  service_type: POLICE,      resource_type: POLICE_PATROL,      callsign: "ДПС-31",  name_ru: "Экипаж ДПС 31",                   home_station_ru: "ОБ ДПС",       crew_size: 2, capabilities: [TRAFFIC_CONTROL, AREA_CORDON],                  availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 15, travel_time_seconds: 200, setup_seconds: 15, on_scene_work_seconds: 300, return_time_seconds: 200 } }
+  - { resource_id: ags1,   service_type: GAS_SERVICE, resource_type: GAS_EMERGENCY_UNIT, callsign: "АГС-1",   name_ru: "Аварийная газовая бригада",       home_station_ru: "Горгаз",       crew_size: 3, capabilities: [GAS_SHUTOFF, GAS_LEAK_DETECTION],               availability: { available_from_ms: 0,      available_until_ms: null, initial_status: AVAILABLE },   eta: { turnout_delay_seconds: 45, travel_time_seconds: 240, setup_seconds: 30, on_scene_work_seconds: 240, return_time_seconds: 240 } }
+
+expected_response:
+  required_services: [FIRE_RESCUE, AMBULANCE]
+  optional_services: [POLICE, GAS_SERVICE]
+  required_resource_capabilities: [FIRE_SUPPRESSION, HIGH_RISE_ACCESS, BASIC_LIFE_SUPPORT]
+  min_units_by_service: { FIRE_RESCUE: 2, AMBULANCE: 1 }
+  resolution_condition:
+    all:
+      - { resource: { selector: { capability: FIRE_SUPPRESSION }, op: ANY_IS, status: WORKING } }
+      - { sim_time: { op: GTE, ms: 540000 } }
+  prefab_handoff:
+    recipient_services: [FIRE_RESCUE, AMBULANCE]
+    card_values:
+      incident.type: FIRE
+      address.locality: "Смоленск"
+      address.street: "улица Николаева"
+      address.house: "27"
+      address.entrance: "3"
+      address.floor: 5            # deliberately the caller's wrong floor
+      address.apartment: "45"
+      description.text: "Задымление и открытое горение в квартире, в квартире человек."
+      people.trapped_count: 1
+      flags.threat_to_life: true
+      recipients.services: [FIRE_RESCUE, AMBULANCE]
+
+world_events:
+  # TIMED — the fire spreads three minutes in
+  - world_event_id: fire_spreads
+    kind: TIMED
+    at_ms: 180000
+    title_ru: "Огонь перекинулся в комнату"
+    caller_observable: true
+    max_occurrences: 1
+    effects:
+      - { kind: MUTATE_WORLD_TRUTH, changes: { incident.smoke_visible: true } }
+      - { kind: MUTATE_CALLER_BELIEF, changes: { incident.smoke_visible: { value: true, knowledge: KNOWN, certainty: 1.0 } } }
+      - { kind: CREATE_NOTIFICATION, audience_role: DDS, severity: WARNING,
+          title_ru: "Развитие пожара", body_ru: "Горение распространилось на комнату, требуется усиление." }
+      - { kind: CHANGE_CALLER_EMOTION, set_emotion: PANICKED, stress_delta: 0.3 }
+
+  # ACTION_TRIGGERED — a second caller reports a person on the balcony one minute after the handoff
+  - world_event_id: second_report_balcony
+    kind: ACTION_TRIGGERED
+    on_event_type: HANDOFF_CREATED
+    payload_match: null
+    delay_ms: 60000
+    title_ru: "Повторное сообщение: человек на балконе"
+    caller_observable: false
+    max_occurrences: 1
+    effects:
+      - { kind: MUTATE_WORLD_TRUTH, changes: { people.total_inside: 2 } }
+      - { kind: CREATE_NOTIFICATION, audience_role: DDS, severity: CRITICAL,
+          title_ru: "Повторное сообщение", body_ru: "Очевидцы сообщают о человеке на балконе 4-го этажа." }
+
+  # CONDITIONAL — the gas cylinder becomes a hazard only if help is slow
+  - world_event_id: gas_cylinder_hazard
+    kind: CONDITIONAL
+    check_after_ms: 0
+    cooldown_ms: 0
+    title_ru: "Газовый баллон на балконе нагревается"
+    caller_observable: true
+    max_occurrences: 1
+    condition:
+      all:
+        - { sim_time: { op: GTE, ms: 420000 } }
+        - { not: { resource: { selector: { capability: FIRE_SUPPRESSION }, op: ANY_IS, status: WORKING } } }
+    effects:
+      - { kind: MUTATE_WORLD_TRUTH, changes: { hazards.gas_cylinder: true } }
+      - { kind: MUTATE_CALLER_BELIEF, changes: { hazards.gas_cylinder: { value: true, knowledge: KNOWN, certainty: 1.0 } } }
+      - { kind: CREATE_NOTIFICATION, audience_role: DDS, severity: CRITICAL,
+          title_ru: "Угроза взрыва", body_ru: "На балконе горящей квартиры газовый баллон." }
+      - { kind: CHANGE_CALLER_EMOTION, set_emotion: PANICKED, stress_delta: 0.2 }
+
+  # SEEDED_RANDOM — a vehicle may break down on the way
+  - world_event_id: ac2_breakdown
+    kind: SEEDED_RANDOM
+    probability: 0.25
+    check_every_ms: 30000
+    window_start_ms: 0
+    window_end_ms: 600000
+    title_ru: "Отказ техники в пути"
+    caller_observable: false
+    max_occurrences: 1
+    condition: { resource: { selector: { resource_id: ac2 }, op: ANY_IS, status: EN_ROUTE } }
+    effects:
+      - { kind: ALTER_RESOURCE_AVAILABILITY, resource_id: ac2, new_status: OUT_OF_SERVICE, restore: false, eta_multiplier: 1.0 }
+      - { kind: CREATE_RADIO_MESSAGE, from_callsign: "АЦ-2", to_role: DDS, resource_id: ac2,
+          text_ru: "АЦ-2, неисправность в пути, следование прекращаю." }
+      - { kind: CREATE_NOTIFICATION, audience_role: DDS, severity: WARNING,
+          title_ru: "АЦ-2 вышла из строя", body_ru: "Требуется замена расчёта." }
+
+scoring_rules:
+  # 1 — FACT_OBTAINED
+  - rule_id: fact_victim_inside
+    name_ru: "Выяснено, что в квартире есть человек"
+    description_ru: "Оператор прямо спросил, остался ли кто-то внутри."
+    category: INFORMATION_GATHERING
+    max_points: 10
+    critical: true
+    evaluator_type: FACT_OBTAINED
+    min_evidence: 1
+    config: { fact_id: people.victim_01.inside, within_ms: 180000,
+              points: 10, penalty_if_missing: 0 }
+
+  # 2 — CARD_FIELD_CORRECT
+  - rule_id: card_house_correct
+    name_ru: "Номер дома записан верно"
+    description_ru: "address.house в карточке совпадает с истиной."
+    category: CARD_QUALITY
+    max_points: 8
+    critical: true
+    evaluator_type: CARD_FIELD_CORRECT
+    min_evidence: 1
+    config: { field_path: address.house, expected_from_fact_id: address.house,
+              expected_literal: null, comparison: NORMALIZED_DIGITS, tolerance: 0,
+              evaluated_at: HANDOFF, points: 8, penalty_if_wrong: -4 }
+
+  # 3 — CARD_FIELD_PRESENT
+  - rule_id: card_phone_present
+    name_ru: "Телефон заявителя заполнен"
+    description_ru: "caller.phone не пуст на момент передачи."
+    category: CARD_QUALITY
+    max_points: 3
+    critical: false
+    evaluator_type: CARD_FIELD_PRESENT
+    min_evidence: 1
+    config: { field_path: caller.phone, evaluated_at: HANDOFF, points: 3,
+              penalty_if_missing: 0, treat_false_as_present: true }
+
+  # 4 — CARD_CONTRADICTION
+  - rule_id: card_no_false_floor
+    name_ru: "Этаж не противоречит полученной информации"
+    description_ru: "Штраф, если в карточке этаж отличается от сообщённого заявителем."
+    category: CARD_QUALITY
+    max_points: 4
+    critical: false
+    evaluator_type: CARD_CONTRADICTION
+    min_evidence: 1
+    config: { field_path: address.floor, contradicts_fact_id: address.floor,
+              comparison: EXACT, require_fact_delivered: true,
+              penalty_points: -4, evaluated_at: HANDOFF }
+
+  # 5 — SERVICE_SELECTION
+  - rule_id: services_fire_and_ambulance
+    name_ru: "Выбраны пожарная охрана и скорая"
+    description_ru: "Обе службы указаны получателями, полиция допустима."
+    category: SERVICE_ROUTING
+    max_points: 12
+    critical: true
+    evaluator_type: SERVICE_SELECTION
+    min_evidence: 1
+    config: { required_services: [FIRE_RESCUE, AMBULANCE],
+              forbidden_services: [UTILITY_EMERGENCY],
+              points_per_required: 6, penalty_per_forbidden: -3,
+              all_or_nothing: false, evaluated_at: HANDOFF }
+
+  # 6 — DEADLINE
+  - rule_id: deadline_handoff
+    name_ru: "Карточка передана в ДДС вовремя"
+    description_ru: "От ответа на вызов до HANDOFF_CREATED не более 4 минут."
+    category: TIMELINESS
+    max_points: 10
+    critical: false
+    evaluator_type: DEADLINE
+    min_evidence: 1
+    config: { from_event_type: CALL_ANSWERED, to_event_type: HANDOFF_CREATED,
+              to_payload_match: null, max_offset_ms: 240000, points: 10,
+              penalty_if_late: -5, scale: LINEAR, linear_zero_ms: 360000 }
+
+  # 7 — WORKFLOW_ACTION
+  - rule_id: workflow_answered_call
+    name_ru: "Вызов принят"
+    description_ru: "Оператор ответил на вызов ровно один раз."
+    category: WORKFLOW
+    max_points: 2
+    critical: true
+    evaluator_type: WORKFLOW_ACTION
+    min_evidence: 1
+    config: { event_type: CALL_ANSWERED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 2, penalty_if_missing: -2, penalty_per_excess: 0 }
+
+  # 8 — RESOURCE_SELECTION
+  - rule_id: resources_fire_high_rise
+    name_ru: "Направлены силы с автолестницей"
+    description_ru: "Минимум две пожарные единицы, одна из них с доступом на высоту."
+    category: RESOURCE_MANAGEMENT
+    max_points: 12
+    critical: true
+    evaluator_type: RESOURCE_SELECTION
+    min_evidence: 1
+    config: { required_capabilities: [FIRE_SUPPRESSION, HIGH_RISE_ACCESS],
+              min_units_by_service: { FIRE_RESCUE: 2, AMBULANCE: 1 },
+              forbidden_resource_ids: [], must_be_dispatched: true,
+              points: 12, penalty_per_missing: -4, penalty_per_forbidden: 0 }
+
+  # 9 — REQUIRED_STATUS_UPDATE
+  - rule_id: status_on_scene_report
+    name_ru: "Доклад о прибытии на место"
+    description_ru: "ДДС отправил доклад в течение минуты после прибытия."
+    category: COMMUNICATION
+    max_points: 5
+    critical: false
+    evaluator_type: REQUIRED_STATUS_UPDATE
+    min_evidence: 1
+    config: { update_kind: ON_SCENE_REPORT, min_count: 1,
+              within_ms_of_event: RESOURCE_STATUS_CHANGED, within_ms: 60000,
+              points: 5, penalty_if_missing: -2 }
+
+  # 10 — HANDOFF_COMPLETENESS
+  - rule_id: handoff_minimum_fields
+    name_ru: "Полнота переданной карточки"
+    description_ru: "Ключевые поля заполнены в момент передачи."
+    category: CARD_QUALITY
+    max_points: 12
+    critical: false
+    evaluator_type: HANDOFF_COMPLETENESS
+    min_evidence: 1
+    config: { required_field_paths: [incident.type, address.locality, address.street,
+                                     address.house, address.apartment, description.text],
+              points_per_field: 2, all_or_nothing: false,
+              penalty_per_missing: 0, treat_false_as_present: true }

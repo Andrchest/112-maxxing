@@ -30,6 +30,10 @@ extend-exclude = ["docs", "frontend"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+# UP042: docs/hld/10-domain-model.md §10.2 fixes every domain enum as `class X(str, Enum)` whose member
+# name is its wire value; that decision wins over the StrEnum rewrite.
+# RUF001-003: Russian UI/caller strings are mandated (owner decision); Cyrillic is not "ambiguous unicode".
+ignore = ["UP042", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 # defaults are fine; format is enabled by using `ruff format`.
