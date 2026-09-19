@@ -1,0 +1,147 @@
+"""`SqlAlchemyUnitOfWork` — one transaction, then the fan-out (D5, HLD §20.8, §40.6).
+
+Materialised state changes and the event append share the single transaction of one `AsyncSession`.
+Only after `commit()` returns does the Unit of Work hand the appended events' envelopes to the
+`EventPublisher`, so a Redis subscriber can never see an event that a later PostgreSQL read would
+not return (§40.6 "Publish-after-commit").
+
+A publisher failure neither rolls back nor loses the committed events: Redis is a fan-out bus, not
+a source of truth (§40.6, SPEC §31), so the exception is logged and swallowed. The cost of a lost
+publish is live fan-out until the client's next resume — never simulation state.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from types import TracebackType
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.application.ports.clock import Clock
+from app.application.ports.event_publisher import EventPublisher, envelope_of
+from app.application.ports.event_store import EventStore
+from app.application.ports.scenario_repository import ScenarioRepository
+from app.domain.common.ids import SessionId
+from app.domain.events.session_event import SessionEvent
+from app.infrastructure.persistence.event_store import SqlAlchemyEventStore
+from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
+
+__all__ = ["SqlAlchemyUnitOfWork", "unit_of_work_factory"]
+
+logger = logging.getLogger(__name__)
+
+
+class SqlAlchemyUnitOfWork:
+    """`UnitOfWork` over one `AsyncSession`, publishing after a successful commit."""
+
+    def __init__(
+        self,
+        session_factory: Callable[[], AsyncSession],
+        clock: Clock,
+        publisher: EventPublisher,
+        close_session: bool = True,
+    ) -> None:
+        self._session_factory = session_factory
+        self._clock = clock
+        self._publisher = publisher
+        #: False when the session is owned by the caller (a test's `db_session`, for example).
+        self._close_session = close_session
+        self._session: AsyncSession | None = None
+        self._event_store: SqlAlchemyEventStore | None = None
+        self._scenarios: SqlAlchemyScenarioRepository | None = None
+        self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
+        self._committed = False
+
+    # -- lifecycle ----------------------------------------------------------------------------
+
+    async def __aenter__(self) -> SqlAlchemyUnitOfWork:
+        session = self._session_factory()
+        self._session = session
+        self._event_store = SqlAlchemyEventStore(session, self._clock, on_append=self._record)
+        self._scenarios = SqlAlchemyScenarioRepository(session)
+        self._pending = []
+        self._committed = False
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            if not self._committed:
+                await self.rollback()
+        finally:
+            session = self._session
+            self._session = None
+            self._event_store = None
+            self._scenarios = None
+            if session is not None and self._close_session:
+                await session.close()
+
+    # -- repositories -------------------------------------------------------------------------
+
+    @property
+    def session(self) -> AsyncSession:
+        """The bound session; use cases that need raw SQL share this one transaction."""
+        if self._session is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._session
+
+    @property
+    def events(self) -> EventStore:
+        if self._event_store is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._event_store
+
+    @property
+    def scenarios(self) -> ScenarioRepository:
+        if self._scenarios is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._scenarios
+
+    # -- transaction --------------------------------------------------------------------------
+
+    async def commit(self) -> None:
+        """Commit, then publish every envelope appended in this transaction, in `seq_no` order."""
+        await self.session.commit()
+        self._committed = True
+        pending, self._pending = self._pending, []
+        for session_id, events in pending:
+            await self._publish(session_id, events)
+
+    async def rollback(self) -> None:
+        """Roll back and drop the pending envelopes; nothing is published."""
+        self._pending = []
+        if self._session is not None:
+            await self._session.rollback()
+
+    # -- internals ----------------------------------------------------------------------------
+
+    def _record(self, session_id: SessionId, events: list[SessionEvent]) -> None:
+        self._pending.append((session_id, events))
+
+    async def _publish(self, session_id: SessionId, events: list[SessionEvent]) -> None:
+        envelopes = [envelope_of(event) for event in sorted(events, key=lambda e: e.seq_no)]
+        try:
+            await self._publisher.publish(session_id, envelopes)
+        except Exception:  # Redis is non-authoritative (§40.6); never propagate
+            logger.exception(
+                "publishing %d event(s) of session %s failed; the events are committed and "
+                "remain readable from PostgreSQL",
+                len(envelopes),
+                session_id,
+            )
+
+
+def unit_of_work_factory(
+    session_factory: Callable[[], AsyncSession], clock: Clock, publisher: EventPublisher
+) -> Callable[[], SqlAlchemyUnitOfWork]:
+    """A zero-argument factory a use case can call once per invocation (`UnitOfWorkFactory`)."""
+
+    def factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(session_factory, clock, publisher)
+
+    return factory

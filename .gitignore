@@ -7,7 +7,7 @@ node_modules
 frontend/dist
 .env
 data/
-models/
+/models/
 *.gguf
 benchmarks/results/
 READ_AFTER_COMPACT.md

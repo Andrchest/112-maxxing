@@ -8,7 +8,7 @@ HLD gap — "the slug in the file must match the path": the SPEC §4 top-level k
 which lives in its own type and its own table (D4). The only path/content agreement a version file
 can express is its `version` number against the `v<N>.yaml` file name, which is what
 `load_scenario_version` enforces; `scenario_slug(path)` exposes the directory-derived slug for the
-importer that will create the `Scenario` row (TODO(E4)). See the task report.
+importer (`app.application.scenarios.import_scenarios`) that creates the `Scenario` row.
 """
 
 from __future__ import annotations
