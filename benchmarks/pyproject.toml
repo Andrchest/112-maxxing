@@ -1,0 +1,16 @@
+[project]
+name = "sim-benchmarks"
+version = "0.1.0"
+description = "System-112/DDS training simulator — benchmark scripts (no package code yet; see E19)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sim-backend",
+    "sim-voice-agent",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+sim-backend = { workspace = true }
+sim-voice-agent = { workspace = true }

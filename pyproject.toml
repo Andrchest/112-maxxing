@@ -1,0 +1,51 @@
+[project]
+name = "sim112-workspace"
+version = "0.1.0"
+description = "Workspace root for the System-112/DDS training simulator (not published)."
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["backend", "workers/voice_agent", "benchmarks"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+    "types-PyYAML",
+    "httpx",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Python tooling only: `docs/` (design docs, code fences included, are never reformatted — see
+# docs/SPEC.md and docs/hld/00-decisions.md) and `frontend/` (owned by the npm/eslint/prettier
+# toolchain) are out of scope for ruff.
+extend-exclude = ["docs", "frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+[tool.ruff.format]
+# defaults are fine; format is enabled by using `ruff format`.
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["app.domain.*", "app.application.*"]
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests", "workers/voice_agent/tests"]
+markers = [
+    "integration: requires live PostgreSQL/Redis test infra (make infra-up)",
+    "requires_models: requires real ML model weights/extras to be installed",
+]

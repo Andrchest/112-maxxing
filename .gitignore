@@ -1,0 +1,13 @@
+.venv
+__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+node_modules
+frontend/dist
+.env
+data/
+models/
+*.gguf
+benchmarks/results/
+READ_AFTER_COMPACT.md
