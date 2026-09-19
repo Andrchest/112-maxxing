@@ -1,0 +1,103 @@
+@startuml sequence-turn
+title 112-maxxing — one normal dialogue turn, with SessionEvent emissions (D9/D10)
+
+autonumber
+skinparam shadowing false
+skinparam ParticipantPadding 6
+skinparam ArrowFontSize 11
+
+actor "trainee" as T
+participant "livekit room" as LK
+participant "CallTransport" as TR
+participant "Resampler" as RS
+participant "VADProvider" as VAD
+participant "TurnDetector" as TD
+participant "TurnPipeline" as TP
+participant "ASRProvider" as ASR
+participant "DialogueInterpreter" as DI
+participant "FactAccessGate" as FG
+participant "CallerResponseGenerator" as GEN
+participant "ResponseValidator" as VAL
+participant "TTSProvider" as TTS
+database "session_events" as EV
+
+T -> LK : speaks
+LK -> TR : inbound audio (48 kHz)
+TR -> RS : AudioFrame
+RS -> VAD : AudioFrame (16 kHz mono, 512 samples)
+VAD -> TD : VadFrameResult(speech_probability)
+
+group speech onset
+  TD -> TD : IDLE -> PRE_SPEECH (p >= speech_start_threshold)
+  TD -> TD : PRE_SPEECH -> IN_SPEECH after speech_start_min_ms (96 ms)
+  TD -> TP : turn opened, pre-roll (300 ms) copied into accumulator
+  TP -> EV : **USER_SPEECH_STARTED** {turn_id, start_ms, was_during_playback=false}
+end
+
+loop while IN_SPEECH, every partial_interval_ms (500 ms)
+  TP -> ASR : transcribe(accumulated audio)  [separate task]
+  ASR --> TP : AsrResult (treated as partial)
+  TP -> EV : **ASR_PARTIAL** {turn_id, text, start_ms, end_ms}
+end
+
+group endpoint
+  TD -> TD : IN_SPEECH -> ENDPOINTING (p < speech_end_threshold)
+  TD -> TD : ENDPOINTING -> IDLE after endpoint_silence_ms (300 ms)
+  TD -> TP : DetectedTurn {turn_id, audio, start_ms, end_ms}
+  TP -> EV : **USER_SPEECH_ENDED** {turn_id, duration_ms, end_reason=ENDPOINT_SILENCE}
+  note right of TP : t0 — the SPEC 27 product metric starts here
+end
+
+TP -> ASR : transcribe(finalized turn audio)
+ASR --> TP : AsrResult {text, confidence, provider, model_version}
+TP -> EV : **ASR_FINAL** {turn_id, text, confidence, audio_segment_id, transcript_segment_id}
+
+TP -> DI : interpret(text, last 4-6 turns, fact catalog WITHOUT values)
+DI --> TP : InterpretedUtterance {speech_act, requested_facts[{fact_id, explicit}], ...}
+TP -> EV : **DIALOGUE_INTERPRETED** {turn_id, speech_act, requested_facts, semantic_confidence}
+note right of DI
+  invalid schema -> one repair prompt ->
+  speech_act=UNINTELLIGIBLE + **MODEL_FALLBACK_USED**
+  LLM call failure -> **MODEL_ERROR**
+end note
+
+TP -> FG : evaluate(interpreted, ScenarioVersion, WorldTruth, CallerBelief, revealed, sim time)
+FG --> TP : AllowedFactsPackage {allowed[], unavailable[], withheld_count, metadata}
+TP -> EV : **FACT_GATE_EVALUATED** {turn_id, requested, allowed, unavailable, withheld_count}
+note right of FG : pure domain code; caller values only, world values never leave it
+
+TP -> EV : **CALLER_RESPONSE_PLANNED** {turn_id, allowed_fact_ids, withheld_count, emotion}
+TP -> GEN : generate(package, CallerProfile, emotion, last 4-6 turns, utterance)
+GEN --> TP : raw {"utterance": "..."}  (max_tokens=80, thinking disabled)
+TP -> VAL : validate(raw, package, revealed, operator turns, persona whitelist, forbidden values)
+VAL --> TP : ValidationVerdict{ok=true}
+note right of VAL
+  fail -> ONE regeneration -> deterministic
+  fallback template by gate outcome + **MODEL_FALLBACK_USED**
+end note
+TP -> EV : **CALLER_RESPONSE_GENERATED** {turn_id, text, attempt, prompt_tokens, completion_tokens}
+
+TP -> TTS : stream(text, TtsVoiceSpec, max_chunk_ms=40)
+TTS --> TP : TtsChunk #1 (with text_offset_start/end)
+TP -> TR : play(chunks)
+TR -> LK : AudioSource.capture_frame(...)
+LK -> T : caller audio becomes audible
+TP -> EV : **CALLER_TTS_STARTED** {turn_id, text, voice_id, provider, first_audio_offset_ms}
+note right of TP : t1 — speech_end_to_first_audio_ms = t1 - t0 (target p50 < 1.2 s)
+
+loop remaining chunks
+  TTS --> TP : TtsChunk
+  TP -> TR : capture_frame
+  TR -> LK : audio
+end
+
+TR --> TP : DeliveredAudio {cancelled=false, delivered_audio_ms}
+TP -> EV : **CALLER_TTS_ENDED** {turn_id, delivered_audio_ms, total_audio_ms_generated}
+TP -> EV : **FACTS_DELIVERED** {turn_id, fact_ids}
+note right of EV
+  FACTS_DELIVERED only after an UNINTERRUPTED
+  CALLER_TTS_ENDED. Scoring reads this event,
+  never the caller wording (SPEC 42 test 10).
+end note
+
+@enduml

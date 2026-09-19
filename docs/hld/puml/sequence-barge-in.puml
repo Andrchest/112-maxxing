@@ -1,0 +1,84 @@
+@startuml sequence-barge-in
+title 112-maxxing — barge-in: speech onset to audio cutoff < 250 ms (SPEC 18, D9)
+
+autonumber
+skinparam shadowing false
+skinparam ParticipantPadding 6
+skinparam ArrowFontSize 11
+
+actor "trainee" as T
+participant "livekit room" as LK
+participant "CallTransport\n(+ PlaybackHandle)" as TR
+participant "VADProvider" as VAD
+participant "TurnDetector" as TD
+participant "TurnPipeline" as TP
+participant "TTSProvider\n(TtsStream)" as TTS
+participant "LLMClient" as LLM
+database "session_events" as EV
+
+== caller is speaking ==
+TP -> TTS : stream(planned_text, max_chunk_ms=40)
+TTS --> TP : TtsChunk (text_offset_start/end, alignment_is_exact)
+TP -> TR : capture_frame -> outbound queue (outbound_queue_ms = 200)
+TR -> LK : caller audio
+LK -> T : trainee hears the caller
+note over TP : playback_active = true
+
+== trainee starts talking over the caller ==
+T -> LK : speaks
+LK -> TR : inbound audio
+TR -> VAD : AudioFrame (16 kHz, 512 samples = 32 ms)
+VAD -> TD : VadFrameResult(p >= speech_start_threshold)
+
+TD -> TD : IDLE -> PRE_SPEECH, was_during_playback = true\nsustain = barge_in_min_speech_ms (120 ms), NOT speech_start_min_ms
+note right of TD
+  budget row 1: VAD frame quantisation  <= 32 ms
+  budget row 2: sustain confirmation        120 ms
+end note
+
+TD -> TD : PRE_SPEECH -> IN_SPEECH (sustained 120 ms)
+TD -> TP : barge-in detected, turn opened (pre-roll 300 ms kept)
+TP -> EV : **USER_SPEECH_STARTED** {turn_id, start_ms, was_during_playback=true}
+note right of TP : budget row 3: detector + task hand-off <= 5 ms
+
+== cutoff procedure (SPEC 18 steps 1-7), steps 2-4 concurrent ==
+TP -> TR : read AudioSource.queued_duration  (for delivered_audio_ms)
+TP -> TR : **clear_outbound()**  -> AudioSource.clear_queue()
+note right of TR
+  budget row 4: clear_outbound round trip <= 5 ms
+  budget row 5: residual chunk past the queue <= 40 ms (tts_chunk_ms)
+  budget row 6: network + browser jitter buffer <= 40 ms (UNVERIFIED, measured by benchmark_e2e.py)
+  TOTAL <= 242 ms  (< 250 ms target)
+end note
+TP -> TTS : TtsStream.cancel()
+TP -> LLM : llm_stream.aclose()  (if generation was still streaming)
+TP -> TR : PlaybackHandle.cancel()
+TR --> TP : DeliveredAudio {delivered_audio_ms, total_audio_ms_generated,\nframes_delivered, frames_discarded, cancelled=true}
+LK -> T : caller audio stops
+
+== preserve what was delivered ==
+TP -> TP : delivered_audio_ms = sum(captured chunk audio_ms)\n - round(queued_duration_at_cancel * 1000)
+TP -> TP : delivered_text = planned_text[: last covered text_offset_end]\n(word-proportional fallback when alignment_is_exact = false)
+TP -> EV : **CALLER_UTTERANCE_INTERRUPTED**\n{turn_id, interrupting_turn_id, planned_text, delivered_text,\ndelivered_audio_ms, total_audio_ms_generated, alignment_is_exact,\nfact_ids_not_revealed, cutoff_latency_ms}
+
+note over EV
+  NO CALLER_TTS_ENDED (no natural end).
+  NO FACTS_DELIVERED — an interrupted response
+  reveals nothing; the operator may ask again (D10).
+  transcript_segments row carries delivered_text.
+  inference_metrics rows get status = "CANCELLED".
+end note
+
+== the trainee turn is then processed normally ==
+TD -> TD : IN_SPEECH -> ENDPOINTING -> IDLE (endpoint_silence_ms = 300)
+TD -> TP : DetectedTurn
+TP -> EV : **USER_SPEECH_ENDED** {turn_id, duration_ms, end_reason=ENDPOINT_SILENCE}
+TP -> EV : **ASR_FINAL** ... then the normal turn of sequence-turn.puml
+note right of TP
+  Forbidden as latency work (SPEC 44):
+  removing the sustain confirmation,
+  skipping CALLER_UTTERANCE_INTERRUPTED,
+  or letting the caller finish speaking.
+end note
+
+@enduml

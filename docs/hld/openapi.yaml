@@ -1,0 +1,3454 @@
+# HLD — Backend REST contract (D8, SPEC §34)
+#
+# Elaborates docs/hld/00-decisions.md D8 against docs/SPEC.md. Every schema name, field name,
+# enum member and field path is copied literally from docs/hld/10-domain-model.md; nothing here
+# renames or redefines a domain identifier. Frontend TypeScript types are generated from this
+# file by `openapi-typescript` (D12) and the gate fails when they are stale.
+#
+# Conventions:
+#   - every command returns the new materialized view for the acting role (D8);
+#   - every operation carries `x-action` (the RoleModule ActionDescriptor.action_id it maps to,
+#     or `-` when it is not a RoleModule action) and `x-emits` (the SessionEvent types it
+#     appends, in append order);
+#   - schemas that may contain WorldTruth or FactAccessGate internals carry
+#     `x-visibility: INSTRUCTOR` and are returned only by /api/v1/instructor/** and the report;
+#   - errors are RFC 7807 `application/problem+json` with a machine-readable `code`.
+openapi: 3.1.0
+info:
+  title: System-112 / DDS training simulator — backend API
+  version: 1.0.0
+  summary: Commands and resources for the local emergency-response training simulator.
+  description: |
+    REST command/resource API under `/api/v1` (D8). Realtime session updates travel over the
+    WebSocket channel specified in `docs/hld/40-realtime-protocol.md`; raw microphone audio
+    travels over LiveKit and never over this API (SPEC §34).
+
+    Authorisation of every command is two-gated (D8): the caller's participant record must be
+    assigned to the session's active `RoleStage`, **and** the stage's `RoleModule` must permit
+    the action in the current stage state. A failure of the first gate is `403 FORBIDDEN_FOR_ROLE`;
+    of the second, `409 ACTION_NOT_AVAILABLE`. An illegal state-machine trigger is
+    `409 INVALID_TRANSITION`.
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:8000
+    description: Local docker-compose backend (SPEC §36).
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: Local username/password authentication, HS256 JWT (D8).
+  - name: scenarios
+    description: Scenario and ScenarioVersion reference data, import and validation (SPEC §4, D4).
+  - name: sessions
+    description: Session lifecycle, role-filtered snapshot, event page and LiveKit token.
+  - name: operator
+    description: Operator 112 stage commands (`Operator112Module`, SPEC §7, §9, §10).
+  - name: dds
+    description: DDS stage commands (`DDSModule`, SPEC §7, §11).
+  - name: instructor
+    description: Instructor console. The only place WorldTruth and gate internals are exposed.
+  - name: reports
+    description: Deterministic post-session report, re-scoring, audio and telemetry (SPEC §28, §29).
+  - name: health
+    description: Liveness and per-service readiness (SPEC §37, D8).
+  - name: admin
+    description: Retention purge and inference health administration (SPEC §41, D9).
+
+paths:
+
+  # ---------------------------------------------------------------- auth ----
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: loginUser
+      summary: Exchange username and password for a JWT.
+      description: Local accounts only; no external identity provider (SPEC §41).
+      security: []
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      operationId: getCurrentUser
+      summary: The authenticated user account.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: The current user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ----------------------------------------------------------- scenarios ----
+  /api/v1/scenarios:
+    get:
+      tags: [scenarios]
+      operationId: listScenarios
+      summary: List scenarios (identity only — slug and title).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Scenarios.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScenarioSummary' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/scenarios/{scenario_id}/versions:
+    get:
+      tags: [scenarios]
+      operationId: listScenarioVersions
+      summary: List the versions of one scenario.
+      description: |
+        `locked_at` is non-null once the first session used the version; a locked version's
+        `content` can never change (D4, SPEC §42 test 6).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioIdParam'
+      responses:
+        '200':
+          description: Versions, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScenarioVersionListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/scenarios/versions/{scenario_version_id}/summary:
+    get:
+      tags: [scenarios]
+      operationId: getScenarioVersionSummary
+      summary: Trainee-safe summary of a scenario version.
+      description: |
+        Deliberately free of `world_truth`, `caller_knowledge`, `disclosure_rules`,
+        `expected_response`, `world_events` and `scoring_rules`: a trainee who can read this
+        endpoint must learn nothing a briefing would not tell them (SPEC §2, D3).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioVersionIdParam'
+      responses:
+        '200':
+          description: Trainee-safe summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioVersionTraineeSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/scenarios/import:
+    post:
+      tags: [scenarios]
+      operationId: importScenarioVersion
+      summary: Import a scenario version file (INSTRUCTOR / ADMIN).
+      description: |
+        The body is the complete YAML or JSON document of one `ScenarioVersion`
+        (`docs/hld/30-scenario-format.md`). The server runs `validate_scenario_version`
+        (the complete §30.8 list) before writing. Re-importing changed content under an
+        existing version number is rejected: `409 SCENARIO_VERSION_LOCKED` when the version
+        is locked, `409 SCENARIO_VERSION_EXISTS` otherwise — bump the version (D4).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioImportRequest' }
+      responses:
+        '201':
+          description: The version was validated and stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioVersionListItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: |
+            `SCENARIO_INVALID` — the document failed load-time validation. The problem carries
+            the complete `validation_report`; nothing was written.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ScenarioProblem' }
+
+  /api/v1/scenarios/validate:
+    post:
+      tags: [scenarios]
+      operationId: validateScenarioFile
+      summary: Validate a scenario file without importing it (INSTRUCTOR / ADMIN).
+      description: |
+        Dry run of `validate_scenario_version`. Always `200`: an invalid document is reported
+        in the body as `valid: false` plus issues, because this endpoint's purpose is authoring
+        feedback, not command execution.
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioImportRequest' }
+      responses:
+        '200':
+          description: The validation report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioValidationReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/scenarios/versions/{scenario_version_id}/validation-report:
+    get:
+      tags: [scenarios]
+      operationId: getScenarioValidationReport
+      summary: The stored validation report of an imported version.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioVersionIdParam'
+      responses:
+        '200':
+          description: The report recorded at import time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioValidationReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------------------------ sessions ----
+  /api/v1/sessions:
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Create a simulation session (INSTRUCTOR / ADMIN).
+      description: |
+        Creates one `SimulationSession`, one `Incident` and one `RoleStage` per `role_chain`
+        entry, instantiates `WorldTruth` and `CallerBelief` from the version, then fires the
+        session machine trigger `validate` (`CREATED → READY`). A `role_chain` of `[DDS]` under
+        `SINGLE_ROLE` or `ASSESSMENT` without `expected_response.prefab_handoff` is refused with
+        `409 PREFAB_HANDOFF_REQUIRED` (D6, §10.10).
+      x-action: '-'
+      x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionCreateRequest' }
+      responses:
+        '201':
+          description: The created session in state `READY` (or `CREATED` if validation deferred).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List sessions — mine, or all for an instructor.
+      description: |
+        `scope=MINE` returns the sessions the caller participates in or created.
+        `scope=ALL` is permitted for `INSTRUCTOR` and `ADMIN` only; a `TRAINEE` asking for
+        `ALL` gets `403 FORBIDDEN_FOR_ROLE`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [MINE, ALL]
+            default: MINE
+        - name: state
+          in: query
+          required: false
+          description: Filter by session state.
+          schema: { $ref: '#/components/schemas/SessionState' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Sessions, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SessionListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/sessions/{session_id}:
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: One session's materialized header.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/start:
+    post:
+      tags: [sessions]
+      operationId: startSession
+      summary: Start the session (INSTRUCTOR).
+      description: |
+        Fires the session trigger `start` (`READY → ACTIVE`, guard `guard_inference_ready`).
+        Refused with `503 INFERENCE_NOT_READY` while a required inference service is not
+        `READY` and `REQUIRE_INFERENCE_READY=true` (D8, SPEC §37). On success the
+        `SimulationRunner` adopts the session and the first `RoleStage` begins; for an
+        `OPERATOR_112` first stage the runner fires `ring` shortly afterwards, which is what
+        publishes `voice:join` on Redis (D9).
+      x-action: start
+      x-emits: [SESSION_STARTED, ROLE_STAGE_STARTED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The session in state `ACTIVE`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/sessions/{session_id}/abort:
+    post:
+      tags: [sessions]
+      operationId: abortSession
+      summary: Abort the session (INSTRUCTOR / ADMIN).
+      description: |
+        Fires `abort` on the session machine and `abort_stage` on the active `RoleStage`.
+        Simulation data is preserved: the event log is closed, never deleted (SPEC §39,
+        §42 test 14).
+      x-action: abort
+      x-emits: [SESSION_ABORTED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbortSessionRequest' }
+      responses:
+        '200':
+          description: The session in state `ABORTED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/snapshot:
+    get:
+      tags: [sessions]
+      operationId: getSessionSnapshot
+      summary: Role-filtered restore snapshot (browser refresh).
+      description: |
+        The single REST call the frontend makes after a refresh (SPEC §39, §42 test 13). It
+        returns the active stage, its stage state, `available_actions` from the stage's
+        `RoleModule`, the role's card or work item, the call state and `last_seq_no`; the
+        client then opens the WebSocket and sends `{"type":"resume","after_seq_no":last_seq_no}`
+        (D8, `docs/hld/40-realtime-protocol.md` §3).
+
+        Every field is produced through the acting role's `DataVisibilityPolicy`: a `DDS`
+        caller never receives `card`, `transcript` or anything sourced from `WorldTruth`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The snapshot for the caller's role.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/events:
+    get:
+      tags: [sessions]
+      operationId: listSessionEvents
+      summary: A page of role-filtered session events.
+      description: |
+        The REST twin of the WebSocket replay: the same envelopes, the same per-role filtering
+        by `DataVisibilityPolicy.may_receive` and the same payload redaction table
+        (`docs/hld/40-realtime-protocol.md` §4). Events are ordered by ascending `seq_no`;
+        `after_seq_no` is exclusive. `has_more` is true when more events exist beyond the page.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: after_seq_no
+          in: query
+          required: false
+          description: Exclusive lower bound. Omit or pass 0 to start from the beginning.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+        - name: event_type
+          in: query
+          required: false
+          description: Optional filter; still intersected with the role's visible set.
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/EventType' }
+      responses:
+        '200':
+          description: The page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionEventPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/voice-token:
+    post:
+      tags: [sessions]
+      operationId: createVoiceToken
+      summary: Mint a LiveKit access token for the calling participant.
+      description: |
+        The backend is the only minter of LiveKit tokens (D9): the frontend never holds the
+        LiveKit API secret. The token grants join on exactly the room of this session's active
+        call and nothing else. Issued only while the session is `ACTIVE` and the caller is the
+        participant assigned to an `OPERATOR_112` stage.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: A room-scoped LiveKit token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoiceTokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/audio/{audio_segment_id}:
+    get:
+      tags: [reports]
+      operationId: getAudioSegment
+      summary: Download one audio segment, with HTTP Range.
+      description: |
+        Serves the WAV bytes of one `audio_segments` row using its `byte_offset` / `byte_length`
+        so a Range request needs no scan (`docs/hld/50-voice-pipeline.md` §9.1). Supports
+        `Range: bytes=…`, answering `206 Partial Content` with `Content-Range`, and advertises
+        `Accept-Ranges: bytes`. A purged segment (`file_path IS NULL`, `purged_at` set) answers
+        `410 AUDIO_PURGED` and the report UI renders the transcript without playback (D9).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: audio_segment_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Range
+          in: header
+          required: false
+          description: Standard byte range, e.g. `bytes=0-65535`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The complete segment.
+          headers:
+            Accept-Ranges:
+              schema: { type: string }
+            Content-Length:
+              schema: { type: integer }
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        '206':
+          description: The requested byte range.
+          headers:
+            Accept-Ranges:
+              schema: { type: string }
+            Content-Range:
+              schema: { type: string }
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: '`AUDIO_PURGED` — the recording was deleted by the retention policy.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '416':
+          description: '`RANGE_NOT_SATISFIABLE`.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  # --------------------------------------------- operator stage commands ----
+  /api/v1/sessions/{session_id}/operator/call/answer:
+    post:
+      tags: [operator]
+      operationId: answerCall
+      summary: Answer the ringing call.
+      description: |
+        Fires `answer` (`RINGING → CONNECTED`, guard `guard_participant_assigned_to_stage`).
+        Permission `ANSWER_CALL`. The frontend then joins the LiveKit room with the token from
+        `createVoiceToken`; the voice-agent is already in the room, having joined on the
+        `voice:join` message published at `CALL_RINGING` (D9).
+      x-action: answer
+      x-emits: [CALL_ANSWERED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The new operator stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/operator/call/end:
+    post:
+      tags: [operator]
+      operationId: endCall
+      summary: Hang up the call.
+      description: |
+        Permission `END_CALL`. Not a stage transition of its own: it ends the call and is the
+        precondition of `complete_stage` (guard `guard_call_ended`). The backend publishes
+        `voice:cancel:{session_id}` so an in-flight caller response is cancelled across
+        processes (D9).
+      x-action: end_call
+      x-emits: [CALL_ENDED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EndCallRequest' }
+      responses:
+        '200':
+          description: The new operator stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/operator/card:
+    get:
+      tags: [operator]
+      operationId: getOperatorCard
+      summary: The current incident card.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorCardView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/operator/card/field:
+    put:
+      tags: [operator]
+      operationId: setCardField
+      summary: Set exactly one card field.
+      description: |
+        Permission `EDIT_CARD`. Exactly one `field_path` per command — the API has no bulk card
+        write, because SPEC §9 requires every mutation to be stored with its previous value and
+        actor, and a bulk write would blur which change happened when. The trainee is the only
+        writer: ASR never calls this (SPEC §9, §42 test 4), which is structural — the voice-agent
+        has no credential for it.
+
+        `field_path` must be a member of `CARD_FIELDS` (`10-domain-model.md` §10.6) and the value
+        must match that field's `value_type`; otherwise `422 CARD_FIELD_UNKNOWN` or
+        `422 CARD_VALUE_TYPE_MISMATCH`. Setting a field to its current value is a no-op: it
+        returns `revision: null`, appends no revision and emits no event.
+
+        `recipients.services` is **not** settable here; use the service commands.
+      x-action: edit_card
+      x-emits: [CARD_FIELD_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetCardFieldRequest' }
+      responses:
+        '200':
+          description: The new card plus the `CardRevision` this command created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SetCardFieldResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/sessions/{session_id}/operator/card/revisions:
+    get:
+      tags: [operator]
+      operationId: listCardRevisions
+      summary: The card's revision history.
+      description: |
+        Source `CARD_REVISIONS` of the operator's `DataVisibilityPolicy`. This is what makes
+        "the final card is NOT enough" (SPEC §9) visible in the UI and the report.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: field_path
+          in: query
+          required: false
+          description: Optional filter to one card field path.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Revisions ordered by ascending `revision_no`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardRevisionPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/operator/services/select:
+    post:
+      tags: [operator]
+      operationId: selectRecipientService
+      summary: Add one recipient service to the card.
+      description: |
+        Permission `SELECT_SERVICES`. Writes `recipients.services`, so it emits
+        `CARD_FIELD_CHANGED` **in addition to** `SERVICE_SELECTED`: both the service evaluators
+        and the card evaluators must be self-sufficient from the log alone (D5,
+        `10-domain-model.md` §10.6). Selecting an already selected service is a no-op.
+      x-action: select_services
+      x-emits: [CARD_FIELD_CHANGED, SERVICE_SELECTED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceSelectionRequest' }
+      responses:
+        '200':
+          description: The new recipient-service selection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceSelectionView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/sessions/{session_id}/operator/services/deselect:
+    post:
+      tags: [operator]
+      operationId: deselectRecipientService
+      summary: Remove one recipient service from the card.
+      x-action: select_services
+      x-emits: [CARD_FIELD_CHANGED, SERVICE_DESELECTED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceSelectionRequest' }
+      responses:
+        '200':
+          description: The new recipient-service selection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceSelectionView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/sessions/{session_id}/operator/handoff/prepare:
+    post:
+      tags: [operator]
+      operationId: beginHandoffPreparation
+      summary: Open the handoff preparation screen.
+      description: |
+        Fires `open_handoff_preparation` (`INTERVIEW → HANDOFF_PREPARATION`). Deliberately
+        unguarded: an incomplete card must remain possible, because an omission must propagate
+        to DDS as a real mistake (SPEC §10).
+      x-action: open_handoff_preparation
+      x-emits: [STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The new operator stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/operator/handoff/cancel:
+    post:
+      tags: [operator]
+      operationId: backToInterview
+      summary: Return from handoff preparation to the interview.
+      description: |
+        Fires `back_to_interview` (`HANDOFF_PREPARATION → INTERVIEW`, guard
+        `guard_call_still_connected`).
+      x-action: back_to_interview
+      x-emits: [STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The new operator stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/operator/handoff:
+    post:
+      tags: [operator]
+      operationId: createHandoff
+      summary: Freeze the card and send it to DDS.
+      description: |
+        Permission `CREATE_HANDOFF`; fires `create_handoff`
+        (`HANDOFF_PREPARATION → HANDED_OFF`, guard `guard_at_least_one_recipient_service` —
+        otherwise `409 RECIPIENT_SERVICES_EMPTY`).
+
+        In one Unit of Work: `freeze_card_to_snapshot` deep-copies `OperatorCard.values` into an
+        immutable `HandoffSnapshot`, `snapshot_to_assignment` creates one `DDSAssignment` per
+        recipient service, and both events are appended. Nothing is read from `WorldTruth`
+        (SPEC §10, §42 test 3): if the operator entered house `72` where the world says `27`,
+        DDS receives `72`.
+      x-action: create_handoff
+      x-emits: [HANDOFF_CREATED, STAGE_STATE_CHANGED, HANDOFF_RECEIVED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateHandoffRequest' }
+      responses:
+        '201':
+          description: The frozen snapshot and the assignments it created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffCreatedView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/operator/stage/complete:
+    post:
+      tags: [operator]
+      operationId: completeOperatorStage
+      summary: Complete the Operator 112 stage.
+      description: |
+        Fires `complete_stage` (`HANDED_OFF → STAGE_COMPLETED`, guard `guard_call_ended`).
+        The session machine then fires `begin_role_transition` when the `role_chain` has a next
+        entry, or `complete` when it does not.
+      x-action: complete_stage
+      x-emits: [ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED, ROLE_TRANSITION_STARTED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The session after stage completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------ role transition ----
+  /api/v1/sessions/{session_id}/stage/continue:
+    post:
+      tags: [sessions]
+      operationId: continueToNextStage
+      summary: Continue to the next role stage after the configurable pause.
+      description: |
+        Fires `finish_role_transition` (`ROLE_TRANSITION → ACTIVE`, guard
+        `guard_pause_elapsed_and_next_assigned`: `now_ms ≥ transition_started_ms +
+        policy.transition_pause_seconds·1000`). Called before the pause elapses it is refused
+        with `409 INVALID_TRANSITION` — the pause is `SessionPolicy.transition_pause_seconds`
+        (§10.10), not a frontend timer.
+
+        The same `Incident` carries over; no new incident is created (SPEC §13, §42 test 5).
+      x-action: finish_role_transition
+      x-emits: [ROLE_TRANSITION_COMPLETED, ROLE_STAGE_STARTED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The session with the next stage active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # -------------------------------------------------- DDS stage commands ----
+  /api/v1/sessions/{session_id}/dds/work-item:
+    get:
+      tags: [dds]
+      operationId: getDdsWorkItem
+      summary: The incoming work item — built only from the HandoffSnapshot.
+      description: |
+        Permission `VIEW_HANDOFF`. The response schema `DdsWorkItem` contains **no field
+        sourced from WorldTruth** and no field sourced from the live `OperatorCard`: it is
+        assembled from `handoff_snapshots` and `dds_assignments` alone. The application service
+        behind it is constructed without a world-truth repository, so the data is unreachable
+        rather than merely unrequested (D3, SPEC §10, §42 test 3). If the 112 operator omitted
+        a critical fact, the field is absent here and stays absent.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The work item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsWorkItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/acknowledge:
+    post:
+      tags: [dds]
+      operationId: acknowledgeDdsAssignment
+      summary: Acknowledge the work item.
+      description: |
+        Permission `ACKNOWLEDGE_ASSIGNMENT`; fires `acknowledge` (`RECEIVED → ACKNOWLEDGED`,
+        guard `guard_participant_assigned_to_stage`).
+      x-action: acknowledge
+      x-emits: [DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The new DDS stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/resources:
+    get:
+      tags: [dds]
+      operationId: listDdsResources
+      summary: The resource board for this assignment.
+      description: |
+        Permission `VIEW_RESOURCE_BOARD`. Scenario-defined resources only; the ETA numbers are
+        `EtaProfile` values read verbatim by `ScenarioDefinedEta` (D7) — no external maps API
+        is involved (SPEC §11).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: service_type
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/ServiceType' }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/ResourceStatus' }
+      responses:
+        '200':
+          description: The resource board.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/EmergencyResourceView' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/resources/select:
+    post:
+      tags: [dds]
+      operationId: selectDdsResource
+      summary: Select one resource.
+      description: |
+        Permission `SELECT_RESOURCES`. Fires the resource transition `select`
+        (`AVAILABLE → SELECTED`, guard: the assignment is in `RESOURCE_SELECTION` and the
+        resource is inside its availability window — otherwise `409 RESOURCE_UNAVAILABLE`).
+      x-action: select_resource
+      x-emits: [RESOURCE_SELECTED, RESOURCE_STATUS_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceSelectionRequest' }
+      responses:
+        '200':
+          description: The new DDS stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/resources/deselect:
+    post:
+      tags: [dds]
+      operationId: deselectDdsResource
+      summary: Deselect one resource.
+      description: |
+        Fires `deselect` (`SELECTED → AVAILABLE`, guard: the resource is not yet dispatched).
+      x-action: deselect_resource
+      x-emits: [RESOURCE_DESELECTED, RESOURCE_STATUS_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceSelectionRequest' }
+      responses:
+        '200':
+          description: The new DDS stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsStageView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/resources/dispatch:
+    post:
+      tags: [dds]
+      operationId: dispatchDdsResources
+      summary: Dispatch every currently selected resource.
+      description: |
+        Permission `DISPATCH_RESOURCES`. Fires the assignment trigger `dispatch`
+        (`RESOURCE_SELECTION → DISPATCHED`) the first time, and `dispatch_additional` (a
+        self-transition from `EN_ROUTE` / `ARRIVED` / `WORKING`) afterwards — extra units may be
+        added without losing progress. Guard `guard_at_least_one_selected_available`.
+
+        `RESOURCE_DISPATCHED` carries `capabilities_union` and `eta_seconds_by_resource` so the
+        `RESOURCE_SELECTION` evaluator needs no resource-table lookup (D5).
+      x-action: dispatch
+      x-emits: [RESOURCE_DISPATCHED, RESOURCE_STATUS_CHANGED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DispatchRequest' }
+      responses:
+        '200':
+          description: The dispatch result and the new DDS stage view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DispatchResultView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/status-updates:
+    post:
+      tags: [dds]
+      operationId: sendDdsStatusUpdate
+      summary: Send an incident status update.
+      description: |
+        Permission `SEND_STATUS_UPDATE`. Not a stage transition: it is available in every state
+        from `ACKNOWLEDGED` to `RESOLVED` and is what `REQUIRED_STATUS_UPDATE` scoring reads.
+      x-action: send_status_update
+      x-emits: [DDS_STATUS_UPDATE_SENT]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusUpdateRequest' }
+      responses:
+        '201':
+          description: The recorded status update.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatusUpdateView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/sessions/{session_id}/dds/notifications:
+    get:
+      tags: [dds]
+      operationId: listNotifications
+      summary: Notifications addressed to the caller's role.
+      description: |
+        Read from the `notifications` table, materialized from `NOTIFICATION_CREATED` /
+        `NOTIFICATION_ACKNOWLEDGED`. Filtered to `audience_role == the caller's role`; the
+        operator console calls the same endpoint.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: unacknowledged_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Notifications, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/NotificationView' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/notifications/{notification_id}/acknowledge:
+    post:
+      tags: [dds]
+      operationId: acknowledgeNotification
+      summary: Acknowledge one notification.
+      description: Permission `ACKNOWLEDGE_NOTIFICATION`. Held by both `Operator112Module` and `DDSModule`.
+      x-action: acknowledge_notification
+      x-emits: [NOTIFICATION_ACKNOWLEDGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: notification_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The acknowledged notification.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/radio-messages:
+    get:
+      tags: [dds]
+      operationId: listRadioMessages
+      summary: Radio traffic addressed to the caller's role.
+      description: |
+        Radio messages have **no table**: they are read from `session_events`
+        (`RADIO_MESSAGE_CREATED`) through a read model built from the log
+        (`docs/hld/20-db-schema.md` §20.1). Filtered to `to_role == the caller's role`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: after_seq_no
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Radio messages in log order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, last_seq_no]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RadioMessageView' }
+                  last_seq_no: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/close:
+    post:
+      tags: [dds]
+      operationId: closeDdsIncident
+      summary: Close the incident.
+      description: |
+        Permission `CLOSE_INCIDENT`; fires `close` (`RESOLVED → CLOSED`). The stage then
+        completes and, being the last `role_chain` entry in the primary flow, the session
+        machine fires `complete` and deterministic scoring runs over the event log.
+      x-action: close
+      x-emits: [DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED, SCORING_RULE_EVALUATED, SESSION_COMPLETED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloseIncidentRequest' }
+      responses:
+        '200':
+          description: The session after closure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ---------------------------------------------------------- instructor ----
+  /api/v1/instructor/sessions/{session_id}/overview:
+    get:
+      tags: [instructor]
+      operationId: getInstructorSessionOverview
+      summary: Live instructor overview — includes WorldTruth and gate internals.
+      description: |
+        `x-visibility: INSTRUCTOR`. The one live endpoint that exposes `WorldTruth`,
+        `CallerBelief` and `FactAccessGate` decisions (D3, D11). Restricted to `INSTRUCTOR` and
+        `ADMIN`; a `TRAINEE` gets `403 FORBIDDEN_FOR_ROLE` even for a session they participate in.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The overview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstructorSessionOverview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/instructor/sessions/{session_id}/report/release:
+    post:
+      tags: [instructor]
+      operationId: releaseReportToTrainee
+      summary: Release the report to the trainee.
+      description: |
+        For modes whose `SessionPolicy.report_visible_to_trainee_before_release` is `false`
+        (`MULTI_TRAINEE`, `ASSESSMENT`) the trainee's `GET /api/v1/reports/{session_id}` answers
+        `403 REPORT_NOT_RELEASED` until this command runs. It changes no score: releasing is a
+        visibility flag, not a scoring operation (D11).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The release state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportReleaseView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------------- reports ----
+  /api/v1/reports/{session_id}:
+    get:
+      tags: [reports]
+      operationId: getSessionReport
+      summary: The post-session report (SPEC §29, every item).
+      description: |
+        Assembles every SPEC §29 item: total score, score by category, critical errors, the
+        complete event timeline, the transcript with audio offsets for click-to-seek, the final
+        card, the ground-truth-vs-entered-card diff, the handoff snapshot, the DDS decisions, the
+        resource timeline, timing metrics and the evidence for every scoring rule.
+
+        The truth-vs-card diff is the one place `WorldTruth` is shown to a human (D11); it is
+        included only for `INSTRUCTOR`/`ADMIN`, or for the trainee once the report is released.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/reports/{session_id}/rescore:
+    post:
+      tags: [reports]
+      operationId: rescoreSession
+      summary: Re-score deterministically from the event log.
+      description: |
+        Runs `score(scenario_version, events)` again over `(scenario_versions.content, ordered
+        session_events)` — no LLM, no clock, no materialized table (D11, SPEC §42 tests 9–11) —
+        and compares the result with the stored `score_results`. The response's
+        `identical_to_stored` flag is the machine-checkable form of "the same event log and
+        scenario version must always reproduce the same score" (SPEC §28).
+
+        `persist: false` (the default) leaves the stored results untouched, so the check is
+        non-destructive.
+      x-action: '-'
+      x-emits: [SCORING_RULE_EVALUATED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RescoreRequest' }
+      responses:
+        '200':
+          description: The recomputed report plus the equality flag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RescoreResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/reports/{session_id}/explanation:
+    get:
+      tags: [reports]
+      operationId: getReportExplanation
+      summary: The stored LLM explanation of an already-computed report.
+      description: |
+        A separate resource from the report on purpose: the explanation is generated only from
+        an already persisted `ScoreReport`, is stored separately, and cannot write to the score
+        tables (SPEC §29, D11). `404` when none has been generated.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The explanation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportExplanation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [reports]
+      operationId: generateReportExplanation
+      summary: Generate the LLM explanation of an already-computed report.
+      description: |
+        Reads the persisted `ScoreReport` and produces prose. It **cannot alter scores**: the
+        handler has no write path to `score_results` or `score_evidence`, and the response
+        echoes `score_report_checksum` so a client can verify that the numbers did not move
+        (SPEC §2, §29, D11). Refused with `409 REPORT_NOT_READY` before scoring has run.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateExplanationRequest' }
+      responses:
+        '201':
+          description: The generated explanation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportExplanation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/reports/{session_id}/inference-metrics:
+    get:
+      tags: [reports]
+      operationId: listInferenceMetrics
+      summary: Inference latency telemetry for one session (SPEC §27).
+      description: |
+        Rows of `inference_metrics` plus the aggregate of the critical product metric
+        `speech_end_to_first_audio_ms` (p50 / p95), computed per turn from `USER_SPEECH_ENDED`
+        and the first audible `CALLER_TTS_STARTED` (D9). Benchmark values are measured, never
+        hard-coded (SPEC §27).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: component
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ASR, LLM_INTERPRETER, LLM_GENERATOR, TTS, VAD]
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 2000, default: 500 }
+      responses:
+        '200':
+          description: Metrics and the product-metric aggregate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InferenceMetricsPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # -------------------------------------------------------------- health ----
+  /api/v1/health/live:
+    get:
+      tags: [health]
+      operationId: getHealthLive
+      summary: Process liveness.
+      description: Liveness only, deliberately separate from readiness (SPEC §37).
+      security: []
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthLiveResponse' }
+
+  /api/v1/health/ready:
+    get:
+      tags: [health]
+      operationId: getHealthReady
+      summary: Per-service readiness.
+      description: |
+        Aggregates `postgres`, `redis`, `livekit` (owned by the backend) with `llm`, `asr`,
+        `tts`, `vad` (read from the Redis keys `voice:health:{service}`, a missing key being
+        `NOT_READY`, `docs/hld/60-inference-ops.md` §4.3). Each component reports
+        `READY | WARMING | NOT_READY | FATAL` (D8). The UI disables the start button from this
+        response (SPEC §37). Answers `200` when `overall` is `READY`, `503` otherwise, so a
+        plain HTTP health probe works.
+      security: []
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Every required component is `READY`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReadyResponse' }
+        '503':
+          description: At least one required component is not `READY`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReadyResponse' }
+
+  # --------------------------------------------------------------- admin ----
+  /api/v1/admin/recordings/purge:
+    post:
+      tags: [admin]
+      operationId: purgeRecordings
+      summary: Purge recordings past the retention window (ADMIN).
+      description: |
+        Deletes the WAV files of sessions past `RECORDING_RETENTION_DAYS`, sets
+        `audio_segments.file_path = NULL` and `audio_segments.purged_at = now()`, and writes one
+        `recording_purge_audit` record. Rows are kept so that offsets, transcripts, events and
+        scores stay intact and the same event log still reproduces the same score (SPEC §28,
+        §41, D9). `dry_run: true` reports what would be purged and deletes nothing.
+
+        No session event is appended: a completed session's log is closed (D9).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurgeRecordingsRequest' }
+      responses:
+        '200':
+          description: What was purged, or would be purged under `dry_run`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurgeRecordingsResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/inference/clear-fatal:
+    post:
+      tags: [admin]
+      operationId: clearInferenceFatal
+      summary: Clear a latched FATAL inference state (INSTRUCTOR / ADMIN).
+      description: |
+        Deletes the Redis key `voice:health:fatal`, which is otherwise never expired so that a
+        restart loop cannot make a fatal condition look transient
+        (`docs/hld/60-inference-ops.md` §4.3). Touches no session state.
+      x-action: '-'
+      x-emits: [INFERENCE_HEALTH_CHANGED]
+      responses:
+        '200':
+          description: The readiness snapshot after clearing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReadyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HS256 JWT minted by `loginUser`; the secret comes from the environment (D8, SPEC §41).
+
+  parameters:
+    SessionIdParam:
+      name: session_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ScenarioIdParam:
+      name: scenario_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ScenarioVersionIdParam:
+      name: scenario_version_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: '`UNAUTHENTICATED` — missing, malformed or expired bearer token.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: |
+        `FORBIDDEN_FOR_ROLE` — the caller's user role, or the participant assignment to the
+        active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: '`NOT_FOUND` — no such session, scenario, version, resource or segment.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: |
+        A state conflict. `INVALID_TRANSITION` when the state machine rejects the trigger (D8),
+        `ACTION_NOT_AVAILABLE` when the `RoleModule` does not offer the action in the current
+        stage state, plus `SCENARIO_VERSION_LOCKED`, `SCENARIO_VERSION_EXISTS`,
+        `PREFAB_HANDOFF_REQUIRED`, `RECIPIENT_SERVICES_EMPTY`, `HANDOFF_ALREADY_CREATED`,
+        `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnprocessableEntity:
+      description: |
+        `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
+        `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ServiceUnavailable:
+      description: |
+        `INFERENCE_NOT_READY` — a required inference service is not `READY` while
+        `REQUIRE_INFERENCE_READY=true` (D8, SPEC §37); or `LLM_UNAVAILABLE` for the optional
+        explanation.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    # ------------------------------------------------------------ errors ----
+    ProblemCode:
+      type: string
+      description: The machine-readable error code carried by every RFC 7807 problem.
+      enum:
+        - UNAUTHENTICATED
+        - FORBIDDEN_FOR_ROLE
+        - NOT_FOUND
+        - VALIDATION_ERROR
+        - INVALID_TRANSITION
+        - ACTION_NOT_AVAILABLE
+        - PARTICIPANT_NOT_ASSIGNED
+        - INFERENCE_NOT_READY
+        - SCENARIO_INVALID
+        - SCENARIO_VERSION_LOCKED
+        - SCENARIO_VERSION_EXISTS
+        - PREFAB_HANDOFF_REQUIRED
+        - RECIPIENT_SERVICES_EMPTY
+        - HANDOFF_ALREADY_CREATED
+        - CARD_FIELD_UNKNOWN
+        - CARD_VALUE_TYPE_MISMATCH
+        - RESOURCE_UNAVAILABLE
+        - SESSION_NOT_ACTIVE
+        - REPORT_NOT_READY
+        - REPORT_NOT_RELEASED
+        - EXPLANATION_ALREADY_EXISTS
+        - LLM_UNAVAILABLE
+        - AUDIO_PURGED
+        - RANGE_NOT_SATISFIABLE
+
+    Problem:
+      type: object
+      description: RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose.
+      additionalProperties: true
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri-reference, default: 'about:blank' }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: [string, 'null'] }
+        instance: { type: [string, 'null'], format: uri-reference }
+        code: { $ref: '#/components/schemas/ProblemCode' }
+
+    ScenarioProblem:
+      description: A `SCENARIO_INVALID` problem, carrying the complete validation report.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [validation_report]
+          properties:
+            validation_report: { $ref: '#/components/schemas/ScenarioValidationReport' }
+
+    # ------------------------------------------------------------- enums ----
+    UserRole:
+      type: string
+      description: Account role (D8). Distinct from `RoleType`, which is a simulation role.
+      enum: [TRAINEE, INSTRUCTOR, ADMIN]
+    RoleType:
+      type: string
+      enum: [OPERATOR_112, DDS, EDDS]
+    ActorType:
+      type: string
+      enum: [TRAINEE, INSTRUCTOR, SIMULATION, MODEL, SYSTEM]
+    SessionMode:
+      type: string
+      enum: [SINGLE_ROLE, FULL_CYCLE_SINGLE_TRAINEE, MULTI_TRAINEE, ASSESSMENT]
+    SessionState:
+      type: string
+      enum: [CREATED, READY, ACTIVE, ROLE_TRANSITION, COMPLETED, ABORTED]
+    Operator112StageState:
+      type: string
+      enum: [WAITING_FOR_CALL, RINGING, CONNECTED, INTERVIEW, HANDOFF_PREPARATION, HANDED_OFF, STAGE_COMPLETED]
+    DDSStageState:
+      type: string
+      enum: [RECEIVED, ACKNOWLEDGED, RESOURCE_SELECTION, DISPATCHED, EN_ROUTE, ARRIVED, WORKING, RESOLVED, CLOSED]
+    StageState:
+      description: Either an `Operator112StageState` or a `DDSStageState` member.
+      oneOf:
+        - $ref: '#/components/schemas/Operator112StageState'
+        - $ref: '#/components/schemas/DDSStageState'
+    ServiceType:
+      type: string
+      enum: [FIRE_RESCUE, POLICE, AMBULANCE, GAS_SERVICE, UTILITY_EMERGENCY, EDDS]
+    ResourceType:
+      type: string
+      enum:
+        - FIRE_ENGINE
+        - LADDER_TRUCK
+        - RESCUE_UNIT
+        - AMBULANCE_UNIT
+        - RESUSCITATION_UNIT
+        - POLICE_PATROL
+        - GAS_EMERGENCY_UNIT
+        - UTILITY_CREW
+        - FIRE_CHIEF_CAR
+    ResourceStatus:
+      type: string
+      enum: [AVAILABLE, SELECTED, DISPATCHED, EN_ROUTE, ON_SCENE, WORKING, RETURNING, OUT_OF_SERVICE, UNAVAILABLE]
+    ResourceCapability:
+      type: string
+      enum:
+        - FIRE_SUPPRESSION
+        - HIGH_RISE_ACCESS
+        - LADDER_RESCUE
+        - TECHNICAL_RESCUE
+        - SMOKE_DIVING
+        - BASIC_LIFE_SUPPORT
+        - ADVANCED_LIFE_SUPPORT
+        - BURN_CARE
+        - PUBLIC_ORDER
+        - TRAFFIC_CONTROL
+        - AREA_CORDON
+        - GAS_SHUTOFF
+        - GAS_LEAK_DETECTION
+        - POWER_SHUTOFF
+        - WATER_SUPPLY
+        - COMMAND_AND_CONTROL
+    KnowledgeState:
+      type: string
+      enum: [KNOWN, UNKNOWN, INCORRECT_BELIEF, UNCERTAIN]
+    DisclosurePolicy:
+      type: string
+      enum: [SPONTANEOUS, ON_ASK, ONLY_IF_EXPLICITLY_ASKED, NEVER_DISCLOSE]
+    SpeechAct:
+      type: string
+      enum: [QUESTION, ANSWER, STATEMENT, CONFIRMATION, INSTRUCTION, GREETING, CLOSING, REASSURANCE, REPEAT_REQUEST, UNINTELLIGIBLE]
+    IncidentType:
+      type: string
+      enum: [FIRE, MEDICAL, CRIME, TRAFFIC_ACCIDENT, GAS_LEAK, UTILITY_FAILURE, RESCUE, OTHER]
+    CallerRelationship:
+      type: string
+      enum: [VICTIM, WITNESS, NEIGHBOUR, RELATIVE, PASSERBY, OFFICIAL, UNKNOWN]
+    AgeGroup:
+      type: string
+      enum: [CHILD, TEEN, ADULT, ELDERLY]
+    EmotionLabel:
+      type: string
+      enum: [CALM, WORRIED, FRIGHTENED, PANICKED, ANGRY, CONFUSED, APATHETIC]
+    ValueType:
+      type: string
+      enum: [STRING, INTEGER, FLOAT, BOOLEAN, ENUM, STRING_LIST]
+    NotificationSeverity:
+      type: string
+      enum: [INFO, WARNING, CRITICAL]
+    StatusUpdateKind:
+      type: string
+      enum:
+        - ACKNOWLEDGEMENT
+        - EN_ROUTE_REPORT
+        - ON_SCENE_REPORT
+        - SITUATION_UPDATE
+        - ADDITIONAL_FORCES_REQUESTED
+        - RESOLUTION_REPORT
+    HealthStatus:
+      type: string
+      enum: [READY, WARMING, NOT_READY, FATAL]
+    ClosureReason:
+      type: string
+      enum: [RESOLVED, FALSE_CALL, TRANSFERRED, CANCELLED_BY_CALLER]
+    WorldEventKind:
+      type: string
+      enum: [TIMED, CONDITIONAL, ACTION_TRIGGERED, SEEDED_RANDOM]
+    EffectKind:
+      type: string
+      enum:
+        - MUTATE_WORLD_TRUTH
+        - MUTATE_CALLER_BELIEF
+        - CREATE_NOTIFICATION
+        - CREATE_RADIO_MESSAGE
+        - ALTER_RESOURCE_AVAILABILITY
+        - TRIGGER_EVENT
+        - CHANGE_CALLER_EMOTION
+    GateOutcome:
+      type: string
+      enum: [ALLOWED, ALLOWED_SPONTANEOUS, ALLOWED_REPEAT, WITHHELD, NOT_YET, UNAVAILABLE]
+    GateReason:
+      type: string
+      enum:
+        - OK
+        - NEVER_DISCLOSE
+        - CALLER_DOES_NOT_KNOW
+        - NOT_YET_AVAILABLE
+        - REQUIRES_EXPLICIT_QUESTION
+        - UNKNOWN_FACT_ID
+        - ALREADY_REVEALED
+    ScoringCategory:
+      type: string
+      enum:
+        - INFORMATION_GATHERING
+        - CARD_QUALITY
+        - SERVICE_ROUTING
+        - TIMELINESS
+        - WORKFLOW
+        - RESOURCE_MANAGEMENT
+        - COMMUNICATION
+    EvaluatorType:
+      type: string
+      enum:
+        - FACT_OBTAINED
+        - CARD_FIELD_CORRECT
+        - CARD_FIELD_PRESENT
+        - CARD_CONTRADICTION
+        - SERVICE_SELECTION
+        - DEADLINE
+        - WORKFLOW_ACTION
+        - RESOURCE_SELECTION
+        - REQUIRED_STATUS_UPDATE
+        - HANDOFF_COMPLETENESS
+    Permission:
+      type: string
+      enum:
+        - ANSWER_CALL
+        - END_CALL
+        - EDIT_CARD
+        - SELECT_SERVICES
+        - CREATE_HANDOFF
+        - VIEW_HANDOFF
+        - ACKNOWLEDGE_ASSIGNMENT
+        - SELECT_RESOURCES
+        - DISPATCH_RESOURCES
+        - SEND_STATUS_UPDATE
+        - CLOSE_INCIDENT
+        - ACKNOWLEDGE_NOTIFICATION
+        - VIEW_RESOURCE_BOARD
+        - VIEW_TRANSCRIPT
+    EventType:
+      type: string
+      description: |
+        All 49 members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by
+        the 21 additive members of D5.
+      enum:
+        - SESSION_CREATED
+        - SESSION_STARTED
+        - ROLE_STAGE_STARTED
+        - CALL_RINGING
+        - CALL_ANSWERED
+        - USER_SPEECH_STARTED
+        - USER_SPEECH_ENDED
+        - ASR_PARTIAL
+        - ASR_FINAL
+        - CALLER_RESPONSE_PLANNED
+        - CALLER_RESPONSE_GENERATED
+        - CALLER_TTS_STARTED
+        - CALLER_TTS_ENDED
+        - CALLER_UTTERANCE_INTERRUPTED
+        - CARD_FIELD_CHANGED
+        - SERVICE_SELECTED
+        - HANDOFF_CREATED
+        - HANDOFF_RECEIVED
+        - DDS_ACKNOWLEDGED
+        - RESOURCE_SELECTED
+        - RESOURCE_DISPATCHED
+        - RESOURCE_STATUS_CHANGED
+        - WORLD_EVENT_TRIGGERED
+        - ROLE_STAGE_COMPLETED
+        - SCORING_RULE_EVALUATED
+        - SESSION_COMPLETED
+        - MODEL_FALLBACK_USED
+        - MODEL_ERROR
+        - SESSION_ABORTED
+        - STAGE_STATE_CHANGED
+        - ROLE_TRANSITION_STARTED
+        - ROLE_TRANSITION_COMPLETED
+        - SERVICE_DESELECTED
+        - RESOURCE_DESELECTED
+        - DDS_STATUS_UPDATE_SENT
+        - DDS_INCIDENT_CLOSED
+        - NOTIFICATION_CREATED
+        - NOTIFICATION_ACKNOWLEDGED
+        - RADIO_MESSAGE_CREATED
+        - WORLD_TRUTH_MUTATED
+        - CALLER_BELIEF_MUTATED
+        - CALLER_EMOTION_CHANGED
+        - CALL_ENDED
+        - DIALOGUE_INTERPRETED
+        - FACT_GATE_EVALUATED
+        - FACTS_DELIVERED
+        - TRANSPORT_DISCONNECTED
+        - TRANSPORT_RECONNECTED
+        - INFERENCE_HEALTH_CHANGED
+
+    # ------------------------------------------------------ value objects ----
+    FactValue:
+      description: |
+        `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
+        `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
+        (`10-domain-model.md` §10.3).
+      anyOf:
+        - type: string
+        - type: number
+        - type: boolean
+        - type: array
+          items: { type: string }
+        - type: 'null'
+
+    ActorRef:
+      type: object
+      additionalProperties: false
+      required: [actor_type, actor_id]
+      properties:
+        actor_type: { $ref: '#/components/schemas/ActorType' }
+        actor_id: { type: [string, 'null'], format: uuid }
+
+    ActionDescriptor:
+      type: object
+      description: |
+        One entry of `RoleModule.available_actions(stage_state)`. The frontend enables buttons
+        from this list and never decides a transition itself (D12).
+      additionalProperties: false
+      required: [action_id, label_ru, permission, trigger]
+      properties:
+        action_id: { type: string, examples: [answer, edit_card, create_handoff] }
+        label_ru: { type: string, examples: [Ответить] }
+        permission: { $ref: '#/components/schemas/Permission' }
+        trigger:
+          type: [string, 'null']
+          description: The state-machine trigger, or `null` for a non-transition command such as `edit_card`.
+
+    # -------------------------------------------------------------- auth ----
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+        password: { type: string, minLength: 1, maxLength: 256, format: password }
+
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_in, user]
+      properties:
+        access_token: { type: string, description: HS256 JWT. }
+        token_type: { type: string, const: bearer }
+        expires_in: { type: integer, minimum: 1, description: Seconds until expiry. }
+        user: { $ref: '#/components/schemas/UserAccount' }
+
+    UserAccount:
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name_ru, user_role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+        user_role: { $ref: '#/components/schemas/UserRole' }
+        created_at: { type: string, format: date-time }
+
+    # --------------------------------------------------------- scenarios ----
+    ScenarioSummary:
+      type: object
+      description: '`Scenario` — identity only (D4): slug and title, never content.'
+      additionalProperties: false
+      required: [scenario_id, slug, title_ru, version_count, latest_version]
+      properties:
+        scenario_id: { type: string, format: uuid }
+        slug: { type: string }
+        title_ru: { type: string }
+        version_count: { type: integer, minimum: 0 }
+        latest_version: { type: [integer, 'null'], minimum: 1 }
+
+    ScenarioVersionListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - scenario_id
+        - schema_version
+        - version
+        - title
+        - description
+        - difficulty
+        - role_chain
+        - content_sha256
+        - locked_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        scenario_id: { type: string, format: uuid }
+        schema_version: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        title: { type: string }
+        description: { type: string }
+        difficulty: { type: integer }
+        role_chain:
+          type: array
+          items: { $ref: '#/components/schemas/RoleType' }
+        content_sha256: { type: string }
+        locked_at:
+          type: [string, 'null']
+          format: date-time
+          description: Set in the transaction that creates the first session using this version (D4).
+        created_at: { type: string, format: date-time }
+
+    ScenarioVersionTraineeSummary:
+      type: object
+      description: |
+        Trainee-safe projection: no `world_truth`, `caller_knowledge`, `disclosure_rules`,
+        `expected_response`, `world_events` or `scoring_rules`. The caller's persona is included
+        only to the extent a dispatcher would perceive it on the phone.
+      additionalProperties: false
+      required:
+        - id
+        - scenario_id
+        - scenario_slug
+        - version
+        - title
+        - description
+        - difficulty
+        - role_chain
+        - caller_display_ru
+        - caller_language
+        - caller_age_group
+        - caller_relationship
+        - estimated_duration_seconds
+        - resource_count
+      properties:
+        id: { type: string, format: uuid }
+        scenario_id: { type: string, format: uuid }
+        scenario_slug: { type: string }
+        version: { type: integer, minimum: 1 }
+        title: { type: string }
+        description: { type: string }
+        difficulty: { type: integer }
+        role_chain:
+          type: array
+          items: { $ref: '#/components/schemas/RoleType' }
+        caller_display_ru:
+          type: string
+          description: '`CallerProfile.identity_ru`.'
+        caller_language: { type: string, examples: ['ru-RU'] }
+        caller_age_group: { $ref: '#/components/schemas/AgeGroup' }
+        caller_relationship: { $ref: '#/components/schemas/CallerRelationship' }
+        estimated_duration_seconds: { type: [integer, 'null'], minimum: 0 }
+        resource_count:
+          type: integer
+          minimum: 0
+          description: How many resources the DDS board will show — a count, never the list.
+
+    ScenarioImportRequest:
+      type: object
+      additionalProperties: false
+      required: [format, content]
+      properties:
+        format:
+          type: string
+          enum: [YAML, JSON]
+        content:
+          type: string
+          description: The complete scenario version document, verbatim (`docs/hld/30-scenario-format.md`).
+        source_path:
+          type: [string, 'null']
+          description: 'Optional provenance, e.g. `scenarios/examples/fire-apartment/v1.yaml`.'
+
+    ScenarioValidationIssue:
+      type: object
+      description: One violation from `validate_scenario_version` (`30-scenario-format.md` §30.8).
+      additionalProperties: false
+      required: [rule_number, severity, location, message]
+      properties:
+        rule_number:
+          type: integer
+          minimum: 1
+          maximum: 30
+          description: The §30.8 rule number that failed.
+        severity:
+          type: string
+          enum: [ERROR, WARNING]
+        location:
+          type: string
+          description: 'Dotted path into the document, e.g. `caller_knowledge.facts.incident.fire_source`.'
+        message: { type: string }
+        fact_id: { type: [string, 'null'] }
+        field_path: { type: [string, 'null'] }
+
+    ScenarioValidationReport:
+      type: object
+      additionalProperties: false
+      required: [valid, scenario_slug, version, schema_version, content_sha256, issues, checked_rule_count]
+      properties:
+        valid:
+          type: boolean
+          description: '`false` if any issue has `severity: ERROR`. A scenario that is not valid cannot start a session (D4).'
+        scenario_slug: { type: [string, 'null'] }
+        version: { type: [integer, 'null'], minimum: 1 }
+        schema_version: { type: [integer, 'null'], minimum: 1 }
+        content_sha256: { type: [string, 'null'] }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/ScenarioValidationIssue' }
+        checked_rule_count:
+          type: integer
+          const: 30
+          description: The complete §30.8 list is always run; a partial run is never reported as valid.
+
+    # ---------------------------------------------------------- sessions ----
+    ParticipantAssignment:
+      type: object
+      description: One `session_participants` row — a user bound to a simulation role.
+      additionalProperties: false
+      required: [user_id, assigned_role_type]
+      properties:
+        user_id: { type: string, format: uuid }
+        assigned_role_type:
+          description: |
+            `null` is permitted only where `SessionPolicy.assignment_rule` is
+            `ALL_STAGES_ONE_PARTICIPANT` (one trainee plays every stage).
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'
+
+    SessionCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [scenario_version_id, session_mode, participants]
+      properties:
+        scenario_version_id: { type: string, format: uuid }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        participants:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        session_seed:
+          type: [string, 'null']
+          description: |
+            Overrides `ScenarioVersion.deterministic_seed`. Recorded in the `SESSION_CREATED`
+            payload, so an identical seed with identical timestamped actions reproduces an
+            identical world-event stream (D7, SPEC §42 test 7).
+        time_scale:
+          type: number
+          minimum: 0.1
+          maximum: 10
+          default: 1
+          description: |
+            Multiplier applied to simulated time only. It scales world-event scheduling and ETA
+            countdowns; it never scales the audio path, which is realtime by nature.
+
+    SessionParticipantView:
+      type: object
+      additionalProperties: false
+      required: [user_id, username, display_name_ru, assigned_role_type, joined_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+        assigned_role_type:
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'
+        joined_at: { type: string, format: date-time }
+
+    RoleStageView:
+      type: object
+      additionalProperties: false
+      required: [role_stage_id, role_type, order_index, state, participant_user_id, started_at_offset_ms, completed_at_offset_ms]
+      properties:
+        role_stage_id: { type: string, format: uuid }
+        role_type: { $ref: '#/components/schemas/RoleType' }
+        order_index: { type: integer, minimum: 0 }
+        state: { $ref: '#/components/schemas/StageState' }
+        participant_user_id: { type: [string, 'null'], format: uuid }
+        started_at_offset_ms: { type: [integer, 'null'] }
+        completed_at_offset_ms: { type: [integer, 'null'] }
+
+    SessionListItem:
+      type: object
+      additionalProperties: false
+      required: [id, scenario_slug, scenario_version, session_mode, state, created_at, created_by_user_id, my_role_type]
+      properties:
+        id: { type: string, format: uuid }
+        scenario_slug: { type: string }
+        scenario_version: { type: integer, minimum: 1 }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/SessionState' }
+        created_at: { type: string, format: date-time }
+        created_by_user_id: { type: string, format: uuid }
+        my_role_type:
+          description: The caller's role in this session, or `null` when they only observe it.
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'
+
+    SessionDetail:
+      type: object
+      description: |
+        The materialized session header every command returns (D8). `session_seed` is included
+        because it is public reproduction data, not hidden incident truth.
+      additionalProperties: false
+      required:
+        - id
+        - scenario_version_id
+        - scenario_slug
+        - scenario_version
+        - session_mode
+        - state
+        - session_seed
+        - time_scale
+        - incident_id
+        - role_chain
+        - stages
+        - active_role_stage_id
+        - participants
+        - created_by_user_id
+        - created_at
+        - started_at
+        - completed_at
+        - abort_reason
+        - monotonic_offset_ms
+        - last_seq_no
+        - transition_pause_seconds
+        - transition_continue_available_at_offset_ms
+      properties:
+        id: { type: string, format: uuid }
+        scenario_version_id: { type: string, format: uuid }
+        scenario_slug: { type: string }
+        scenario_version: { type: integer, minimum: 1 }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/SessionState' }
+        session_seed: { type: string }
+        time_scale: { type: number }
+        incident_id: { type: string, format: uuid }
+        role_chain:
+          type: array
+          items: { $ref: '#/components/schemas/RoleType' }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/RoleStageView' }
+        active_role_stage_id: { type: [string, 'null'], format: uuid }
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/SessionParticipantView' }
+        created_by_user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        abort_reason: { type: [string, 'null'] }
+        monotonic_offset_ms:
+          type: integer
+          minimum: 0
+          description: |
+            Current simulation time: ms since `SESSION_STARTED`, derived from the persisted
+            `started_at` plus paused intervals, so a restart or a refresh never resets it (D7).
+        last_seq_no:
+          type: integer
+          minimum: 0
+          description: The highest `seq_no` visible to the caller's role — the WebSocket resume cursor.
+        transition_pause_seconds:
+          type: integer
+          minimum: 0
+          description: '`SessionPolicy.transition_pause_seconds` for this mode (§10.10).'
+        transition_continue_available_at_offset_ms:
+          type: [integer, 'null']
+          description: |
+            When `state` is `ROLE_TRANSITION`, the offset at which `continueToNextStage` stops
+            being refused. `null` otherwise.
+
+    AbortSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    CallStateView:
+      type: object
+      description: |
+        The phone widget's state (D12). `call_id` and `room_name` are what the LiveKit client
+        needs; nothing about the caller's hidden knowledge appears here.
+      additionalProperties: false
+      required: [call_id, room_name, phase, caller_display_ru, started_at_offset_ms, answered_at_offset_ms, ended_at_offset_ms, duration_ms, caller_speaking]
+      properties:
+        call_id: { type: [string, 'null'], format: uuid }
+        room_name: { type: [string, 'null'] }
+        phase:
+          type: string
+          enum: [NO_CALL, RINGING, CONNECTED, ENDED]
+        caller_display_ru: { type: [string, 'null'] }
+        started_at_offset_ms: { type: [integer, 'null'] }
+        answered_at_offset_ms: { type: [integer, 'null'] }
+        ended_at_offset_ms: { type: [integer, 'null'] }
+        duration_ms: { type: [integer, 'null'] }
+        caller_speaking:
+          type: boolean
+          description: True while caller TTS is playing; drives the level meter and barge-in affordance.
+
+    SessionSnapshot:
+      type: object
+      description: |
+        The browser-refresh restore payload (SPEC §39, §42 test 13). Exactly one of `card` and
+        `work_item` is non-null, decided by the active stage's `RoleModule` — a DDS trainee can
+        never receive the live `OperatorCard` (D3).
+      additionalProperties: false
+      required:
+        - session
+        - my_role_type
+        - active_role_stage_id
+        - active_role_type
+        - stage_state
+        - available_actions
+        - card
+        - work_item
+        - call_state
+        - last_seq_no
+        - visible_sources
+        - server_time_utc
+      properties:
+        session: { $ref: '#/components/schemas/SessionDetail' }
+        my_role_type:
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'
+        active_role_stage_id: { type: [string, 'null'], format: uuid }
+        active_role_type:
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'
+        stage_state:
+          oneOf:
+            - $ref: '#/components/schemas/StageState'
+            - type: 'null'
+        available_actions:
+          type: array
+          description: '`RoleModule.available_actions(stage_state)` filtered by the caller''s participant assignment.'
+          items: { $ref: '#/components/schemas/ActionDescriptor' }
+        card:
+          description: Present for `OPERATOR_112` and `INSTRUCTOR` only.
+          oneOf:
+            - $ref: '#/components/schemas/OperatorCardView'
+            - type: 'null'
+        work_item:
+          description: Present for `DDS` only, and built solely from the `HandoffSnapshot`.
+          oneOf:
+            - $ref: '#/components/schemas/DdsWorkItem'
+            - type: 'null'
+        call_state: { $ref: '#/components/schemas/CallStateView' }
+        last_seq_no:
+          type: integer
+          minimum: 0
+          description: Pass this as `after_seq_no` in the WebSocket `resume` frame.
+        visible_sources:
+          type: array
+          description: '`DataVisibilityPolicy.sources` for the caller''s role — the UI renders only these panels.'
+          items:
+            type: string
+            enum:
+              - OPERATOR_CARD
+              - CARD_REVISIONS
+              - HANDOFF_SNAPSHOT
+              - DDS_ASSIGNMENT
+              - RESOURCE_BOARD
+              - NOTIFICATIONS
+              - RADIO_MESSAGES
+              - TRANSCRIPT
+              - CALL_STATE
+              - SCORE_REPORT
+              - WORLD_TRUTH
+              - CALLER_BELIEF
+              - GATE_INTERNALS
+        server_time_utc: { type: string, format: date-time }
+
+    SessionEventEnvelope:
+      type: object
+      description: |
+        The envelope pushed over the WebSocket and returned by `listSessionEvents` — identical
+        in both (D8, `docs/hld/40-realtime-protocol.md` §2). `payload` follows the
+        `EVENT_PAYLOAD_CATALOG` entry for `event_type`, after the per-role redaction of §4.
+      additionalProperties: false
+      required: [seq_no, event_type, timestamp_utc, monotonic_offset_ms, payload]
+      properties:
+        seq_no: { type: integer, minimum: 1 }
+        event_type: { $ref: '#/components/schemas/EventType' }
+        timestamp_utc: { type: string, format: date-time }
+        monotonic_offset_ms: { type: integer }
+        payload:
+          type: object
+          additionalProperties: true
+        actor_type: { $ref: '#/components/schemas/ActorType' }
+        correlation_id: { type: [string, 'null'], format: uuid }
+        redacted_keys:
+          type: array
+          description: |
+            Payload keys removed for this role by the redaction table. Present so the UI can
+            show "hidden" rather than silently imply absence; always empty for `INSTRUCTOR`.
+          items: { type: string }
+
+    SessionEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, last_seq_no, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SessionEventEnvelope' }
+        last_seq_no: { type: integer, minimum: 0 }
+        has_more: { type: boolean }
+
+    VoiceTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [token, livekit_url, room_name, participant_identity, expires_at]
+      properties:
+        token: { type: string, description: LiveKit JWT minted by the backend (D9). }
+        livekit_url: { type: string, format: uri }
+        room_name: { type: string }
+        participant_identity: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    # ------------------------------------------------------ operator card ----
+    OperatorCardView:
+      type: object
+      description: '`OperatorCard` (SPEC §9). `values` is keyed by the dotted `field_path`s of `CARD_FIELDS`.'
+      additionalProperties: false
+      required: [card_id, incident_id, values, revision_counter, field_specs]
+      properties:
+        card_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        values:
+          type: object
+          description: 'Only the paths the trainee has set; an unset field is absent, not `null`-filled.'
+          additionalProperties: { $ref: '#/components/schemas/FactValue' }
+        revision_counter: { type: integer, minimum: 0 }
+        field_specs:
+          type: array
+          description: '`CARD_FIELDS` — the UI renders the form from this, never from a hard-coded list.'
+          items: { $ref: '#/components/schemas/CardFieldSpec' }
+
+    CardFieldSpec:
+      type: object
+      additionalProperties: false
+      required: [field_path, value_type, enum_name, label_ru, scoring_relevant, required_for_handoff]
+      properties:
+        field_path: { type: string, examples: ['address.house'] }
+        value_type: { $ref: '#/components/schemas/ValueType' }
+        enum_name:
+          type: [string, 'null']
+          description: 'The enum backing a `ValueType.ENUM` field, e.g. `IncidentType`.'
+        label_ru: { type: string, examples: [Дом] }
+        scoring_relevant: { type: boolean }
+        required_for_handoff:
+          type: boolean
+          description: Advisory only — a missing field never blocks a handoff (SPEC §10).
+
+    CardRevisionView:
+      type: object
+      description: One `incident_card_revisions` row — SPEC §9's previous value, new value, path, time and actor.
+      additionalProperties: false
+      required: [revision_id, card_id, revision_no, field_path, previous_value, new_value, actor, at_offset_ms]
+      properties:
+        revision_id: { type: string, format: uuid }
+        card_id: { type: string, format: uuid }
+        revision_no: { type: integer, minimum: 1 }
+        field_path: { type: string }
+        previous_value: { $ref: '#/components/schemas/FactValue' }
+        new_value: { $ref: '#/components/schemas/FactValue' }
+        actor: { $ref: '#/components/schemas/ActorRef' }
+        at_offset_ms: { type: integer }
+
+    CardRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CardRevisionView' }
+        total: { type: integer, minimum: 0 }
+
+    SetCardFieldRequest:
+      type: object
+      additionalProperties: false
+      required: [field_path, new_value]
+      properties:
+        field_path:
+          type: string
+          description: 'Must be a `CARD_FIELDS` member other than `recipients.services`.'
+          examples: ['address.house']
+        new_value: { $ref: '#/components/schemas/FactValue' }
+        client_command_id:
+          type: [string, 'null']
+          format: uuid
+          description: Optional idempotency key; a repeat with the same id returns the first result.
+
+    SetCardFieldResponse:
+      type: object
+      additionalProperties: false
+      required: [card, revision]
+      properties:
+        card: { $ref: '#/components/schemas/OperatorCardView' }
+        revision:
+          description: '`null` when the command was a no-op (the value was already set).'
+          oneOf:
+            - $ref: '#/components/schemas/CardRevisionView'
+            - type: 'null'
+
+    ServiceSelectionRequest:
+      type: object
+      additionalProperties: false
+      required: [service_type]
+      properties:
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+
+    ServiceSelectionView:
+      type: object
+      additionalProperties: false
+      required: [card_id, selected_services, available_services, card]
+      properties:
+        card_id: { type: string, format: uuid }
+        selected_services:
+          type: array
+          description: The new value of the card field `recipients.services`.
+          items: { $ref: '#/components/schemas/ServiceType' }
+        available_services:
+          type: array
+          description: Every `ServiceType` the UI offers, including plausibly wrong ones.
+          items: { $ref: '#/components/schemas/ServiceType' }
+        card: { $ref: '#/components/schemas/OperatorCardView' }
+
+    EndCallRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [OPERATOR_HANGUP, CALLER_HANGUP, TRANSPORT_LOST]
+
+    OperatorStageView:
+      type: object
+      description: The materialized view every Operator 112 command returns (D8).
+      additionalProperties: false
+      required: [role_stage_id, stage_state, available_actions, card, call_state, session_state, last_seq_no]
+      properties:
+        role_stage_id: { type: string, format: uuid }
+        stage_state: { $ref: '#/components/schemas/Operator112StageState' }
+        available_actions:
+          type: array
+          items: { $ref: '#/components/schemas/ActionDescriptor' }
+        card: { $ref: '#/components/schemas/OperatorCardView' }
+        call_state: { $ref: '#/components/schemas/CallStateView' }
+        session_state: { $ref: '#/components/schemas/SessionState' }
+        last_seq_no: { type: integer, minimum: 0 }
+
+    # ------------------------------------------------------------ handoff ----
+    CreateHandoffRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        comment_ru:
+          type: [string, 'null']
+          maxLength: 2000
+          description: |
+            Written to the card field `recipients.comment` before freezing, so it is part of the
+            snapshot rather than a side channel around it.
+
+    HandoffSnapshotView:
+      type: object
+      description: |
+        `HandoffSnapshot` — immutable; the DB trigger rejects UPDATE and DELETE (D3). `card_values`
+        is a deep copy of the trainee's entries at freeze time and shares nothing with the card.
+      additionalProperties: false
+      required:
+        - snapshot_id
+        - incident_id
+        - card_id
+        - card_revision_id
+        - card_values
+        - recipient_services
+        - created_by_user_id
+        - created_at_offset_ms
+        - content_sha256
+      properties:
+        snapshot_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        card_id: { type: string, format: uuid }
+        card_revision_id: { type: string, format: uuid }
+        card_values:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/FactValue' }
+        recipient_services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceType' }
+        created_by_user_id: { type: string, format: uuid }
+        created_at_offset_ms: { type: integer }
+        content_sha256:
+          type: string
+          description: Canonical JSON of `card_values` + `recipient_services`.
+
+    HandoffCreatedView:
+      type: object
+      additionalProperties: false
+      required: [snapshot, assignment_ids, stage_state, session_state]
+      properties:
+        snapshot: { $ref: '#/components/schemas/HandoffSnapshotView' }
+        assignment_ids:
+          type: array
+          description: One `DDSAssignment` per recipient service.
+          items: { type: string, format: uuid }
+        stage_state: { $ref: '#/components/schemas/Operator112StageState' }
+        session_state: { $ref: '#/components/schemas/SessionState' }
+
+    # ---------------------------------------------------------------- DDS ----
+    DdsWorkItem:
+      type: object
+      x-source: HANDOFF_SNAPSHOT
+      description: |
+        The DDS incoming work item. **Every field is sourced from `handoff_snapshots` and
+        `dds_assignments`; no field is sourced from `WorldTruth`, `CallerBelief` or the live
+        `OperatorCard`** (SPEC §3, §10, D3, §42 test 3). If the operator entered house `72`
+        where the world says `27`, `card_values["address.house"]` is `"72"`. A field the
+        operator never filled is simply absent from `card_values`, and there is no endpoint
+        through which DDS could repair it.
+      additionalProperties: false
+      required:
+        - assignment_id
+        - incident_id
+        - role_stage_id
+        - snapshot_id
+        - service_type
+        - state
+        - card_values
+        - recipient_services
+        - handoff_content_sha256
+        - received_at_offset_ms
+        - acknowledged_at_offset_ms
+        - dispatched_at_offset_ms
+        - closed_at_offset_ms
+        - closure_reason
+        - selected_resource_ids
+        - dispatched_resource_ids
+        - missing_field_paths
+      properties:
+        assignment_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        role_stage_id: { type: string, format: uuid }
+        snapshot_id: { type: string, format: uuid }
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+        state: { $ref: '#/components/schemas/DDSStageState' }
+        card_values:
+          type: object
+          description: The frozen trainee entries, verbatim from the snapshot.
+          additionalProperties: { $ref: '#/components/schemas/FactValue' }
+        recipient_services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceType' }
+        handoff_content_sha256: { type: string }
+        received_at_offset_ms: { type: integer }
+        acknowledged_at_offset_ms: { type: [integer, 'null'] }
+        dispatched_at_offset_ms: { type: [integer, 'null'] }
+        closed_at_offset_ms: { type: [integer, 'null'] }
+        closure_reason:
+          oneOf:
+            - $ref: '#/components/schemas/ClosureReason'
+            - type: 'null'
+        selected_resource_ids:
+          type: array
+          items: { type: string, format: uuid }
+        dispatched_resource_ids:
+          type: array
+          items: { type: string, format: uuid }
+        missing_field_paths:
+          type: array
+          description: |
+            `CARD_FIELDS` entries with `required_for_handoff: true` that the snapshot leaves
+            empty. Computed from the snapshot and the field specs alone — it names the gap
+            without filling it, because the omission must propagate (SPEC §10).
+          items: { type: string }
+
+    EtaProfileView:
+      type: object
+      description: '`EtaProfile` — the only ETA input; `ScenarioDefinedEta` reads these verbatim (D7, SPEC §11).'
+      additionalProperties: false
+      required: [turnout_delay_seconds, travel_time_seconds, setup_seconds, on_scene_work_seconds, return_time_seconds]
+      properties:
+        turnout_delay_seconds: { type: integer, minimum: 0 }
+        travel_time_seconds: { type: integer, minimum: 0 }
+        setup_seconds: { type: integer, minimum: 0 }
+        on_scene_work_seconds: { type: integer, minimum: 0 }
+        return_time_seconds: { type: integer, minimum: 0 }
+
+    EmergencyResourceView:
+      type: object
+      description: '`EmergencyResource` (SPEC §11), every listed item present.'
+      additionalProperties: false
+      required:
+        - resource_id
+        - service_type
+        - resource_type
+        - callsign
+        - name_ru
+        - capabilities
+        - current_status
+        - available_from_ms
+        - available_until_ms
+        - eta
+        - home_station_ru
+        - crew_size
+        - selectable
+      properties:
+        resource_id: { type: string, format: uuid }
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+        resource_type: { $ref: '#/components/schemas/ResourceType' }
+        callsign: { type: string, examples: ['АЦ-1'] }
+        name_ru: { type: string }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/ResourceCapability' }
+        current_status: { $ref: '#/components/schemas/ResourceStatus' }
+        available_from_ms: { type: integer, minimum: 0 }
+        available_until_ms: { type: [integer, 'null'] }
+        eta: { $ref: '#/components/schemas/EtaProfileView' }
+        home_station_ru: { type: string }
+        crew_size: { type: integer, minimum: 0 }
+        selectable:
+          type: boolean
+          description: |
+            Whether `select` would currently succeed — derived from
+            `RESOURCE_STATUS_TRANSITIONS` and the availability window, so the UI greys out
+            rather than guessing. The backend still re-checks the guard.
+
+    ResourceSelectionRequest:
+      type: object
+      additionalProperties: false
+      required: [resource_id]
+      properties:
+        resource_id: { type: string, format: uuid }
+
+    DispatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note_ru: { type: [string, 'null'], maxLength: 1000 }
+
+    DispatchResultView:
+      type: object
+      additionalProperties: false
+      required: [stage, dispatched_resource_ids, eta_seconds_by_resource, is_additional]
+      properties:
+        stage: { $ref: '#/components/schemas/DdsStageView' }
+        dispatched_resource_ids:
+          type: array
+          items: { type: string, format: uuid }
+        eta_seconds_by_resource:
+          type: object
+          description: '`resource_id` → total ETA seconds, as carried in the `RESOURCE_DISPATCHED` payload.'
+          additionalProperties: { type: integer, minimum: 0 }
+        is_additional:
+          type: boolean
+          description: True when this was `dispatch_additional` rather than the first `dispatch`.
+
+    StatusUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [update_kind, text_ru]
+      properties:
+        update_kind: { $ref: '#/components/schemas/StatusUpdateKind' }
+        text_ru: { type: string, minLength: 1, maxLength: 2000 }
+
+    StatusUpdateView:
+      type: object
+      additionalProperties: false
+      required: [assignment_id, update_kind, text_ru, at_offset_ms, actor_user_id]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        update_kind: { $ref: '#/components/schemas/StatusUpdateKind' }
+        text_ru: { type: string }
+        at_offset_ms: { type: integer }
+        actor_user_id: { type: string, format: uuid }
+
+    NotificationView:
+      type: object
+      additionalProperties: false
+      required: [notification_id, incident_id, audience_role, severity, title_ru, body_ru, created_at_offset_ms, source_world_event_id, acknowledged_at_offset_ms]
+      properties:
+        notification_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        audience_role: { $ref: '#/components/schemas/RoleType' }
+        severity: { $ref: '#/components/schemas/NotificationSeverity' }
+        title_ru: { type: string }
+        body_ru: { type: string }
+        created_at_offset_ms: { type: integer }
+        source_world_event_id: { type: [string, 'null'] }
+        acknowledged_at_offset_ms: { type: [integer, 'null'] }
+
+    RadioMessageView:
+      type: object
+      description: |
+        Projected from `RADIO_MESSAGE_CREATED` events; there is no radio table
+        (`docs/hld/20-db-schema.md` §20.1). `seq_no` is the log position it was read from.
+      additionalProperties: false
+      required: [radio_message_id, seq_no, incident_id, from_callsign, to_role, text_ru, resource_id, created_at_offset_ms, source_world_event_id]
+      properties:
+        radio_message_id: { type: string, format: uuid }
+        seq_no: { type: integer, minimum: 1 }
+        incident_id: { type: string, format: uuid }
+        from_callsign: { type: string }
+        to_role: { $ref: '#/components/schemas/RoleType' }
+        text_ru: { type: string }
+        resource_id: { type: [string, 'null'], format: uuid }
+        created_at_offset_ms: { type: integer }
+        source_world_event_id: { type: [string, 'null'] }
+
+    CloseIncidentRequest:
+      type: object
+      additionalProperties: false
+      required: [closure_reason]
+      properties:
+        closure_reason: { $ref: '#/components/schemas/ClosureReason' }
+        comment_ru: { type: [string, 'null'], maxLength: 2000 }
+
+    DdsStageView:
+      type: object
+      description: The materialized view every DDS command returns (D8). It embeds the work item, never WorldTruth.
+      additionalProperties: false
+      required: [role_stage_id, stage_state, available_actions, work_item, resources, unacknowledged_notification_count, session_state, last_seq_no]
+      properties:
+        role_stage_id: { type: string, format: uuid }
+        stage_state: { $ref: '#/components/schemas/DDSStageState' }
+        available_actions:
+          type: array
+          items: { $ref: '#/components/schemas/ActionDescriptor' }
+        work_item: { $ref: '#/components/schemas/DdsWorkItem' }
+        resources:
+          type: array
+          items: { $ref: '#/components/schemas/EmergencyResourceView' }
+        unacknowledged_notification_count: { type: integer, minimum: 0 }
+        session_state: { $ref: '#/components/schemas/SessionState' }
+        last_seq_no: { type: integer, minimum: 0 }
+
+    # --------------------------------------------------------- instructor ----
+    WorldTruthView:
+      type: object
+      x-visibility: INSTRUCTOR
+      description: '`WorldTruth`. Instructor console and report context only (D3, D11).'
+      additionalProperties: false
+      required: [incident_id, revision, facts, value_types]
+      properties:
+        incident_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        facts:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/FactValue' }
+        value_types:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ValueType' }
+
+    CallerBeliefView:
+      type: object
+      x-visibility: INSTRUCTOR
+      description: '`CallerBelief` — what the simulated caller believes, plus current emotion. Instructor only.'
+      additionalProperties: false
+      required: [incident_id, revision, facts, knowledge, certainty, emotion, stress_level, revealed_fact_ids]
+      properties:
+        incident_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        facts:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/FactValue' }
+        knowledge:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/KnowledgeState' }
+        certainty:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 1 }
+        emotion: { $ref: '#/components/schemas/EmotionLabel' }
+        stress_level: { type: number, minimum: 0, maximum: 1 }
+        revealed_fact_ids:
+          type: array
+          description: Written only by `FACTS_DELIVERED`, never by the gate (D10).
+          items: { type: string }
+
+    GateDecisionView:
+      type: object
+      x-visibility: INSTRUCTOR
+      description: One `GateDecision` from `FACT_GATE_EVALUATED`. Gate internals are instructor-only (D3).
+      additionalProperties: false
+      required: [fact_id, outcome, reason]
+      properties:
+        fact_id: { type: string }
+        outcome: { $ref: '#/components/schemas/GateOutcome' }
+        reason: { $ref: '#/components/schemas/GateReason' }
+
+    GateTurnView:
+      type: object
+      x-visibility: INSTRUCTOR
+      additionalProperties: false
+      required: [turn_index, at_offset_ms, decisions, allowed_fact_ids, spontaneous_attached, withheld_count]
+      properties:
+        turn_index: { type: integer, minimum: 0 }
+        at_offset_ms: { type: integer }
+        decisions:
+          type: array
+          items: { $ref: '#/components/schemas/GateDecisionView' }
+        allowed_fact_ids:
+          type: array
+          items: { type: string }
+        spontaneous_attached:
+          type: array
+          items: { type: string }
+        withheld_count: { type: integer, minimum: 0 }
+
+    TruthVsCardDiffEntry:
+      type: object
+      x-visibility: INSTRUCTOR
+      description: |
+        One row of the ground-truth-vs-entered-card diff (SPEC §29). This is the one place
+        `WorldTruth` is shown to a human (D11) — it is a review artefact, never an input to a
+        running stage.
+      additionalProperties: false
+      required: [field_path, label_ru, world_fact_id, world_value, card_value, verdict]
+      properties:
+        field_path: { type: string }
+        label_ru: { type: string }
+        world_fact_id: { type: [string, 'null'] }
+        world_value: { $ref: '#/components/schemas/FactValue' }
+        card_value: { $ref: '#/components/schemas/FactValue' }
+        verdict:
+          type: string
+          enum: [MATCH, MISMATCH, MISSING, NOT_COMPARABLE]
+
+    InstructorSessionOverview:
+      type: object
+      x-visibility: INSTRUCTOR
+      description: |
+        The live instructor console payload. It is the union of the two trainee views plus the
+        hidden layers; no trainee endpoint returns this schema or any part of it.
+      additionalProperties: false
+      required:
+        - session
+        - stages
+        - world_truth
+        - caller_belief
+        - gate_turns
+        - card
+        - handoff
+        - assignments
+        - resources
+        - call_state
+        - last_seq_no
+        - inference_health
+      properties:
+        session: { $ref: '#/components/schemas/SessionDetail' }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/RoleStageView' }
+        world_truth: { $ref: '#/components/schemas/WorldTruthView' }
+        caller_belief: { $ref: '#/components/schemas/CallerBeliefView' }
+        gate_turns:
+          type: array
+          items: { $ref: '#/components/schemas/GateTurnView' }
+        card:
+          oneOf:
+            - $ref: '#/components/schemas/OperatorCardView'
+            - type: 'null'
+        handoff:
+          oneOf:
+            - $ref: '#/components/schemas/HandoffSnapshotView'
+            - type: 'null'
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/DdsWorkItem' }
+        resources:
+          type: array
+          items: { $ref: '#/components/schemas/EmergencyResourceView' }
+        call_state: { $ref: '#/components/schemas/CallStateView' }
+        last_seq_no: { type: integer, minimum: 0 }
+        inference_health: { $ref: '#/components/schemas/HealthReadyResponse' }
+
+    ReportReleaseView:
+      type: object
+      additionalProperties: false
+      required: [session_id, released, released_at, released_by_user_id]
+      properties:
+        session_id: { type: string, format: uuid }
+        released: { type: boolean }
+        released_at: { type: [string, 'null'], format: date-time }
+        released_by_user_id: { type: [string, 'null'], format: uuid }
+
+    # ------------------------------------------------------------ report ----
+    ScoreEvidenceView:
+      type: object
+      description: |
+        Exactly one of `event_id`, `card_revision_id`, `snapshot_id` is set. A rule that awards
+        or deducts without evidence is a hard error, never a silent zero (D11, §42 test 11).
+      additionalProperties: false
+      required: [event_id, card_revision_id, snapshot_id, seq_no, note_ru]
+      properties:
+        event_id: { type: [string, 'null'], format: uuid }
+        card_revision_id: { type: [string, 'null'], format: uuid }
+        snapshot_id: { type: [string, 'null'], format: uuid }
+        seq_no: { type: [integer, 'null'] }
+        note_ru: { type: string }
+
+    ScoreResultView:
+      type: object
+      additionalProperties: false
+      required: [rule_id, name_ru, description_ru, evaluator_type, category, points_awarded, max_points, passed, critical_failure, evidence]
+      properties:
+        rule_id: { type: string }
+        name_ru: { type: string }
+        description_ru: { type: string }
+        evaluator_type: { $ref: '#/components/schemas/EvaluatorType' }
+        category: { $ref: '#/components/schemas/ScoringCategory' }
+        points_awarded: { type: number, description: May be negative (a penalty). }
+        max_points: { type: number }
+        passed: { type: boolean }
+        critical_failure: { type: boolean }
+        evidence:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ScoreEvidenceView' }
+
+    ScoreCategoryTotalView:
+      type: object
+      additionalProperties: false
+      required: [category, points_awarded, max_points]
+      properties:
+        category: { $ref: '#/components/schemas/ScoringCategory' }
+        points_awarded: { type: number }
+        max_points: { type: number }
+
+    ScoreReportView:
+      type: object
+      additionalProperties: false
+      required: [scenario_version_id, session_id, total_points, total_max_points, by_category, critical_errors, results, computed_from_event_count, checksum]
+      properties:
+        scenario_version_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        total_points: { type: number }
+        total_max_points: { type: number }
+        by_category:
+          type: array
+          items: { $ref: '#/components/schemas/ScoreCategoryTotalView' }
+        critical_errors:
+          type: array
+          items: { $ref: '#/components/schemas/ScoreResultView' }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/ScoreResultView' }
+        computed_from_event_count: { type: integer, minimum: 0 }
+        checksum:
+          type: string
+          description: Canonical-JSON SHA-256 of the numeric results; what `rescoreSession` compares.
+
+    TranscriptSegmentView:
+      type: object
+      description: |
+        One `transcript_segments` row (SPEC §19 fields). `audio_segment_id` plus `start_ms` is
+        what makes click-transcript-to-seek work (SPEC §29).
+      additionalProperties: false
+      required: [id, speaker, start_ms, end_ms, text, is_final, confidence, asr_provider, asr_model, audio_segment_id, turn_index]
+      properties:
+        id: { type: string, format: uuid }
+        speaker:
+          type: string
+          enum: [OPERATOR, CALLER]
+        start_ms: { type: integer }
+        end_ms: { type: integer }
+        text: { type: string }
+        is_final: { type: boolean }
+        confidence: { type: [number, 'null'] }
+        asr_provider:
+          type: [string, 'null']
+          description: '`null` for caller rows, whose text is the delivered TTS text.'
+        asr_model: { type: [string, 'null'] }
+        audio_segment_id: { type: [string, 'null'], format: uuid }
+        turn_index: { type: [integer, 'null'] }
+
+    AudioSegmentRef:
+      type: object
+      additionalProperties: false
+      required: [audio_segment_id, speaker, start_ms, end_ms, sample_rate, purged]
+      properties:
+        audio_segment_id: { type: string, format: uuid }
+        speaker:
+          type: string
+          enum: [OPERATOR, CALLER]
+        start_ms:
+          type: integer
+          description: Session-relative, not file-relative (D9).
+        end_ms: { type: integer }
+        sample_rate: { type: integer }
+        purged:
+          type: boolean
+          description: True when the retention purge nulled `file_path`; the transcript survives.
+
+    TimelineEntryView:
+      type: object
+      description: One row of the complete event timeline (SPEC §29), projected from `session_events`.
+      additionalProperties: false
+      required: [seq_no, event_type, monotonic_offset_ms, timestamp_utc, actor_type, actor_id, summary_ru, payload]
+      properties:
+        seq_no: { type: integer, minimum: 1 }
+        event_type: { $ref: '#/components/schemas/EventType' }
+        monotonic_offset_ms: { type: integer }
+        timestamp_utc: { type: string, format: date-time }
+        actor_type: { $ref: '#/components/schemas/ActorType' }
+        actor_id: { type: [string, 'null'], format: uuid }
+        summary_ru: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+
+    DdsDecisionView:
+      type: object
+      description: The DDS decisions section of SPEC §29 — what was acknowledged, dispatched, reported and closed.
+      additionalProperties: false
+      required: [assignment_id, service_type, acknowledged_at_offset_ms, dispatch_events, status_updates, closure_reason, closed_at_offset_ms]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+        acknowledged_at_offset_ms: { type: [integer, 'null'] }
+        dispatch_events:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [at_offset_ms, resource_ids, callsigns, is_additional]
+            properties:
+              at_offset_ms: { type: integer }
+              resource_ids:
+                type: array
+                items: { type: string, format: uuid }
+              callsigns:
+                type: array
+                items: { type: string }
+              is_additional: { type: boolean }
+        status_updates:
+          type: array
+          items: { $ref: '#/components/schemas/StatusUpdateView' }
+        closure_reason:
+          oneOf:
+            - $ref: '#/components/schemas/ClosureReason'
+            - type: 'null'
+        closed_at_offset_ms: { type: [integer, 'null'] }
+
+    ResourceTimelineEntryView:
+      type: object
+      description: One `RESOURCE_STATUS_CHANGED` step — the resource timeline of SPEC §29.
+      additionalProperties: false
+      required: [resource_id, callsign, previous_status, new_status, trigger, at_offset_ms]
+      properties:
+        resource_id: { type: string, format: uuid }
+        callsign: { type: string }
+        previous_status: { $ref: '#/components/schemas/ResourceStatus' }
+        new_status: { $ref: '#/components/schemas/ResourceStatus' }
+        trigger: { type: string }
+        at_offset_ms: { type: integer }
+
+    TimingMetricsView:
+      type: object
+      description: |
+        The timing metrics section of SPEC §29. `speech_end_to_first_audio_ms` is the SPEC §27
+        critical product metric, measured per turn — never hard-coded.
+      additionalProperties: false
+      required: [turn_count, speech_end_to_first_audio_ms_p50, speech_end_to_first_audio_ms_p95, asr_latency_ms_p50, llm_ttft_ms_p50, tts_first_audio_ms_p50, barge_in_cutoff_ms_p95, fallback_count]
+      properties:
+        turn_count: { type: integer, minimum: 0 }
+        speech_end_to_first_audio_ms_p50: { type: [number, 'null'] }
+        speech_end_to_first_audio_ms_p95: { type: [number, 'null'] }
+        asr_latency_ms_p50: { type: [number, 'null'] }
+        llm_ttft_ms_p50: { type: [number, 'null'] }
+        tts_first_audio_ms_p50: { type: [number, 'null'] }
+        barge_in_cutoff_ms_p95: { type: [number, 'null'] }
+        fallback_count: { type: integer, minimum: 0 }
+
+    SessionReport:
+      type: object
+      description: |
+        Every SPEC §29 item, in order: total score, score by category, critical errors, complete
+        event timeline, transcript, audio playback references, click-to-seek offsets, final card,
+        ground-truth-vs-card diff, handoff snapshot, DDS decisions, resource timeline, timing
+        metrics, evidence per rule (carried inside each `ScoreResultView`).
+      additionalProperties: false
+      required:
+        - session_id
+        - session
+        - score_report
+        - timeline
+        - transcript
+        - audio_segments
+        - final_card
+        - truth_vs_card_diff
+        - handoff
+        - dds_decisions
+        - resource_timeline
+        - timing_metrics
+        - explanation_available
+        - released
+      properties:
+        session_id: { type: string, format: uuid }
+        session: { $ref: '#/components/schemas/SessionDetail' }
+        score_report: { $ref: '#/components/schemas/ScoreReportView' }
+        timeline:
+          type: array
+          items: { $ref: '#/components/schemas/TimelineEntryView' }
+        transcript:
+          type: array
+          items: { $ref: '#/components/schemas/TranscriptSegmentView' }
+        audio_segments:
+          type: array
+          description: 'Fetch each with `getAudioSegment`; `start_ms` is the seek target.'
+          items: { $ref: '#/components/schemas/AudioSegmentRef' }
+        final_card: { $ref: '#/components/schemas/OperatorCardView' }
+        truth_vs_card_diff:
+          type: array
+          x-visibility: INSTRUCTOR
+          description: |
+            Included for `INSTRUCTOR`/`ADMIN` always, and for the trainee once the report is
+            released. Empty array when the caller may not see it.
+          items: { $ref: '#/components/schemas/TruthVsCardDiffEntry' }
+        handoff:
+          oneOf:
+            - $ref: '#/components/schemas/HandoffSnapshotView'
+            - type: 'null'
+        dds_decisions:
+          type: array
+          items: { $ref: '#/components/schemas/DdsDecisionView' }
+        resource_timeline:
+          type: array
+          items: { $ref: '#/components/schemas/ResourceTimelineEntryView' }
+        timing_metrics: { $ref: '#/components/schemas/TimingMetricsView' }
+        explanation_available: { type: boolean }
+        released: { type: boolean }
+
+    RescoreRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        persist:
+          type: boolean
+          default: false
+          description: |
+            When `true`, the recomputed results replace `score_results` / `score_evidence`.
+            The default is a non-destructive check.
+
+    RescoreResult:
+      type: object
+      additionalProperties: false
+      required: [session_id, identical_to_stored, recomputed, stored_checksum, recomputed_checksum, differences, persisted]
+      properties:
+        session_id: { type: string, format: uuid }
+        identical_to_stored:
+          type: boolean
+          description: |
+            The machine-checkable form of SPEC §28: the same event log and scenario version must
+            always reproduce the same score. `false` is a defect, never an expected outcome.
+        recomputed: { $ref: '#/components/schemas/ScoreReportView' }
+        stored_checksum: { type: [string, 'null'] }
+        recomputed_checksum: { type: string }
+        differences:
+          type: array
+          description: Per-rule deltas when `identical_to_stored` is false; empty otherwise.
+          items:
+            type: object
+            additionalProperties: false
+            required: [rule_id, stored_points, recomputed_points]
+            properties:
+              rule_id: { type: string }
+              stored_points: { type: [number, 'null'] }
+              recomputed_points: { type: number }
+        persisted: { type: boolean }
+
+    GenerateExplanationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        regenerate:
+          type: boolean
+          default: false
+          description: Replace an existing explanation instead of failing with `EXPLANATION_ALREADY_EXISTS`.
+        audience:
+          type: string
+          enum: [TRAINEE, INSTRUCTOR]
+          default: TRAINEE
+
+    ReportExplanation:
+      type: object
+      description: |
+        Prose generated from an already persisted `ScoreReport`. It may not alter numeric
+        results (SPEC §2, §29): `score_report_checksum` is echoed so the client can verify that
+        the numbers are the ones it already has.
+      additionalProperties: false
+      required: [session_id, audience, text_ru, generated_at, llm_provider, llm_model, score_report_checksum]
+      properties:
+        session_id: { type: string, format: uuid }
+        audience:
+          type: string
+          enum: [TRAINEE, INSTRUCTOR]
+        text_ru: { type: string }
+        generated_at: { type: string, format: date-time }
+        llm_provider: { type: string }
+        llm_model: { type: string }
+        score_report_checksum:
+          type: string
+          description: Equals `ScoreReportView.checksum` of the report it explains.
+
+    InferenceMetricView:
+      type: object
+      description: One `inference_metrics` row — the SPEC §27 `InferenceMetric` fields.
+      additionalProperties: false
+      required:
+        - id
+        - session_id
+        - request_id
+        - component
+        - provider
+        - model
+        - model_version
+        - turn_index
+        - input_tokens
+        - input_duration_ms
+        - output_tokens
+        - output_audio_ms
+        - started_at
+        - first_output_at
+        - finished_at
+        - ttft_ms
+        - total_latency_ms
+        - tokens_per_second
+        - realtime_factor
+        - gpu_memory_mb
+        - fallback_count
+        - retry_count
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: [string, 'null'], format: uuid }
+        request_id: { type: string }
+        component:
+          type: string
+          enum: [ASR, LLM_INTERPRETER, LLM_GENERATOR, TTS, VAD]
+        provider: { type: string }
+        model: { type: string }
+        model_version: { type: [string, 'null'] }
+        turn_index: { type: [integer, 'null'] }
+        input_tokens: { type: [integer, 'null'] }
+        input_duration_ms: { type: [integer, 'null'] }
+        output_tokens: { type: [integer, 'null'] }
+        output_audio_ms: { type: [integer, 'null'] }
+        started_at: { type: string, format: date-time }
+        first_output_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        ttft_ms: { type: [integer, 'null'] }
+        total_latency_ms: { type: [integer, 'null'] }
+        tokens_per_second: { type: [number, 'null'] }
+        realtime_factor: { type: [number, 'null'] }
+        gpu_memory_mb: { type: [integer, 'null'] }
+        fallback_count: { type: integer, minimum: 0 }
+        retry_count: { type: integer, minimum: 0 }
+
+    InferenceMetricsPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, timing_metrics]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/InferenceMetricView' }
+        total: { type: integer, minimum: 0 }
+        timing_metrics: { $ref: '#/components/schemas/TimingMetricsView' }
+
+    # ------------------------------------------------------------ health ----
+    HealthLiveResponse:
+      type: object
+      additionalProperties: false
+      required: [status, version, uptime_seconds]
+      properties:
+        status: { type: string, const: LIVE }
+        version: { type: string }
+        uptime_seconds: { type: integer, minimum: 0 }
+
+    ComponentHealth:
+      type: object
+      additionalProperties: false
+      required: [component, status, detail, checked_at]
+      properties:
+        component:
+          type: string
+          enum: [postgres, redis, livekit, llm, asr, tts, vad]
+        status: { $ref: '#/components/schemas/HealthStatus' }
+        detail:
+          type: [string, 'null']
+          description: |
+            For an inference service, the `detail` of the `voice:health:{service}` key; a missing
+            key reports `NOT_READY` with `"no heartbeat from voice-agent"`.
+        checked_at: { type: string, format: date-time }
+        provider: { type: [string, 'null'] }
+        model_version: { type: [string, 'null'] }
+        warmup_ms: { type: [integer, 'null'] }
+
+    HealthReadyResponse:
+      type: object
+      description: |
+        Readiness per SPEC §37 and D8. `overall` is `READY` only when every component in
+        `required_components` is `READY`; `FATAL` anywhere makes `overall` `FATAL`, and a FATAL
+        latched in `voice:health:fatal` is cleared only by `clearInferenceFatal`.
+      additionalProperties: false
+      required: [overall, components, required_components, require_inference_ready, model_profile]
+      properties:
+        overall: { $ref: '#/components/schemas/HealthStatus' }
+        components:
+          type: array
+          items: { $ref: '#/components/schemas/ComponentHealth' }
+        required_components:
+          type: array
+          description: The components `startSession` insists on while `require_inference_ready` is true.
+          items: { type: string }
+        require_inference_ready:
+          type: boolean
+          description: '`REQUIRE_INFERENCE_READY` (default true; tests set it false explicitly).'
+        model_profile:
+          type: string
+          enum: [DEV_3060TI, FINAL_3080TI_12GB, FINAL_3080TI_16GB]
+
+    # ------------------------------------------------------------- admin ----
+    PurgeRecordingsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        dry_run:
+          type: boolean
+          default: true
+          description: Report what would be purged and delete nothing.
+        older_than_days:
+          type: [integer, 'null']
+          minimum: 0
+          description: Overrides `RECORDING_RETENTION_DAYS` for this run.
+        session_id:
+          type: [string, 'null']
+          format: uuid
+          description: Restrict the purge to one session (`reason = MANUAL_REQUEST`).
+
+    PurgeRecordingsResult:
+      type: object
+      additionalProperties: false
+      required: [dry_run, retention_days, session_count, segment_count, bytes_freed, purged_at, reason]
+      properties:
+        dry_run: { type: boolean }
+        retention_days: { type: integer, minimum: 0 }
+        session_count: { type: integer, minimum: 0 }
+        segment_count: { type: integer, minimum: 0 }
+        bytes_freed: { type: integer, minimum: 0 }
+        purged_at: { type: string, format: date-time }
+        reason:
+          type: string
+          enum: [RETENTION_WINDOW, MANUAL_REQUEST, ADMIN_DELETE]

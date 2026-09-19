@@ -1,0 +1,347 @@
+@startuml sequence-full-cycle
+' HLD — the primary implemented flow of SPEC §1, end to end.
+'
+' Scope: FULL_CYCLE_SINGLE_TRAINEE. One SimulationSession, one Incident, one ScenarioVersion,
+' one event timeline (SPEC §13). Shows which process appends which SessionEvent; the note on
+' each append names the event type exactly as in EventType (10-domain-model.md §10.2).
+'
+' Reading rule: every `append` arrow is one row in session_events, allocated under the
+' next_seq_no row lock and committed in the same Unit of Work as the state change (D5).
+' Every `publish` is the post-commit fan-out to Redis session:{id}:events (40-realtime-protocol.md).
+
+title Primary flow (SPEC §1) — create → call → interview → card → handoff → DDS → close → report
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "Instructor" as INS
+actor "Trainee\n(112 → DDS)" as TR
+
+box "Browser (D12)" #F7F7F7
+  participant "Frontend\n/operator, /dds, /report" as FE
+end box
+
+box "backend (FastAPI)" #EFF5FF
+  participant "API\napp/api" as API
+  participant "Use cases\napp/application" as UC
+  participant "Domain\napp/domain" as DOM
+  participant "SimulationRunner\n+ WorldEvent engine" as RUN
+  participant "Scoring\ndomain/scoring" as SCORE
+end box
+
+box "infrastructure" #F3FFF3
+  database "PostgreSQL\nsession_events (audit source)" as PG
+  queue "Redis\nsession:{id}:events" as RDS
+end box
+
+box "workers/voice_agent (D9)" #FFF6EF
+  participant "TurnPipeline\nVAD→ASR→Interp→Gate→LLM→TTS" as VA
+  participant "LiveKit room" as LK
+end box
+
+== 1. Create (POST /api/v1/sessions — createSession) ==
+
+INS -> FE : choose scenario version, mode,\nparticipants, seed override
+FE -> API : POST /api/v1/sessions
+API -> UC : CreateSessionUseCase
+UC -> DOM : instantiate_world_truth(version, incident_id)\ninstantiate_caller_belief(version, incident_id)
+note right of DOM
+  WorldTruth and CallerBelief are two separate
+  objects in two separate tables (SPEC §3, D3).
+  Neither aliases the other.
+end note
+UC -> PG : one Unit of Work:\nsimulation_sessions, incidents,\nrole_stages[OPERATOR_112, DDS],\nincident_cards, emergency_resources
+UC -> PG : append **SESSION_CREATED**\n{session_mode, session_seed, role_chain, …}
+UC -> DOM : SESSION_TRANSITIONS.fire(CREATED, "validate")\nguard_scenario_valid_and_participants_assigned
+UC --> API : SessionDetail (state = READY)
+API --> FE : 201 SessionDetail
+
+== 2. Start (POST /api/v1/sessions/{id}/start — startSession) ==
+
+INS -> FE : Start
+FE -> API : POST /api/v1/sessions/{id}/start
+API -> UC : StartSessionUseCase
+UC -> UC : guard_inference_ready\n(GET voice:health:{llm,asr,tts,vad})
+alt a required service is not READY and REQUIRE_INFERENCE_READY
+  UC --> FE : 503 problem+json code = INFERENCE_NOT_READY
+else ready
+  UC -> DOM : fire(READY, "start") → ACTIVE
+  UC -> PG : append **SESSION_STARTED**
+  UC -> PG : append **ROLE_STAGE_STARTED** {role_type = OPERATOR_112}
+  UC -> RDS : publish envelopes (post-commit)
+  RDS --> FE : WS event frames
+  UC -> RUN : adopt session\n(lock:session:{id}:runner)
+end
+
+== 3. Ringing (SimulationRunner) ==
+
+RUN -> DOM : fire(WAITING_FOR_CALL, "ring") → RINGING\nguard_session_active_and_transport_ready
+RUN -> PG : append **CALL_RINGING** {call_id, room_name, caller_display_ru}
+RUN -> PG : append **STAGE_STATE_CHANGED**
+RUN -> RDS : publish `voice:join {session_id, room, call_id}`
+RDS --> VA : join instruction
+VA -> LK : connect(call_id) — CallTransport.connect
+RDS --> FE : CALL_RINGING → phone widget rings
+
+== 4. Answer (POST …/operator/call/answer — answerCall) ==
+
+TR -> FE : Ответить
+FE -> API : POST /api/v1/sessions/{id}/operator/call/answer
+API -> UC : AnswerCallUseCase
+UC -> DOM : fire(RINGING, "answer") → CONNECTED\nguard_participant_assigned_to_stage
+UC -> PG : append **CALL_ANSWERED**, **STAGE_STATE_CHANGED**
+UC --> FE : OperatorStageView (available_actions)
+FE -> API : POST /api/v1/sessions/{id}/voice-token
+API --> FE : LiveKit token (backend-minted, D9)
+FE -> LK : join room — media plane only
+
+== 5. One interview turn (voice-agent; repeats N times) ==
+
+TR -> LK : speaks (PCM)
+LK -> VA : inbound_audio()
+VA -> VA : Resampler → VADProvider → TurnDetector
+VA -> PG : append **USER_SPEECH_STARTED**
+VA -> PG : append **USER_SPEECH_ENDED** {speech_duration_ms, endpoint_silence_ms}
+VA -> PG : append **ASR_PARTIAL** (while streaming; shown only if\nSessionPolicy.show_asr_partials)
+VA -> PG : append **ASR_FINAL** {transcript_segment_id, text}
+VA -> VA : DialogueInterpreter (llama.cpp, json_schema)
+VA -> PG : append **DIALOGUE_INTERPRETED** {speech_act, requested_facts[{fact_id, explicit}]}
+VA -> DOM : evaluate_fact_access(requests, definitions,\ncaller_belief, revealed_fact_ids, now_ms, ctx)
+note right of DOM
+  FactAccessGate is deterministic domain code and
+  takes **no** world_truth parameter (SPEC §21, D10):
+  no world value can reach the caller LLM.
+end note
+VA -> PG : append **FACT_GATE_EVALUATED** {decisions, allowed_fact_ids} — INSTRUCTOR only
+VA -> PG : append **CALLER_RESPONSE_PLANNED**
+VA -> VA : CallerResponseGenerator (AllowedFactsPackage + persona only)\n→ ResponseValidator
+alt validation fails twice
+  VA -> PG : append **MODEL_FALLBACK_USED** {component = GENERATOR}
+end
+VA -> PG : append **CALLER_RESPONSE_GENERATED** {utterance_ru, validator_verdict}
+VA -> LK : TTSProvider.stream() → CallTransport.play()
+VA -> PG : append **CALLER_TTS_STARTED** {text_sent_to_tts}
+LK -> TR : caller audio
+
+alt trainee barges in (SPEC §18)
+  TR -> LK : sustained speech during playback
+  VA -> VA : cancel TTS → clear_outbound() → PlaybackHandle.cancel()
+  VA -> PG : append **CALLER_UTTERANCE_INTERRUPTED**\n{planned_text, delivered_text, delivered_audio_ms}
+  note right of VA : nothing is revealed by an interrupted response (D10)
+else playback completes
+  VA -> PG : append **CALLER_TTS_ENDED** {completed = true}
+  VA -> PG : append **FACTS_DELIVERED** {fact_ids} — the sole writer of revealed_fact_ids
+end
+VA -> PG : first finalized turn only:\nfire(CONNECTED, "begin_interview") → INTERVIEW,\nappend **STAGE_STATE_CHANGED**
+VA -> RDS : publish envelopes
+RDS --> FE : role-filtered frames (40-realtime-protocol.md §40.4)
+
+== 6. Card edits (PUT …/operator/card/field — setCardField; one field per command) ==
+
+TR -> FE : types a value into one card field
+FE -> API : PUT /api/v1/sessions/{id}/operator/card/field\n{field_path, new_value}
+API -> UC : SetCardFieldUseCase
+UC -> DOM : set_field(card, field_path, new_value, actor, at_offset_ms, revision_id)
+note right of DOM
+  Trainee-written only. ASR never calls this
+  (SPEC §9, §42 test 4). Previous value, new value,
+  path, time and actor are all recorded.
+end note
+UC -> PG : incident_card_revisions row +\nappend **CARD_FIELD_CHANGED** {previous_value, new_value, revision_id}
+UC --> FE : SetCardFieldResponse {card, revision}
+
+== 7. Recipient services (POST …/operator/services/select — selectRecipientService) ==
+
+TR -> FE : selects FIRE_RESCUE, AMBULANCE
+FE -> API : POST /api/v1/sessions/{id}/operator/services/select
+API -> UC : SelectServiceUseCase
+UC -> PG : append **CARD_FIELD_CHANGED** {field_path = "recipients.services"}
+UC -> PG : append **SERVICE_SELECTED** {service_type, selected_services}
+UC --> FE : ServiceSelectionView
+
+== 8. Handoff (POST …/operator/handoff — createHandoff) ==
+
+TR -> FE : Подготовить передачу
+FE -> API : POST /api/v1/sessions/{id}/operator/handoff/prepare
+API -> DOM : fire(INTERVIEW, "open_handoff_preparation") → HANDOFF_PREPARATION
+API -> PG : append **STAGE_STATE_CHANGED**
+
+TR -> FE : Передать в ДДС
+FE -> API : POST /api/v1/sessions/{id}/operator/handoff
+API -> UC : CreateHandoffUseCase
+UC -> DOM : fire(HANDOFF_PREPARATION, "create_handoff") → HANDED_OFF\nguard_at_least_one_recipient_service
+UC -> DOM : freeze_card_to_snapshot(card, card_revision_id,\nrecipient_services, created_by_user_id, at_offset_ms)
+note right of DOM
+  Deep copy of exactly the trainee-entered values.
+  If the operator typed house "72" where WorldTruth
+  says "27", the snapshot carries "72" (SPEC §3, §10).
+  An omission propagates; it is never repaired.
+end note
+UC -> DOM : snapshot_to_assignment(snapshot, role_stage_id, at_offset_ms)\n— one DDSAssignment per recipient service
+UC -> PG : handoff_snapshots (immutable; trigger rejects UPDATE/DELETE)\n+ dds_assignments
+UC -> PG : append **HANDOFF_CREATED** {snapshot_id, card_values, content_sha256}
+UC -> PG : append **STAGE_STATE_CHANGED**
+UC -> PG : append **HANDOFF_RECEIVED** {assignment_id, service_type}
+UC --> FE : 201 HandoffCreatedView
+
+TR -> FE : Завершить вызов
+FE -> API : POST /api/v1/sessions/{id}/operator/call/end
+API -> PG : append **CALL_ENDED** {duration_ms, ended_by}
+API -> RDS : publish `voice:cancel:{session_id}`
+RDS --> VA : stop the turn loop, leave the room
+VA -> LK : disconnect()
+
+== 9. Stage completion and role transition (SPEC §13, §42 test 5) ==
+
+TR -> FE : Завершить этап
+FE -> API : POST /api/v1/sessions/{id}/operator/stage/complete
+API -> DOM : fire(HANDED_OFF, "complete_stage") → STAGE_COMPLETED\nguard_call_ended
+API -> PG : append **ROLE_STAGE_COMPLETED** {role_type = OPERATOR_112, duration_ms}
+API -> PG : append **STAGE_STATE_CHANGED**
+API -> DOM : fire(ACTIVE, "begin_role_transition") → ROLE_TRANSITION\nguard_stage_terminal_and_next_exists
+API -> PG : append **ROLE_TRANSITION_STARTED**\n{from_role_type = OPERATOR_112, to_role_type = DDS,\npause_seconds = SessionPolicy.transition_pause_seconds}
+API --> FE : SessionDetail (state = ROLE_TRANSITION)
+FE -> FE : countdown; the Continue button is enabled\nfrom the server's transition_continue_available_at_offset_ms
+
+TR -> FE : Продолжить
+FE -> API : POST /api/v1/sessions/{id}/stage/continue
+API -> DOM : fire(ROLE_TRANSITION, "finish_role_transition") → ACTIVE\nguard_pause_elapsed_and_next_assigned
+API -> PG : append **ROLE_TRANSITION_COMPLETED** {incident_id — the SAME incident}
+API -> PG : append **ROLE_STAGE_STARTED** {role_type = DDS, initial_state = RECEIVED}
+API -> PG : append **STAGE_STATE_CHANGED**
+API --> FE : SessionDetail → route /dds
+
+== 10. DDS receives exactly the submitted card (GET …/dds/work-item) ==
+
+FE -> API : GET /api/v1/sessions/{id}/dds/work-item
+API -> UC : GetDdsWorkItemUseCase
+note right of UC
+  Constructed WITHOUT a world-truth repository (D3).
+  The work item is built from handoff_snapshots and
+  dds_assignments only — there is no code path from
+  DDS to WorldTruth (SPEC §10, §42 test 3).
+end note
+UC -> PG : read handoff_snapshots, dds_assignments
+UC --> FE : DdsWorkItem {card_values = "72", missing_field_paths}
+
+TR -> FE : Принять к исполнению
+FE -> API : POST /api/v1/sessions/{id}/dds/acknowledge
+API -> DOM : fire(RECEIVED, "acknowledge") → ACKNOWLEDGED
+API -> PG : append **DDS_ACKNOWLEDGED** {latency_from_handoff_ms}
+API -> PG : append **STAGE_STATE_CHANGED**
+
+== 11. Resource selection and dispatch (SPEC §11) ==
+
+FE -> API : GET /api/v1/sessions/{id}/dds/resources
+API --> FE : EmergencyResourceView[] (scenario-defined EtaProfile)
+
+TR -> FE : Подбор сил и средств
+FE -> API : POST /api/v1/sessions/{id}/dds/resources/select {resource_id}
+API -> DOM : fire(ACKNOWLEDGED, "open_resource_selection") → RESOURCE_SELECTION\nRESOURCE_STATUS_TRANSITIONS: AVAILABLE --select--> SELECTED
+API -> PG : append **RESOURCE_SELECTED**, **RESOURCE_STATUS_CHANGED**
+
+TR -> FE : Направить
+FE -> API : POST /api/v1/sessions/{id}/dds/resources/dispatch
+API -> DOM : fire(RESOURCE_SELECTION, "dispatch") → DISPATCHED\nSELECTED --dispatch--> DISPATCHED
+API -> PG : append **RESOURCE_DISPATCHED**\n{resource_ids, capabilities_union, eta_seconds_by_resource}
+API -> PG : append **RESOURCE_STATUS_CHANGED**, **STAGE_STATE_CHANGED**
+API --> FE : DispatchResultView
+
+== 12. The world keeps developing (SimulationRunner, SPEC §12) ==
+
+loop every SIM_TICK_MS (default 500) and after each command
+  RUN -> DOM : advance(state, now_ms, pending_actions, rng_factory)
+  note right of DOM
+    rng = Random(sha256("{session_seed}:{event_id}:{occurrence}"))
+    — independent of evaluation order, so identical seed +
+    identical timestamped actions ⇒ identical event stream
+    (SPEC §12, §42 test 7).
+  end note
+  RUN -> PG : append **WORLD_EVENT_TRIGGERED** {world_event_id, kind, occurrence}
+  alt effect MutateWorldTruth
+    RUN -> PG : append **WORLD_TRUTH_MUTATED** — INSTRUCTOR only
+  end
+  alt effect MutateCallerBelief (only if caller_observable)
+    RUN -> PG : append **CALLER_BELIEF_MUTATED** — INSTRUCTOR only
+  end
+  alt effect ChangeCallerEmotion
+    RUN -> PG : append **CALLER_EMOTION_CHANGED**
+  end
+  alt effect CreateNotification
+    RUN -> PG : append **NOTIFICATION_CREATED** {audience_role, severity}
+  end
+  alt effect CreateRadioMessage
+    RUN -> PG : append **RADIO_MESSAGE_CREATED** {from_callsign, to_role}\n(no table — read model over session_events)
+  end
+  RUN -> DOM : resource ETA transitions\n(turnout → travel → setup → work)
+  RUN -> PG : append **RESOURCE_STATUS_CHANGED** (DISPATCHED→EN_ROUTE→ON_SCENE→WORKING)
+  RUN -> DOM : assignment triggers first_en_route / first_arrived / work_started
+  RUN -> PG : append **STAGE_STATE_CHANGED** (DISPATCHED→EN_ROUTE→ARRIVED→WORKING)
+  RUN -> RDS : publish envelopes
+  RDS --> FE : role-filtered frames
+end
+
+TR -> FE : Отправить статус
+FE -> API : POST /api/v1/sessions/{id}/dds/status-updates {update_kind, text_ru}
+API -> PG : append **DDS_STATUS_UPDATE_SENT**
+TR -> FE : acknowledge a notification
+FE -> API : POST /api/v1/sessions/{id}/dds/notifications/{notification_id}/acknowledge
+API -> PG : append **NOTIFICATION_ACKNOWLEDGED**
+
+== 13. Resolve and close ==
+
+RUN -> DOM : fire(WORKING, "incident_resolved") → RESOLVED\nguard_resolution_condition (expected_response.resolution_condition)
+RUN -> PG : append **STAGE_STATE_CHANGED** {new_state = RESOLVED}
+
+TR -> FE : Закрыть происшествие
+FE -> API : POST /api/v1/sessions/{id}/dds/close {closure_reason}
+API -> DOM : fire(RESOLVED, "close") → CLOSED
+API -> PG : append **DDS_INCIDENT_CLOSED** {closure_reason, released_resource_ids}
+API -> PG : append **ROLE_STAGE_COMPLETED** {role_type = DDS}
+API -> PG : append **STAGE_STATE_CHANGED**
+
+== 14. Deterministic scoring (SPEC §28, §42 tests 9–11) ==
+
+API -> DOM : fire(ACTIVE, "complete") → COMPLETED\nguard_stage_terminal_and_last
+API -> SCORE : score(scenario_version, ordered session_events)
+note right of SCORE
+  Pure: no I/O, no LLM, no clock, and it reads ONLY
+  (ScenarioVersion, ordered SessionEvents) — never a
+  materialized table. Every ScoreResult carries at least
+  one ScoreEvidence; a point without evidence raises
+  ScoringEvidenceError (D11).
+end note
+SCORE -> PG : score_results, score_evidence +\nappend **SCORING_RULE_EVALUATED** per rule
+API -> PG : append **SESSION_COMPLETED** {final_session_state, total_events}
+API -> RDS : publish envelopes
+RDS --> FE : SESSION_COMPLETED → route /report
+
+== 15. Report and replay (SPEC §29, §46) ==
+
+TR -> FE : open /report
+FE -> API : GET /api/v1/reports/{session_id}
+API -> PG : score_results + score_evidence + session_events +\ntranscript_segments + audio_segments + handoff_snapshots +\ndds_assignments + incident_world_states
+API --> FE : SessionReport — totals, by category, critical errors,\ncomplete timeline, transcript, audio refs, final card,\ntruth-vs-card diff, handoff snapshot, DDS decisions,\nresource timeline, timing metrics, evidence per rule
+FE -> API : GET /api/v1/sessions/{id}/audio/{audio_segment_id}\nRange: bytes=…
+API --> FE : 206 Partial Content (byte_offset / byte_length)
+note over FE
+  Click a transcript line → seek to its audio:
+  transcript_segments.audio_segment_id + start_ms.
+end note
+
+opt instructor releases the report (MULTI_TRAINEE / ASSESSMENT)
+  INS -> API : POST /api/v1/instructor/sessions/{id}/report/release
+  API --> INS : ReportReleaseView {released = true}
+end
+
+opt optional LLM explanation (SPEC §29 — after deterministic scores exist)
+  TR -> FE : Объяснить результат
+  FE -> API : POST /api/v1/reports/{session_id}/explanation
+  API -> PG : read the persisted ScoreReport (read-only)
+  API --> FE : ReportExplanation {text_ru, score_report_checksum}
+  note right of API : cannot alter numeric results — no write path\nto score_results (SPEC §2, D11)
+end
+
+@enduml

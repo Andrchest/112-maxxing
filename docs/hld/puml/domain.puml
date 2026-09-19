@@ -1,0 +1,472 @@
+@startuml domain
+' Domain model of backend/app/domain/** — see docs/hld/10-domain-model.md
+' The four information layers are four packages with NO association between them:
+' conversion happens only through the explicit copy functions in layers/copies.py.
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide empty members
+
+package "scenario" {
+  class Scenario {
+    +scenario_id: ScenarioId
+    +slug: str
+    +title_ru: str
+  }
+  class ScenarioVersion {
+    +id: ScenarioVersionId
+    +schema_version: int
+    +scenario_id: ScenarioId
+    +version: int
+    +title: str
+    +description: str
+    +difficulty: int
+    +deterministic_seed: str
+    +role_chain: tuple[RoleType]
+    +world_truth: WorldTruthSection
+    +caller_profile: CallerProfile
+    +caller_knowledge: CallerKnowledgeSection
+    +disclosure_rules: DisclosureRulesSection
+    +expected_response: ExpectedResponse
+    +available_resources: tuple[ResourceSpec]
+    +world_events: tuple[WorldEventDefinition]
+    +scoring_rules: tuple[ScoringRule]
+  }
+  class ExpectedResponse {
+    +required_services: tuple[ServiceType]
+    +required_resource_capabilities: tuple[ResourceCapability]
+    +min_units_by_service: Mapping[ServiceType, int]
+    +resolution_condition: Condition
+    +prefab_handoff: PrefabHandoff | None
+  }
+  Scenario "1" --> "*" ScenarioVersion
+  ScenarioVersion *-- ExpectedResponse
+}
+
+package "facts" {
+  class FactDefinition {
+    +fact_id: str
+    +world_value: FactValue
+    +value_type: ValueType
+    +label_ru: str
+    +caller_value: FactValue
+    +knowledge: KnowledgeState
+    +certainty: float
+    +policy: DisclosurePolicy
+    +aliases_ru: tuple[str]
+    +categories: tuple[str]
+    +available_after: AvailableAfter | None
+  }
+  class FactCatalogEntry {
+    +fact_id: str
+    +label_ru: str
+    +aliases_ru: tuple[str]
+    +categories: tuple[str]
+    .. values are deliberately absent ..
+  }
+  class AllowedFactsPackage {
+    +allowed: tuple[AllowedFact]
+    +unavailable: tuple[UnavailableFact]
+    +withheld_count: int
+    +metadata: GateMetadata
+  }
+  class AllowedFact {
+    +fact_id: str
+    +label_ru: str
+    +value: FactValue
+    +certainty: float
+    +hedge: bool
+    +spontaneous: bool
+  }
+  class FactAccessGate <<function>> {
+    +evaluate_fact_access(requests, definitions, caller_belief,\n   revealed_fact_ids, now_ms, condition_ctx, max_spontaneous_per_turn)
+  }
+  FactDefinition ..> FactCatalogEntry : projected to (no values)
+  AllowedFactsPackage *-- AllowedFact
+  FactAccessGate ..> AllowedFactsPackage : produces
+  FactAccessGate ..> FactDefinition : reads
+}
+
+package "layer A — WorldTruth" #FFF2F2 {
+  class WorldTruth {
+    +incident_id: IncidentId
+    +revision: int
+    +facts: dict[str, FactValue]
+    +value_types: dict[str, ValueType]
+  }
+}
+
+package "layer B — CallerBelief" #FFF8E7 {
+  class CallerBelief {
+    +incident_id: IncidentId
+    +revision: int
+    +facts: dict[str, FactValue]
+    +knowledge: dict[str, KnowledgeState]
+    +certainty: dict[str, float]
+    +emotion: EmotionState
+    +revealed_fact_ids: frozenset[str]
+  }
+  class CallerProfile {
+    +identity_ru: str
+    +relationship: CallerRelationship
+    +language: str
+    +voice_id: str
+    +age_group: AgeGroup
+    +baseline_emotion: EmotionLabel
+    +cooperativeness: float
+    +verbosity: float
+    +confusion: float
+    +interruption_tendency: float
+    +speaking_rate: float
+    +baseline_stress_level: float
+    +persona_whitelist_ru: tuple[str]
+  }
+  class EmotionState {
+    +emotion: EmotionLabel
+    +stress_level: float
+  }
+  class EmotionRule {
+    +rule_id: str
+    +trigger: EmotionTrigger
+    +set_emotion: EmotionLabel | None
+    +stress_delta: float
+    +max_applications: int | None
+  }
+  CallerBelief *-- EmotionState
+  CallerProfile "1" --> "*" EmotionRule
+}
+
+package "layer C — OperatorCard" #F2FFF5 {
+  class OperatorCard {
+    +card_id: CardId
+    +incident_id: IncidentId
+    +values: dict[str, FactValue]
+    +revision_counter: int
+    --
+    +set_field(field_path, new_value, actor, at_offset_ms, revision_id)
+  }
+  class CardRevision {
+    +revision_id: CardRevisionId
+    +card_id: CardId
+    +revision_no: int
+    +field_path: str
+    +previous_value: FactValue
+    +new_value: FactValue
+    +actor: ActorRef
+    +at_offset_ms: int
+  }
+  class CardFieldSpec {
+    +field_path: str
+    +value_type: ValueType
+    +enum_name: str | None
+    +label_ru: str
+    +scoring_relevant: bool
+    +required_for_handoff: bool
+  }
+  OperatorCard "1" --> "*" CardRevision : append-only history
+  OperatorCard ..> CardFieldSpec : validated against CARD_FIELDS
+}
+
+package "layer D — DDSReceivedSnapshot" #F2F6FF {
+  class HandoffSnapshot <<frozen>> {
+    +snapshot_id: SnapshotId
+    +incident_id: IncidentId
+    +card_id: CardId
+    +card_revision_id: CardRevisionId
+    +card_values: Mapping[str, FactValue]
+    +recipient_services: tuple[ServiceType]
+    +created_by_user_id: UserId
+    +created_at_offset_ms: int
+    +content_sha256: str
+  }
+}
+
+package "copies" {
+  class LayerCopies <<functions>> {
+    +instantiate_world_truth(version, incident_id) : WorldTruth
+    +instantiate_caller_belief(version, incident_id) : CallerBelief
+    +freeze_card_to_snapshot(card, revision_id, services, user, at) : HandoffSnapshot
+    +snapshot_to_assignment(snapshot, role_stage_id, at) : DDSAssignment
+    .. there is NO WorldTruth -> OperatorCard or WorldTruth -> HandoffSnapshot copy ..
+  }
+  LayerCopies ..> WorldTruth : creates
+  LayerCopies ..> CallerBelief : creates
+  LayerCopies ..> HandoffSnapshot : creates (deep copy by value)
+  OperatorCard ..> LayerCopies : read by
+}
+
+package "session" {
+  class SimulationSession {
+    +session_id: SessionId
+    +scenario_version_id: ScenarioVersionId
+    +session_mode: SessionMode
+    +state: SessionState
+    +session_seed: str
+    +next_seq_no: int
+  }
+  class Incident {
+    +incident_id: IncidentId
+    +session_id: SessionId
+    +closure_reason: ClosureReason | None
+  }
+  class RoleStage {
+    +role_stage_id: RoleStageId
+    +role_type: RoleType
+    +order_index: int
+    +state: str
+    +participant_user_id: UserId | None
+  }
+  class SessionParticipant {
+    +user_id: UserId
+    +assigned_role_type: RoleType | None
+  }
+  class SessionPolicy {
+    +session_mode: SessionMode
+    +assignment_rule: ParticipantAssignmentRule
+    +role_chain_length: str
+    +transition_pause_seconds: int
+    +show_asr_partials: bool
+    +report_visible_to_trainee_before_release: bool
+    +requires_prefab_handoff_for_dds_only: bool
+  }
+  SimulationSession "1" --> "1" Incident
+  SimulationSession "1" --> "*" RoleStage
+  SimulationSession "1" --> "*" SessionParticipant
+  SimulationSession ..> SessionPolicy
+  SimulationSession --> ScenarioVersion
+  Incident "1" --> "1" WorldTruth
+  Incident "1" --> "1" CallerBelief
+  Incident "1" --> "1" OperatorCard
+  Incident "1" --> "*" HandoffSnapshot
+}
+
+package "roles" {
+  interface RoleModule <<Protocol>> {
+    +role_type: RoleType
+    +implemented: bool
+    +permissions: frozenset[Permission]
+    +state_machine: StateMachine
+    +visibility_policy: DataVisibilityPolicy
+    +ui_schema: Mapping[str, Any]
+    +available_actions(stage_state) : tuple[ActionDescriptor]
+    +initial_state() : Enum
+    +terminal_states() : frozenset[Enum]
+  }
+  class Operator112Module
+  class DDSModule
+  class EDDSModule <<stub, implemented = False>>
+  class DataVisibilityPolicy {
+    +role_type: RoleType
+    +sources: frozenset[VisibilitySource]
+    +visible_event_types: frozenset[EventType]
+    +may_read(source) : bool
+    +may_receive(event_type) : bool
+  }
+  class ActionDescriptor {
+    +action_id: str
+    +label_ru: str
+    +permission: Permission
+    +trigger: str | None
+  }
+  RoleModule <|.. Operator112Module
+  RoleModule <|.. DDSModule
+  RoleModule <|.. EDDSModule
+  RoleModule *-- DataVisibilityPolicy
+  RoleModule ..> ActionDescriptor
+  RoleStage --> RoleModule
+}
+
+package "common" {
+  class StateMachine<S> {
+    +table: TransitionTable[S]
+    +guards: Mapping[str, Callable]
+    +can_fire(state, trigger, ctx) : bool
+    +fire(state, trigger, ctx) : S
+    +available_triggers(state, ctx) : tuple[str]
+  }
+  class Transition<S> {
+    +source: S
+    +trigger: str
+    +target: S
+    +allowed_actors: frozenset[ActorType]
+    +allowed_roles: frozenset[RoleType]
+    +guard_name: str | None
+    +emits: EventType | None
+  }
+  StateMachine *-- Transition
+}
+
+package "dds" {
+  class DDSAssignment {
+    +assignment_id: AssignmentId
+    +incident_id: IncidentId
+    +role_stage_id: RoleStageId
+    +snapshot_id: SnapshotId
+    +service_type: ServiceType
+    +state: DDSStageState
+    +selected_resource_ids: tuple[ResourceId]
+    +dispatched_resource_ids: tuple[ResourceId]
+    +closure_reason: ClosureReason | None
+  }
+  class EmergencyResource {
+    +resource_id: ResourceId
+    +service_type: ServiceType
+    +resource_type: ResourceType
+    +callsign: str
+    +name_ru: str
+    +capabilities: frozenset[ResourceCapability]
+    +current_status: ResourceStatus
+    +availability: ResourceAvailability
+    +eta: EtaProfile
+    +home_station_ru: str
+    +crew_size: int
+  }
+  class EtaProfile {
+    +turnout_delay_seconds: int
+    +travel_time_seconds: int
+    +setup_seconds: int
+    +on_scene_work_seconds: int
+    +return_time_seconds: int
+  }
+  class Notification {
+    +notification_id: NotificationId
+    +audience_role: RoleType
+    +severity: NotificationSeverity
+    +title_ru: str
+    +body_ru: str
+  }
+  class RadioMessage {
+    +radio_message_id: RadioMessageId
+    +from_callsign: str
+    +to_role: RoleType
+    +text_ru: str
+    +resource_id: ResourceId | None
+  }
+  EmergencyResource *-- EtaProfile
+  DDSAssignment --> HandoffSnapshot : reads ONLY this
+  DDSAssignment "1" --> "*" EmergencyResource
+}
+
+package "world" {
+  abstract class WorldEventDefinition {
+    +world_event_id: str
+    +kind: WorldEventKind
+    +title_ru: str
+    +caller_observable: bool
+    +max_occurrences: int
+    +effects: tuple[Effect]
+  }
+  class TimedEvent { +at_ms: int }
+  class ConditionalEvent { +condition: Condition\n+check_after_ms: int\n+cooldown_ms: int }
+  class ActionTriggeredEvent { +on_event_type: EventType\n+payload_match: Mapping | None\n+delay_ms: int }
+  class SeededRandomEvent { +probability: float\n+check_every_ms: int\n+window_start_ms: int\n+window_end_ms: int | None\n+condition: Condition | None }
+  WorldEventDefinition <|-- TimedEvent
+  WorldEventDefinition <|-- ConditionalEvent
+  WorldEventDefinition <|-- ActionTriggeredEvent
+  WorldEventDefinition <|-- SeededRandomEvent
+
+  class Effect <<union>> {
+    MutateWorldTruth
+    MutateCallerBelief
+    CreateNotification
+    CreateRadioMessage
+    AlterResourceAvailability
+    TriggerEvent
+    ChangeCallerEmotion
+  }
+  class WorldEngine <<function>> {
+    +advance(state, now_ms, pending_actions, rng_factory)\n   : tuple[WorldState, tuple[Effect]]
+  }
+  WorldEventDefinition *-- Effect
+  WorldEngine ..> WorldEventDefinition : evaluates
+  WorldEngine ..> WorldTruth : mutates
+  WorldEngine ..> CallerBelief : mutates (only if caller_observable)
+  WorldEngine ..> EmergencyResource : alters
+}
+
+package "events" {
+  class SessionEvent {
+    +id: EventId
+    +session_id: SessionId
+    +seq_no: int
+    +event_type: EventType
+    +timestamp_utc: datetime
+    +monotonic_offset_ms: int
+    +actor_type: ActorType
+    +actor_id: UserId | None
+    +correlation_id: UUID | None
+    +payload: Mapping[str, Any]
+  }
+  class EventSpec {
+    +event_type: EventType
+    +actor_types: frozenset[ActorType]
+    +payload_keys: Mapping[str, str]
+    +visible_to: frozenset[RoleType | "INSTRUCTOR"]
+  }
+  SessionEvent ..> EventSpec : catalog entry
+  DataVisibilityPolicy ..> SessionEvent : filters
+}
+
+package "scoring" {
+  class ScoringRule {
+    +rule_id: str
+    +name_ru: str
+    +description_ru: str
+    +category: ScoringCategory
+    +max_points: float
+    +critical: bool
+    +evaluator_type: EvaluatorType
+    +config: Mapping[str, Any]
+    +min_evidence: int
+  }
+  class ScoreResult {
+    +rule_id: str
+    +evaluator_type: EvaluatorType
+    +category: ScoringCategory
+    +points_awarded: float
+    +max_points: float
+    +passed: bool
+    +critical_failure: bool
+  }
+  class ScoreEvidence {
+    +event_id: EventId | None
+    +card_revision_id: CardRevisionId | None
+    +snapshot_id: SnapshotId | None
+    +seq_no: int | None
+    +note_ru: str
+  }
+  class ScoreReport {
+    +total_points: float
+    +total_max_points: float
+    +by_category: tuple[ScoreCategoryTotal]
+    +critical_errors: tuple[ScoreResult]
+    +results: tuple[ScoreResult]
+  }
+  class ScoringEngine <<function>> {
+    +score(scenario_version, events) : ScoreReport
+  }
+  ScoreResult "1" --> "1..*" ScoreEvidence
+  ScoreReport *-- ScoreResult
+  ScoringEngine ..> ScoringRule
+  ScoringEngine ..> SessionEvent : the ONLY runtime input
+  ScoringEngine ..> ScoreReport
+  ScenarioVersion *-- ScoringRule
+}
+
+note as N1
+  D3 — the four layers never alias.
+  There is no association between WorldTruth,
+  CallerBelief, OperatorCard and HandoffSnapshot:
+  every arrow between them goes through
+  layers/copies.py by value.
+end note
+N1 .. LayerCopies
+
+note as N2
+  D10 — the caller LLM boundary.
+  FactAccessGate takes CallerBelief, never WorldTruth,
+  so no world value can reach AllowedFactsPackage.
+end note
+N2 .. FactAccessGate
+
+@enduml

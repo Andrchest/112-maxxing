@@ -1,0 +1,89 @@
+@startuml state-machines
+' The three state machines of docs/hld/10-domain-model.md §10.8 (SPEC §7, D6).
+' Transition labels read: trigger [guard] / who may fire.
+
+skinparam state {
+  BackgroundColor<<terminal>> #EEEEEE
+}
+
+title Session / Operator 112 stage / DDS stage
+
+state "SESSION (SessionState)" as SESSION {
+  [*] --> CREATED
+  CREATED --> READY : validate\n[scenario valid, participants assignable]\n/ SYSTEM
+  CREATED --> ABORTED : abort / INSTRUCTOR, SYSTEM
+  READY --> ACTIVE : start\n[inference ready or REQUIRE_INFERENCE_READY=false]\n/ INSTRUCTOR
+  READY --> ABORTED : abort / INSTRUCTOR, SYSTEM
+  ACTIVE --> ROLE_TRANSITION : begin_role_transition\n[stage terminal and next role_chain entry exists]\n/ SYSTEM
+  ACTIVE --> COMPLETED : complete\n[stage terminal and it is the last entry]\n/ SYSTEM
+  ACTIVE --> ABORTED : abort / INSTRUCTOR, SYSTEM
+  ROLE_TRANSITION --> ACTIVE : finish_role_transition\n[pause elapsed, next stage assigned]\n/ SYSTEM
+  ROLE_TRANSITION --> ABORTED : abort / INSTRUCTOR, SYSTEM
+  COMPLETED --> [*]
+  ABORTED --> [*]
+
+  state COMPLETED <<terminal>>
+  state ABORTED <<terminal>>
+}
+
+state "OPERATOR 112 STAGE (Operator112StageState)" as OP112 {
+  [*] --> WAITING_FOR_CALL
+  WAITING_FOR_CALL --> RINGING : ring\n[session ACTIVE, transport ready]\n/ SIMULATION
+  RINGING --> CONNECTED : answer\n[participant assigned to stage]\n/ TRAINEE
+  CONNECTED --> INTERVIEW : begin_interview\n[first ASR_FINAL appended]\n/ SIMULATION
+  INTERVIEW --> HANDOFF_PREPARATION : open_handoff_preparation / TRAINEE
+  HANDOFF_PREPARATION --> INTERVIEW : back_to_interview\n[call still connected]\n/ TRAINEE
+  HANDOFF_PREPARATION --> HANDED_OFF : create_handoff\n[at least one recipient service]\n/ TRAINEE
+  HANDED_OFF --> STAGE_COMPLETED : complete_stage\n[CALL_ENDED appended]\n/ TRAINEE, SIMULATION
+  WAITING_FOR_CALL --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  RINGING --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  CONNECTED --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  INTERVIEW --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  HANDOFF_PREPARATION --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  HANDED_OFF --> STAGE_COMPLETED : abort_stage / INSTRUCTOR, SYSTEM
+  STAGE_COMPLETED --> [*]
+
+  state STAGE_COMPLETED <<terminal>>
+}
+
+state "DDS STAGE (DDSStageState)" as DDS {
+  [*] --> RECEIVED
+  RECEIVED --> ACKNOWLEDGED : acknowledge\n[participant assigned to stage]\n/ TRAINEE
+  ACKNOWLEDGED --> RESOURCE_SELECTION : open_resource_selection / TRAINEE
+  RESOURCE_SELECTION --> ACKNOWLEDGED : back_to_acknowledged\n[no resource selected]\n/ TRAINEE
+  RESOURCE_SELECTION --> DISPATCHED : dispatch\n[at least one SELECTED resource]\n/ TRAINEE
+  DISPATCHED --> RESOURCE_SELECTION : open_resource_selection\n[no dispatched unit is EN_ROUTE yet]\n/ TRAINEE
+  DISPATCHED --> EN_ROUTE : first_en_route\n[a dispatched unit reached EN_ROUTE]\n/ SIMULATION
+  EN_ROUTE --> ARRIVED : first_arrived\n[a dispatched unit reached ON_SCENE]\n/ SIMULATION
+  ARRIVED --> WORKING : work_started\n[a dispatched unit reached WORKING]\n/ SIMULATION
+  WORKING --> RESOLVED : incident_resolved\n[expected_response.resolution_condition]\n/ SIMULATION
+  RESOLVED --> CLOSED : close / TRAINEE
+  EN_ROUTE --> EN_ROUTE : dispatch_additional\n[at least one SELECTED resource]\n/ TRAINEE
+  ARRIVED --> ARRIVED : dispatch_additional\n[at least one SELECTED resource]\n/ TRAINEE
+  WORKING --> WORKING : dispatch_additional\n[at least one SELECTED resource]\n/ TRAINEE
+  RECEIVED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  ACKNOWLEDGED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  RESOURCE_SELECTION --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  DISPATCHED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  EN_ROUTE --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  ARRIVED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  WORKING --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  RESOLVED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  CLOSED --> [*]
+
+  state CLOSED <<terminal>>
+}
+
+note bottom of SESSION
+  Invalid (state, trigger) pairs raise InvalidTransitionError
+  in the domain; the API answers 409 INVALID_TRANSITION (D8).
+  The frontend is never authoritative (SPEC §7).
+end note
+
+note bottom of DDS
+  Simulation-fired triggers (first_en_route, first_arrived,
+  work_started, incident_resolved) pass through the same table
+  and are rejected the same way when invalid (D6).
+end note
+
+@enduml

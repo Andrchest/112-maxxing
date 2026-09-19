@@ -1,0 +1,459 @@
+@startuml erd
+' Entity-relationship diagram of every table in docs/hld/20-db-schema.md (PostgreSQL 16).
+' PK = primary key, FK = foreign key, U = unique, J = jsonb.
+
+skinparam linetype ortho
+hide circle
+hide empty methods
+
+!define TABLE(x) entity x << (T,#7A9BC4) >>
+
+package "reference data" #F6F6F6 {
+  TABLE(users) {
+    **id** : uuid <<PK>>
+    --
+    username : text <<U>>
+    password_hash : text
+    display_name_ru : text
+    role : text
+    is_active : boolean
+    created_at : timestamptz
+  }
+  TABLE(scenarios) {
+    **id** : uuid <<PK>>
+    --
+    slug : text <<U>>
+    title_ru : text
+    created_at : timestamptz
+  }
+  TABLE(scenario_versions) {
+    **id** : uuid <<PK>>
+    --
+    scenario_id : uuid <<FK RESTRICT>>
+    version : integer
+    schema_version : integer
+    title : text
+    description : text
+    difficulty : smallint
+    deterministic_seed : text
+    role_chain : text[]
+    content : jsonb <<J>>
+    content_sha256 : text
+    source_path : text
+    locked_at : timestamptz
+    created_at : timestamptz
+    --
+    U (scenario_id, version)
+    trigger: content frozen once locked_at is set
+  }
+  TABLE(scoring_rules) {
+    **scenario_version_id** : uuid <<PK,FK CASCADE>>
+    **rule_id** : text <<PK>>
+    --
+    name_ru : text
+    description_ru : text
+    category : text
+    max_points : numeric(8,2)
+    critical : boolean
+    evaluator_type : text
+    config : jsonb <<J>>
+    min_evidence : smallint
+    order_index : integer
+  }
+}
+
+package "session aggregate" #F2F8FF {
+  TABLE(simulation_sessions) {
+    **id** : uuid <<PK>>
+    --
+    scenario_version_id : uuid <<FK RESTRICT>>
+    session_mode : text
+    state : text
+    session_seed : text
+    created_by_user_id : uuid <<FK RESTRICT>>
+    next_seq_no : bigint
+    started_at : timestamptz
+    paused_total_ms : integer
+    completed_at : timestamptz
+    abort_reason : text
+    created_at : timestamptz
+  }
+  TABLE(session_participants) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    user_id : uuid <<FK RESTRICT>>
+    assigned_role_type : text
+    joined_at : timestamptz
+    --
+    U (session_id, user_id)
+  }
+  TABLE(incidents) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE, U>>
+    scenario_version_id : uuid <<FK RESTRICT>>
+    created_at_offset_ms : integer
+    closed_at_offset_ms : integer
+    closure_reason : text
+  }
+  TABLE(role_stages) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    incident_id : uuid <<FK CASCADE>>
+    role_type : text
+    order_index : integer
+    state : text
+    participant_user_id : uuid <<FK RESTRICT>>
+    started_at_offset_ms : integer
+    completed_at_offset_ms : integer
+    --
+    U (session_id, order_index)
+  }
+}
+
+package "four information layers" #FFF8F2 {
+  TABLE(incident_world_states) {
+    **incident_id** : uuid <<PK,FK CASCADE>>
+    --
+    revision : integer
+    facts : jsonb <<J>>
+    value_types : jsonb <<J>>
+    updated_at : timestamptz
+  }
+  TABLE(incident_caller_beliefs) {
+    **incident_id** : uuid <<PK,FK CASCADE>>
+    --
+    revision : integer
+    facts : jsonb <<J>>
+    knowledge : jsonb <<J>>
+    certainty : jsonb <<J>>
+    emotion : jsonb <<J>>
+    revealed_fact_ids : text[]
+    updated_at : timestamptz
+  }
+  TABLE(incident_cards) {
+    **id** : uuid <<PK>>
+    --
+    incident_id : uuid <<FK CASCADE, U>>
+    values : jsonb <<J>>
+    revision_counter : integer
+    updated_at : timestamptz
+  }
+  TABLE(incident_card_revisions) {
+    **id** : uuid <<PK>>
+    --
+    card_id : uuid <<FK CASCADE>>
+    revision_no : integer
+    field_path : text
+    previous_value : jsonb <<J>>
+    new_value : jsonb <<J>>
+    value_type : text
+    actor_type : text
+    actor_user_id : uuid <<FK RESTRICT>>
+    at_offset_ms : integer
+    session_event_id : uuid <<FK RESTRICT>>
+    created_at : timestamptz
+    --
+    U (card_id, revision_no)
+    trigger: append-only
+  }
+  TABLE(handoff_snapshots) {
+    **id** : uuid <<PK>>
+    --
+    incident_id : uuid <<FK CASCADE>>
+    card_id : uuid <<FK RESTRICT>>
+    card_revision_id : uuid <<FK RESTRICT>>
+    card_values : jsonb <<J>>
+    recipient_services : text[]
+    content_sha256 : text
+    created_by_user_id : uuid <<FK RESTRICT>>
+    created_at_offset_ms : integer
+    created_at : timestamptz
+    --
+    trigger: immutable
+  }
+}
+
+package "DDS and resources" #F2FFF5 {
+  TABLE(dds_assignments) {
+    **id** : uuid <<PK>>
+    --
+    incident_id : uuid <<FK CASCADE>>
+    role_stage_id : uuid <<FK CASCADE>>
+    snapshot_id : uuid <<FK RESTRICT>>
+    service_type : text
+    state : text
+    received_at_offset_ms : integer
+    acknowledged_at_offset_ms : integer
+    dispatched_at_offset_ms : integer
+    closed_at_offset_ms : integer
+    closure_reason : text
+    --
+    U (role_stage_id, service_type)
+  }
+  TABLE(emergency_resources) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    scenario_resource_id : text
+    service_type : text
+    resource_type : text
+    callsign : text
+    name_ru : text
+    capabilities : text[]
+    current_status : text
+    home_station_ru : text
+    crew_size : smallint
+    availability : jsonb <<J>>
+    eta : jsonb <<J>>
+    status_changed_at_offset_ms : integer
+    assignment_id : uuid <<FK SET NULL>>
+    --
+    U (session_id, scenario_resource_id)
+    U (session_id, callsign)
+  }
+  TABLE(resource_state_changes) {
+    **id** : uuid <<PK>>
+    --
+    resource_id : uuid <<FK CASCADE>>
+    assignment_id : uuid <<FK SET NULL>>
+    previous_status : text
+    new_status : text
+    trigger : text
+    source_world_event_id : text
+    at_offset_ms : integer
+    session_event_id : uuid <<FK RESTRICT>>
+  }
+  TABLE(notifications) {
+    **id** : uuid <<PK>>
+    --
+    incident_id : uuid <<FK CASCADE>>
+    audience_role : text
+    severity : text
+    title_ru : text
+    body_ru : text
+    source_world_event_id : text
+    created_at_offset_ms : integer
+    acknowledged_at_offset_ms : integer
+    acknowledged_by_user_id : uuid <<FK RESTRICT>>
+  }
+}
+
+package "audit log, transcript, audio" #FFFDF2 {
+  TABLE(session_events) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    seq_no : bigint
+    event_type : text
+    timestamp_utc : timestamptz
+    monotonic_offset_ms : integer
+    actor_type : text
+    actor_id : uuid <<FK RESTRICT>>
+    correlation_id : uuid
+    payload : jsonb <<J>>
+    --
+    U (session_id, seq_no)
+    trigger: append-only
+  }
+  TABLE(transcript_segments) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    audio_segment_id : uuid <<FK SET NULL>>
+    speaker : text
+    start_ms : integer
+    end_ms : integer
+    text : text
+    is_final : boolean
+    confidence : real
+    asr_provider : text
+    asr_model : text
+    turn_index : integer
+  }
+  TABLE(audio_segments) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    speaker : text
+    file_path : text
+    format : text
+    start_ms : integer
+    end_ms : integer
+    sample_rate : integer
+    num_channels : integer
+    byte_offset : bigint
+    byte_length : bigint
+    purged_at : timestamptz
+    created_at : timestamptz
+  }
+  TABLE(dialogue_turns) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    role_stage_id : uuid <<FK CASCADE>>
+    turn_index : integer
+    user_speech_started_offset_ms : integer
+    user_speech_ended_offset_ms : integer
+    operator_transcript_segment_id : uuid <<FK SET NULL>>
+    caller_transcript_segment_id : uuid <<FK SET NULL>>
+    interpretation : jsonb <<J>>
+    gate_output : jsonb <<J>>
+    planned_text : text
+    delivered_text : text
+    interrupted : boolean
+    fallback_used : boolean
+    speech_end_to_first_audio_ms : integer
+    correlation_id : uuid
+    created_at : timestamptz
+    --
+    U (session_id, turn_index)
+  }
+  TABLE(recording_purge_audit) {
+    **id** : uuid <<PK>>
+    --
+    purged_at : timestamptz
+    actor_type : text
+    actor_user_id : uuid <<FK SET NULL>>
+    session_id : uuid <<FK CASCADE>>
+    audio_segment_id : uuid <<FK RESTRICT>>
+    file_path_was : text
+    bytes : bigint
+    retention_days : integer
+    reason : text
+  }
+  TABLE(inference_metrics) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    request_id : text <<U>>
+    component : text
+    provider : text
+    model : text
+    model_version : text
+    turn_index : integer
+    input_tokens : integer
+    input_duration_ms : integer
+    output_tokens : integer
+    output_audio_ms : integer
+    started_at : timestamptz
+    first_output_at : timestamptz
+    finished_at : timestamptz
+    ttft_ms : integer
+    total_latency_ms : integer
+    tokens_per_second : real
+    realtime_factor : real
+    gpu_memory_mb : integer
+    fallback_count : smallint
+    retry_count : smallint
+  }
+}
+
+package "scoring output" #F8F2FF {
+  TABLE(score_results) {
+    **id** : uuid <<PK>>
+    --
+    session_id : uuid <<FK CASCADE>>
+    scenario_version_id : uuid <<FK RESTRICT>>
+    rule_id : text <<FK RESTRICT>>
+    evaluator_type : text
+    category : text
+    points_awarded : numeric(8,2)
+    max_points : numeric(8,2)
+    passed : boolean
+    critical_failure : boolean
+    computed_at : timestamptz
+    --
+    U (session_id, rule_id)
+  }
+  TABLE(score_evidence) {
+    **id** : uuid <<PK>>
+    --
+    score_result_id : uuid <<FK CASCADE>>
+    session_event_id : uuid <<FK RESTRICT>>
+    card_revision_id : uuid <<FK RESTRICT>>
+    snapshot_id : uuid <<FK RESTRICT>>
+    seq_no : bigint
+    note_ru : text
+    --
+    CHECK exactly one reference is set
+  }
+}
+
+scenarios ||--o{ scenario_versions
+scenario_versions ||--o{ scoring_rules
+scenario_versions ||--o{ simulation_sessions
+scenario_versions ||--o{ incidents
+users ||--o{ simulation_sessions
+users ||--o{ session_participants
+users ||--o{ role_stages
+users ||--o{ incident_card_revisions
+users ||--o{ handoff_snapshots
+users ||--o{ notifications
+users ||--o{ session_events
+
+simulation_sessions ||--o{ session_participants
+simulation_sessions ||--|| incidents
+simulation_sessions ||--o{ role_stages
+simulation_sessions ||--o{ emergency_resources
+simulation_sessions ||--o{ session_events
+simulation_sessions ||--o{ transcript_segments
+simulation_sessions ||--o{ audio_segments
+simulation_sessions ||--o{ inference_metrics
+simulation_sessions ||--o{ score_results
+
+incidents ||--|| incident_world_states
+incidents ||--|| incident_caller_beliefs
+incidents ||--|| incident_cards
+incidents ||--o{ handoff_snapshots
+incidents ||--o{ dds_assignments
+incidents ||--o{ role_stages
+incidents ||--o{ notifications
+
+incident_cards ||--o{ incident_card_revisions
+incident_cards ||--o{ handoff_snapshots
+incident_card_revisions ||--o{ handoff_snapshots
+handoff_snapshots ||--o{ dds_assignments
+role_stages ||--o{ dds_assignments
+dds_assignments ||--o{ emergency_resources
+dds_assignments ||--o{ resource_state_changes
+emergency_resources ||--o{ resource_state_changes
+
+session_events ||--o{ incident_card_revisions
+session_events ||--o{ resource_state_changes
+session_events ||--o{ score_evidence
+audio_segments ||--o{ transcript_segments
+simulation_sessions ||--o{ dialogue_turns
+role_stages ||--o{ dialogue_turns
+transcript_segments ||--o{ dialogue_turns
+simulation_sessions ||--o{ recording_purge_audit
+audio_segments ||--o{ recording_purge_audit
+users ||--o{ recording_purge_audit
+scoring_rules ||--o{ score_results
+score_results ||--|{ score_evidence
+incident_card_revisions ||--o{ score_evidence
+handoff_snapshots ||--o{ score_evidence
+
+note as NLAYERS
+  The four information layers (SPEC §3, D3):
+  A incident_world_states  — engine-written only
+  B incident_caller_beliefs — engine-written only
+  C incident_cards / incident_card_revisions — trainee-written only
+  D handoff_snapshots — immutable copy by value
+  dds_assignments reaches the trainee's data ONLY via snapshot_id:
+  there is deliberately no FK to incident_cards.
+end note
+NLAYERS .. handoff_snapshots
+
+note as NLOG
+  session_events is the audit source (SPEC §8, D5).
+  role_stages, incident_cards, dds_assignments,
+  transcript_segments and notifications are
+  materialized read models of that log.
+  score() reads only (scenario_versions.content, session_events).
+end note
+NLOG .. session_events
+
+@enduml

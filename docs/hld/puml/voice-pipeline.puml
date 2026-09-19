@@ -1,0 +1,119 @@
+@startuml voice-pipeline
+title 112-maxxing — voice pipeline components and process boundaries (SPEC 15-27, D9/D10)
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowFontSize 11
+
+node "browser" as browser {
+  component "frontend (React/Vite)" as fe
+  component "LiveKit client SDK" as lkclient
+  component "phone widget\n(ring / answer / mute / hang-up)" as phone
+  fe -- lkclient
+  fe -- phone
+}
+
+node "livekit (SFU)" as livekit {
+  component "room per call" as room
+}
+
+node "voice-agent process\nworkers/voice_agent" as agent {
+  component "LiveKitCallTransport\n(CallTransport port)" as transport
+  component "Resampler\n48k -> 16k mono, normalize" as resampler
+  component "VADProvider\n(SileroVAD / EnergyVAD)" as vad
+  component "TurnDetector\nIDLE/PRE_SPEECH/IN_SPEECH/ENDPOINTING" as turndet
+  component "ASRProvider\n(GigaAMProvider v3_e2e_ctc)" as asr
+  component "DialogueInterpreter" as interp
+  component "FactAccessGate\n(pure domain)" as gate
+  component "CallerResponseGenerator\n+ CallerPromptBuilder" as gen
+  component "ResponseValidator" as val
+  component "TTSProvider\n(PiperTTS / Qwen3TTS / ChatterboxTTS)" as tts
+  component "TurnPipeline\n(orchestrator, event emitter)" as pipeline
+  component "SessionRecorder" as rec
+  component "MetricsRecorder" as metrics
+  component "LLMClient\n(LlamaCppClient)" as llm
+}
+
+node "backend process\nbackend/app" as backend {
+  component "FastAPI api/v1\nREST commands + WS" as api
+  component "application use cases\n+ SimulationRunner" as appsvc
+  component "domain\n(WorldTruth / CallerBelief / OperatorCard)" as domain
+  component "health/ready aggregator" as health
+}
+
+database "postgres" as pg {
+  component "session_events (append-only)" as evt
+  component "transcript_segments / audio_segments" as tr
+  component "inference_metrics / dialogue_turns" as im
+}
+
+queue "redis" as redis {
+  component "session:{id}:events (pub/sub)" as chan
+  component "voice:join / voice:cancel:{session_id}" as ctl
+  component "voice:health:{service}" as hk
+}
+
+node "llama-server" as llamasrv {
+  component "Qwen3 GGUF\nOpenAI-compatible /v1" as qwen
+}
+
+' ---- media path
+phone --> room : publish mic / subscribe caller audio (WebRTC)
+room <--> transport : AudioStream in / AudioSource out
+transport --> resampler : AudioFrame (48 kHz)
+resampler --> vad : AudioFrame (16 kHz mono, 512 samples)
+vad --> turndet : VadFrameResult
+turndet --> pipeline : DetectedTurn / USER_SPEECH_STARTED / USER_SPEECH_ENDED
+pipeline --> asr : transcribe(finalized turn)
+asr --> pipeline : AsrResult
+pipeline --> interp : text + last 4-6 turns + fact catalog (no values)
+interp --> llm : chat completion, response_format json_schema
+interp --> pipeline : InterpretedUtterance
+pipeline --> gate : InterpretedUtterance + ScenarioVersion + WorldTruth + CallerBelief
+gate --> pipeline : AllowedFactsPackage (caller values only)
+pipeline --> gen : AllowedFactsPackage + persona + emotion + turns
+gen --> llm : chat completion, max_tokens=80, thinking off
+gen --> val : raw utterance
+val --> pipeline : ValidationVerdict (retry once, then template fallback)
+pipeline --> tts : stream(validated text, TtsVoiceSpec, max_chunk_ms=40)
+tts --> transport : TtsChunk -> AudioFrame -> play()
+transport --> room : outbound audio
+
+' ---- barge-in control path
+turndet ..> pipeline : barge-in (sustained speech during playback)
+pipeline ..> tts : TtsStream.cancel()
+pipeline ..> transport : clear_outbound() + PlaybackHandle.cancel()
+
+' ---- persistence and control
+pipeline --> evt : append voice SessionEvents (seq_no under row lock)
+pipeline --> tr : ASR_FINAL / caller utterance rows
+rec --> tr : audio_segments + WAV under DATA_DIR/recordings
+pipeline --> rec : tee trainee + caller audio
+pipeline --> metrics : InferenceMetric per ASR/LLM/TTS call
+metrics --> im
+llm --> qwen : HTTP, loopback / compose-internal only (SPEC 41)
+pipeline --> hk : publish READY / WARMING / NOT_READY / FATAL
+ctl --> pipeline : voice:join, voice:cancel:{session_id}
+api --> ctl : publish voice:join at CALL_RINGING
+api --> appsvc
+appsvc --> domain
+appsvc --> evt
+appsvc --> chan : publish event envelopes after commit
+chan --> api : tail for WebSocket
+health --> hk : read voice-agent readiness
+fe --> api : REST commands + WebSocket /api/v1/ws/sessions/{id}
+api --> fe : role-filtered event envelopes
+
+note right of gate
+  The ONLY normal path through which
+  scenario facts reach the caller LLM.
+  Never collapsed into a prompt (SPEC 16, 44).
+end note
+
+note bottom of llm
+  No external AI API anywhere in the
+  runtime path (SPEC 41).
+end note
+
+@enduml
