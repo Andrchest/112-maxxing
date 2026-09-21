@@ -48,6 +48,7 @@ from app.application.ports.audio_segment_repository import StoredAudioSegment
 from app.application.ports.call_transport import (
     AudioFrame,
     CallTransport,
+    DeliveredAudio,
     PlaybackHandle,
     TransportEvent,
     TransportEventType,
@@ -65,11 +66,15 @@ from app.application.voice.events import (
 from app.application.voice.partial_asr import PartialAsrEmitter
 from app.application.voice.recorder import SessionRecorder
 from app.application.voice.resampler import Resampler
-from app.application.voice.turn_detector import DetectedTurn, TurnDetector
+from app.application.voice.turn_detector import DetectedTurn, SpeechStarted, TurnDetector
 from app.domain.common.ids import RoleStageId, SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
 
 __all__ = [
+    "BARGE_IN_BUDGET_CLEAR_OUTBOUND_MS",
+    "BARGE_IN_BUDGET_DETECTOR_HANDOFF_MS",
+    "BARGE_IN_BUDGET_NETWORK_JITTER_MS",
+    "ActiveCallerUtterance",
     "NullTurnResponder",
     "ShowAsrPartials",
     "TranscribedTurn",
@@ -91,6 +96,49 @@ trip per audio frame would be in the worst possible place.
 
 _CALL_ENDED_TRANSPORT_CLOSED = "TRANSPORT_CLOSED"
 _CALL_ENDED_CANCELLED = "CANCELLED"
+
+
+@runtime_checkable
+class ActiveCallerUtterance(Protocol):
+    """One caller utterance in flight, as `_barge_in` needs to see it (§6.1 steps 2, 5, 6).
+
+    This is E14's **one** hook into the pipeline, registered through
+    `TurnContext.set_active_utterance`. `set_playback` stays beside it (E11's, and tests use it),
+    but a `PlaybackHandle` alone is not enough for §6.1: steps 2, 5 and 6 need the TTS stream to
+    cancel, the planned text and `fact_ids` the interrupted event carries, and the chunk ledger
+    §6.3's `delivered_text` arithmetic reads. Rather than teach the pipeline about any of them,
+    the responder registers one object that knows all of it and answers three questions.
+
+    The implementation is `app.application.voice.tts_speech_sink._ActiveCallerUtterance`; the
+    Protocol lives here because the pipeline may not import the sink (the sink imports
+    `TurnContext`).
+    """
+
+    @property
+    def playback(self) -> PlaybackHandle | None:
+        """The live playback for this utterance, or `None` before the first frame."""
+
+    def mark_interrupted(self) -> None:
+        """Claim the utterance for a barge-in. Synchronous, and called *first* (§6.1)."""
+        ...
+
+    async def cancel_generation(self) -> None:
+        """§6.1 step 2: stop the TTS stream after the unit in flight."""
+        ...
+
+    async def on_interrupted(
+        self,
+        *,
+        interrupting_turn_id: uuid.UUID,
+        delivered: DeliveredAudio | None,
+        cutoff_latency_ms: int,
+    ) -> None:
+        """§6.1 steps 5-6: `CALLER_UTTERANCE_INTERRUPTED` and §6.4's rows."""
+        ...
+
+
+SetActiveUtterance = Callable[["ActiveCallerUtterance | None"], None]
+"""How a responder tells the pipeline which caller utterance is in flight (E14)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +164,16 @@ class TurnContext:
     of the same turn named. It is a read-only view of the pipeline's own mapping — a responder
     looks a turn up, it never registers one.
     """
+
+    speech_ended_offset_ms: Mapping[uuid.UUID, int] = field(default_factory=dict)
+    """`turn_id -> USER_SPEECH_ENDED` offset, for SPEC §27's `speech_end_to_first_audio_ms` (E14).
+
+    The responder cannot derive it: `DetectedTurn.end_ms` is where the *speech* ended, while the
+    metric is measured from the moment the pipeline finalized the turn and the response chain
+    began. Read-only, like the mapping above."""
+
+    set_active_utterance: SetActiveUtterance | None = None
+    """E14's one hook: register the caller utterance `_barge_in` must be able to reach (§6.1)."""
 
 
 @runtime_checkable
@@ -187,7 +245,9 @@ class NullTurnResponder:
     `AsrTurnResponder.next_stage` (`app.application.dialogue.responder.DialogueResponder`), not
     here: this responder is the *pipeline's* stub and stays modelless on purpose.
 
-    TODO(E14): streaming TTS and the outbound half of barge-in (§6.1 steps 2, 5, 6).
+    E14 put streaming TTS behind `DialogueResponder`'s `CallerSpeechSink`
+    (`app.application.voice.tts_speech_sink.TtsSpeechSink`) and the outbound half of barge-in in
+    `_barge_in` above; this responder still speaks nothing, which is the point of it.
     """
 
     def __init__(self) -> None:
@@ -197,6 +257,23 @@ class NullTurnResponder:
     async def respond(self, turn: DetectedTurn, context: TurnContext) -> None:
         """Record the turn and return; no event, no audio, no model."""
         self.responded.append(turn)
+
+
+#: §6.2's fixed budget rows that are not read off any `VoiceTurnConfig` field — rows 3 and 4
+#: (in-process hand-off and the local `clear_outbound()` FFI call) and row 6 (network + browser
+#: jitter buffer, UNVERIFIED, measured by `benchmark_e2e.py`). Named here, beside `_barge_in`
+#: (the method that measures the real `cutoff_latency_ms`), so a documented-budget test can assert
+#: `vad_frame_ms + barge_in_min_speech_ms + row3 + row4 + tts_chunk_ms + row6 < 250` without a
+#: second copy of the doc's numbers (this task's report, CHANGE item 3).
+BARGE_IN_BUDGET_DETECTOR_HANDOFF_MS = 5
+"""§6.2 row 3: detector + task hand-off, in-process, one `asyncio` queue put + a coroutine step."""
+
+BARGE_IN_BUDGET_CLEAR_OUTBOUND_MS = 5
+"""§6.2 row 4: `clear_outbound()` round trip — a local FFI call, no network."""
+
+BARGE_IN_BUDGET_NETWORK_JITTER_MS = 40
+"""§6.2 row 6: network + jitter buffer to the browser. UNVERIFIED — measured by
+`benchmark_e2e.py`."""
 
 
 class TurnPipeline:
@@ -240,6 +317,10 @@ class TurnPipeline:
         self._partials: PartialAsrEmitter | None = None
         #: `turn_id -> audio_segments.id`, handed to every responder through `TurnContext`.
         self._audio_segment_ids: dict[uuid.UUID, uuid.UUID] = {}
+        #: `turn_id -> USER_SPEECH_ENDED` offset (SPEC §27's `speech_end_to_first_audio_ms`, E14).
+        self._speech_ended_offset_ms: dict[uuid.UUID, int] = {}
+        #: The caller utterance E14's sink registered, if one is in flight (§6.1).
+        self._active_utterance: ActiveCallerUtterance | None = None
         self._turns: asyncio.Queue[DetectedTurn] = asyncio.Queue(maxsize=1)
         self._append_lock = asyncio.Lock()
         self._response_task: asyncio.Task[None] | None = None
@@ -265,17 +346,41 @@ class TurnPipeline:
             appender=self._appender,
             recorder=self._recorder,
             audio_segment_ids=MappingProxyType(self._audio_segment_ids),
+            speech_ended_offset_ms=MappingProxyType(self._speech_ended_offset_ms),
+            set_active_utterance=self.set_active_utterance,
         )
 
     @property
     def playback_active(self) -> bool:
         """True while a caller utterance is being played out (the detector's barge-in flag)."""
-        playback = self._playback
+        playback = self._live_playback()
         return playback is not None and playback.is_active()
 
+    def _live_playback(self) -> PlaybackHandle | None:
+        """The handle to cancel: the registered utterance's, else `set_playback`'s (E14)."""
+        active = self._active_utterance
+        if active is not None and active.playback is not None:
+            return active.playback
+        return self._playback
+
     def set_playback(self, handle: PlaybackHandle | None) -> None:
-        """Tell the pipeline which `PlaybackHandle` is live (called by the responder, E14)."""
+        """Tell the pipeline which `PlaybackHandle` is live (called by the responder, E14).
+
+        Kept beside `set_active_utterance` because a test that is about *playback* should not
+        have to build a whole caller utterance; a registered utterance wins when both are set.
+        """
         self._playback = handle
+
+    def set_active_utterance(self, handle: ActiveCallerUtterance | None) -> None:
+        """E14's hook: the caller utterance `_barge_in` must be able to reach (§6.1 steps 2/5/6).
+
+        One hook, not three: §6.1 needs the TTS stream, the playback handle and the record of
+        what was planned, and a pipeline that held all three separately could be told about them
+        in an order that leaves it cancelling a stream whose utterance it cannot describe.
+        """
+        self._active_utterance = handle
+        if handle is None:
+            self._playback = None
 
     async def run(self) -> None:
         """Run the three tasks until the transport closes or `stop()` is called."""
@@ -366,7 +471,7 @@ class TurnPipeline:
                 ]
             )
             if step.started.was_during_playback:
-                await self._barge_in()
+                await self._barge_in(step.started)
         if self._partials is not None and self._detector.turn_open:
             await self._partials.on_frame(
                 frame,
@@ -390,10 +495,12 @@ class TurnPipeline:
             segments.append(segment)
             payload_extra["audio_segment_id"] = str(segment.id)
             self._audio_segment_ids[turn.turn_id] = segment.id
+        ended_offset_ms = self._appender.offset_ms()
+        self._speech_ended_offset_ms[turn.turn_id] = ended_offset_ms
         event = user_speech_ended_event(
             turn,
             call_id=self._call_id,
-            offset_ms=self._appender.offset_ms(),
+            offset_ms=ended_offset_ms,
             endpoint_silence_ms=self._config.endpoint_silence_ms,
         )
         if payload_extra:
@@ -434,15 +541,69 @@ class TurnPipeline:
                 if self._response_task is task:
                     self._response_task = None
 
-    async def _barge_in(self) -> None:
-        """SPEC §18 steps 3–4, in the order §6.1 fixes: clear the queue, then stop playback."""
-        playback = self._playback
-        await self._transport.clear_outbound()
-        if playback is not None and playback.is_active():
-            await playback.cancel()
-        # TODO(E14): steps 2, 5 and 6 — cancel the TTS/LLM streams, emit
-        # `CALLER_UTTERANCE_INTERRUPTED` with `delivered_text`, and persist the truncated caller
-        # segment. They need a caller utterance to interrupt, which E11 never produces.
+    async def _barge_in(self, started: SpeechStarted) -> None:
+        """SPEC §18 / §6.1 steps 2-6, in the order §6.1 fixes.
+
+        Steps 2-4 run concurrently under one `asyncio.gather`, and **step 3 is the first member**:
+        clearing the outbound queue is what actually stops sound, and §6.1 says it must never
+        wait on step 2. Step 7 needs no code — the detector is already IN_SPEECH and the trainee's
+        turn goes down the ordinary path.
+
+        A barge-in that arrives while the response is still being generated (no audio yet) cancels
+        the responder, appends **no** `CALLER_UTTERANCE_INTERRUPTED` — nothing was spoken, so
+        there is nothing to have interrupted — and leaves the responder to record its own
+        `CANCELLED` metric (E12/E13 already do).
+        """
+        active = self._active_utterance
+        playback = self._live_playback()
+        # First, and synchronously: claim the utterance, so the sink's own `speak()` coroutine —
+        # which step 2 is about to cancel — can never emit `CALLER_TTS_ENDED` for it (INV 12).
+        if active is not None:
+            active.mark_interrupted()
+        delivered: DeliveredAudio | None = None
+
+        async def _clear_queue() -> None:
+            """Step 3."""
+            await self._transport.clear_outbound()
+
+        async def _cancel_generation() -> None:
+            """Step 2: the TTS stream, and the responder task that owns the LLM stream."""
+            if active is not None:
+                await active.cancel_generation()
+            response = self._response_task
+            if response is not None and not response.done():
+                response.cancel()
+
+        async def _stop_playback() -> None:
+            """Step 4."""
+            nonlocal delivered
+            if playback is not None and playback.is_active():
+                delivered = await playback.cancel()
+
+        await asyncio.gather(_clear_queue(), _cancel_generation(), _stop_playback())
+        # §6.3: measured every time, never assumed — `clear_outbound()` completion minus the
+        # trainee's speech **onset**.
+        #
+        # HLD gap (see this task's report): §6.3 says "minus the `USER_SPEECH_STARTED` offset",
+        # but that event's `at_offset_ms` is `SpeechStarted.start_ms`, which §4.4 defines as
+        # `capture_offset_ms - pre_roll_ms` — the start of the *kept pre-roll*, up to 300 ms
+        # before the trainee made a sound. Measuring from it would add `pre_roll_ms` of audio
+        # that predates the barge-in to every reading and put the §6.2 budget out of reach by
+        # construction. §6.2's own definition — "onset is the first sample of trainee speech" —
+        # is the reading closest to SPEC §18, so the pre-roll is added back here.
+        onset_ms = started.start_ms + self._config.pre_roll_ms
+        cutoff_latency_ms = max(0, self._appender.offset_ms() - onset_ms)
+        if active is None:
+            return
+        # Steps 5 and 6. They live on the utterance because only it knows the planned text, the
+        # chunk alignment ledger and the `fact_ids` that must stay unrevealed (§6.4, INV 12).
+        await active.on_interrupted(
+            interrupting_turn_id=started.turn_id,
+            delivered=delivered,
+            cutoff_latency_ms=cutoff_latency_ms,
+        )
+        self._active_utterance = None
+        self._playback = None
 
     # -- task 3: control ----------------------------------------------------------------------
 

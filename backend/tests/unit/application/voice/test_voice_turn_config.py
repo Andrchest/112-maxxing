@@ -27,7 +27,7 @@ def test_defaults_are_the_hld_table() -> None:
     assert config.min_turn_ms == 200
     assert config.vad_frame_ms == 32
     assert config.outbound_queue_ms == 200
-    assert config.tts_chunk_ms == 40
+    assert config.tts_chunk_ms == 20
     assert config.partial_asr_enabled is True
     assert config.partial_interval_ms == 500
 

@@ -47,6 +47,14 @@ from app.application.ports.token_service import (
     TokenClaims,
     TokenService,
 )
+from app.application.ports.tts import (
+    TtsChunk,
+    TTSProvider,
+    TtsStream,
+    TtsTimeoutError,
+    TtsUnavailableError,
+    TtsVoiceSpec,
+)
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import StoredUser, UserRepository, UserRole
 from app.application.ports.voice_signal_publisher import CANCEL_REASONS, VoiceSignalPublisher
@@ -89,8 +97,14 @@ __all__ = [
     "StoredScenarioVersionDetail",
     "StoredSessionListing",
     "StoredUser",
+    "TTSProvider",
     "TokenClaims",
     "TokenService",
+    "TtsChunk",
+    "TtsStream",
+    "TtsTimeoutError",
+    "TtsUnavailableError",
+    "TtsVoiceSpec",
     "UnitOfWork",
     "UnitOfWorkFactory",
     "UserRepository",

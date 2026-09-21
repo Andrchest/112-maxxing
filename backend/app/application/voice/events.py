@@ -22,8 +22,10 @@ would break a documented consumer. See this task's report under "HLD gaps".
 This module emits the boundary signals, the transport transitions, the end of the call and — from
 E12 — the ASR events and `MODEL_ERROR`. The dialogue-chain payloads (`DIALOGUE_INTERPRETED`,
 `FACT_GATE_EVALUATED`, `CALLER_RESPONSE_PLANNED`, `CALLER_RESPONSE_GENERATED`) live beside the
-stage that produces them, in `app.application.dialogue.events` (E13-B2); `CALLER_TTS_*` and
-`FACTS_DELIVERED` are TODO(E14), the epic that first produces the fact.
+stage that produces them, in `app.application.dialogue.events` (E13-B2). E14 adds the playback
+side — `CALLER_TTS_STARTED`, `CALLER_TTS_ENDED`, `CALLER_UTTERANCE_INTERRUPTED`,
+`FACTS_DELIVERED` and the TTS `MODEL_FALLBACK_USED` — here rather than beside the sink, because
+they are pipeline facts (what reached the wire), not dialogue decisions.
 """
 
 from __future__ import annotations
@@ -52,7 +54,12 @@ __all__ = [
     "asr_final_event",
     "asr_partial_event",
     "call_ended_event",
+    "caller_tts_ended_event",
+    "caller_tts_started_event",
+    "caller_utterance_interrupted_event",
+    "facts_delivered_event",
     "model_error_event",
+    "model_fallback_used_event",
     "transport_event_to_domain_event",
     "user_speech_ended_event",
     "user_speech_started_event",
@@ -248,6 +255,7 @@ def model_error_event(
     recoverable: bool,
     turn_index: int | None,
     turn_id: uuid.UUID | None = None,
+    stage: str | None = None,
 ) -> DomainEvent:
     """`MODEL_ERROR` — a model call failed and the turn ends quietly (SPEC §42 item 14).
 
@@ -269,6 +277,10 @@ def model_error_event(
             "recoverable": recoverable,
             "turn_index": turn_index,
             "turn_id": None if turn_id is None else str(turn_id),
+            # E14: `50-voice-pipeline.md` §6/§19 name the failing step a *stage*, while §10.13's
+            # catalogued key is `component`. Both are carried, the catalogued one authoritative —
+            # the same resolution E13 made for `MODEL_FALLBACK_USED.component` vs `stage`.
+            "stage": stage if stage is not None else component,
         },
         correlation_id=turn_id,
     )
@@ -325,6 +337,199 @@ def call_ended_event(
             "ended_by": ended_by.value,
             "reason": reason,
         },
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# E14: the playback side (§3.7, §6, §9.1, SPEC §18, §19, §25, §26; D9, D10)
+# ---------------------------------------------------------------------------------------------
+#
+# Every payload carries §10.13's catalogued keys; the extra keys `50-voice-pipeline.md` §6.3 and
+# this epic's brief name ride *beside* them, the convention `turn_id` established above.
+
+
+def caller_tts_started_event(
+    *,
+    call_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    text: str,
+    voice_id: str,
+    provider: str,
+    model_version: str,
+    first_audio_offset_ms: int,
+) -> DomainEvent:
+    """`CALLER_TTS_STARTED` — the **first** frame has been handed to the transport (§3.7).
+
+    Not "synthesis was requested": SPEC §18's stage order and §27's
+    `speech_end_to_first_audio_ms` are both about audio that actually left, so this event is
+    emitted from the playback tee and never from the `stream()` call site. `text_sent_to_tts` is
+    §10.13's key and SPEC §25's requirement — the *exact* text handed to the provider.
+    """
+    return _event(
+        EventType.CALLER_TTS_STARTED,
+        _SIMULATION,
+        offset_ms,
+        {
+            "call_id": call_id,
+            "turn_index": turn_index,
+            "text_sent_to_tts": text,
+            "tts_provider": provider,
+            "tts_model": model_version,
+            "voice_id": voice_id,
+            "at_offset_ms": first_audio_offset_ms,
+            # Beside the catalogued keys:
+            "turn_id": str(turn_id),
+            "text": text,
+            "provider": provider,
+            "model_version": model_version,
+            "first_audio_offset_ms": first_audio_offset_ms,
+        },
+        correlation_id=turn_id,
+    )
+
+
+def caller_tts_ended_event(
+    *,
+    call_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    at_offset_ms: int,
+    total_audio_ms: int,
+    audio_segment_id: uuid.UUID | None,
+    delivered_text: str,
+) -> DomainEvent:
+    """`CALLER_TTS_ENDED` — the playback drained naturally (§6.4).
+
+    **An interrupted utterance never produces one** (§6.4, D10): `completed` is therefore always
+    `True` here, and the absence of the event is what makes "the facts were not revealed" a
+    structural property of the log rather than a flag a reader has to trust.
+    """
+    return _event(
+        EventType.CALLER_TTS_ENDED,
+        _SIMULATION,
+        offset_ms,
+        {
+            "call_id": call_id,
+            "turn_index": turn_index,
+            "at_offset_ms": at_offset_ms,
+            "total_audio_ms": total_audio_ms,
+            "completed": True,
+            "audio_segment_id": None if audio_segment_id is None else str(audio_segment_id),
+            # Beside the catalogued keys:
+            "turn_id": str(turn_id),
+            "delivered_text": delivered_text,
+        },
+        correlation_id=turn_id,
+    )
+
+
+def caller_utterance_interrupted_event(
+    *,
+    call_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    interrupting_turn_id: uuid.UUID,
+    planned_text: str,
+    delivered_text: str,
+    delivered_audio_ms: int,
+    total_audio_ms_generated: int,
+    alignment_is_exact: bool,
+    fact_ids_not_revealed: Sequence[str],
+    cutoff_latency_ms: int,
+) -> DomainEvent:
+    """`CALLER_UTTERANCE_INTERRUPTED` — §6.3's payload, exactly (INV 12).
+
+    `fact_ids_not_revealed` is **every** fact the utterance would have revealed, not the ones the
+    prefix happened to miss: "facts are revealed by code, not by text" (D10), and the code that
+    reveals them is the uninterrupted `CALLER_TTS_ENDED` that never happened. A reader of the log
+    can therefore offer all of them again on the next turn, which is what INV 12 asserts.
+    """
+    return _event(
+        EventType.CALLER_UTTERANCE_INTERRUPTED,
+        _SIMULATION,
+        offset_ms,
+        {
+            "call_id": call_id,
+            "turn_index": turn_index,
+            "planned_text": planned_text,
+            "delivered_text": delivered_text,
+            "delivered_audio_ms": delivered_audio_ms,
+            "total_audio_ms_generated": total_audio_ms_generated,
+            "cutoff_latency_ms": cutoff_latency_ms,
+            # Beside the catalogued keys (§6.3's payload block):
+            "turn_id": str(turn_id),
+            "interrupting_turn_id": str(interrupting_turn_id),
+            "alignment_is_exact": alignment_is_exact,
+            "fact_ids_not_revealed": list(fact_ids_not_revealed),
+        },
+        correlation_id=turn_id,
+    )
+
+
+def facts_delivered_event(
+    *,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    at_offset_ms: int,
+    fact_ids: Sequence[str],
+) -> DomainEvent:
+    """`FACTS_DELIVERED` — appended **only** after an uninterrupted `CALLER_TTS_ENDED` (D10).
+
+    `delivered_via` is the catalog's single literal `"TTS_COMPLETED"`, which says the same thing
+    the event's position in the log does: a fact is revealed when the trainee has heard it, not
+    when the gate allowed it or the generator wrote it.
+    """
+    return _event(
+        EventType.FACTS_DELIVERED,
+        _SIMULATION,
+        offset_ms,
+        {
+            "turn_index": turn_index,
+            "fact_ids": list(fact_ids),
+            "delivered_via": "TTS_COMPLETED",
+            "at_offset_ms": at_offset_ms,
+            # Beside the catalogued keys:
+            "turn_id": str(turn_id),
+        },
+        correlation_id=turn_id,
+    )
+
+
+def model_fallback_used_event(
+    *,
+    offset_ms: int,
+    component: str,
+    reason: str,
+    attempt: int,
+    fallback_kind: str,
+    turn_index: int | None,
+    turn_id: uuid.UUID | None = None,
+) -> DomainEvent:
+    """`MODEL_FALLBACK_USED` for a *voice-path* stage — E14 uses it for `component = "TTS"`.
+
+    `component` is §10.13's catalogued key and `stage` is what §6/§7.8 call the same thing; both
+    are carried, exactly as E13 resolved it for the interpreter's fallback.
+    """
+    return _event(
+        EventType.MODEL_FALLBACK_USED,
+        _SYSTEM,
+        offset_ms,
+        {
+            "component": component,
+            "reason": reason,
+            "attempt": attempt,
+            "fallback_kind": fallback_kind,
+            "turn_index": turn_index,
+            # Beside the catalogued keys:
+            "stage": component,
+            "turn_id": None if turn_id is None else str(turn_id),
+        },
+        correlation_id=turn_id,
     )
 
 

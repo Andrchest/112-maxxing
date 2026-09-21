@@ -8,7 +8,7 @@ A separate process, not a backend thread. It:
 2. subscribes to `voice:join` (§40.6, `{session_id, room, call_id}`) and starts one `TurnPipeline`
    per call, plus a `voice:cancel:{session_id}` subscription for that call's hang-up/abort;
 3. warms the inference components up in `60-inference-ops.md` §4.2's **sequential** order — VAD,
-   then ASR, then the LLM — and heartbeats one `voice:health:{service}` key per warmed
+   then ASR, then the LLM, then TTS — and heartbeats one `voice:health:{service}` key per warmed
    component with `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A
    missing key means
    NOT_READY, which is what the backend's `ring` guard reads as "the media plane cannot take a
@@ -22,10 +22,8 @@ A separate process, not a backend thread. It:
 The agent owns no domain rule (D9). It never decides a session's state; it produces audio,
 recordings and events.
 
-`voice:health:tts` is deliberately still absent: §4.2's sequence has four steps and this process
-owns three of them today. Publishing READY for a component that does not exist would be a lie the
-`ring` guard then trusts, so the TTS key arrives with the epic that brings the component —
-TODO(E14).
+§4.2's sequence has four steps and this process now runs all four: VAD, ASR, the LLM and — since
+E14 — TTS, each with its own `voice:health:{service}` key.
 """
 
 from __future__ import annotations
@@ -45,6 +43,7 @@ from typing import Any
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
 from app.application.ports.llm import LLMClient
+from app.application.ports.tts import TTSProvider, TtsVoiceSpec
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
 from app.config.settings import Settings, get_settings
@@ -58,6 +57,7 @@ from voice_agent.wiring import (
     build_dialogue_llm,
     build_pipeline,
     build_transport,
+    build_tts,
 )
 
 __all__ = ["VoiceAgent", "main", "run", "synthetic_tone"]
@@ -69,9 +69,11 @@ HEALTH_KEY_PREFIX = "voice:health:"
 VAD_SERVICE = "vad"
 ASR_SERVICE = "asr"
 LLM_SERVICE = "llm"
+TTS_SERVICE = "tts"
 #: The components this process warms up and heartbeats, in §4.2's warm-up order.
-#: TODO(E14): `"tts"`.
-HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE)
+HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_SERVICE)
+#: `60-inference-ops.md` §4.2 step 4: the text the TTS warm-up synthesises and drains to the end.
+WARMUP_TTS_TEXT_RU = "Алло, я вас слушаю."
 #: `HealthStatus` (§4.1). `FATAL` is E18's admin-clearable state and is not published here.
 STATE_READY = "READY"
 STATE_WARMING = "WARMING"
@@ -137,6 +139,7 @@ class VoiceAgent:
         self._vad: VADProvider | None = None
         self._asr: ASRProvider | None = None
         self._llm: LLMClient | None = None
+        self._tts: TTSProvider | None = None
         #: `service -> (state, provider, model_version, warmup_ms, detail)`, what the heartbeat
         #: republishes every `voice_health_heartbeat_s` seconds (§4.3).
         self._health: dict[str, _ComponentHealth] = {
@@ -220,6 +223,7 @@ class VoiceAgent:
         await self._warm_component(VAD_SERVICE, self._warm_vad)
         await self._warm_component(ASR_SERVICE, self._warm_asr)
         await self._warm_component(LLM_SERVICE, self._warm_llm)
+        await self._warm_component(TTS_SERVICE, self._warm_tts)
 
     async def _warm_component(
         self, service: str, warm: Callable[[], Awaitable[tuple[str, str | None]]]
@@ -276,6 +280,32 @@ class VoiceAgent:
         self._llm = llm
         await llm.warm_up()
         return self._deps.settings.llm_provider, llm.model_name
+
+    async def _warm_tts(self) -> tuple[str, str | None]:
+        """§4.2 step 4: `stream(warmup.tts_text, default voice)`, **drained to completion**.
+
+        Drained, not merely started: §2.4's contract is that the first chunk arrives without
+        waiting for full synthesis, and a warm-up that stopped at the first chunk would leave the
+        rest of the graph cold — which is exactly the 87-second cold call the measurements warn
+        about. A failure leaves `voice:health:tts` NOT_READY and the process running, like every
+        other component.
+        """
+        settings = self._deps.settings
+        tts = build_tts(settings)
+        self._tts = tts
+        await tts.warm_up()
+        stream = tts.stream(
+            WARMUP_TTS_TEXT_RU,
+            TtsVoiceSpec(
+                voice_id=settings.tts_voice_id,
+                speaking_rate=settings.tts_speaking_rate,
+            ),
+            request_id=f"warmup:{TTS_SERVICE}",
+            max_chunk_ms=self._deps.config.tts_chunk_ms,
+        )
+        async for _chunk in stream:
+            pass
+        return tts.provider_name, tts.model_version
 
     def _warmup_audio(self, sample_rate: int) -> bytes:
         """`SIM_ASR_WARMUP_SAMPLE_PATH`'s PCM, or a synthesised tone (§4.2).
@@ -358,6 +388,7 @@ class VoiceAgent:
             transport=transport,
             asr=self._asr,
             llm=self._llm,
+            tts=self._tts,
         )
         try:
             await transport.connect(call_id)

@@ -22,10 +22,15 @@ paged out by anything this project does. The usable budget on the dev machine is
 Consequences, stated as rules rather than as measurements:
 
 1. **`DEV_3060TI` does not attempt full GPU residency.** It runs the LLM with **partial GPU offload**
-   (`--n-gpu-layers` set to a value that fits the measured free VRAM, not `-1`), TTS on **CPU**
-   (`PiperTTS`), and VAD on **CPU** (`SileroVAD` via onnxruntime CPU EP). Only the LLM and the ASR
-   model may hold GPU memory, and ASR may be moved to CPU by profile key if a measurement says it
-   must be.
+   (`--n-gpu-layers` set to a value that fits the measured free VRAM, not `-1`), and VAD on **CPU**
+   (`SileroVAD` via onnxruntime CPU EP). **TTS is GPU by default, not CPU** (OWNER DECISION, E14,
+   `docs/hld/90-tbd-epics.md` row E14: "use qwen3tts as tts on gpu, I already checked it and it is
+   very good") — `Qwen3TTS` (Qwen3-TTS 1.7B CustomVoice, ≈ 4.3 GB bf16 residency, measured; a
+   separate worker process/venv, `workers/tts_qwen3/`) is `DEV_3060TI`'s TTS provider too, with
+   `PiperTTS` (CPU) as the configured fallback — this supersedes the older "TTS on CPU" rule this
+   paragraph used to state. The LLM, the ASR model and now TTS may all hold GPU memory
+   simultaneously on this profile; the VRAM-budget consequence is §2.2's superseded-budget note
+   below, and ASR may still be moved to CPU by profile key if a measurement says it must be.
 2. **The budget is declared, not inferred.** `DEV_3060TI` declares
    `vram_budget_mb` as the amount this project is allowed to use, and the preflight (§5) refuses to
    proceed if *measured free* VRAM is below `vram_budget_mb + min_vram_margin_mb`. The project never
@@ -95,7 +100,7 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `tts.voice_id` | str | voice selected for the default caller persona |
 | `tts.device` | str | `cuda` \| `cpu` |
 | `tts.output_sample_rate` | int | provider native rate |
-| `tts.max_chunk_ms` | int | 40 (D9) |
+| `tts.max_chunk_ms` | int | 20 (D9, E14 close-out: 40 -> 20 so §6.2's barge-in budget lands under SPEC §18's 250 ms) |
 | `tts.fallback_provider` | str | provider used when the primary fails (SPEC §39) |
 | `vad.provider` | str | `silero` \| `energy` |
 | `vad.model_path` | str | onnx path (silero) |
@@ -115,13 +120,20 @@ Every key is required unless marked optional. Types are the Pydantic types.
 profile_name: DEV_3060TI
 description: >
   Development profile for an RTX 3060 Ti 8 GB whose memory is mostly occupied by unrelated
-  processes that must never be killed. LLM runs with partial GPU offload; TTS and VAD run on CPU.
+  processes that must never be killed. LLM runs with partial GPU offload; TTS runs on GPU too
+  (Qwen3-TTS 1.7B CustomVoice, OWNER DECISION E14, a separate worker process/venv); VAD runs on
+  CPU.
 
 hardware:
   gpu_name_contains: "3060 Ti"
   gpu_total_vram_mb: 8192
   reserved_by_others_mb: 5120
 
+# SUPERSEDED (E14-B): this figure predates the OWNER DECISION that puts Qwen3-TTS (≈ 4.3 GB bf16
+# measured residency) on this profile's GPU alongside the LLM's partial offload — 2800 no longer
+# reflects what DEV_3060TI actually needs to budget for. Re-measuring the correct DEV VRAM budget
+# with TTS included is E18's job (profiles, warm-up, preflight — `90-tbd-epics.md` row E18); this
+# task does not invent a replacement number (SPEC §27: no benchmark number before it is measured).
 vram_budget_mb: 2800
 min_vram_margin_mb: 512
 measured_peak_vram_mb: null      # UNVERIFIED — set by benchmarks/benchmark_vram.py
@@ -154,13 +166,18 @@ asr:
   sample_rate: 16000
 
 tts:
-  provider: piper                # lowest-risk TTS profile (SPEC §26), CPU only
-  model_path: /models/tts/piper/ru_RU-model.onnx
-  voice_id: ru_RU-default        # UNVERIFIED — pin a measured Russian Piper voice
-  device: cpu
-  output_sample_rate: 22050
-  max_chunk_ms: 40
-  fallback_provider: fake
+  provider: qwen3_tts             # OWNER DECISION (E14): GPU default for every profile, DEV incl.
+  model_path: /models/tts/qwen3-tts          # SIM_TTS_QWEN3_MODEL_DIR; a separate worker process
+                                              # (own venv, workers/tts_qwen3/) loads this, not the
+                                              # backend/voice-agent process itself — see §2.6 below
+  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
+  device: cuda
+  output_sample_rate: 24000
+  max_chunk_ms: 20
+  fallback_provider: piper        # PiperTTS, CPU — the configured fallback (D9), not the DEV default
+  fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  fallback_voice_id: ru_RU-irina-medium
+  fallback_output_sample_rate: 22050
 
 vad:
   provider: silero
@@ -178,7 +195,7 @@ voice_turn:
   min_turn_ms: 200
   vad_frame_ms: 32
   outbound_queue_ms: 200
-  tts_chunk_ms: 40
+  tts_chunk_ms: 20
   partial_asr_enabled: true
   partial_interval_ms: 500
 
@@ -240,11 +257,13 @@ asr:
 
 tts:
   provider: qwen3_tts
-  model_path: /models/tts/qwen3-tts-0.6b
-  voice_id: ru_female_calm       # UNVERIFIED — pin a measured voice id
+  # FIXED (E14-B): was "/models/tts/qwen3-tts-0.6b" — a size mismatch against the owner's actually
+  # evaluated/verified checkpoint (recon §1.1, this task's report): 1.7B CustomVoice, not 0.6B.
+  model_path: /models/tts/qwen3-tts
+  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
   device: cuda
   output_sample_rate: 24000
-  max_chunk_ms: 40
+  max_chunk_ms: 20
   fallback_provider: piper
 
 vad:
@@ -263,7 +282,7 @@ voice_turn:
   min_turn_ms: 200
   vad_frame_ms: 32
   outbound_queue_ms: 200
-  tts_chunk_ms: 40
+  tts_chunk_ms: 20
   partial_asr_enabled: true
   partial_interval_ms: 500
 
@@ -661,8 +680,8 @@ cancellation sub-suite `cancel_latency_ms` (`cancel()` call → generator actual
 `chunks_after_cancel` (must be 0 or 1) and `alignment_is_exact`.
 **Aggregates:** per category — `first_audio_p50_ms`, `first_audio_p95_ms`, `rtf_mean`,
 `peak_vram_mb_max`; plus `cancel_latency_p95_ms` and `chunks_after_cancel_max` over the cancellation
-sub-suite. Run once per configured TTS provider so Qwen3-TTS 0.6B, Chatterbox Multilingual and Piper
-are comparable (SPEC §25).
+sub-suite. Run once per configured TTS provider so Qwen3-TTS 1.7B CustomVoice, Chatterbox
+Multilingual and Piper are comparable (SPEC §25).
 
 ### 7.4 `benchmark_e2e.py`
 
@@ -789,9 +808,37 @@ Notes that matter for this project:
 
 - Built from `workers/voice_agent/Dockerfile`; installs the uv workspace with the extras the profile
   needs (`asr-gigaam`, `vad-silero`, `tts-piper`, …) — heavy extras are image build args so the DEV
-  image does not carry the GPU TTS stacks it will not use (D1).
-- `runtime: nvidia` with the same device pinning; on DEV the GPU is used for the ASR model only,
-  TTS and VAD run on CPU (§1), so `cpus`/`mem_limit` matter as much as the GPU reservation.
+  image does not carry the GPU TTS stacks it will not use (D1). **`tts-qwen3` is never one of these
+  extras** (E14-B): Qwen3-TTS lives in the separate `tts_qwen3` worker process/venv below, never
+  imported by `voice-agent` itself (`backend/tools/check_imports.py`).
+- `runtime: nvidia` with the same device pinning; on DEV the GPU is used for the ASR model and, via
+  the separate `tts_qwen3` worker process (not this container's own process), TTS — OWNER DECISION,
+  E14, supersedes the older "TTS runs on CPU" claim this bullet used to make. VAD still runs on CPU
+  (§1). `voice-agent` itself holds no TTS GPU memory; `cpus`/`mem_limit` on this container matter as
+  much as the GPU reservation, same as before.
+
+### `tts_qwen3` worker (E14-B; not yet its own compose service — E18 adds the full seven-service
+compose, `90-tbd-epics.md` row E18)
+
+- Standalone package `workers/tts_qwen3/` (own `pyproject.toml`, own venv — `qwen-tts==0.1.1` pins
+  `torch==2.14.0`, outside the `asr-gigaam` extra's `torch<2.9` ceiling, so it cannot share a venv
+  with `backend`/`voice-agent`; see `workers/tts_qwen3/README.md`). Launched with
+  `python -m tts_qwen3` (`make run-tts-qwen3`), which binds **loopback only**
+  (`--host 127.0.0.1`, hard-coded, not a flag) on `SIM_TTS_QWEN3_PORT` (default **8112** — never
+  8012/8016, the owner's other processes on this machine).
+- `Qwen3TTS` (`backend/app/inference/tts/qwen3_tts.py`) is the only caller: an `httpx` client whose
+  `base_url` is validated loopback/compose-internal at construction (SPEC §41), mirroring
+  `LlamaCppClient`'s `validate_llm_base_url`.
+- Health: `GET /health` -> `{status, model, revision, device, loaded}` — a simpler shape than the
+  `voice:health:{service}` Redis contract §4.3 describes for `llm`/`asr`/`vad`/`tts`; **the
+  `voice:health:tts` heartbeat key itself is still owned by `voice-agent`'s own warm-up sequence
+  (§4.2 step 4), not by this worker** — `voice-agent` polls this worker's `/health` (and drives
+  `POST /warm_up`) the way it drives every other provider's `warm_up()`, then publishes
+  `voice:health:tts` itself, same as every other service in §4.3's table.
+- Once E18 adds the full compose, this becomes its own service (no published host port, reachable
+  only as `http://tts-qwen3:8112` inside the network — the same "no `ports:` mapping" shape as
+  `llama-server` above); until then it is started out-of-band by whoever runs the profile
+  (`make deps-tts-qwen3 && make models-tts-qwen3 && make run-tts-qwen3`).
 - `depends_on`: `redis` (service_started), `postgres` (service_healthy), `livekit`
   (service_started), `llama-server` (service_healthy). It tolerates llama-server being slow anyway —
   the warm-up polls (§4.2) — but the ordering keeps the logs readable.
@@ -828,7 +875,40 @@ stack (`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains onl
    `benchmark_vram.py` run before the demo.
 3. The llama.cpp tag and the exact spelling of `--chat-template-kwargs` / `--flash-attn on` are
    UNVERIFIED against a pinned build (§8).
-4. The Russian voice ids for Piper, Qwen3-TTS and Chatterbox are UNVERIFIED placeholders.
+4. Voice ids: Piper's is now pinned and measured (`ru_RU-irina-medium`, `make models-piper`, §11's
+   model table — no longer a placeholder). Qwen3-TTS's is a real vendor CustomVoice speaker name
+   (`Serena`, one of the closed four `Serena`/`Ryan`/`Vivian`/`Aiden` — E14-B recon §1.1), not a
+   free-form Russian voice id at all; which of the four "sounds best" for the demo's caller persona
+   is still UNVERIFIED (no listening evaluation has been done). Chatterbox's remains an UNVERIFIED
+   placeholder — out of E14-B's scope (E14-B built `Qwen3TTS`/`PiperTTS` only).
+
+   **E14 close-out (item 7): Piper's real contract run, measured** — `SIM_RUN_MODEL_TESTS=1 uv run
+   pytest backend/tests/models/test_tts_contract.py -k piper -s`, real `piper-tts==1.8.0` (installed
+   by the new `make deps-tts-piper` target) + real GigaAM v3 e2e CTC ASR (`device=cuda`), on
+   `andreipc-B660M-DS3H-DDR4` (RTX 3060 Ti 8 GB, the same dev machine `DEV_3060TI` describes),
+   2026-09-21. This surfaced and fixed a real adapter bug, not a config gap: `piper_tts.py` called
+   `PiperVoice.synthesize_stream_raw()`, an API the installed `piper-tts>=1.2,<2` range no longer
+   has (it exposes `synthesize(text) -> Iterable[AudioChunk]` instead, `AudioChunk.audio_int16_bytes`
+   the s16le PCM) — the extra had never actually been installed anywhere before this task, so this
+   was never run against the real package (E14-B's report, "what was NOT run"). Fixed to call the
+   real API; behaviour (bounded, cancellable drain via `asyncio.to_thread(next, ...)`) unchanged.
+   Five Russian dispatcher-style sentences, all passed (`wer <= 0.6` for every row):
+
+   | sentence | first_chunk_ms | total_ms | rtf | sample_rate | wer |
+   |:--|--:|--:|--:|--:|--:|
+   | «Служба сто двенадцать, что у вас случилось?» | 153.6 | 153.6 | 0.052 | 22050 | 0.286 |
+   | «Назовите, пожалуйста, точный адрес происшествия.» | 98.8 | 98.9 | 0.023 | 22050 | 0.0 |
+   | «Есть ли пострадавшие, нуждающиеся в помощи?» | 87.1 | 87.1 | 0.027 | 22050 | 0.0 |
+   | «Оставайтесь на линии, я направляю к вам бригаду.» | 81.5 | 81.5 | 0.024 | 22050 | 0.0 |
+   | «Повторите, пожалуйста, номер телефона ещё раз.» | 99.9 | 100.0 | 0.026 | 22050 | 0.0 |
+
+   `first_chunk_ms == total_ms` on every row because `_measure_provider` buffers Piper's whole
+   sentence before its first `TtsChunk` (`piper_tts.py`'s documented "HLD gap": re-chunking is
+   post-hoc, not incremental) — a measurement, not a target; §7.3's `benchmark_tts.py` is the
+   target-bearing benchmark. The one non-zero WER (0.286, «Служба сто двенадцать» → GigaAM heard
+   «Служба 112») is GigaAM normalising the digits, not a Piper intelligibility defect.
+   `nvidia-smi --query-compute-apps` before and after: only the owner's PID 1082982 at 4638 MiB,
+   unchanged — GigaAM ran on GPU (~1.3 GB, fits the ~3.2 GB free) without touching that PID.
 5. `--ctx-size` vs `--parallel` (§8, first note) is the one place this document had to choose a
    mechanism the frame did not name; it is listed for ratification in the task report.
 
@@ -848,6 +928,9 @@ URLs, sha256, `make` target) lives in `models/README.md`; this table is the cros
 | GigaAM Conformer-CTC | `v3_ctc` (benchmarked alternative, SPEC §19) | same as above | same as above | MIT | manual |
 | faster-whisper (optional) | whisper size per `SIM_WHISPER_MODEL_PATH` | not fetched by this project at all (E12 ruling 4) | n/a | n/a | never — a developer points `SIM_WHISPER_MODEL_PATH` at a CTranslate2 model they already have |
 | Qwen3-4B (LLM, `llm.provider: llama_cpp`, DEV_3060TI, SPEC §22) | `Qwen3-4B-Q4_K_M` | `huggingface.co/Qwen/Qwen3-4B-GGUF`, file `Qwen3-4B-Q4_K_M.gguf` | HF repo `main` at fetch time; file identity is the sha256 below, not a git commit (E13-B1 measured 2026-09-21: 2 497 280 256 bytes, sha256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5` — matches the HF repo's own LFS `sha256` for this file, queried via `HfApi.model_info(files_metadata=True)`) | Apache-2.0 (per the repo's own licence file) | `make models-llm` (`hf download`, `curl -C -` fallback), sha256 not re-verified by the target itself — see this task's report |
+| Qwen3-TTS 1.7B CustomVoice (`tts.provider: qwen3_tts`, GPU default incl. DEV_3060TI, OWNER DECISION E14) | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice@0c0e3051f131929182e2c023b9537f8b1c68adfe` | `huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` | pinned commit `0c0e3051f131929182e2c023b9537f8b1c68adfe` (owner-evaluated, E14-B recon §1.1) | see the repo's own licence file | `make models-tts-qwen3` (`hf download`, only when >= 12 GB disk is free — NOT_RUN otherwise); loaded by the standalone `workers/tts_qwen3` worker, never by `backend`/`voice-agent` directly |
+| Qwen3-TTS-Tokenizer-12Hz (paired with the checkpoint above) | n/a | `huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz` | pinned commit `7dd38ad4e9bad454aae9cd937d0cd577604fe229` (owner-evaluated, E14-B recon §1.1) | see the repo's own licence file | `make models-tts-qwen3` |
+| Piper `ru_RU-irina-medium` (`tts.provider: piper`, CPU, the configured fallback) | `ru_RU-irina-medium` | `huggingface.co/rhasspy/piper-voices`, path `ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx` (+ `.onnx.json`) | HF repo `main` at fetch time; file identity is the sha256 recorded by this task's report (measured, not pinned in advance — same posture as the Qwen3-4B GGUF row above) | MIT (per `rhasspy/piper-voices`) | `make models-piper` (`curl -C -`, retried) |
 
 `GigaAMProvider` (`backend/app/inference/asr/gigaam_provider.py`) loads the local directory with
 `AutoModel.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)` and

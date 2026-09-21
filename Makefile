@@ -21,7 +21,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test
+.PHONY: deps deps-models models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper
 deps:
 	$(UV) sync --all-packages --group dev
 	cd frontend && npm ci
@@ -33,6 +33,13 @@ deps:
 # `uv sync` here or anywhere else (it would remove `--inexact`'s protection for other workers).
 deps-models:
 	$(UV) sync --all-packages --group dev --inexact --extra vad-silero --extra asr-gigaam
+# E14 close-out, item 7: `deps-models` plus `tts-piper`, so `PiperTTS`'s real contract test
+# (`backend/tests/models/test_tts_contract.py -k piper`) can actually import `piper-tts` — E14-B's
+# real run SKIPPED because it was never installed anywhere (SPEC §27: measured, never invented).
+# `--inexact` so this never strips a package another worker's plain `make deps`/`uv run` added;
+# NEVER a bare `uv sync`.
+deps-tts-piper:
+	$(UV) sync --all-packages --group dev --inexact --extra vad-silero --extra asr-gigaam --extra tts-piper
 # Fetches the Silero VAD v5 onnx graph from a PINNED release tag (MIT licence) and verifies its
 # sha256 before it is trusted — see docs/hld/60-inference-ops.md's model table / models/README.md
 # for the URL and hash this checks against. GigaAM's checkpoints are not fetched here: the owner
@@ -57,6 +64,57 @@ models-llm:
 		curl -L -C - -o models/$(QWEN3_4B_FILE) \
 			https://huggingface.co/$(QWEN3_4B_HF_REPO)/resolve/main/$(QWEN3_4B_FILE)
 	sha256sum models/$(QWEN3_4B_FILE)
+# -- E14-B: the standalone Qwen3-TTS GPU worker (own venv — `workers/tts_qwen3/README.md`) -----
+# Creates workers/tts_qwen3/.venv with `uv` and installs the pinned deps (qwen-tts==0.1.1,
+# torch==2.14.0) into it — never into the main workspace venv (`scripts/setup_tts_qwen3.sh`
+# refuses to run inside it).
+deps-tts-qwen3:
+	scripts/setup_tts_qwen3.sh
+# Pinned exactly (recon §1.1 / docs/QWEN3_TTS_EXPERIMENT.md:25-30) — immutable SHA revisions, not
+# "latest". ~4.3 GB total; only fetched when at least 12 GB is free (this task's brief, item 1) —
+# otherwise this prints NOT_RUN and its reason and exits 0, the same "measured, never invented"
+# posture SPEC §27 asks for everywhere else (a partial/failed download would be worse than none).
+QWEN3_TTS_MODEL_REPO := Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+QWEN3_TTS_MODEL_REVISION := 0c0e3051f131929182e2c023b9537f8b1c68adfe
+QWEN3_TTS_TOKENIZER_REPO := Qwen/Qwen3-TTS-Tokenizer-12Hz
+QWEN3_TTS_TOKENIZER_REVISION := 7dd38ad4e9bad454aae9cd937d0cd577604fe229
+QWEN3_TTS_MODEL_DIR := models/qwen3-tts
+QWEN3_TTS_MIN_FREE_DISK_GB := 12
+models-tts-qwen3:
+	@free_kb=$$(df --output=avail -k . | tail -1); \
+	free_gb=$$((free_kb / 1024 / 1024)); \
+	if [ "$$free_gb" -lt $(QWEN3_TTS_MIN_FREE_DISK_GB) ]; then \
+		echo "NOT_RUN: models-tts-qwen3 needs >= $(QWEN3_TTS_MIN_FREE_DISK_GB) GB free disk, only $${free_gb} GB free"; \
+	else \
+		mkdir -p $(QWEN3_TTS_MODEL_DIR); \
+		uvx --from huggingface_hub hf download $(QWEN3_TTS_MODEL_REPO) \
+			--revision $(QWEN3_TTS_MODEL_REVISION) \
+			--local-dir $(QWEN3_TTS_MODEL_DIR)/Qwen3-TTS-12Hz-1.7B-CustomVoice; \
+		uvx --from huggingface_hub hf download $(QWEN3_TTS_TOKENIZER_REPO) \
+			--revision $(QWEN3_TTS_TOKENIZER_REVISION) \
+			--local-dir $(QWEN3_TTS_MODEL_DIR)/Qwen3-TTS-Tokenizer-12Hz; \
+	fi
+# Loopback only (`tts_qwen3/__main__.py` hard-codes `--host 127.0.0.1`); port from
+# SIM_TTS_QWEN3_PORT, default 8112 (never 8012/8016 — those belong to the owner's other work).
+run-tts-qwen3:
+	workers/tts_qwen3/.venv/bin/python -m tts_qwen3
+# The fake-model-factory suite (`workers/tts_qwen3/tests/test_server.py`), in the worker's own
+# venv — this task's brief, item 1: "run in ITS OWN venv only if you created it".
+test-tts-qwen3:
+	cd workers/tts_qwen3 && .venv/bin/python -m pytest -q
+# `PiperTTS`'s Russian voice (CPU fallback, D9's "configured fallback"). URL pattern confirmed
+# from the owner's own downloader script (recon §4): rhasspy/piper-voices on Hugging Face. The
+# sha256 is measured here, not pinned in advance (like `models-llm`'s Qwen3-4B GGUF) — record it
+# in `docs/hld/60-inference-ops.md`'s model table after a real run (this task's report does).
+PIPER_VOICE_NAME := irina
+PIPER_VOICE_QUALITY := medium
+PIPER_VOICE_FILE := ru_RU-$(PIPER_VOICE_NAME)-$(PIPER_VOICE_QUALITY)
+PIPER_VOICE_URL := https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/$(PIPER_VOICE_NAME)/$(PIPER_VOICE_QUALITY)/$(PIPER_VOICE_FILE).onnx
+models-piper:
+	mkdir -p models/piper
+	curl -sL --retry 5 --retry-all-errors -C - -o models/piper/$(PIPER_VOICE_FILE).onnx $(PIPER_VOICE_URL)
+	curl -sL --retry 5 --retry-all-errors -C - -o models/piper/$(PIPER_VOICE_FILE).onnx.json $(PIPER_VOICE_URL).json
+	sha256sum models/piper/$(PIPER_VOICE_FILE).onnx models/piper/$(PIPER_VOICE_FILE).onnx.json
 # Real-model contract tests (marker `requires_models`): never part of `make gate` (ruling 1). Skips
 # per-test when the extra/model/env is missing (see backend/tests/models/_skip.py).
 test-models:

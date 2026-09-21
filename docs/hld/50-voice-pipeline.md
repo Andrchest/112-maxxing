@@ -323,6 +323,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.application.ports.call_transport import AudioFrame
+from app.domain.caller.emotion import EmotionState
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +332,8 @@ class TtsVoiceSpec:
     speaking_rate: float   # 1.0 = provider default; CallerProfile.speaking_rate
     pitch: float = 0.0     # semitones; 0.0 = provider default
     language: str = "ru"
+    emotion: EmotionState | None = None  # additive (E14 close-out): PlannedCallerUtterance.emotion,
+                                          # None = no live emotion available (neutral)
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +380,7 @@ class TTSProvider(Protocol):
         voice: TtsVoiceSpec,
         *,
         request_id: str,
-        max_chunk_ms: int = 40,
+        max_chunk_ms: int = 20,
     ) -> TtsStream:
         """Begin streaming synthesis. Must yield the first chunk without waiting for full synthesis.
         Chunks are at most `max_chunk_ms` of audio so that cancellation is bounded (SPEC §18)."""
@@ -385,16 +388,30 @@ class TTSProvider(Protocol):
     async def close(self) -> None: ...
 ```
 
+**E14 close-out addition (additive, not a rewrite of the snippet's shape).** `TtsVoiceSpec.emotion`
+carries `PlannedCallerUtterance.emotion` from `TtsSpeechSink` to the provider without any mutable
+provider-side state (MANAGER RULING on E14-B's gap 1: the earlier `Qwen3TTS.set_emotion()` seam is
+deleted). `None` means no live emotion is available (e.g. a warm-up call); a provider treats that
+as neutral. `PiperTTS`/`FakeTTS` ignore the field — see §2.4's provider bullets below.
+`max_chunk_ms`'s default also drops from 40 to 20 in this change (§6.2, SPEC §18 — the barge-in
+budget at stock defaults must land under 250 ms, not exactly at it).
+
 Implementations must never buffer the whole utterance into one WAV before yielding (SPEC §18 last
 line). Adapters that can only synthesise sentence-at-a-time still satisfy the port by slicing each
 synthesised sentence into `max_chunk_ms` frames as they are produced, and set
 `alignment_is_exact = True` at sentence granularity. Adapters with no alignment data at all set
 `alignment_is_exact = False` and compute offsets word-proportionally to elapsed audio (D9).
 
-- `PiperTTS` — CPU, onnxruntime, Russian voice models; the lowest-risk profile and the configured
-  fallback (D9). **UNVERIFIED:** which Russian Piper voice is selected; a voice id per profile is
-  chosen in `60-inference-ops.md` once one is measured.
-- `Qwen3TTS` — Qwen3-TTS 0.6B, GPU.
+- `PiperTTS` — CPU, onnxruntime, Russian voice models; the configured fallback for every profile
+  (D9) — no longer the DEV default (see §10: OWNER DECISION makes `Qwen3TTS` the DEV_3060TI
+  default too). Voice: `ru_RU-irina-medium` (`make models-piper`, `60-inference-ops.md`'s model
+  table).
+- `Qwen3TTS` — Qwen3-TTS **1.7B** CustomVoice, GPU (OWNER DECISION, E14; corrects the earlier "0.6B"
+  placeholder — the owner's evaluated/verified checkpoint is `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`,
+  measured VRAM residency ≈ 4.3 GB bf16). GPU default for every profile including `DEV_3060TI`, not
+  only `FINAL_*`. Whole-utterance synthesis only (no native streaming/cancellation) — the mandatory
+  mitigation is sentence-chunked synthesis in front of every provider (§2.4's chunker), never a
+  per-adapter workaround.
 - `ChatterboxTTS` — Chatterbox Multilingual, GPU.
 - `FakeTTS` — deterministic silence of a length proportional to the text; exact alignment.
 
@@ -703,6 +720,17 @@ transcript_segment_id}` carries the values the ASR transaction just committed. T
 therefore starts from the same transcript `ASR_FINAL` and the `transcript_segments` row carry, and
 cannot drift from them; `AsrTurnResponder.next_stage` is a `TranscribedTurnResponder | None`.
 
+**The barge-in hook (E14).** Behind the dialogue chain, `CallerSpeechSink` (§3.5) is implemented by
+`app.application.voice.tts_speech_sink.TtsSpeechSink`, which registers the utterance it is speaking
+with the pipeline through **one** hook: `TurnContext.set_active_utterance(handle)`, typed
+`ActiveCallerUtterance` in `turn_pipeline.py`. The handle answers the three questions §6.1 asks —
+`playback` (the live `PlaybackHandle`, step 4), `cancel_generation()` (the TTS stream, step 2) and
+`on_interrupted(...)` (steps 5-6, which need the planned text, the chunk alignment ledger and the
+`fact_ids` that must stay unrevealed). `set_playback(handle)` stays beside it for a caller that has
+only a playback; a registered utterance wins when both are set. `TurnContext.speech_ended_offset_ms`
+(`turn_id -> USER_SPEECH_ENDED` offset) is what the sink measures SPEC §27's
+`speech_end_to_first_audio_ms` from.
+
 **Events emitted by `TurnPipeline` itself:** `ASR_PARTIAL`, `ASR_FINAL`, `CALLER_TTS_STARTED`,
 `CALLER_TTS_ENDED`, `CALLER_UTTERANCE_INTERRUPTED`, `FACTS_DELIVERED`, `TRANSPORT_DISCONNECTED`,
 `TRANSPORT_RECONNECTED`, `CALL_ENDED`. It re-emits the stage events of §3.2–§3.6 through the same
@@ -742,14 +770,14 @@ profile and `.env`, never from literals in code (D9).
 | `speech_start_threshold` | float | 0.55 | 0.30–0.90 | VAD probability at or above which a frame counts as speech |
 | `speech_end_threshold` | float | 0.35 | 0.10–`speech_start_threshold` | probability below which a frame counts as silence (hysteresis) |
 | `speech_start_min_ms` | int | 96 | 32–400, multiple of `vad_frame_ms` | consecutive speech needed to leave PRE_SPEECH |
-| `endpoint_silence_ms` | int | 300 | 250–350 (SPEC §17 initial target); hard bound 150–1500 | trailing silence that finalizes a turn |
+| `endpoint_silence_ms` | int | 320 | 250–350 (SPEC §17 initial target); hard bound 150–1500 | trailing silence that finalizes a turn |
 | `pre_roll_ms` | int | 300 | 100–1000 | audio kept before speech onset so word beginnings survive |
-| `barge_in_min_speech_ms` | int | 120 | 60–400, multiple of `vad_frame_ms` | sustained speech during playback before a barge-in fires |
+| `barge_in_min_speech_ms` | int | 128 | 60–400, multiple of `vad_frame_ms` | sustained speech during playback before a barge-in fires |
 | `max_turn_ms` | int | 30000 | 5000–120000 | hard cap; forces `end_reason = MAX_TURN_MS` |
 | `min_turn_ms` | int | 200 | 0–2000 | turns shorter than this are discarded as noise, no ASR |
 | `vad_frame_ms` | int | 32 | fixed by `VADProvider.frame_samples` | analysis frame length |
 | `outbound_queue_ms` | int | 200 | 40–500 | transport outbound buffer depth (`queue_size_ms`) |
-| `tts_chunk_ms` | int | 40 | 10–60 | `max_chunk_ms` handed to `TTSProvider.stream` |
+| `tts_chunk_ms` | int | 20 | 10–60 | `max_chunk_ms` handed to `TTSProvider.stream` |
 | `partial_asr_enabled` | bool | true | — | whether `ASR_PARTIAL` is produced at all (also gated per session by `SessionPolicy`, D6) |
 | `partial_interval_ms` | int | 500 | 200–2000 | pseudo-streaming partial cadence (§4.5) |
 
@@ -757,6 +785,20 @@ Validation at load: `speech_end_threshold <= speech_start_threshold`;
 `speech_start_min_ms`, `barge_in_min_speech_ms` and `endpoint_silence_ms` are integer multiples of
 `vad_frame_ms` (rounded up at load with a warning if not); `min_turn_ms < max_turn_ms`;
 `tts_chunk_ms <= outbound_queue_ms`.
+
+**E14 correction.** `endpoint_silence_ms` and `barge_in_min_speech_ms` were previously written as
+300 and 120. Neither is a multiple of the 32 ms `vad_frame_ms`, so the load-time rounding above
+turned them into **320** and **128** on every start-up, and the "defaults" column named values no
+process ever ran with. The table now states the effective values. The `.env` block
+(`SIM_VOICE_ENDPOINT_SILENCE_MS`, `SIM_VOICE_BARGE_IN_MIN_SPEECH_MS`) keeps the old numbers as its
+own defaults and the rounding keeps doing its job — this is a documentation correction, not a
+behaviour change — and 320 ms is still inside SPEC §17's 250-350 target band.
+
+**E14 close-out correction.** `tts_chunk_ms`'s default drops from 40 to 20 in this change (a
+standard 20 ms audio frame), a genuine behaviour change, not a rounding correction: §6.2's budget
+at the *other* stock defaults (320/128) sums to exactly 250 ms with `tts_chunk_ms = 40`, which
+meets SPEC §18's "< 250 ms" at zero margin. 20 ms brings the total to 230 ms — see §6.2 below.
+`SIM_VOICE_TTS_CHUNK_MS` stays a config key; nothing is hard-coded.
 
 ### 4.2 Pre-roll ring buffer
 
@@ -1165,12 +1207,27 @@ sample the trainee hears.
 | # | Contribution | ms | Why |
 |:--|:--|--:|:--|
 | 1 | VAD frame quantisation | ≤ 32 | onset can fall just after a frame boundary; Silero v5 window is 512 samples @ 16 kHz |
-| 2 | Sustain confirmation `barge_in_min_speech_ms` | 120 | SPEC §18 step 1; 4 frames minimum below which breath noise cuts the caller off |
+| 2 | Sustain confirmation `barge_in_min_speech_ms` | 128 | SPEC §18 step 1; 4 frames (the effective value after §4.1's rounding), below which breath noise cuts the caller off |
 | 3 | Detector + task hand-off | ≤ 5 | in-process, one `asyncio` queue put and a coroutine step |
 | 4 | `clear_outbound()` round trip | ≤ 5 | `AudioSource.clear_queue()` is a local FFI call, no network |
-| 5 | Residual audio already past the queue | ≤ 40 | one `tts_chunk_ms` frame may already be inside the LiveKit encoder |
+| 5 | Residual audio already past the queue | ≤ 20 | one `tts_chunk_ms` frame may already be inside the LiveKit encoder |
 | 6 | Network + jitter buffer to the browser | ≤ 40 | loopback/LAN WebRTC; the browser's own jitter buffer dominates. **UNVERIFIED** — measured by `benchmark_e2e.py` |
-| | **Total** | **≤ 242** | margin 8 ms at defaults |
+| | **Total** | **≤ 230** | **20 ms of margin** at the effective defaults — see below |
+
+**E14 correction, recomputed honestly.** Row 2 was written as 120 ms, but `barge_in_min_speech_ms`
+is rounded up to a whole 32 ms VAD frame at load (§4.1), so the value every process actually uses
+is **128**. With row 5 at the old `tts_chunk_ms` default of 40, the sum was
+`32 + 128 + 5 + 5 + 40 + 40 = 250` ms, which met the target exactly and left no margin: SPEC §18
+asks for *under* 250 ms, so at the stock defaults the budget was spent, not met.
+
+**E14 close-out fix.** `tts_chunk_ms`'s default drops from 40 to 20 ms (a standard 20 ms audio
+frame; this task). Row 5 is one chunk of residual audio, so the sum is now
+`32 + 128 + 5 + 5 + 20 + 40 = 230` ms — **under** 250 ms, with 20 ms of margin. The lever that
+brought it back is `tts_chunk_ms`: at 10 ms the total would be 220 ms. `outbound_queue_ms`
+is **not** a lever here — it does not appear in the sum at all, because `clear_outbound()` discards
+it. The numbers above remain a budget, not a measurement; `benchmark_e2e.py` measures rows 5 and 6
+on real hardware, and the pipeline records the true figure as `cutoff_latency_ms` on every
+barge-in.
 
 Two knobs keep this inside budget and are the only ones allowed to move:
 
@@ -1225,8 +1282,16 @@ the TTS produced, including chunks generated but never captured.
 }
 ```
 
-`cutoff_latency_ms` is `clear_outbound()` completion offset minus `USER_SPEECH_STARTED` offset — the
-measured value of §6.2, recorded every time so the target is monitored and not assumed.
+`cutoff_latency_ms` is `clear_outbound()` completion offset minus the trainee's speech **onset** —
+the measured value of §6.2, recorded every time so the target is monitored and not assumed.
+
+**E14 clarification.** This line previously read "minus `USER_SPEECH_STARTED` offset". That event's
+`at_offset_ms` is `SpeechStarted.start_ms`, which §4.4 defines as `capture_offset_ms - pre_roll_ms`
+— the start of the *kept pre-roll*, up to `pre_roll_ms` (300 ms) before the trainee made a sound.
+Measuring from it would add the whole pre-roll to every reading and put §6.2's budget out of reach
+by arithmetic rather than by behaviour. §6.2's own definition — "onset is the first sample of
+trainee speech" — is the reading SPEC §18 supports, so the implementation measures from
+`USER_SPEECH_STARTED.at_offset_ms + pre_roll_ms` (`TurnPipeline._barge_in`).
 
 ### 6.4 What is persisted on a barge-in
 
@@ -1243,6 +1308,16 @@ measured value of §6.2, recorded every time so the target is monitored and not 
 `planned_text` is kept in the event payload and in the turn record but **not** in
 `transcript_segments`: the transcript is what was heard (SPEC §25 "store actual text sent to TTS and
 playback timing" is satisfied by the event payload + `inference_metrics`).
+
+**E14 reading — the turn that was never spoken at all.** INV 14's last row (every configured TTS
+provider failed) is not a barge-in: nothing was interrupted, and nothing was heard either. §20.6
+has no "undelivered" flag on `transcript_segments`, so the reading implemented is the one this
+table already licenses for the interrupted case, with `delivered_audio_ms = 0`: the `CALLER`
+transcript row **is** written and carries `text = planned_text` — losing the record of what the
+caller was going to say would be exactly the data loss SPEC §42 item 14 forbids — and
+`dialogue_turns.delivered_text = ""` beside E13's `planned_text` is what says nothing reached the
+trainee. No `CALLER_TTS_ENDED` and no `FACTS_DELIVERED` are appended, so the facts stay unrevealed
+exactly as they do after a barge-in.
 
 ---
 
@@ -1567,10 +1642,16 @@ profile name resolves to.
 
 | Profile | VADProvider | ASRProvider | TTSProvider | LLM |
 |:--|:--|:--|:--|:--|
-| `DEV_3060TI` | `SileroVAD` (CPU) | `GigaAMProvider` `v3_e2e_ctc` | `PiperTTS` (CPU) | Qwen3-4B via `LlamaCppClient` |
+| `DEV_3060TI` | `SileroVAD` (CPU) | `GigaAMProvider` `v3_e2e_ctc` | `Qwen3TTS` (GPU; fallback `PiperTTS`, CPU) | Qwen3-4B via `LlamaCppClient` |
 | `FINAL_3080TI_12GB` | `SileroVAD` (CPU) | `GigaAMProvider` `v3_e2e_ctc` | `Qwen3TTS` (fallback `PiperTTS`) | Qwen3-8B Q4_K_M |
 | `FINAL_3080TI_16GB` | `SileroVAD` (CPU) | `GigaAMProvider` `v3_e2e_ctc` | `Qwen3TTS` or `ChatterboxTTS` (fallback `PiperTTS`) | Qwen3-8B Q4_K_M |
 | gate / tests | `EnergyVAD` | `FakeASR` | `FakeTTS` | `FakeLLM` |
+
+`DEV_3060TI`'s `Qwen3TTS` binding is the OWNER DECISION (E14, `docs/hld/90-tbd-epics.md` row E14:
+"use qwen3tts as tts on gpu, I already checked it and it is very good") — GPU Qwen3-TTS is the
+default for every profile including the development one, not only `FINAL_*`; `PiperTTS` (CPU) is
+the configured fallback everywhere, never the DEV default. See `60-inference-ops.md` §1/§2.2 for
+the VRAM-budget consequence of running Qwen3-TTS alongside the LLM's partial offload on a 3060 Ti.
 
 A TTS failure at runtime falls back to the profile's configured fallback provider, logs the failure
 and emits `MODEL_ERROR {turn_id, stage: "TTS", error_kind}` followed by the fallback synthesis; it

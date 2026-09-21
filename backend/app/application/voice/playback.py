@@ -2,7 +2,7 @@
 
 SPEC §18 forbids the easy implementation: "Do not implement TTS as one complete WAV file that
 cannot be interrupted." So an utterance is pulled from its producer chunk by chunk
-(`tts_chunk_ms`, default 40 ms), handed to a transport queue no deeper than `outbound_queue_ms`
+(`tts_chunk_ms`, default 20 ms), handed to a transport queue no deeper than `outbound_queue_ms`
 (default 200 ms), and can be stopped at any point with three numbers that are *measured*, not
 assumed: how much audio was actually played out, how much was generated, and how many frames were
 thrown away.

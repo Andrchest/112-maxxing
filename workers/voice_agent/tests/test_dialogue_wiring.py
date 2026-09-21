@@ -25,10 +25,12 @@ from app.application.ports.llm import JsonSchemaSpec, LLMClient
 from app.application.ports.metrics_recorder import NullMetricsRecorder
 from app.application.testing.fakes import FakeClock
 from app.application.voice.asr_responder import AsrTurnResponder
+from app.application.voice.tts_speech_sink import TtsSpeechSink
 from app.application.voice.turn_pipeline import TranscribedTurnResponder
 from app.config.settings import Settings
 from app.domain.facts.gate import AllowedFactsPackage
 from app.inference.asr.fake_asr import FakeASR
+from app.inference.tts.fake_tts import FakeTTS
 from voice_agent.wiring import (
     ScriptedFakeDialogueLLM,
     VoiceAgentDeps,
@@ -99,11 +101,23 @@ def test_the_dialogue_responder_is_built_from_settings_not_literals() -> None:
     assert generator._validator.config.max_chars == 222
 
 
-def test_the_default_speech_sink_is_the_null_one_until_e14() -> None:
-    """E13 decides the words; E14 decides the audio (R5)."""
+def test_the_default_speech_sink_is_e14s_tts_sink() -> None:
+    """E13 decides the words; E14 decides the audio (R5) — and now wires the sink that does it."""
     responder = build_dialogue_responder(deps(), metrics=NullMetricsRecorder())
 
-    assert isinstance(responder._sink, NullCallerSpeechSink)
+    assert isinstance(responder._sink, TtsSpeechSink)
+    # `SIM_TTS_PROVIDER=fake` is the gate's, and `SIM_TTS_FALLBACK_PROVIDER=none` means the
+    # "both providers failed" row of INV 14 is reachable rather than papered over by a fake.
+    assert isinstance(responder._sink._provider, FakeTTS)
+    assert responder._sink._fallback is None
+
+
+def test_an_explicit_null_speech_sink_is_still_honoured() -> None:
+    """A dialogue test that is about the *words* wires `NullCallerSpeechSink` deliberately."""
+    null = NullCallerSpeechSink()
+    responder = build_dialogue_responder(deps(), metrics=NullMetricsRecorder(), sink=null)
+
+    assert responder._sink is null
 
 
 def test_the_gate_is_not_a_collaborator() -> None:

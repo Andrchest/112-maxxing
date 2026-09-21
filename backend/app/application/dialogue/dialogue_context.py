@@ -234,9 +234,15 @@ def _window(
         if operator:
             rendered.append(DialogueTurn(speaker="OPERATOR", text=operator))
             operator_texts.append(operator)
-        caller = texts.get(turn.caller_transcript_segment_id) or turn.planned_text
-        # TODO(E14): `delivered_text` once barge-in truncates it — an interrupted utterance's
-        # window entry must be what the trainee actually heard, not what was planned.
+        # E14: the caller side of the window is what the trainee actually **heard**. An
+        # interrupted utterance's `delivered_text` is a prefix of `planned_text` (§6.3), and a
+        # caller who then "continues" from the full planned wording would be answering a
+        # conversation that did not happen. `planned_text` is the fallback only for a turn that
+        # has no delivered text yet — one still being spoken, or one E13 planned before the sink
+        # ever ran.
+        caller = (
+            texts.get(turn.caller_transcript_segment_id) or turn.delivered_text or turn.planned_text
+        )
         if caller:
             rendered.append(DialogueTurn(speaker="CALLER", text=caller))
     return tuple(rendered), tuple(operator_texts)

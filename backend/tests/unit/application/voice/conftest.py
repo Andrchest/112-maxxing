@@ -99,6 +99,17 @@ async def drive(
 # ---------------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class CallerOutcome:
+    """One `set_caller_outcome` call — E14's caller-side columns on a `dialogue_turns` row."""
+
+    session_id: SessionId
+    turn_index: int
+    caller_transcript_segment_id: uuid.UUID | None
+    delivered_text: str
+    interrupted: bool
+
+
 @dataclass
 class VoiceStore:
     """What the fake Unit of Work committed, and what it rolled back."""
@@ -113,6 +124,8 @@ class VoiceStore:
     fail_on_commit: Exception | None = None
     fail_on_event_append: Exception | None = None
     fail_on_transcript_add: Exception | None = None
+    #: Every `DialogueTurnRepository.set_caller_outcome` call E14's sink made, in call order.
+    caller_outcomes: list[CallerOutcome] = field(default_factory=list)
 
 
 class _FakeEventStore:
@@ -146,6 +159,17 @@ class _FakeEventStore:
         self._pending.extend(appended)
         return appended
 
+    async def read(
+        self, session_id: SessionId, after_seq_no: int = 0, limit: int | None = None
+    ) -> list[SessionEvent]:
+        """Every committed event of the session — what E14's interruption fold reads."""
+        rows = [
+            event
+            for event in self._store.events
+            if event.session_id == session_id and event.seq_no > after_seq_no
+        ]
+        return rows if limit is None else rows[:limit]
+
 
 class _FakeAudioSegments:
     def __init__(self, pending: list[StoredAudioSegment]) -> None:
@@ -167,12 +191,34 @@ class _FakeTranscriptSegments:
 
 
 class _FakeDialogueTurns:
-    def __init__(self, pending: list[DialogueTurnUpsert]) -> None:
+    def __init__(self, store: VoiceStore, pending: list[DialogueTurnUpsert]) -> None:
+        self._store = store
         self._pending = pending
 
     async def upsert(self, turn: DialogueTurnUpsert) -> uuid.UUID:
         self._pending.append(turn)
         return turn.id
+
+    async def set_caller_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        caller_transcript_segment_id: uuid.UUID | None,
+        delivered_text: str,
+        interrupted: bool,
+    ) -> None:
+        """E14's three caller-side columns (§6.4). Recorded, not merged: these tests assert the
+        *call*, and the real merge semantics are `InMemoryDialogueTurnRepository`'s job."""
+        self._store.caller_outcomes.append(
+            CallerOutcome(
+                session_id=session_id,
+                turn_index=turn_index,
+                caller_transcript_segment_id=caller_transcript_segment_id,
+                delivered_text=delivered_text,
+                interrupted=interrupted,
+            )
+        )
 
 
 class InMemoryVoiceUnitOfWork:
@@ -200,7 +246,7 @@ class InMemoryVoiceUnitOfWork:
 
     @property
     def dialogue_turns(self) -> _FakeDialogueTurns:
-        return _FakeDialogueTurns(self._turns)
+        return _FakeDialogueTurns(self._store, self._turns)
 
     async def __aenter__(self) -> InMemoryVoiceUnitOfWork:
         self._events = []

@@ -4,8 +4,8 @@ This is the voice agent's counterpart to `app.api.container`: the one module tha
 application layer and the adapters, so that nothing else has to. It builds, per call:
 
 * the `VoiceTurnConfig` from `Settings` (§4.1) — never literals;
-* the `VADProvider` and the `ASRProvider` for the configured providers, through
-  `voice_agent.providers` — the one module that knows a model's name (SPEC §19);
+* the `VADProvider`, the `ASRProvider` and (E14) the `TTSProvider` for the configured providers,
+  through `voice_agent.providers` — the one module that knows a model's name (SPEC §19);
 * the `CallTransport` for `SIM_CALL_TRANSPORT` (`fake` / `livekit`; `sip` is the documented stub);
 * the `SessionRecorder` over two `WavFileSink`s under `Settings.data_dir` (§9.1, SPEC §41);
 * the `VoiceEventAppender` over the **same** `UnitOfWork` the backend uses, so `seq_no` is
@@ -53,6 +53,7 @@ from app.application.ports.llm import (
     LlmUsage,
 )
 from app.application.ports.metrics_recorder import MetricsRecorder
+from app.application.ports.tts import TTSProvider
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.voice.asr_responder import (
     AsrTurnResponder,
@@ -62,6 +63,7 @@ from app.application.voice.config import VoiceTurnConfig, voice_turn_config_from
 from app.application.voice.events import VoiceEventAppender
 from app.application.voice.recorder import RecordingPaths, SessionRecorder
 from app.application.voice.resampler import Resampler
+from app.application.voice.tts_speech_sink import TtsSpeechSink
 from app.application.voice.turn_detector import TurnDetector
 from app.application.voice.turn_pipeline import (
     ShowAsrPartials,
@@ -81,12 +83,15 @@ from voice_agent.providers import (
     VAD_SILERO,
     build_asr,
     build_llm,
+    build_tts,
+    build_tts_fallback,
     build_vad,
 )
 
 __all__ = [
     "VAD_ENERGY",
     "VAD_SILERO",
+    "NullCallerSpeechSink",
     "ScriptedFakeDialogueLLM",
     "VoiceAgentDeps",
     "build_asr",
@@ -95,7 +100,10 @@ __all__ = [
     "build_metrics",
     "build_pipeline",
     "build_responder",
+    "build_speech_sink",
     "build_transport",
+    "build_tts",
+    "build_tts_fallback",
     "build_vad",
     "show_asr_partials",
 ]
@@ -334,12 +342,42 @@ def build_dialogue_llm(deps: VoiceAgentDeps) -> LLMClient:
     return llm
 
 
+def build_speech_sink(
+    deps: VoiceAgentDeps,
+    *,
+    tts: TTSProvider | None = None,
+    metrics: MetricsRecorder | None = None,
+) -> TtsSpeechSink:
+    """E14's `CallerSpeechSink`: `TTSProvider` → playback → events → recording (§3.7, §6, §9.1).
+
+    The providers themselves come from `voice_agent.providers` (E14-B), the one module that knows
+    a model's name (SPEC §19): `build_tts` for `SIM_TTS_PROVIDER` and `build_tts_fallback` for
+    `SIM_TTS_FALLBACK_PROVIDER`, which answers `None` for `"none"` — the gate's selection, because
+    a fallback that is itself a fake would make INV 14's "both providers failed" row untestable.
+    """
+    settings = deps.settings
+    return TtsSpeechSink(
+        provider=tts if tts is not None else build_tts(settings),
+        fallback_provider=build_tts_fallback(settings),
+        metrics=metrics if metrics is not None else build_metrics(deps),
+        clock=deps.clock,
+        config=deps.config,
+        uow_factory=deps.uow_factory,
+        default_voice_id=settings.tts_voice_id,
+        default_speaking_rate=settings.tts_speaking_rate,
+        timeout_ms=settings.tts_timeout_ms,
+        first_chunk_timeout_ms=settings.tts_first_chunk_timeout_ms,
+        max_unit_chars=settings.tts_max_unit_chars,
+    )
+
+
 def build_dialogue_responder(
     deps: VoiceAgentDeps,
     *,
     llm: LLMClient | None = None,
     metrics: MetricsRecorder | None = None,
     sink: CallerSpeechSink | None = None,
+    tts: TTSProvider | None = None,
 ) -> DialogueResponder:
     """The whole E13 chain: interpreter → Fact Access Gate → generator → validator → §7.8 (R10).
 
@@ -367,8 +405,9 @@ def build_dialogue_responder(
             config=generator_config_from_settings(settings),
         ),
         fallbacks=FallbackTemplates(),
-        # TODO(E14): `TtsSpeechSink` replaces this one; see `NullCallerSpeechSink`'s docstring.
-        sink=sink if sink is not None else NullCallerSpeechSink(),
+        # E14: the real sink speaks the utterance. `NullCallerSpeechSink` stays importable —
+        # a dialogue test that is about the *words* still wires it deliberately.
+        sink=sink if sink is not None else build_speech_sink(deps, tts=tts, metrics=recorder),
         uow_factory=deps.uow_factory,
     )
 
@@ -402,6 +441,7 @@ def build_pipeline(
     responder: TurnResponder | None = None,
     asr: ASRProvider | None = None,
     llm: LLMClient | None = None,
+    tts: TTSProvider | None = None,
     record: bool = True,
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
@@ -434,7 +474,9 @@ def build_pipeline(
             responder
             if responder is not None
             else build_responder(
-                deps, asr=provider, next_stage=build_dialogue_responder(deps, llm=llm)
+                deps,
+                asr=provider,
+                next_stage=build_dialogue_responder(deps, llm=llm, tts=tts),
             )
         ),
         asr=provider,

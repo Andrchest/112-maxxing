@@ -1,0 +1,48 @@
+[project]
+name = "tts-qwen3-worker"
+version = "0.1.0"
+description = """
+Standalone Qwen3-TTS GPU worker process for the System-112/DDS training simulator (E14-B).
+
+Deliberately NOT a `sim112-workspace` member (see the root pyproject.toml's `[tool.uv.workspace]`
+member list, which names this package nowhere): `qwen-tts==0.1.1` pins `torch==2.14.0`, which is
+outside the main backend venv's `torch>=2.6,<2.9` ceiling (asr-gigaam extra, `backend/pyproject.
+toml`). One `uv sync` cannot satisfy both floors in one venv (see `/tmp/teamwork-112-maxxing/
+reports/e14-recon.md` §1.1 and §6 item 3), so this worker gets its own venv
+(`workers/tts_qwen3/.venv`, created only by `scripts/setup_tts_qwen3.sh`) and talks to the backend
+over loopback HTTP (`backend/app/inference/tts/qwen3_tts.py::Qwen3TTS`) — never imported directly
+by `backend` or `workers/voice_agent` (`backend/tools/check_imports.py`'s "nothing imports
+tts_qwen3" rule).
+"""
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "pydantic>=2",
+    # Pinned exactly to the owner's measured-working set (recon §1.1, `docs/QWEN3_TTS_EXPERIMENT.
+    # md:18-20`), not a floor: this venv exists solely to run this one model at this one revision.
+    "qwen-tts==0.1.1",
+    "torch==2.14.0",
+    "torchaudio==2.11.0",
+    "transformers==4.57.3",
+    "accelerate==1.12.0",
+    "huggingface-hub==0.36.2",
+    "numpy>=2,<3",
+]
+
+[project.optional-dependencies]
+# `make test-tts-qwen3` only: httpx to drive TestClient-style requests against the FastAPI app
+# with a fake model factory (no torch/qwen-tts import needed for these tests — see
+# `tests/test_server.py`'s module docstring).
+test = ["pytest", "pytest-asyncio", "httpx"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tts_qwen3"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -47,7 +47,15 @@ asr-gigaam = [
 asr-whisper = ["faster-whisper>=1.0,<2"]
 # SileroVAD (backend/app/inference/vad/silero_vad.py): onnxruntime CPU execution provider only.
 vad-silero = ["onnxruntime>=1.19,<2"]
-tts-piper = []
+# PiperTTS (backend/app/inference/tts/piper_tts.py): pure CPU, in-process (E14-B). `piper-tts`'s
+# own onnxruntime floor (>=1.10) is below the `vad-silero` extra's `>=1.19,<2` pin, so both extras
+# resolve to one onnxruntime in the same venv without conflict — not verified with a real `uv
+# sync` here (this task's machine rules forbid one in the repo root); see this task's report.
+tts-piper = ["piper-tts>=1.2,<2"]
+# Qwen3TTS (backend/app/inference/tts/qwen3_tts.py) is an httpx client of the standalone
+# `workers/tts_qwen3/` worker process (own venv, `qwen-tts==0.1.1` pins torch==2.14.0, outside
+# `asr-gigaam`'s torch<2.9 ceiling) — this extra stays empty on purpose: the backend venv never
+# installs qwen-tts/torch==2.14.0 itself, only `httpx`, already a hard dependency above.
 tts-qwen3 = []
 tts-chatterbox = []
 

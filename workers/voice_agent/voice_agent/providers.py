@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from app.application.ports.asr import ASRProvider
 from app.application.ports.llm import LLMClient
+from app.application.ports.tts import TTSProvider
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import VoiceTurnConfig, voice_turn_config_from_settings
 from app.config.settings import Settings
@@ -30,10 +31,16 @@ __all__ = [
     "ASR_GIGAAM",
     "LLM_FAKE",
     "LLM_LLAMA_CPP",
+    "TTS_FAKE",
+    "TTS_NONE",
+    "TTS_PIPER",
+    "TTS_QWEN3",
     "VAD_ENERGY",
     "VAD_SILERO",
     "build_asr",
     "build_llm",
+    "build_tts",
+    "build_tts_fallback",
     "build_vad",
 ]
 
@@ -49,6 +56,14 @@ ASR_FASTER_WHISPER = "faster_whisper"
 #: `SIM_LLM_PROVIDER` values (E13, D10). `llama_cpp` is every profile's; `fake` is the gate's.
 LLM_FAKE = "fake"
 LLM_LLAMA_CPP = "llama_cpp"
+
+#: `SIM_TTS_PROVIDER` / `SIM_TTS_FALLBACK_PROVIDER` values (E14-A/E14-B, D9). `qwen3_tts` is the
+#: OWNER DECISION's GPU default for every profile incl. `DEV_3060TI`; `piper` is the CPU fallback;
+#: `fake` is the gate's provider (D13). `none` is `SIM_TTS_FALLBACK_PROVIDER`-only: "no fallback".
+TTS_FAKE = "fake"
+TTS_QWEN3 = "qwen3_tts"
+TTS_PIPER = "piper"
+TTS_NONE = "none"
 
 
 def build_vad(settings: Settings, config: VoiceTurnConfig | None = None) -> VADProvider:
@@ -136,3 +151,54 @@ def build_llm(settings: Settings) -> LLMClient:
         f"SIM_LLM_PROVIDER={provider!r} is not an LLM provider; "
         f"use {LLM_FAKE!r} or {LLM_LLAMA_CPP!r}"
     )
+
+
+def _build_named_tts(provider: str, settings: Settings) -> TTSProvider:
+    """The `TTSProvider` named by `provider` — the shared branch `build_tts`/`build_tts_fallback`
+    both dispatch through, so a provider name always means the same construction regardless of
+    which of the two slots (primary/fallback) it fills (E14-B)."""
+    if provider == TTS_FAKE:
+        from app.inference.tts.fake_tts import FakeTTS
+
+        return FakeTTS()
+    if provider == TTS_QWEN3:
+        # Lazy: this only imports `httpx` (a hard dependency already) — never `qwen-tts`/
+        # `torch==2.14.0`, which live in the separate `workers/tts_qwen3` worker process/venv.
+        from app.inference.tts.qwen3_tts import Qwen3TTS
+
+        return Qwen3TTS(
+            base_url=settings.tts_qwen3_base_url,
+            speaker=settings.tts_qwen3_speaker,
+            timeout_ms=settings.tts_timeout_ms,
+        )
+    if provider == TTS_PIPER:
+        # Lazy: `piper-tts` is the `tts-piper` extra.
+        from app.inference.tts.piper_tts import PiperTTS
+
+        return PiperTTS(voice_path=settings.tts_piper_voice_path)
+    raise ValueError(
+        f"{provider!r} is not a TTS provider; use {TTS_FAKE!r}, {TTS_QWEN3!r} or {TTS_PIPER!r}"
+    )
+
+
+def build_tts(settings: Settings) -> TTSProvider:
+    """The primary `TTSProvider` named by `SIM_TTS_PROVIDER` (E14-A/E14-B, D9, SPEC §18, §19).
+
+    `qwen3_tts` is an `httpx` client of the standalone `workers/tts_qwen3` worker process
+    (`SIM_TTS_QWEN3_BASE_URL`, validated loopback/compose-internal at construction, SPEC §41);
+    `piper` runs in-process on CPU. Neither is imported until selected (D1)."""
+    return _build_named_tts(settings.tts_provider, settings)
+
+
+def build_tts_fallback(settings: Settings) -> TTSProvider | None:
+    """The fallback `TTSProvider` named by `SIM_TTS_FALLBACK_PROVIDER`, or `None` for `"none"`
+    (D9's "configured fallback"; SPEC §39, `60-inference-ops.md` §4.4's TTS failure row).
+
+    `"none"` is not refused the way an unrecognised name is (`_build_named_tts`'s `ValueError`):
+    it is the gate's own selection (a fallback that is itself a fake would make INV 14's *second*
+    failure untestable — `.env.example`'s `SIM_TTS_FALLBACK_PROVIDER` comment) and every real
+    profile's explicit choice to run without a fallback provider at all."""
+    provider = settings.tts_fallback_provider
+    if provider == TTS_NONE:
+        return None
+    return _build_named_tts(provider, settings)

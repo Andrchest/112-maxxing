@@ -17,7 +17,7 @@ participant "LLMClient" as LLM
 database "session_events" as EV
 
 == caller is speaking ==
-TP -> TTS : stream(planned_text, max_chunk_ms=40)
+TP -> TTS : stream(planned_text, max_chunk_ms=20)
 TTS --> TP : TtsChunk (text_offset_start/end, alignment_is_exact)
 TP -> TR : capture_frame -> outbound queue (outbound_queue_ms = 200)
 TR -> LK : caller audio
@@ -46,9 +46,9 @@ TP -> TR : read AudioSource.queued_duration  (for delivered_audio_ms)
 TP -> TR : **clear_outbound()**  -> AudioSource.clear_queue()
 note right of TR
   budget row 4: clear_outbound round trip <= 5 ms
-  budget row 5: residual chunk past the queue <= 40 ms (tts_chunk_ms)
+  budget row 5: residual chunk past the queue <= 20 ms (tts_chunk_ms)
   budget row 6: network + browser jitter buffer <= 40 ms (UNVERIFIED, measured by benchmark_e2e.py)
-  TOTAL <= 242 ms  (< 250 ms target)
+  TOTAL <= 222 ms  (< 250 ms target)
 end note
 TP -> TTS : TtsStream.cancel()
 TP -> LLM : llm_stream.aclose()  (if generation was still streaming)

@@ -12,10 +12,10 @@ by `world_engine_states.emotion_applications`, the same mapping the world engine
 writes (`WorldEngineState.emotion_applications`). Two counters would mean a rule capped at one
 application could fire twice — once per code path — which is exactly the determinism §10.5 promises.
 
-E13 calls this for **no trigger yet**. The two dialogue-side triggers of §10.5 — `FACT_REVEALED` and
-`INTERRUPTION_COUNT` — both fire from events E14 owns (`FACTS_DELIVERED` and
-`CALLER_UTTERANCE_INTERRUPTED`); see the `TODO(E14)` in
-`app.application.dialogue.speech_sink.NullCallerSpeechSink`. The function is unit-tested directly.
+E13 called this for **no trigger yet**; E14's `app.application.voice.tts_speech_sink.TtsSpeechSink`
+fires both dialogue-side triggers of §10.5 — `FACT_REVEALED` once per fact behind an uninterrupted
+`FACTS_DELIVERED`, and `INTERRUPTION_COUNT` (folded from the log) behind
+`CALLER_UTTERANCE_INTERRUPTED`. The function is unit-tested directly as well.
 """
 
 from __future__ import annotations

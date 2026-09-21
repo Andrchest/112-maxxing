@@ -76,7 +76,7 @@ pipeline --> gen : AllowedFactsPackage + persona + emotion + turns
 gen --> llm : chat completion, max_tokens=80, thinking off
 gen --> val : raw utterance
 val --> pipeline : ValidationVerdict (retry once, then template fallback)
-pipeline --> tts : stream(validated text, TtsVoiceSpec, max_chunk_ms=40)
+pipeline --> tts : stream(validated text, TtsVoiceSpec, max_chunk_ms=20)
 tts --> transport : TtsChunk -> AudioFrame -> play()
 transport --> room : outbound audio
 

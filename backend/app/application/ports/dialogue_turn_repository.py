@@ -111,6 +111,25 @@ class DialogueTurnRepository(Protocol):
         """
         ...
 
+    async def set_caller_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        caller_transcript_segment_id: UUID | None,
+        delivered_text: str,
+        interrupted: bool,
+    ) -> None:
+        """The three caller-side columns E14 owns, on an existing turn row (§20.6, §6.4).
+
+        Like the two methods beside it, it does **not** create a row. `delivered_text` is what the
+        trainee actually heard — equal to `planned_text` on a natural end, a prefix of it on a
+        barge-in (§6.3), and `""` for a turn that ended silent because every TTS provider failed
+        (INV 14). `planned_text` is E13's column and is never touched here, so the pair always
+        reads "this is what was meant, this is what arrived".
+        """
+        ...
+
     async def set_speech_end_to_first_audio_ms(
         self, session_id: SessionId, turn_index: int, value: int
     ) -> None:

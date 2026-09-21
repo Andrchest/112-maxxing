@@ -115,6 +115,29 @@ class SqlAlchemyDialogueTurnRepository:
             )
         )
 
+    async def set_caller_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        caller_transcript_segment_id: UUID | None,
+        delivered_text: str,
+        interrupted: bool,
+    ) -> None:
+        """E14's three caller-side columns on an existing row; no row, no write (§20.6, §6.4)."""
+        await self._session.execute(
+            sa.update(_DIALOGUE_TURNS)
+            .where(
+                _DIALOGUE_TURNS.c.session_id == UUID(str(session_id)),
+                _DIALOGUE_TURNS.c.turn_index == turn_index,
+            )
+            .values(
+                caller_transcript_segment_id=caller_transcript_segment_id,
+                delivered_text=delivered_text,
+                interrupted=interrupted,
+            )
+        )
+
     async def set_speech_end_to_first_audio_ms(
         self, session_id: SessionId, turn_index: int, value: int
     ) -> None:

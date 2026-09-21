@@ -135,7 +135,8 @@ class AsrTurnResponder:
         # what goes here; with `None` the turn stops after `ASR_FINAL`. SPEC §16 fixes the stage
         # order, and a responder that invented a caller answer would be exactly the "LLM is the
         # simulation" failure SPEC §2 forbids.
-        # TODO(E14): the TTS stage sits behind E13's, through `CallerSpeechSink`.
+        # E14's TTS stage sits behind E13's, through `CallerSpeechSink` — this responder still
+        # knows nothing about it.
         self._next_stage = next_stage
 
     @property
@@ -267,9 +268,10 @@ class AsrTurnResponder:
                     correlation_id=turn.turn_id,
                 )
                 # E13 fills `interpretation`, `gate_output`, `planned_text` and `fallback_used`
-                # through `DialogueTurnRepository.set_dialogue_outcome` once the chain has run.
-                # TODO(E14): `caller_transcript_segment_id`, `delivered_text`,
-                # `interrupted` and `speech_end_to_first_audio_ms`.
+                # through `DialogueTurnRepository.set_dialogue_outcome` once the chain has run;
+                # E14's `TtsSpeechSink` fills `caller_transcript_segment_id`, `delivered_text`
+                # and `interrupted` through `set_caller_outcome`, and
+                # `speech_end_to_first_audio_ms` through `MetricsRecorder.record_turn_latency`.
             )
         await context.appender.append(
             [

@@ -67,11 +67,12 @@ class NullCallerSpeechSink:
     be a silently unmet requirement, and one that emitted `FACTS_DELIVERED` would make a fact
     "revealed" without a single millisecond of audio reaching the trainee (D10, SPEC §42 test 10).
 
-    TODO(E14): `TtsSpeechSink` — `TTSProvider.stream` → `CallTransport.play` →
-    `CALLER_TTS_STARTED` / `CALLER_TTS_ENDED` → `FACTS_DELIVERED {fact_ids}`, plus the two
-    dialogue-side emotion triggers this epic deliberately fires for nobody yet
+    E14 shipped the real one — `app.application.voice.tts_speech_sink.TtsSpeechSink`:
+    `TTSProvider.stream` → `CallTransport.play` → `CALLER_TTS_STARTED` / `CALLER_TTS_ENDED` →
+    `FACTS_DELIVERED {fact_ids}`, plus both dialogue-side emotion triggers
     (`app.application.dialogue.emotion_updates`): `FACT_REVEALED` at `FACTS_DELIVERED` and
-    `INTERRUPTION_COUNT` at `CALLER_UTTERANCE_INTERRUPTED` (§10.5, R7).
+    `INTERRUPTION_COUNT` at `CALLER_UTTERANCE_INTERRUPTED` (§10.5, R7). This one stays because a
+    dialogue test that is about the *words* should not have to synthesise audio for them.
     """
 
     def __init__(self) -> None:

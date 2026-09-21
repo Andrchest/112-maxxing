@@ -101,7 +101,7 @@ class VoiceTurnConfig(BaseModel):
     outbound_queue_ms: int = Field(default=200, ge=40, le=500)
     """Transport outbound buffer depth (`queue_size_ms`)."""
 
-    tts_chunk_ms: int = Field(default=40, ge=10, le=60)
+    tts_chunk_ms: int = Field(default=20, ge=10, le=60)
     """`max_chunk_ms` handed to `TTSProvider.stream` (E14)."""
 
     partial_asr_enabled: bool = True

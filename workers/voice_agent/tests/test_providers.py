@@ -22,18 +22,26 @@ from typing import Any
 
 import pytest
 from app.application.ports.asr import ASRProvider
+from app.application.ports.tts import TTSProvider
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import VoiceTurnConfig
 from app.config.settings import Settings
 from app.inference.asr import FakeASR
+from app.inference.tts import FakeTTS
 from voice_agent import providers as providers_module
 from voice_agent.providers import (
     ASR_FAKE,
     ASR_FASTER_WHISPER,
     ASR_GIGAAM,
+    TTS_FAKE,
+    TTS_NONE,
+    TTS_PIPER,
+    TTS_QWEN3,
     VAD_ENERGY,
     VAD_SILERO,
     build_asr,
+    build_tts,
+    build_tts_fallback,
     build_vad,
 )
 
@@ -46,6 +54,8 @@ HEAVY_PACKAGES: tuple[str, ...] = (
     "onnxruntime",
     "faster_whisper",
     "gigaam",
+    "piper",
+    "qwen_tts",
 )
 
 
@@ -71,6 +81,8 @@ def test_the_defaults_are_the_gate_s_providers() -> None:
     resolved = settings()
     assert resolved.vad_provider == VAD_ENERGY
     assert resolved.asr_provider == ASR_FAKE
+    assert resolved.tts_provider == TTS_FAKE
+    assert resolved.tts_fallback_provider == TTS_NONE
 
 
 def test_the_energy_branch_builds_a_vad_matching_the_turn_config() -> None:
@@ -95,6 +107,24 @@ def test_the_fake_branch_builds_the_scripted_provider() -> None:
     assert isinstance(asr, FakeASR)
     assert isinstance(asr, ASRProvider)
     assert asr.provider_name == "fake"
+
+
+def test_build_tts_fake_branch_builds_faketts() -> None:
+    """D13's TTS: `FakeTTS`, deterministic, no weights."""
+    tts = build_tts(settings(tts_provider=TTS_FAKE))
+    assert isinstance(tts, FakeTTS)
+    assert isinstance(tts, TTSProvider)
+    assert tts.provider_name == "fake"
+
+
+def test_build_tts_fallback_is_none_for_the_no_fallback_setting() -> None:
+    """`SIM_TTS_FALLBACK_PROVIDER=none` (the gate's own selection, D9/INV 14) -> `None`."""
+    assert build_tts_fallback(settings(tts_fallback_provider=TTS_NONE)) is None
+
+
+def test_build_tts_fallback_builds_the_named_provider_when_configured() -> None:
+    fallback = build_tts_fallback(settings(tts_fallback_provider=TTS_FAKE))
+    assert isinstance(fallback, FakeTTS)
 
 
 # -- the real branches, without the real packages ----------------------------------------------
@@ -191,6 +221,72 @@ def test_the_faster_whisper_branch_passes_the_configured_model_path(
     }
 
 
+def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Qwen3TTS(*, base_url, speaker, timeout_ms)` (E14-B)."""
+    captured: dict[str, Any] = {}
+
+    class StubQwen3TTS:
+        def __init__(self, *, base_url: str, speaker: str, timeout_ms: int) -> None:
+            captured.update(base_url=base_url, speaker=speaker, timeout_ms=timeout_ms)
+
+    module = _stub_module("app.inference.tts.qwen3_tts", Qwen3TTS=StubQwen3TTS)
+    monkeypatch.setitem(sys.modules, "app.inference.tts.qwen3_tts", module)
+
+    build_tts(
+        settings(
+            tts_provider=TTS_QWEN3,
+            tts_qwen3_base_url="http://127.0.0.1:8112",
+            tts_qwen3_speaker="Serena",
+            tts_timeout_ms=9000,
+        )
+    )
+
+    assert captured == {
+        "base_url": "http://127.0.0.1:8112",
+        "speaker": "Serena",
+        "timeout_ms": 9000,
+    }
+
+
+def test_the_piper_branch_passes_the_configured_voice_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`PiperTTS(*, voice_path)` (E14-B)."""
+    captured: dict[str, Any] = {}
+
+    class StubPiperTTS:
+        def __init__(self, *, voice_path: str) -> None:
+            captured.update(voice_path=voice_path)
+
+    module = _stub_module("app.inference.tts.piper_tts", PiperTTS=StubPiperTTS)
+    monkeypatch.setitem(sys.modules, "app.inference.tts.piper_tts", module)
+
+    build_tts(settings(tts_provider=TTS_PIPER, tts_piper_voice_path="models/piper/x.onnx"))
+
+    assert captured == {"voice_path": "models/piper/x.onnx"}
+
+
+def test_build_tts_fallback_also_uses_the_shared_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fallback slot builds the same way the primary slot does — one branch, two callers."""
+    captured: dict[str, Any] = {}
+
+    class StubPiperTTS:
+        def __init__(self, *, voice_path: str) -> None:
+            captured.update(voice_path=voice_path)
+
+    module = _stub_module("app.inference.tts.piper_tts", PiperTTS=StubPiperTTS)
+    monkeypatch.setitem(sys.modules, "app.inference.tts.piper_tts", module)
+
+    fallback = build_tts_fallback(
+        settings(tts_fallback_provider=TTS_PIPER, tts_piper_voice_path="models/piper/y.onnx")
+    )
+
+    assert fallback is not None
+    assert captured == {"voice_path": "models/piper/y.onnx"}
+
+
 # -- refusals ----------------------------------------------------------------------------------
 
 
@@ -204,6 +300,18 @@ def test_an_unknown_asr_provider_is_refused() -> None:
     """Likewise for ASR — a scripted transcript in production is worse than a dead process."""
     with pytest.raises(ValueError, match="SIM_ASR_PROVIDER"):
         build_asr(settings(asr_provider="whisper-api"))
+
+
+def test_an_unknown_tts_provider_is_refused() -> None:
+    with pytest.raises(ValueError):
+        build_tts(settings(tts_provider="elevenlabs"))
+
+
+def test_an_unknown_tts_fallback_provider_is_refused() -> None:
+    """`"none"` is the only value that means "no fallback" — anything else unrecognised is a
+    refusal, exactly like the primary slot, not a silent `None`."""
+    with pytest.raises(ValueError):
+        build_tts_fallback(settings(tts_fallback_provider="elevenlabs"))
 
 
 # -- laziness ----------------------------------------------------------------------------------

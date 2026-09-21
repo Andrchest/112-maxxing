@@ -203,8 +203,10 @@ voice_agent    -> application, inference, infrastructure
   Cross-process cancellation signal (UI hang-up, abort): Redis `voice:cancel:{session_id}`.
 - Providers: VAD — `SileroVAD` (onnx), `EnergyVAD` (tests/fallback). ASR — `GigaAMProvider`
   (`v3_e2e_ctc` primary, `v3_ctc` benchmarked), `FasterWhisperProvider` optional, `FakeASR`.
-  TTS — `PiperTTS` (CPU, lowest-risk DEV profile + configured fallback), `Qwen3TTS`, `ChatterboxTTS`,
-  `FakeTTS`. LLM — `LlamaCppClient` (OpenAI-compatible HTTP to the local llama-server only;
+  TTS — `Qwen3TTS` (Qwen3-TTS 1.7B CustomVoice, GPU; OWNER DECISION, E14: the default for every
+  profile including `DEV_3060TI`, an httpx client of the standalone `workers/tts_qwen3` worker
+  process/venv), `PiperTTS` (CPU, the configured fallback everywhere — no longer the DEV default),
+  `ChatterboxTTS`, `FakeTTS` (gate). LLM — `LlamaCppClient` (OpenAI-compatible HTTP to the local llama-server only;
   `base_url` must be loopback/compose-internal, enforced in config validation — §41), `FakeLLM`.
 - Recording: the agent writes trainee and caller audio to `DATA_DIR/recordings/{session_id}/` (WAV),
   rows in `audio_segments` with session-relative `start_ms`; `transcript_segments.audio_segment_id`

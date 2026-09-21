@@ -77,7 +77,7 @@ note right of VAL
 end note
 TP -> EV : **CALLER_RESPONSE_GENERATED** {turn_id, text, attempt, prompt_tokens, completion_tokens}
 
-TP -> TTS : stream(text, TtsVoiceSpec, max_chunk_ms=40)
+TP -> TTS : stream(text, TtsVoiceSpec, max_chunk_ms=20)
 TTS --> TP : TtsChunk #1 (with text_offset_start/end)
 TP -> TR : play(chunks)
 TR -> LK : AudioSource.capture_frame(...)

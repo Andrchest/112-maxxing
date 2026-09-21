@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     voice_vad_frame_ms: int = 32
     voice_trailing_pad_ms: int = 100
     voice_outbound_queue_ms: int = 200
-    voice_tts_chunk_ms: int = 40
+    voice_tts_chunk_ms: int = 20
     voice_partial_asr_enabled: bool = True
     voice_partial_interval_ms: int = 500
     voice_sample_rate: int = 16000
@@ -167,6 +167,51 @@ class Settings(BaseSettings):
     #: build_caller_response_grammar`) when true (the default); `response_format=json_schema` when
     #: false — the same lever `llm_interpreter_use_grammar` is for the interpreter.
     llm_generator_use_grammar: bool = True
+    # -- E14-A: the TTS stage (`60-inference-ops.md` §1, §2.1, D9, SPEC §18, §19, §25) --------
+    # SPEC §19 again: the provider is the only place a TTS model is named, and nothing above
+    # `voice_agent.providers.build_tts` ever sees the value. `fake` is what `make gate` runs
+    # (D13); the GPU default and the CPU fallback are E14-B's providers.
+    #: `fake` | `qwen3_tts` | `piper` — `SIM_TTS_PROVIDER`.
+    tts_provider: str = "fake"
+    #: The provider the whole utterance is retried on once after a failure (INV 14, §6/D9's
+    #: "configured fallback"). `none` means "no retry": the turn then ends silent but complete,
+    #: which is the gate's selection — a fallback that is itself a fake would make INV 14's
+    #: second failure untestable.
+    tts_fallback_provider: str = "none"
+    #: `TtsVoiceSpec.voice_id` when a session's scenario has no `CallerProfile` to read it from.
+    #: UNVERIFIED as a real voice id (`60-inference-ops.md` §10 open item 4) — it is a default,
+    #: not a measured binding.
+    tts_voice_id: str = "ru_female_1"
+    #: `TtsVoiceSpec.speaking_rate`'s default; 1.0 is "the provider's own".
+    tts_speaking_rate: float = 1.0
+    #: How long one whole utterance may take before the turn ends with `MODEL_ERROR{TIMEOUT}`.
+    #: §8 budgets 200 ms to the *first* chunk; this is "the provider is wedged", not "slow".
+    tts_timeout_ms: int = 8000
+    #: The tighter guard on §8 row 8 — first audio. A provider that has produced nothing after
+    #: this long has already lost the turn's latency budget.
+    tts_first_chunk_timeout_ms: int = 1500
+    #: `split_for_tts`'s `max_unit_chars` (`app.application.voice.sentence_chunker`): the length
+    #: above which a sentence is subdivided at clause separators so the first chunk of audio is
+    #: not held hostage by a run-on sentence (§2.4, §8 lever 1).
+    tts_max_unit_chars: int = 120
+    # -- E14-B: the real TTS providers (OWNER DECISION: Qwen3-TTS GPU default; `PiperTTS` CPU
+    # fallback). `voice_agent.providers.build_tts`/`build_tts_fallback` are the only readers.
+    #: `Qwen3TTS`'s httpx client target — the standalone `workers/tts_qwen3` worker on loopback,
+    #: never the LiveKit/compose-internal network (SPEC §41,
+    #: `app.inference.tts.qwen3_tts.validate_tts_qwen3_base_url`).
+    tts_qwen3_base_url: str = "http://127.0.0.1:8112"
+    #: `SIM_TTS_QWEN3_MODEL_DIR` — the worker process (a separate venv/program, `workers/
+    #: tts_qwen3`) reads this directly; the backend never opens the model file itself, only
+    #: documents/validates the path exists when the profile requires it (E18).
+    tts_qwen3_model_dir: str = "models/qwen3-tts"
+    #: The vendor CustomVoice speaker `Qwen3TTS` falls back to when `TtsVoiceSpec.voice_id` is
+    #: empty (recon §1.1: `"Serena" | "Ryan" | "Vivian" | "Aiden"` only — the generic
+    #: `tts_voice_id` default above is not one of them and is rejected, not substituted, when a
+    #: caller passes it explicitly; see E14-B's report, "HLD gaps").
+    tts_qwen3_speaker: str = "Serena"
+    #: `PiperTTS`'s `.onnx` voice file (+ sibling `.onnx.json`), `models/piper/` (gitignored),
+    #: fetched by `make models-piper`.
+    tts_piper_voice_path: str = "models/piper/ru_RU-irina-medium.onnx"
     # -- E13-B2: the caller prompt builder and the response validator (§5.2, §5.3, §7) --------
     #: §5.2's turn window: "the last 6 turns … but never drops below 4" (valid 4-6, SPEC §22).
     dialogue_window_turns: int = 6

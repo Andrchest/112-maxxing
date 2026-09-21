@@ -8,8 +8,10 @@ things this adapter is responsible for that the port itself cannot enforce:
 * **`base_url` never leaves the local machine (SPEC §41).** `validate_llm_base_url` runs at
   construction, not at call time, and does no DNS resolution — it is a pure string/`ipaddress`
   check against loopback addresses and a configured allow-list of compose-internal service names
-  (default `("llama-server",)`). A host that merely *looks* loopback (`localhost.evil.com`,
-  `127.0.0.1.nip.io`) is rejected exactly because no resolution happens.
+  (default `("llama-server",)`), delegated to the one shared `app.inference.loopback.
+  validate_loopback_base_url` (E14 close-out) that `Qwen3TTS`'s `validate_tts_qwen3_base_url` also
+  uses. A host that merely *looks* loopback (`localhost.evil.com`, `127.0.0.1.nip.io`) is rejected
+  exactly because no resolution happens.
 * **Thinking is off, belt and braces (D10, "Thinking must be disabled").** Every request carries
   `chat_template_kwargs: {"enable_thinking": false}` in the body. HLD §2.5/§5.2 additionally say
   the client "prefixes the **last user** message with `/no_think`"; this task's brief says it
@@ -30,13 +32,11 @@ things this adapter is responsible for that the port itself cannot enforce:
 from __future__ import annotations
 
 import contextlib
-import ipaddress
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from types import TracebackType
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -51,6 +51,7 @@ from app.application.ports.llm import (
 )
 from app.inference.errors import InferenceOutOfMemoryError
 from app.inference.llm.errors import ExternalInferenceEndpointError
+from app.inference.loopback import validate_loopback_base_url
 
 __all__ = ["LlamaCppClient", "validate_llm_base_url"]
 
@@ -72,31 +73,20 @@ def validate_llm_base_url(
 ) -> None:
     """SPEC §41: `base_url`'s host must be loopback or a configured compose-internal name.
 
-    Pure string/`ipaddress` check — **no DNS resolution** — so a host that would *resolve* to a
-    loopback address (`127.0.0.1.nip.io`) or merely contains the word `localhost`
-    (`localhost.evil.com`) is rejected rather than trusted.
+    Thin wrapper over `app.inference.loopback.validate_loopback_base_url` (E14 close-out, item 5:
+    "ONE loopback validator" — this used to be its own ~30-line check; `Qwen3TTS`'s
+    `validate_tts_qwen3_base_url` had duplicated it). Kept importable under this name and from
+    this module: every existing caller and test still works unchanged, and behaviour is identical
+    to before the move — pure string/`ipaddress` check, **no DNS resolution**, so a host that
+    would *resolve* to a loopback address (`127.0.0.1.nip.io`) or merely contains the word
+    `localhost` (`localhost.evil.com`) is rejected rather than trusted.
     """
-    parsed = urlparse(base_url)
-    host = parsed.hostname
-    if not host:
-        raise ExternalInferenceEndpointError(
-            f"SIM_LLM_BASE_URL={base_url!r} has no host (SPEC §41)"
-        )
-    if host in allowed_internal_hosts:
-        return
-    if host == "localhost":
-        return
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError as exc:
-        raise ExternalInferenceEndpointError(
-            f"SIM_LLM_BASE_URL host {host!r} is not loopback, not 'localhost' and not one of "
-            f"the configured compose-internal hosts {tuple(allowed_internal_hosts)!r} (SPEC §41)"
-        ) from exc
-    if not address.is_loopback:
-        raise ExternalInferenceEndpointError(
-            f"SIM_LLM_BASE_URL host {host!r} ({address}) is not a loopback address (SPEC §41)"
-        )
+    validate_loopback_base_url(
+        base_url,
+        what="SIM_LLM_BASE_URL",
+        allowed_internal_hosts=allowed_internal_hosts,
+        error=ExternalInferenceEndpointError,
+    )
 
 
 def _looks_like_oom(body_text: str) -> bool:

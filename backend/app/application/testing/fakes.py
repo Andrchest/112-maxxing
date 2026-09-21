@@ -772,6 +772,27 @@ class InMemoryDialogueTurnRepository:
             }
         )
 
+    async def set_caller_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        caller_transcript_segment_id: uuid.UUID | None,
+        delivered_text: str,
+        interrupted: bool,
+    ) -> None:
+        """E14's three caller-side columns on an existing row; a missing row is not created."""
+        row = self.rows.get((session_id, turn_index))
+        if row is None:
+            return
+        self.rows[(session_id, turn_index)] = row.model_copy(
+            update={
+                "caller_transcript_segment_id": caller_transcript_segment_id,
+                "delivered_text": delivered_text,
+                "interrupted": interrupted,
+            }
+        )
+
     async def set_speech_end_to_first_audio_ms(
         self, session_id: SessionId, turn_index: int, value: int
     ) -> None:
