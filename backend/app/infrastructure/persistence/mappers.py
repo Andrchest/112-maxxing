@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from app.application.ports.resource_repository import ResourceStateChange, StoredResource
 from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.domain.caller.emotion import EmotionState
+from app.domain.common.actors import ActorRef
 from app.domain.common.ids import (
     CardId,
     CardRevisionId,
@@ -52,7 +53,7 @@ from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
 from app.domain.layers.caller_belief import CallerBelief
 from app.domain.layers.handoff import HandoffSnapshot
-from app.domain.layers.operator_card import OperatorCard
+from app.domain.layers.operator_card import CardRevision, OperatorCard
 from app.domain.layers.world_truth import WorldTruth
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
@@ -68,6 +69,8 @@ from app.domain.world.engine import ScheduledTrigger
 __all__ = [
     "caller_belief_from_row",
     "caller_belief_row_values",
+    "card_revision_from_row",
+    "card_revision_row_values",
     "emergency_resource_from_row",
     "emergency_resource_row_values",
     "event_row_values",
@@ -479,6 +482,55 @@ def operator_card_from_row(row: Mapping[str, Any]) -> OperatorCard:
         incident_id=IncidentId(UUID(str(row["incident_id"]))),
         values=dict(row["values"]),
         revision_counter=int(row["revision_counter"]),
+    )
+
+
+def card_revision_row_values(revision: CardRevision, value_type: ValueType) -> dict[str, Any]:
+    """Column values for one `incident_card_revisions` row (§20.4, SPEC §9).
+
+    `value_type` is a column of the row but not a field of the pure `CardRevision`: it comes from
+    the `CARD_FIELDS` spec the writing use case already resolved. `actor_type` is constrained by
+    the table's own CHECK to `TRAINEE`/`INSTRUCTOR` (§42 test 4), which is why the domain's
+    `set_field` refuses every other actor before a row can reach this function.
+
+    `session_event_id` is left `NULL`: the `CARD_FIELD_CHANGED` row's id is allocated by the event
+    store in the *same* transaction, and threading it back here would make the revision write
+    depend on the append order. The link exists the other way round — the event payload carries
+    `revision_id` — TODO(E16): back-fill the column for the report's evidence join if the scoring
+    slice needs it from this side.
+    """
+    return {
+        "id": UUID(str(revision.revision_id)),
+        "card_id": UUID(str(revision.card_id)),
+        "revision_no": revision.revision_no,
+        "field_path": revision.field_path,
+        "previous_value": revision.previous_value,
+        "new_value": revision.new_value,
+        "value_type": value_type.value,
+        "actor_type": revision.actor.actor_type.value,
+        "actor_user_id": (
+            None if revision.actor.actor_id is None else UUID(str(revision.actor.actor_id))
+        ),
+        "at_offset_ms": revision.at_offset_ms,
+        "session_event_id": None,
+    }
+
+
+def card_revision_from_row(row: Mapping[str, Any]) -> CardRevision:
+    """Read one `incident_card_revisions` row back into its domain type (§20.4)."""
+    actor_user_id = row["actor_user_id"]
+    return CardRevision(
+        revision_id=CardRevisionId(UUID(str(row["id"]))),
+        card_id=CardId(UUID(str(row["card_id"]))),
+        revision_no=int(row["revision_no"]),
+        field_path=row["field_path"],
+        previous_value=row["previous_value"],
+        new_value=row["new_value"],
+        actor=ActorRef(
+            actor_type=ActorType(row["actor_type"]),
+            actor_id=None if actor_user_id is None else UserId(UUID(str(actor_user_id))),
+        ),
+        at_offset_ms=int(row["at_offset_ms"]),
     )
 
 

@@ -17,7 +17,7 @@ here (step 3) and published only after that transaction commits.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -28,6 +28,7 @@ from app.application.ports.clock import Clock
 from app.db.models.events import SessionEvent as SessionEventRow
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
+from app.domain.events.types import EventType
 from app.infrastructure.persistence.mappers import (
     event_row_values,
     session_event_from_row,
@@ -107,6 +108,30 @@ class SqlAlchemyEventStore:
             statement = statement.limit(limit)
         result = await self._session.execute(statement)
         return [session_event_from_row(row._mapping) for row in result.all()]
+
+    async def last_seq_no(
+        self, session_id: SessionId, event_types: Collection[EventType] | None = None
+    ) -> int:
+        """`MAX(seq_no)`, optionally narrowed to `event_types`; `0` for an empty log (§40.6).
+
+        This is the PostgreSQL fallback behind the `session:{id}:last_seq_no` cache key, and —
+        with `event_types` set to a role's `visible_event_types` — the "highest `seq_no` visible
+        to the caller's role" that `SessionDetail.last_seq_no` and `SessionEventPage.last_seq_no`
+        are defined as. An empty `event_types` collection means "no type at all" and therefore
+        answers `0` without touching the database.
+        """
+        table = SessionEventRow.__table__
+        if event_types is not None and not event_types:
+            return 0
+        statement = sa.select(sa.func.max(table.c.seq_no)).where(
+            table.c.session_id == UUID(str(session_id))
+        )
+        if event_types is not None:
+            statement = statement.where(
+                table.c.event_type.in_([event_type.value for event_type in event_types])
+            )
+        result = await self._session.execute(statement)
+        return int(result.scalar_one_or_none() or 0)
 
     async def _allocate(self, session_id: SessionId, event_count: int) -> int:
         """§20.8 step 1: lock the session row, then reserve `event_count` numbers."""

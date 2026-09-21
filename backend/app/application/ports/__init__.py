@@ -7,39 +7,70 @@ vendor SDK; `backend/tools/check_imports.py` enforces it.
 
 from __future__ import annotations
 
+from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.event_publisher import EventEnvelope, EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.health_probe import ComponentReading, HealthProbe
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.inference_readiness import InferenceReadiness
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.scenario_repository import (
     ScenarioRepository,
     StoredScenario,
+    StoredScenarioListing,
     StoredScenarioVersion,
+    StoredScenarioVersionDetail,
 )
-from app.application.ports.session_repository import SessionRepository
+from app.application.ports.session_repository import (
+    SessionRepository,
+    StoredParticipant,
+    StoredSessionListing,
+)
+from app.application.ports.token_service import (
+    InvalidTokenError,
+    IssuedToken,
+    TokenClaims,
+    TokenService,
+)
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.ports.user_repository import StoredUser, UserRepository, UserRole
 from app.application.ports.world_truth_repository import WorldTruthRepository
 
 __all__ = [
+    "CallTransportStatus",
     "CallerBeliefRepository",
     "Clock",
+    "ComponentReading",
     "EventEnvelope",
     "EventPublisher",
     "EventStore",
     "HandoffRepository",
+    "HealthProbe",
     "IdGenerator",
     "InferenceReadiness",
+    "InvalidTokenError",
+    "IssuedToken",
     "OperatorCardRepository",
+    "PasswordHasher",
     "ScenarioRepository",
     "SessionRepository",
+    "StoredParticipant",
     "StoredScenario",
+    "StoredScenarioListing",
     "StoredScenarioVersion",
+    "StoredScenarioVersionDetail",
+    "StoredSessionListing",
+    "StoredUser",
+    "TokenClaims",
+    "TokenService",
     "UnitOfWork",
     "UnitOfWorkFactory",
+    "UserRepository",
+    "UserRole",
     "WorldTruthRepository",
     "envelope_of",
 ]

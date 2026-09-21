@@ -22,17 +22,29 @@ Five properties this implementation is built around:
 * **`stop()` leaves nothing behind.** Every task is cancelled *and awaited*, and every lock this
   instance still owns is released.
 
-TODO(E7): starting the runner from the FastAPI lifespan, and calling `tick_now(session_id)`
-immediately after each command, are E7's wiring — this module deliberately does not import
-`app.api`, and `start_session` (E5-B) deliberately does not import this module. `adopt` /
-`release` / `tick_now` are the surface E7 needs; `StartSession` calls `adopt` and `AbortSession`
-calls `release` once that wiring exists.
+**`after_tick` is a seam, not a dependency.** Some stage triggers are fired by the simulation
+rather than by a trainee — `ring` when the caller joins the transport, `begin_interview` when the
+first `ASR_FINAL` lands (§10.8, both `allowed_actors = {SIMULATION}`). They belong to the
+simulation loop, and they are injected as hooks instead of imported: this module must stay free of
+`app.application.operator`, so that "the loop drives the call flow" is a wiring fact of the
+composition root and not a knot between two packages. `backend/tests/unit/application/simulation/`
+scans this module's imports and fails if the knot appears.
+
+Each hook runs after `tick_session` in its own `try`/`except`: a hook that raises is logged and
+the remaining hooks still run, exactly as a failing tick never stops the loop. `tick_now` runs
+them too, because D7's "immediately after each command" must advance the call flow as promptly as
+the interval tick does.
+
+Starting the runner from the FastAPI lifespan, and calling `tick_now(session_id)` immediately
+after each command, are E7's wiring — this module deliberately does not import `app.api`, and
+`start_session` (E5-B) deliberately does not import this module.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 
 from app.application.ports.runner_lock import RunnerLock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -57,7 +69,10 @@ class SimulationRunner:
         tick_ms: int,
         lock_ttl_s: int,
         lock_refresh_s: int,
+        after_tick: Sequence[Callable[[SessionId], Awaitable[object]]] = (),
     ) -> None:
+        #: Ran after every tick of a session, each in its own try/except (see the docstring).
+        self._after_tick = tuple(after_tick)
         self._unit_of_work = unit_of_work
         self._tick_session = tick_session
         self._lock = lock
@@ -123,13 +138,31 @@ class SimulationRunner:
     # -- ticking -------------------------------------------------------------------------------
 
     async def tick_now(self, session_id: SessionId) -> TickResult:
-        """Tick once, immediately — D7's "and immediately after each command" (TODO(E7) callers).
+        """Tick once, immediately — D7's "and immediately after each command".
 
         It does not require the lock: a command is already serialised against the tick loop by the
         session row lock of §20.8, and making a command wait for a lock another instance holds
         would make the command's own effects invisible until that instance's next tick.
+
+        The `after_tick` hooks run here too: a command that made a simulation trigger due — the
+        `CALL_ANSWERED` that leaves the stage `CONNECTED`, say — must not wait a whole interval
+        for the loop to notice.
         """
-        return await self._tick_session(session_id)
+        result = await self._tick_session(session_id)
+        await self._run_hooks(session_id)
+        return result
+
+    async def _run_hooks(self, session_id: SessionId) -> None:
+        """Run every `after_tick` hook, each isolated: one failure never skips the others."""
+        for hook in self._after_tick:
+            try:
+                await hook(session_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "an after-tick hook of session %s failed; the loop continues", session_id
+                )
 
     async def _run(self, session_id: SessionId) -> None:
         """One session's loop: acquire, then tick every `tick_ms` while the lock is held."""
@@ -165,6 +198,7 @@ class SimulationRunner:
             raise
         except Exception:
             logger.exception("tick of session %s failed; the loop continues", session_id)
+        await self._run_hooks(session_id)
 
     # -- lock ----------------------------------------------------------------------------------
 

@@ -72,8 +72,17 @@ def _is_application(mod: str | None) -> bool:
     return mod is not None and _in_package(mod, "app.application")
 
 
+#: The composition root (D2, D8). Every layered design needs exactly one module that imports both
+#: `app.application` and `app.infrastructure` — that is what "wiring" *is* — and naming it here is
+#: how the rule stays a rule instead of becoming a convention. The allowance is for this one
+#: module, by exact dotted name: no other module under `app.api` may import `app.infrastructure`,
+#: `app.db` or a vendor SDK, and `backend/tests/unit/test_check_imports.py` asserts that the
+#: allowance is exactly one name long.
+COMPOSITION_ROOT = "app.api.container"
+
+
 def _is_api(mod: str | None) -> bool:
-    return mod is not None and _in_package(mod, "app.api")
+    return mod is not None and _in_package(mod, "app.api") and mod != COMPOSITION_ROOT
 
 
 def _is_voice_agent_transport(mod: str | None) -> bool:

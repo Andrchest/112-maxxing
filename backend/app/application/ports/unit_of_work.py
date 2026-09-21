@@ -26,6 +26,7 @@ from app.application.ports.operator_card_repository import OperatorCardRepositor
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
 
@@ -49,6 +50,16 @@ class UnitOfWork(Protocol):
     @property
     def sessions(self) -> SessionRepository:
         """The session aggregate repository bound to this transaction (§20.3)."""
+        ...
+
+    @property
+    def users(self) -> UserRepository:
+        """The `users` repository bound to this transaction (§20.2, D8).
+
+        Authentication reads through the same Unit of Work as everything else so that a login and
+        a command see one consistent database, and so that `app.api` never needs a second,
+        auth-only session factory.
+        """
         ...
 
     @property

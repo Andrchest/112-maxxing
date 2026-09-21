@@ -7,11 +7,12 @@ lock of §20.8, so several processes (backend, voice-agent) can append to one se
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Protocol, runtime_checkable
 
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
+from app.domain.events.types import EventType
 
 __all__ = ["EventStore"]
 
@@ -35,4 +36,20 @@ class EventStore(Protocol):
         self, session_id: SessionId, after_seq_no: int = 0, limit: int | None = None
     ) -> list[SessionEvent]:
         """Every event of `session_id` with `seq_no > after_seq_no`, ordered by `seq_no`."""
+        ...
+
+    async def last_seq_no(
+        self, session_id: SessionId, event_types: Collection[EventType] | None = None
+    ) -> int:
+        """`MAX(seq_no)` for `session_id`, `0` when the log is empty (HLD §40.2, §40.6).
+
+        `event_types` narrows the maximum to those types, which is how a caller asks for "the
+        highest `seq_no` **visible to this role**": pass the role's
+        `DataVisibilityPolicy.visible_event_types`. `None` means every type, which is the
+        instructor's answer and the heartbeat's PostgreSQL fallback when the
+        `session:{id}:last_seq_no` cache key is missing (§40.6).
+
+        The SQL stays in the adapter: this is a `MAX` with an optional `IN`, not a read of the
+        rows themselves, so a session with a hundred thousand events costs one index probe.
+        """
         ...

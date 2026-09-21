@@ -23,6 +23,8 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[4]
 PORTS = BACKEND / "app" / "application" / "ports"
 ADAPTERS = BACKEND / "app" / "infrastructure" / "persistence"
+OPERATOR = BACKEND / "app" / "application" / "operator"
+SESSIONS = BACKEND / "app" / "application" / "sessions"
 
 #: Every spelling of the engine-written layers that could appear in an import: the domain types,
 #: the ORM models and the module basenames.
@@ -58,6 +60,14 @@ ISOLATED_MODULES: tuple[tuple[Path, frozenset[str]], ...] = (
     (PORTS / "caller_belief_repository.py", TRAINEE_LAYER_NAMES),
     (ADAPTERS / "world_truth_repository.py", TRAINEE_LAYER_NAMES),
     (ADAPTERS / "caller_belief_repository.py", TRAINEE_LAYER_NAMES),
+    # E7-B: the Operator 112 use cases and the snapshot are trainee-facing components, so the
+    # same rule applies to them — a 112 command or a restore snapshot that could reach
+    # `WorldTruth` would be one refactor away from showing a trainee the hidden incident truth
+    # (SPEC §2, §10, §42 test 3). Every module of `application/operator/**` is listed by the
+    # `test_the_scan_covers_every_operator_module` guard below, so a module added there is not
+    # silently unchecked.
+    *((path, ENGINE_LAYER_NAMES) for path in sorted(OPERATOR.glob("*.py"))),
+    (SESSIONS / "get_snapshot.py", ENGINE_LAYER_NAMES),
 )
 
 LAYER_PORT_MODULES: tuple[tuple[Path, str], ...] = (
@@ -138,3 +148,14 @@ def test_every_layer_adapter_takes_only_an_async_session() -> None:
         assert arg_names == ["self", "session"], f"{node.name}.__init__ takes {arg_names}"
         annotation = init.args.args[1].annotation
         assert isinstance(annotation, ast.Name) and annotation.id == "AsyncSession"
+
+
+def test_the_scan_covers_every_operator_module() -> None:
+    """A guard on the guard: every module of `application/operator/**` is really scanned.
+
+    Without it, a new Operator 112 use case dropped into that package would be unchecked, which
+    is the failure mode that makes an isolation test worthless (E7-B).
+    """
+    scanned = {path for path, _forbidden in ISOLATED_MODULES}
+    missing = sorted(path.name for path in OPERATOR.glob("*.py") if path not in scanned)
+    assert not missing, f"operator modules not scanned: {missing}"

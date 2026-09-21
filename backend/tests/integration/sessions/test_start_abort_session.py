@@ -12,7 +12,13 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from app.application.sessions import AbortSession, CreateSession, SessionNotFoundError, StartSession
+from app.application.sessions import (
+    AbortSession,
+    CreateSession,
+    InferenceNotReadyError,
+    SessionNotFoundError,
+    StartSession,
+)
 from app.application.testing.fakes import (
     FakeClock,
     FakeInferenceReadiness,
@@ -121,15 +127,23 @@ async def test_start_is_refused_when_inference_is_not_ready(
     instructor: ActorRef,
     migrated_engine: AsyncEngine,
 ) -> None:
-    """D8: with `REQUIRE_INFERENCE_READY` on, `guard_inference_ready` denies `start`."""
+    """D8: with `REQUIRE_INFERENCE_READY` on, a cold stack refuses `start`.
+
+    E7-A changed the *error*, not the outcome: the refusal is now `InferenceNotReadyError`
+    rather than a denied `guard_inference_ready`, because `openapi.yaml` gives `startSession` a
+    dedicated `503 INFERENCE_NOT_READY` that means "come back when the stack is warm" and must
+    not be collapsed into the `409 INVALID_TRANSITION` that means "this session can never start
+    from the state it is in". Everything else this test asserts — the port consulted exactly
+    once, the state unchanged, not one event appended — is unchanged.
+    """
     inference = FakeInferenceReadiness(ready=False)
     use_case = StartSession(unit_of_work, clock, inference, require_inference_ready=True)
 
     before = await event_types(migrated_engine, ready_session.id)
-    with pytest.raises(InvalidTransitionError) as excinfo:
+    with pytest.raises(InferenceNotReadyError) as excinfo:
         await use_case(ready_session.id, instructor)
 
-    assert excinfo.value.trigger == "start"
+    assert excinfo.value.code == "INFERENCE_NOT_READY"
     assert inference.calls == 1
     assert await stored_state(migrated_engine, ready_session.id) == "READY"
     assert await event_types(migrated_engine, ready_session.id) == before
@@ -277,7 +291,7 @@ async def test_abort_of_a_completed_session_is_refused(
     unit_of_work: Callable[..., Any],
     migrated_engine: AsyncEngine,
 ) -> None:
-    """`COMPLETED` has no `abort` row (§10.8). Completing is TODO(E7), so the state is set
+    """`COMPLETED` has no `abort` row (§10.8). Completing is TODO(E9), so the state is set
     through the repository rather than through a use case that does not exist yet."""
     async with unit_of_work() as uow:
         await uow.sessions.save(ready_session.model_copy(update={"state": SessionState.COMPLETED}))

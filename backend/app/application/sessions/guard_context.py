@@ -5,9 +5,10 @@ A domain guard is pure: every fact it cannot derive from the session aggregate a
 derives them from the audit source — the `session_events` log — rather than from any materialised
 projection, because the log is authoritative (SPEC §8, §31).
 
-It is a pure function over a `Sequence[SessionEvent]`: no repository, no clock, no I/O. The three
-facts the log cannot answer (`scenario_valid`, `inference_ready`, `resolution_condition_met`) are
-keyword arguments the calling use case supplies from its own ports.
+It is a pure function over a `Sequence[SessionEvent]`: no repository, no clock, no I/O. The four
+facts the log cannot answer (`scenario_valid`, `inference_ready`, `transport_ready`,
+`resolution_condition_met`) are keyword arguments the calling use case supplies from its own
+ports.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ def build_guard_runtime(
     *,
     scenario_valid: bool,
     inference_ready: bool,
+    transport_ready: bool = False,
     resolution_condition_met: bool = False,
 ) -> GuardRuntime:
     """Derive the event-log-backed `GuardRuntime` fields for one session (§10.8).
@@ -39,13 +41,17 @@ def build_guard_runtime(
     * `transition_started_ms` — the `monotonic_offset_ms` of the `ROLE_TRANSITION_STARTED`
       currently in effect, i.e. `None` once the matching `ROLE_TRANSITION_COMPLETED` landed.
 
-    `transport_ready` is left `False`. TODO(E11): §10.8's `ring` guard asks whether the
-    `CallTransport` reports the caller joined the room, and the §10.13 event catalog has no event
-    that states it — `TRANSPORT_DISCONNECTED`/`TRANSPORT_RECONNECTED` describe losing and regaining
-    an already-established transport, not establishing one, and `CALL_RINGING` is the *result* of
-    the guarded transition, so reading it here would make the guard vacuous. The transport slice
-    owns either the missing event or a `CallTransport` port reading; until then the conservative
-    value denies `ring`, which is the documented `GuardRuntime` default.
+    **The log still cannot answer `transport_ready`, and this function still does not try.**
+    §10.8's `ring` guard asks whether the call transport reports the caller joined the room, and
+    the §10.13 event catalog has no event that states it — `TRANSPORT_DISCONNECTED` /
+    `TRANSPORT_RECONNECTED` describe losing and regaining an already-established transport, not
+    establishing one, and `CALL_RINGING` is the *result* of the guarded transition, so deriving it
+    from the log here would make the guard vacuous. E7-A turned the missing fact into the
+    `app.application.ports.call_transport_status.CallTransportStatus` port, so `transport_ready`
+    is now a **keyword the caller supplies from that port**; it defaults to `False`, which denies
+    `ring` and is the documented `GuardRuntime` default, for every caller that has no transport
+    reading to give. TODO(E11): the LiveKit adapter behind that port — `SIM_CALL_TRANSPORT=fake`
+    is the only wiring that answers today.
     """
     first_finalized_turn = False
     call_connected = False
@@ -69,7 +75,7 @@ def build_guard_runtime(
     return GuardRuntime(
         scenario_valid=scenario_valid,
         inference_ready=inference_ready,
-        transport_ready=False,
+        transport_ready=transport_ready,
         first_finalized_turn=first_finalized_turn,
         call_connected=call_connected,
         call_ended=call_ended,

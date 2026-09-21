@@ -14,10 +14,17 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
+from app.domain.enums import RoleType
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
 
-__all__ = ["ScenarioRepository", "StoredScenario", "StoredScenarioVersion"]
+__all__ = [
+    "ScenarioRepository",
+    "StoredScenario",
+    "StoredScenarioListing",
+    "StoredScenarioVersion",
+    "StoredScenarioVersionDetail",
+]
 
 
 class StoredScenario(BaseModel):
@@ -44,6 +51,47 @@ class StoredScenarioVersion(BaseModel):
     version: int
     content_sha256: str
     locked_at: datetime | None = None
+
+
+class StoredScenarioListing(BaseModel):
+    """One row of `listScenarios` — `openapi.yaml`'s `ScenarioSummary`, property names literal.
+
+    `version_count` and `latest_version` are aggregates over `scenario_versions`, so they are
+    computed by the adapter in one statement rather than by a per-scenario read above it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scenario_id: ScenarioId
+    slug: str
+    title_ru: str
+    version_count: int
+    latest_version: int | None = None
+
+
+class StoredScenarioVersionDetail(BaseModel):
+    """The `scenario_versions` columns `openapi.yaml`'s `ScenarioVersionListItem` renders.
+
+    Distinct from `StoredScenarioVersion`, which is the decision-making projection the importer
+    and session creation read (`content_sha256` + `locked_at` and nothing else). This one is the
+    *presentation* projection and, like that one, still leaves `content` out: an endpoint that
+    lists versions must never serialise a scenario document.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scenario_version_id: ScenarioVersionId
+    scenario_id: ScenarioId
+    scenario_slug: str
+    schema_version: int
+    version: int
+    title: str
+    description: str
+    difficulty: int
+    role_chain: tuple[RoleType, ...]
+    content_sha256: str
+    locked_at: datetime | None = None
+    created_at: datetime
 
 
 @runtime_checkable
@@ -82,6 +130,32 @@ class ScenarioRepository(Protocol):
         there is exactly one parser in the system (`app.domain.scenario`) and this method feeds
         it, it does not duplicate it.
         """
+        ...
+
+    async def list_scenarios(
+        self, *, limit: int, offset: int
+    ) -> tuple[list[StoredScenarioListing], int]:
+        """One page of `scenarios`, ordered by `slug`, plus the unpaged total (`listScenarios`).
+
+        The total is what `openapi.yaml`'s response object calls `total`: how many scenarios exist,
+        not how many this page holds.
+        """
+        ...
+
+    async def list_versions(
+        self, scenario_id: ScenarioId
+    ) -> list[StoredScenarioVersionDetail] | None:
+        """Every version of one scenario, newest first, or `None` when the scenario is unknown.
+
+        `None` rather than `[]` because `listScenarioVersions` answers `404 NOT_FOUND` for a
+        scenario that does not exist and `200` with an empty page for one that has no versions.
+        """
+        ...
+
+    async def get_version_detail(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> StoredScenarioVersionDetail | None:
+        """One version's presentation projection, or `None`."""
         ...
 
     async def add_scenario(self, scenario_id: ScenarioId, slug: str, title_ru: str) -> None:

@@ -541,11 +541,12 @@ class SimulationSession(BaseModel):
     ) -> tuple[SimulationSession, list[DomainEvent]]:
         """`ACTIVE --complete--> COMPLETED` (SYSTEM). Emits `SESSION_COMPLETED`.
 
-        TODO(E7): the `total_events` payload key counts the session's event-log rows, which only
+        TODO(E9): the `total_events` payload key counts the session's event-log rows, which only
         the event store knows (`next_seq_no` is deliberately not a field of this aggregate). It is
         emitted as `0` here and overwritten by the completing use case, which holds the
-        repository. That use case is first needed by the Operator-112 single-role flow, so E7 owns
-        it; E5 ships create/start/abort only (E5-B ruling R2).
+        repository. A session is completed by finishing its last role stage, which today means
+        completing the DDS stage, so E9 owns that use case; E5 ships create/start/abort only
+        (E5-B ruling R2) and E7 ships the Operator-112 commands only.
         """
         ctx = self._ctx(
             actor=actor, role_type=None, now_ms=now_ms, runtime=runtime, stage=self.active_stage
@@ -583,12 +584,11 @@ class SimulationSession(BaseModel):
         Emits `STAGE_STATE_CHANGED`, plus `ROLE_STAGE_COMPLETED` when the target state is
         terminal — and nothing else.
 
-        TODO(E7) / TODO(E9): the trigger-specific event named by `Transition.emits` (`CALL_RINGING`,
-        `CALL_ANSWERED`, `HANDOFF_CREATED`, `DDS_ACKNOWLEDGED`, `RESOURCE_DISPATCHED`,
-        `DDS_INCIDENT_CLOSED`) needs payload this aggregate does not hold — the call id and room
-        name, the handoff snapshot id, the dispatched resource ids. The owning use case (E7 for
-        the 112 call/handoff triggers, E9 for the DDS resource triggers) appends it alongside the
-        events returned here.
+        TODO(E9): the trigger-specific event named by `Transition.emits` (`HANDOFF_CREATED`,
+        `DDS_ACKNOWLEDGED`, `RESOURCE_DISPATCHED`, `DDS_INCIDENT_CLOSED`) needs payload this
+        aggregate does not hold — the handoff snapshot id, the dispatched resource ids. The owning
+        use case appends it alongside the events returned here, which is what E7 already does for
+        `CALL_RINGING` and `CALL_ANSWERED` (`app.application.operator`).
         """
         stage = self.stage(stage_id)
         previous_state = stage.state

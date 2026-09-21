@@ -11,7 +11,10 @@ ALEMBIC := $(UV) run alembic -c backend/alembic.ini
 SCRATCH_DB := sim_dbcheck
 SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_DB)
 
-.PHONY: deps infra-up infra-down fmt lint typecheck boundaries scenarios migrate db-check test-backend gate-backend gate-frontend gate test
+export SIM_API_HOST ?= 127.0.0.1
+export SIM_API_PORT ?= 8100
+
+.PHONY: deps infra-up infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test
 deps:
 	$(UV) sync --all-packages --group dev
 	cd frontend && npm ci
@@ -42,6 +45,14 @@ db-check: infra-up
 		-c 'CREATE DATABASE $(SCRATCH_DB)'
 	$(ALEMBIC) -x url=$(SCRATCH_DATABASE_URL) upgrade head
 	$(ALEMBIC) -x url=$(SCRATCH_DATABASE_URL) check
+# Run the API (D8). `--factory` because `create_app` takes an optional Container (E7-A).
+# The default port is 8100, NOT 8000/8001: those belong to another project on the dev machine.
+run-api:
+	$(UV) run uvicorn app.api.main:create_app --factory --host $(SIM_API_HOST) --port $(SIM_API_PORT)
+# Idempotent upsert of the three local accounts. The passwords come from SIM_SEED_*_PASSWORD;
+# there is no default and none is ever written in source (SPEC §41).
+seed-users:
+	$(UV) run python -m app.tools.seed_users
 test-backend: infra-up
 	$(UV) run pytest -q
 gate-backend: lint typecheck boundaries scenarios db-check test-backend

@@ -23,12 +23,15 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.session_repository import StoredParticipant, StoredSessionListing
+from app.db.models.reference import Scenario as ScenarioRow
+from app.db.models.reference import ScenarioVersion as ScenarioVersionRow
 from app.db.models.session import Incident as IncidentRow
 from app.db.models.session import RoleStage as RoleStageRow
 from app.db.models.session import SessionParticipant as ParticipantRow
 from app.db.models.session import SimulationSession as SessionRow
-from app.domain.common.ids import SessionId
-from app.domain.enums import SessionState
+from app.domain.common.ids import SessionId, UserId
+from app.domain.enums import RoleType, SessionMode, SessionState
 from app.domain.session.session import SimulationSession
 from app.infrastructure.persistence.mappers import (
     incident_row_values,
@@ -44,6 +47,14 @@ _SESSIONS = SessionRow.__table__
 _INCIDENTS = IncidentRow.__table__
 _STAGES = RoleStageRow.__table__
 _PARTICIPANTS = ParticipantRow.__table__
+_SCENARIOS = ScenarioRow.__table__
+_VERSIONS = ScenarioVersionRow.__table__
+
+#: `session_participants` reduced to what `my_role_type` needs; aliased per query so a session
+#: listing can LEFT JOIN it restricted to one viewer without colliding with the write path.
+_MY_PARTICIPATION = sa.select(
+    _PARTICIPANTS.c.session_id, _PARTICIPANTS.c.user_id, _PARTICIPANTS.c.assigned_role_type
+).subquery("my_participation")
 
 #: Columns an UPDATE of an existing session row may change. `id`, `scenario_version_id`,
 #: `session_mode`, `session_seed`, `created_by_user_id`, `created_at` are immutable once created,
@@ -151,6 +162,118 @@ class SqlAlchemySessionRepository:
         )
         return [SessionId(UUID(str(row[0]))) for row in result.all()]
 
+    # -- read paths for `listSessions` / `getSession` (E7) --------------------------------------
+
+    async def list_sessions(
+        self,
+        *,
+        viewer_user_id: UserId,
+        mine_only: bool,
+        state: SessionState | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[StoredSessionListing], int]:
+        """One page of `SessionListItem` rows, newest first, plus the unpaged total.
+
+        One statement, three joins: `scenario_versions` and `scenarios` for the slug and version
+        number, and a LEFT JOIN of `session_participants` restricted to the viewer for
+        `my_role_type`. `scope=MINE` becomes a `WHERE (created_by = viewer OR that join matched)`,
+        so the filter and the `COUNT(*)` see exactly the same set.
+        """
+        viewer = UUID(str(viewer_user_id))
+        mine = _MY_PARTICIPATION.alias("mine")
+        source = (
+            _SESSIONS.join(_VERSIONS, _VERSIONS.c.id == _SESSIONS.c.scenario_version_id)
+            .join(_SCENARIOS, _SCENARIOS.c.id == _VERSIONS.c.scenario_id)
+            .outerjoin(
+                mine,
+                sa.and_(
+                    mine.c.session_id == _SESSIONS.c.id,
+                    mine.c.user_id == viewer,
+                ),
+            )
+        )
+        conditions: list[sa.ColumnElement[bool]] = []
+        if state is not None:
+            conditions.append(_SESSIONS.c.state == state.value)
+        if mine_only:
+            conditions.append(
+                sa.or_(_SESSIONS.c.created_by_user_id == viewer, mine.c.session_id.isnot(None))
+            )
+
+        total_result = await self._session.execute(
+            sa.select(sa.func.count()).select_from(source).where(*conditions)
+        )
+        total = int(total_result.scalar_one())
+
+        result = await self._session.execute(
+            self._listing_select(mine)
+            .select_from(source)
+            .where(*conditions)
+            .order_by(_SESSIONS.c.created_at.desc(), _SESSIONS.c.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_session_listing(row) for row in result.all()], total
+
+    async def get_listing(
+        self, session_id: SessionId, *, viewer_user_id: UserId
+    ) -> StoredSessionListing | None:
+        """The listing row of one session, or `None` (the `SessionDetail` join columns)."""
+        viewer = UUID(str(viewer_user_id))
+        mine = _MY_PARTICIPATION.alias("mine")
+        result = await self._session.execute(
+            self._listing_select(mine)
+            .select_from(
+                _SESSIONS.join(_VERSIONS, _VERSIONS.c.id == _SESSIONS.c.scenario_version_id)
+                .join(_SCENARIOS, _SCENARIOS.c.id == _VERSIONS.c.scenario_id)
+                .outerjoin(
+                    mine,
+                    sa.and_(mine.c.session_id == _SESSIONS.c.id, mine.c.user_id == viewer),
+                )
+            )
+            .where(_SESSIONS.c.id == UUID(str(session_id)))
+        )
+        row = result.one_or_none()
+        return None if row is None else _session_listing(row)
+
+    async def list_participants(self, session_id: SessionId) -> list[StoredParticipant]:
+        """This session's participants with their `joined_at`, in join order (§20.3)."""
+        result = await self._session.execute(
+            sa.select(
+                _PARTICIPANTS.c.user_id,
+                _PARTICIPANTS.c.assigned_role_type,
+                _PARTICIPANTS.c.joined_at,
+            )
+            .where(_PARTICIPANTS.c.session_id == UUID(str(session_id)))
+            .order_by(_PARTICIPANTS.c.joined_at, _PARTICIPANTS.c.id)
+        )
+        return [
+            StoredParticipant(
+                user_id=UserId(UUID(str(row.user_id))),
+                assigned_role_type=(
+                    None
+                    if row.assigned_role_type is None
+                    else RoleType(str(row.assigned_role_type))
+                ),
+                joined_at=row.joined_at,
+            )
+            for row in result.all()
+        ]
+
+    def _listing_select(self, mine: sa.Alias) -> sa.Select[Any]:
+        """The `SessionListItem` columns; `mine` is the viewer-restricted participant alias."""
+        return sa.select(
+            _SESSIONS.c.id,
+            _SCENARIOS.c.slug.label("scenario_slug"),
+            _VERSIONS.c.version.label("scenario_version"),
+            _SESSIONS.c.session_mode,
+            _SESSIONS.c.state,
+            _SESSIONS.c.created_at,
+            _SESSIONS.c.created_by_user_id,
+            mine.c.assigned_role_type.label("my_role_type"),
+        )
+
     # -- internals ----------------------------------------------------------------------------
 
     async def _load(self, session_id: SessionId, *, for_update: bool) -> SimulationSession | None:
@@ -186,3 +309,17 @@ class SqlAlchemySessionRepository:
     async def _rows(self, statement: sa.Select[Any]) -> Sequence[Mapping[str, Any]]:
         result = await self._session.execute(statement)
         return [row._mapping for row in result.all()]
+
+
+def _session_listing(row: sa.Row[tuple[Any, ...]]) -> StoredSessionListing:
+    """One joined session row as `openapi.yaml`'s `SessionListItem` projection."""
+    return StoredSessionListing(
+        session_id=SessionId(UUID(str(row.id))),
+        scenario_slug=str(row.scenario_slug),
+        scenario_version=int(row.scenario_version),
+        session_mode=SessionMode(str(row.session_mode)),
+        state=SessionState(str(row.state)),
+        created_at=row.created_at,
+        created_by_user_id=UserId(UUID(str(row.created_by_user_id))),
+        my_role_type=None if row.my_role_type is None else RoleType(str(row.my_role_type)),
+    )

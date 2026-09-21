@@ -27,6 +27,7 @@ from app.application.ports.operator_card_repository import OperatorCardRepositor
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
 from app.domain.common.ids import SessionId
@@ -42,6 +43,7 @@ from app.infrastructure.persistence.operator_card_repository import (
 from app.infrastructure.persistence.resource_repository import SqlAlchemyResourceRepository
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
 from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
+from app.infrastructure.persistence.user_repository import SqlAlchemyUserRepository
 from app.infrastructure.persistence.world_engine_state_repository import (
     SqlAlchemyWorldEngineStateRepository,
 )
@@ -71,6 +73,7 @@ class SqlAlchemyUnitOfWork:
         self._event_store: SqlAlchemyEventStore | None = None
         self._scenarios: SqlAlchemyScenarioRepository | None = None
         self._sessions: SqlAlchemySessionRepository | None = None
+        self._users: SqlAlchemyUserRepository | None = None
         self._world_truth: SqlAlchemyWorldTruthRepository | None = None
         self._caller_beliefs: SqlAlchemyCallerBeliefRepository | None = None
         self._operator_cards: SqlAlchemyOperatorCardRepository | None = None
@@ -88,6 +91,7 @@ class SqlAlchemyUnitOfWork:
         self._event_store = SqlAlchemyEventStore(session, self._clock, on_append=self._record)
         self._scenarios = SqlAlchemyScenarioRepository(session)
         self._sessions = SqlAlchemySessionRepository(session)
+        self._users = SqlAlchemyUserRepository(session)
         self._world_truth = SqlAlchemyWorldTruthRepository(session)
         self._caller_beliefs = SqlAlchemyCallerBeliefRepository(session)
         self._operator_cards = SqlAlchemyOperatorCardRepository(session)
@@ -113,6 +117,7 @@ class SqlAlchemyUnitOfWork:
             self._event_store = None
             self._scenarios = None
             self._sessions = None
+            self._users = None
             self._world_truth = None
             self._caller_beliefs = None
             self._operator_cards = None
@@ -148,6 +153,12 @@ class SqlAlchemyUnitOfWork:
         if self._sessions is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._sessions
+
+    @property
+    def users(self) -> UserRepository:
+        if self._users is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._users
 
     @property
     def world_truth(self) -> WorldTruthRepository:

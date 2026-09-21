@@ -1,5 +1,6 @@
 """In-memory fakes for the application ports: `FakeClock`, `InMemoryEventPublisher`,
-`FakeInferenceReadiness`, `SequentialIdGenerator`, `InMemoryRunnerLock`.
+`InMemoryEventSubscriber`, `InMemoryLastSeqNoCache`, `FakeInferenceReadiness`,
+`SequentialIdGenerator`, `InMemoryRunnerLock`, `FakeCallTransportStatus`, `FakePasswordHasher`.
 
 They exist so a test can pin time and inspect the realtime fan-out without PostgreSQL or Redis.
 Production wiring uses `app.infrastructure.clock.SystemClock` and
@@ -8,7 +9,9 @@ Production wiring uses `app.infrastructure.clock.SystemClock` and
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -16,9 +19,15 @@ from app.application.ports.event_publisher import EventEnvelope
 from app.domain.common.ids import SessionId
 
 __all__ = [
+    "FakeCallTransportStatus",
     "FakeClock",
     "FakeInferenceReadiness",
+    "FakePasswordHasher",
     "InMemoryEventPublisher",
+    "InMemoryEventSubscriber",
+    "InMemoryEventSubscription",
+    "InMemoryIdempotencyStore",
+    "InMemoryLastSeqNoCache",
     "InMemoryRunnerLock",
     "SequentialIdGenerator",
 ]
@@ -66,6 +75,10 @@ class InMemoryEventPublisher:
         self.calls: int = 0
         #: When set, `publish` raises it — used to prove the Unit of Work swallows the failure.
         self.fail_with = fail_with
+        #: `InMemoryEventSubscriber` registers a callback here, so a fake publish fans out
+        #: exactly as a Redis publish does — that is what makes the §40.3 seam testable without
+        #: Redis (E7-C).
+        self.listeners: list[Callable[[SessionId, EventEnvelope], None]] = []
 
     async def publish(self, session_id: SessionId, envelopes: Sequence[EventEnvelope]) -> None:
         """Record (or, when `fail_with` is set, raise instead of recording)."""
@@ -73,6 +86,9 @@ class InMemoryEventPublisher:
         if self.fail_with is not None:
             raise self.fail_with
         self.published.extend((session_id, envelope) for envelope in envelopes)
+        for envelope in envelopes:
+            for listener in self.listeners:
+                listener(session_id, envelope)
 
     def envelopes_for(self, session_id: SessionId) -> list[EventEnvelope]:
         """Every envelope published for one session, in publish order."""
@@ -162,3 +178,163 @@ class InMemoryRunnerLock:
     def expire(self, session_id: SessionId) -> None:
         """Drop the key as a lapsed TTL would, so another instance can adopt the session."""
         self.owners.pop(session_id, None)
+
+
+class FakeCallTransportStatus:
+    """A scriptable `CallTransportStatus` (D9, §10.8 `ring`).
+
+    `joined` is the blanket answer; `per_session` overrides it for one session, so a test can have
+    the caller present on one session and absent on another in the same process. This is the
+    *test* fake: production wiring never imports `app.application.testing` (D13), and
+    `SIM_CALL_TRANSPORT=fake` wires
+    `app.infrastructure.transport.local_call_transport_status.LocalCallTransportStatus` instead.
+    """
+
+    def __init__(self, joined: bool = True) -> None:
+        #: The answer for every session that has no override.
+        self.joined = joined
+        #: `session_id -> answer`, checked before `joined`.
+        self.per_session: dict[SessionId, bool] = {}
+        #: Every session asked about, in call order.
+        self.calls: list[SessionId] = []
+
+    async def caller_joined(self, session_id: SessionId) -> bool:
+        """The scripted answer."""
+        self.calls.append(session_id)
+        return self.per_session.get(session_id, self.joined)
+
+
+class FakePasswordHasher:
+    """A `PasswordHasher` with no KDF, so a login test is not argon2-bound (D8, D13).
+
+    The "digest" is `fake$<password>`: `hash` prefixes and `verify` compares. It is deliberately
+    unusable as a credential store — nothing outside a test may construct it, and the seeded
+    digests of `app.tools.seed_users` always come from the real
+    `app.infrastructure.auth.argon2_hasher.Argon2PasswordHasher`.
+    """
+
+    PREFIX = "fake$"
+
+    def hash(self, password: str) -> str:
+        """The recognisable, deliberately worthless digest."""
+        return f"{self.PREFIX}{password}"
+
+    def verify(self, password_hash: str, password: str) -> bool:
+        """Constant-shaped comparison; a digest this fake did not produce is never a match."""
+        return password_hash == f"{self.PREFIX}{password}"
+
+
+class InMemoryEventSubscription:
+    """One `EventSubscription` over an `InMemoryEventPublisher` (E7-C, §40.3).
+
+    It is registered with the publisher the moment the context is entered, which is the in-memory
+    equivalent of Redis's `SUBSCRIBE`, and it buffers everything published afterwards. That is
+    what lets a unit test reproduce the replay/live seam race — publish while the replay is
+    mid-page and assert the event arrives exactly once, in order — with no Redis at all.
+    """
+
+    def __init__(self, session_id: SessionId) -> None:
+        self._session_id = session_id
+        self._queue: asyncio.Queue[EventEnvelope] = asyncio.Queue()
+
+    def offer(self, session_id: SessionId, envelope: EventEnvelope) -> None:
+        """The publisher's callback: buffer an envelope published for this session."""
+        if session_id == self._session_id:
+            self._queue.put_nowait(envelope)
+
+    async def get(self) -> EventEnvelope:
+        """The next buffered or live envelope, waiting when the buffer is empty."""
+        return await self._queue.get()
+
+    def drain(self) -> list[EventEnvelope]:
+        """Everything buffered so far, without waiting (§40.3 step 4)."""
+        drained: list[EventEnvelope] = []
+        while True:
+            try:
+                drained.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                return drained
+
+
+class InMemoryEventSubscriber:
+    """An `EventSubscriber` wired to an `InMemoryEventPublisher` (E7-C).
+
+    `subscribe` is a context manager whose *entry* registers the listener and whose exit removes
+    it, exactly like the Redis adapter's subscribe/unsubscribe — so a test that leaks a
+    subscription fails the same way the real one would. `active` counts the open subscriptions,
+    which is the in-memory stand-in for `PUBSUB NUMSUB`.
+    """
+
+    def __init__(self, publisher: InMemoryEventPublisher) -> None:
+        self._publisher = publisher
+        #: Open subscriptions, by session — the fake's `PUBSUB NUMSUB`.
+        self.active: dict[SessionId, int] = {}
+
+    @asynccontextmanager
+    async def subscribe(self, session_id: SessionId) -> AsyncIterator[InMemoryEventSubscription]:
+        """Register a buffering listener; unregister it on the way out."""
+        subscription = InMemoryEventSubscription(session_id)
+        self._publisher.listeners.append(subscription.offer)
+        self.active[session_id] = self.active.get(session_id, 0) + 1
+        try:
+            yield subscription
+        finally:
+            self._publisher.listeners.remove(subscription.offer)
+            remaining = self.active.get(session_id, 1) - 1
+            if remaining:
+                self.active[session_id] = remaining
+            else:
+                self.active.pop(session_id, None)
+
+
+class InMemoryLastSeqNoCache:
+    """A `LastSeqNoCache` in a dictionary (§40.6's `session:{id}:last_seq_no`, E7-C).
+
+    `forget` is how a test reproduces the documented loss behaviour — "Loss ⇒ the handler reads
+    `MAX(seq_no)` from PostgreSQL instead" — without flushing a shared Redis.
+    """
+
+    def __init__(self) -> None:
+        #: `session_id -> cached maximum`; a session absent from the map is a missing key.
+        self.values: dict[SessionId, int] = {}
+
+    async def get(self, session_id: SessionId) -> int | None:
+        """The cached value, or `None` for a missing key."""
+        return self.values.get(session_id)
+
+    async def set(self, session_id: SessionId, seq_no: int) -> None:
+        """Write the cached value."""
+        self.values[session_id] = seq_no
+
+    def forget(self, session_id: SessionId) -> None:
+        """Drop the key, as a lapsed TTL or a `FLUSHALL` would."""
+        self.values.pop(session_id, None)
+
+
+class InMemoryIdempotencyStore:
+    """An `IdempotencyStore` that is a `dict` (§40.6).
+
+    No TTL: a test that wants the key to have expired calls `forget`, which is the same
+    observable event as an expiry and does not make the suite wait 300 seconds for it. The
+    production adapter is
+    `app.infrastructure.realtime.redis_idempotency_store.RedisIdempotencyStore`.
+    """
+
+    def __init__(self) -> None:
+        #: `key -> the first response body`, in the shape the owning use case stored it.
+        self.values: dict[str, str] = {}
+        #: Every key asked for, in call order — a test asserts the second command hit the store.
+        self.reads: list[str] = []
+
+    async def get(self, key: str) -> str | None:
+        """The stored body, or `None`."""
+        self.reads.append(key)
+        return self.values.get(key)
+
+    async def put(self, key: str, value: str) -> None:
+        """Store the body; a second `put` for one key overwrites, as `SET` would."""
+        self.values[key] = value
+
+    def forget(self, key: str) -> None:
+        """Drop the key, as a lapsed TTL or a `FLUSHALL` would (§40.6's documented loss)."""
+        self.values.pop(key, None)

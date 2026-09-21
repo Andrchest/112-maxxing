@@ -11,8 +11,10 @@ the flag in. When it is false the readiness port is not even consulted — that 
 application collapses both into the flag" means, and it is why a dev box without an inference
 stack can still run a session.
 
-An illegal `start` (wrong state, wrong actor, inference not ready) raises `InvalidTransitionError`
-*before* anything is written, and the transaction is never committed: no state change, no event.
+An illegal `start` (wrong state, wrong actor) raises `InvalidTransitionError` *before* anything
+is written, and the transaction is never committed: no state change, no event. A stack that is
+merely not warm yet raises `InferenceNotReadyError` instead — see that class for why the two are
+deliberately different answers.
 """
 
 from __future__ import annotations
@@ -26,7 +28,29 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
 from app.domain.session.session import SimulationSession
 
-__all__ = ["SessionNotFoundError", "StartSession"]
+__all__ = ["InferenceNotReadyError", "SessionNotFoundError", "StartSession"]
+
+
+class InferenceNotReadyError(DomainError):
+    """A required inference service is not `READY` (`openapi.yaml`, `503 INFERENCE_NOT_READY`).
+
+    This is raised **instead of** letting `guard_inference_ready` deny the transition. Both
+    outcomes are "the session does not start", but they are not the same answer to a client:
+    `openapi.yaml` gives `startSession` a dedicated `503` whose meaning is "come back when the
+    stack is warm" (SPEC §37), while `409 INVALID_TRANSITION` means "this session can never be
+    started from the state it is in". Collapsing the two would make the UI's start button
+    permanently disabled-looking for a transient condition.
+
+    Nothing is written when it is raised: the check runs before the trigger fires.
+    """
+
+    code = "INFERENCE_NOT_READY"
+
+    def __init__(self, session_id: SessionId) -> None:
+        self.session_id = session_id
+        super().__init__(
+            "a required inference service is not READY and REQUIRE_INFERENCE_READY is true"
+        )
 
 
 class SessionNotFoundError(DomainError):
@@ -63,10 +87,11 @@ class StartSession:
             if session is None:
                 raise SessionNotFoundError(session_id)
 
+            if not await self._inference_ready():
+                raise InferenceNotReadyError(session_id)
+
             runtime = build_guard_runtime(
-                await uow.events.read(session_id),
-                scenario_valid=True,
-                inference_ready=await self._inference_ready(),
+                await uow.events.read(session_id), scenario_valid=True, inference_ready=True
             )
             # `now_ms=0`: the start *is* the origin every later offset is measured from
             # (`session_offset_ms(now, started_at)` with `now == started_at`), so it is written

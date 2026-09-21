@@ -15,11 +15,17 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.ports.scenario_repository import StoredScenario, StoredScenarioVersion
+from app.application.ports.scenario_repository import (
+    StoredScenario,
+    StoredScenarioListing,
+    StoredScenarioVersion,
+    StoredScenarioVersionDetail,
+)
 from app.db.models.reference import Scenario as ScenarioRow
 from app.db.models.reference import ScenarioVersion as ScenarioVersionRow
 from app.db.models.reference import ScoringRule as ScoringRuleRow
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
+from app.domain.enums import RoleType
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
 from app.infrastructure.persistence.mappers import (
@@ -101,6 +107,95 @@ class SqlAlchemyScenarioRepository:
             return None
         return dict(row.content)
 
+    # -- read paths for `listScenarios` / `listScenarioVersions` (E7) --------------------------
+
+    async def list_scenarios(
+        self, *, limit: int, offset: int
+    ) -> tuple[list[StoredScenarioListing], int]:
+        """One page of scenarios with their version aggregates, plus the unpaged total.
+
+        `version_count` and `latest_version` come from a `LEFT JOIN … GROUP BY`, so a scenario
+        with no versions yet still appears — with `0` and `null`, which is what
+        `ScenarioSummary.latest_version` being nullable means.
+        """
+        total_result = await self._session.execute(
+            sa.select(sa.func.count()).select_from(_SCENARIOS)
+        )
+        total = int(total_result.scalar_one())
+
+        result = await self._session.execute(
+            sa.select(
+                _SCENARIOS.c.id,
+                _SCENARIOS.c.slug,
+                _SCENARIOS.c.title_ru,
+                sa.func.count(_VERSIONS.c.id).label("version_count"),
+                sa.func.max(_VERSIONS.c.version).label("latest_version"),
+            )
+            .select_from(
+                _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
+            )
+            .group_by(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru)
+            .order_by(_SCENARIOS.c.slug)
+            .limit(limit)
+            .offset(offset)
+        )
+        listings = [
+            StoredScenarioListing(
+                scenario_id=ScenarioId(UUID(str(row.id))),
+                slug=row.slug,
+                title_ru=row.title_ru,
+                version_count=int(row.version_count),
+                latest_version=None if row.latest_version is None else int(row.latest_version),
+            )
+            for row in result.all()
+        ]
+        return listings, total
+
+    async def list_versions(
+        self, scenario_id: ScenarioId
+    ) -> list[StoredScenarioVersionDetail] | None:
+        """Every version of one scenario, newest first; `None` when the scenario is unknown."""
+        scenario = await self.get_scenario(scenario_id)
+        if scenario is None:
+            return None
+        result = await self._session.execute(
+            self._detail_select()
+            .where(_VERSIONS.c.scenario_id == UUID(str(scenario_id)))
+            .order_by(_VERSIONS.c.version.desc())
+        )
+        return [_version_detail(row) for row in result.all()]
+
+    async def get_version_detail(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> StoredScenarioVersionDetail | None:
+        """One version's presentation projection, or `None`."""
+        result = await self._session.execute(
+            self._detail_select().where(_VERSIONS.c.id == UUID(str(scenario_version_id)))
+        )
+        row = result.one_or_none()
+        return None if row is None else _version_detail(row)
+
+    def _detail_select(self) -> sa.Select[Any]:
+        """The `scenario_versions` presentation columns joined with the owning scenario's slug.
+
+        `content` is deliberately absent: no listing endpoint may serialise a scenario document
+        (D3, D4).
+        """
+        return sa.select(
+            _VERSIONS.c.id,
+            _VERSIONS.c.scenario_id,
+            _SCENARIOS.c.slug.label("scenario_slug"),
+            _VERSIONS.c.schema_version,
+            _VERSIONS.c.version,
+            _VERSIONS.c.title,
+            _VERSIONS.c.description,
+            _VERSIONS.c.difficulty,
+            _VERSIONS.c.role_chain,
+            _VERSIONS.c.content_sha256,
+            _VERSIONS.c.locked_at,
+            _VERSIONS.c.created_at,
+        ).select_from(_VERSIONS.join(_SCENARIOS, _SCENARIOS.c.id == _VERSIONS.c.scenario_id))
+
     async def add_scenario(self, scenario_id: ScenarioId, slug: str, title_ru: str) -> None:
         await self._session.execute(
             sa.insert(_SCENARIOS).values(id=UUID(str(scenario_id)), slug=slug, title_ru=title_ru)
@@ -162,3 +257,21 @@ class SqlAlchemyScenarioRepository:
             .returning(_VERSIONS.c.id)
         )
         return result.one_or_none() is not None
+
+
+def _version_detail(row: sa.Row[tuple[Any, ...]]) -> StoredScenarioVersionDetail:
+    """One `scenario_versions` row (joined with its scenario's slug) as the read projection."""
+    return StoredScenarioVersionDetail(
+        scenario_version_id=ScenarioVersionId(UUID(str(row.id))),
+        scenario_id=ScenarioId(UUID(str(row.scenario_id))),
+        scenario_slug=str(row.scenario_slug),
+        schema_version=int(row.schema_version),
+        version=int(row.version),
+        title=str(row.title),
+        description=str(row.description),
+        difficulty=int(row.difficulty),
+        role_chain=tuple(RoleType(value) for value in row.role_chain),
+        content_sha256=str(row.content_sha256),
+        locked_at=row.locked_at,
+        created_at=row.created_at,
+    )

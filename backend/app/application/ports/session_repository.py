@@ -12,12 +12,53 @@ concurrent commands cannot both read `READY` and both start the session.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from app.domain.common.ids import SessionId
+from pydantic import BaseModel, ConfigDict
+
+from app.domain.common.ids import SessionId, UserId
+from app.domain.enums import RoleType, SessionMode, SessionState
 from app.domain.session.session import SimulationSession
 
-__all__ = ["SessionRepository"]
+__all__ = ["SessionRepository", "StoredParticipant", "StoredSessionListing"]
+
+
+class StoredSessionListing(BaseModel):
+    """One row of `listSessions` — `openapi.yaml`'s `SessionListItem`, property names literal.
+
+    `scenario_slug` and `scenario_version` live on `scenarios` / `scenario_versions`, and
+    `my_role_type` is the viewer's own `session_participants.assigned_role_type`: all three are
+    joins the adapter does in one statement, so listing N sessions costs one query rather than
+    3N. `my_role_type` is `null` when the viewer only observes the session, exactly as the schema
+    says.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    session_id: SessionId
+    scenario_slug: str
+    scenario_version: int
+    session_mode: SessionMode
+    state: SessionState
+    created_at: datetime
+    created_by_user_id: UserId
+    my_role_type: RoleType | None = None
+
+
+class StoredParticipant(BaseModel):
+    """One `session_participants` row including `joined_at` (§20.3).
+
+    The domain's `SessionParticipant` deliberately has no `joined_at` — it is a storage default no
+    rule reads — but `openapi.yaml`'s `SessionParticipantView` renders it, so the read path needs
+    this second projection rather than a new field on the aggregate.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: UserId
+    assigned_role_type: RoleType | None
+    joined_at: datetime
 
 
 @runtime_checkable
@@ -48,6 +89,43 @@ class SessionRepository(Protocol):
         restart"): on start the backend re-adopts every ACTIVE session from PostgreSQL. It reads
         ids only — the runner loads each aggregate under its own row lock when it ticks it.
         """
+        ...
+
+    async def list_sessions(
+        self,
+        *,
+        viewer_user_id: UserId,
+        mine_only: bool,
+        state: SessionState | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[StoredSessionListing], int]:
+        """One page of sessions, newest first, plus the unpaged total (`listSessions`).
+
+        `mine_only` is `openapi.yaml`'s `scope=MINE`: the sessions `viewer_user_id` participates
+        in **or** created. It is pushed into the statement rather than applied above it, because
+        filtering after pagination would make `total` and the page disagree. `scope=ALL` passes
+        `mine_only=False` and is refused for a `TRAINEE` before it ever reaches this port.
+
+        `viewer_user_id` is read even when `mine_only` is false: it is what `my_role_type` is
+        resolved against.
+        """
+        ...
+
+    async def get_listing(
+        self, session_id: SessionId, *, viewer_user_id: UserId
+    ) -> StoredSessionListing | None:
+        """The listing row of one session, or `None`.
+
+        `SessionDetail` needs three facts the pure aggregate deliberately does not carry —
+        `created_at` (a storage default), `scenario_slug` and `scenario_version` (columns of two
+        other tables) — and they are exactly the joins `list_sessions` already performs. Rather
+        than a fourth projection, `getSession` reads this one for a single id.
+        """
+        ...
+
+    async def list_participants(self, session_id: SessionId) -> list[StoredParticipant]:
+        """This session's participants with their `joined_at`, in join order (§20.3)."""
         ...
 
     async def save(self, session: SimulationSession) -> None:

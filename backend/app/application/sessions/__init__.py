@@ -1,29 +1,63 @@
-"""Session-lifecycle use cases (E5, HLD `10-domain-model.md` §10.8, §10.10, D3, D5, D6).
+"""Session-lifecycle use cases (E5/E7, HLD `10-domain-model.md` §10.8, §10.10, D3, D5, D6, D8).
 
 `CreateSession`, `StartSession` and `AbortSession` — one Unit of Work transaction each (D5) — plus
-`build_guard_runtime`, the pure projection of `GuardRuntime` from a session's event log.
+`build_guard_runtime`, the pure projection of `GuardRuntime` from a session's event log,
+`authorisation` (D8's first gate: `resolve_participant` / `can_observe`) and `queries` (the
+`listSessions` / `getSession` read path and the `SessionDetail` assembler every command returns),
+plus `get_snapshot` (the role-filtered restore payload of SPEC §39, E7-B).
 
 Completing a session is not here: the completing use case owns `SESSION_COMPLETED.total_events`
-and is first needed by the Operator-112 single-role flow — TODO(E7).
+and is reachable only once the 112 stage can be *completed*, which needs `completeOperatorStage`
+— TODO(E9), which owns both.
 """
 
 from __future__ import annotations
 
 from app.application.sessions.abort_session import AbortSession
+from app.application.sessions.authorisation import (
+    ParticipantNotAssignedError,
+    can_observe,
+    resolve_participant,
+)
 from app.application.sessions.create_session import (
     CreateSession,
     CreateSessionCommand,
     ScenarioVersionNotFoundError,
 )
+from app.application.sessions.get_snapshot import GetSnapshot, SessionSnapshotView
 from app.application.sessions.guard_context import build_guard_runtime
-from app.application.sessions.start_session import SessionNotFoundError, StartSession
+from app.application.sessions.queries import (
+    ForbiddenForRoleError,
+    GetSession,
+    ListSessions,
+    ParticipantView,
+    SessionDetailView,
+    assemble_session_detail,
+)
+from app.application.sessions.start_session import (
+    InferenceNotReadyError,
+    SessionNotFoundError,
+    StartSession,
+)
 
 __all__ = [
     "AbortSession",
     "CreateSession",
     "CreateSessionCommand",
+    "ForbiddenForRoleError",
+    "GetSession",
+    "GetSnapshot",
+    "InferenceNotReadyError",
+    "ListSessions",
+    "ParticipantNotAssignedError",
+    "ParticipantView",
     "ScenarioVersionNotFoundError",
+    "SessionDetailView",
     "SessionNotFoundError",
+    "SessionSnapshotView",
     "StartSession",
+    "assemble_session_detail",
     "build_guard_runtime",
+    "can_observe",
+    "resolve_participant",
 ]
