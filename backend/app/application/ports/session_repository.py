@@ -41,6 +41,15 @@ class SessionRepository(Protocol):
         """
         ...
 
+    async def list_active_session_ids(self) -> list[SessionId]:
+        """Every `ACTIVE` session's id, ordered by id.
+
+        This is the `SimulationRunner`'s adoption read (D7, `40-realtime-protocol.md` "Backend
+        restart"): on start the backend re-adopts every ACTIVE session from PostgreSQL. It reads
+        ids only — the runner loads each aggregate under its own row lock when it ticks it.
+        """
+        ...
+
     async def save(self, session: SimulationSession) -> None:
         """Write back an aggregate `get_for_update` returned.
 

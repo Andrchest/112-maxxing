@@ -13,17 +13,26 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.application.ports.resource_repository import ResourceStateChange, StoredResource
+from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.domain.caller.emotion import EmotionState
 from app.domain.common.ids import (
     CardId,
     CardRevisionId,
     EventId,
     IncidentId,
+    ResourceId,
     RoleStageId,
     ScenarioVersionId,
     SessionId,
     SnapshotId,
     UserId,
+)
+from app.domain.dds.resources import (
+    EmergencyResource,
+    EtaProfile,
+    ResourceAvailability,
+    ResourceCapability,
 )
 from app.domain.enums import (
     ActorType,
@@ -31,6 +40,8 @@ from app.domain.enums import (
     DDSStageState,
     KnowledgeState,
     Operator112StageState,
+    ResourceStatus,
+    ResourceType,
     RoleType,
     ServiceType,
     SessionMode,
@@ -52,19 +63,24 @@ from app.domain.session.session import (
     SimulationSession,
     StageState,
 )
+from app.domain.world.engine import ScheduledTrigger
 
 __all__ = [
     "caller_belief_from_row",
     "caller_belief_row_values",
+    "emergency_resource_from_row",
+    "emergency_resource_row_values",
     "event_row_values",
     "handoff_snapshot_from_row",
     "handoff_snapshot_row_values",
     "incident_from_row",
     "incident_row_values",
+    "json_safe_payload",
     "operator_card_from_row",
     "operator_card_row_values",
     "participant_from_row",
     "participant_row_values",
+    "resource_state_change_row_values",
     "role_stage_from_row",
     "role_stage_row_values",
     "scenario_version_row_values",
@@ -73,6 +89,8 @@ __all__ = [
     "session_event_of",
     "session_from_rows",
     "session_row_values",
+    "world_engine_state_from_row",
+    "world_engine_state_row_values",
     "world_truth_from_row",
     "world_truth_row_values",
 ]
@@ -127,6 +145,32 @@ def scoring_rule_row_values(
     ]
 
 
+def json_safe_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Render every `UUID` in an event payload as its canonical string, at any depth.
+
+    `session_events.payload` is `jsonb`, and the pure domain legitimately puts identifier *objects*
+    in a payload: `world/apply.py` emits `RESOURCE_STATUS_CHANGED.resource_id` as a `ResourceId`
+    and derives the notification/radio ids with `uuid5`. §10.13 types those keys `"uuid"`, which at
+    rest is a JSON string, so this is the conversion — and it lives here, at the one
+    `DomainEvent` -> row boundary every producer shares, rather than in any single use case.
+
+    It is applied by `event_row_values`, and `session_event_of` reads the result back out of the
+    row values, so the inserted row, the `SessionEvent` the event store returns and the envelope
+    the Unit of Work publishes after commit all carry the *same* JSON-safe payload (§20.8, §40.6).
+    """
+    return {key: _json_value(value) for key, value in payload.items()}
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_value(item) for item in value]
+    return value
+
+
 def event_row_values(
     session_id: SessionId,
     event: DomainEvent,
@@ -150,14 +194,18 @@ def event_row_values(
         "actor_type": event.actor.actor_type.value,
         "actor_id": UUID(str(event.actor.actor_id)) if event.actor.actor_id is not None else None,
         "correlation_id": event.correlation_id,
-        "payload": dict(event.payload),
+        "payload": json_safe_payload(event.payload),
     }
 
 
 def session_event_of(
     session_id: SessionId, event: DomainEvent, row_values: Mapping[str, Any]
 ) -> SessionEvent:
-    """The persisted `SessionEvent` corresponding to `event_row_values(...)` output."""
+    """The persisted `SessionEvent` corresponding to `event_row_values(...)` output.
+
+    The payload is taken from `row_values`, not from `event`, so it is byte-identical to the one
+    that goes into the row — `UUID`s already rendered as canonical strings (`json_safe_payload`).
+    """
     return SessionEvent(
         id=EventId(UUID(str(row_values["id"]))),
         session_id=session_id,
@@ -168,7 +216,7 @@ def session_event_of(
         actor_type=event.actor.actor_type,
         actor_id=event.actor.actor_id,
         correlation_id=event.correlation_id,
-        payload=dict(event.payload),
+        payload=dict(row_values["payload"]),
     )
 
 
@@ -461,4 +509,126 @@ def handoff_snapshot_from_row(row: Mapping[str, Any]) -> HandoffSnapshot:
         created_by_user_id=UserId(UUID(str(row["created_by_user_id"]))),
         created_at_offset_ms=int(row["created_at_offset_ms"]),
         content_sha256=row["content_sha256"],
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# Resources and the world engine's bookkeeping (§20.5, E6)
+# ---------------------------------------------------------------------------------------------
+
+
+def emergency_resource_row_values(session_id: SessionId, stored: StoredResource) -> dict[str, Any]:
+    """Column values for one `emergency_resources` row (§20.5).
+
+    `assignment_id` is absent: a resource is attached to a DDS assignment by the dispatch use case
+    — TODO(E9) — and the engine never writes that column.
+    """
+    resource = stored.resource
+    return {
+        "id": UUID(str(resource.resource_id)),
+        "session_id": UUID(str(session_id)),
+        "scenario_resource_id": stored.scenario_resource_id,
+        "service_type": resource.service_type.value,
+        "resource_type": resource.resource_type.value,
+        "callsign": resource.callsign,
+        "name_ru": resource.name_ru,
+        "capabilities": sorted(capability.value for capability in resource.capabilities),
+        "current_status": resource.current_status.value,
+        "home_station_ru": resource.home_station_ru,
+        "crew_size": resource.crew_size,
+        "availability": resource.availability.model_dump(mode="json"),
+        "eta": resource.eta.model_dump(mode="json"),
+        "status_changed_at_offset_ms": resource.status_changed_at_offset_ms,
+    }
+
+
+def emergency_resource_from_row(row: Mapping[str, Any]) -> StoredResource:
+    """Read one `emergency_resources` row back into its domain type plus its scenario id (§20.5)."""
+    return StoredResource(
+        scenario_resource_id=row["scenario_resource_id"],
+        resource=EmergencyResource(
+            resource_id=ResourceId(UUID(str(row["id"]))),
+            service_type=ServiceType(row["service_type"]),
+            resource_type=ResourceType(row["resource_type"]),
+            callsign=row["callsign"],
+            name_ru=row["name_ru"],
+            capabilities=frozenset(
+                ResourceCapability(value) for value in (row["capabilities"] or ())
+            ),
+            current_status=ResourceStatus(row["current_status"]),
+            availability=ResourceAvailability.model_validate(row["availability"]),
+            eta=EtaProfile.model_validate(row["eta"]),
+            home_station_ru=row["home_station_ru"],
+            crew_size=int(row["crew_size"]),
+            status_changed_at_offset_ms=int(row["status_changed_at_offset_ms"]),
+        ),
+    )
+
+
+def resource_state_change_row_values(change: ResourceStateChange) -> dict[str, Any]:
+    """Column values for one `resource_state_changes` row (§20.5, SPEC §29).
+
+    `assignment_id` and `session_event_id` stay null: the first belongs to the dispatch use case
+    and the second would need the `session_events.id` of an event appended later in the same
+    transaction — both TODO(E9).
+    """
+    return {
+        "resource_id": UUID(str(change.resource.resource_id)),
+        "previous_status": (
+            change.previous_status.value if change.previous_status is not None else None
+        ),
+        "new_status": change.new_status.value,
+        "trigger": change.trigger,
+        "source_world_event_id": change.source_world_event_id,
+        "at_offset_ms": change.at_offset_ms,
+    }
+
+
+def world_engine_state_row_values(state: WorldEngineState) -> dict[str, Any]:
+    """Column values for one `world_engine_states` row (additive, E6).
+
+    The five bookkeeping members travel as one jsonb document, because their keys are
+    scenario-defined (`world_event_id`s, emotion rule ids) and have no fixed column set — the same
+    reason §20.4 gives for its own jsonb columns.
+    """
+    return {
+        "incident_id": UUID(str(state.incident_id)),
+        "last_tick_ms": state.last_tick_ms,
+        "last_folded_seq_no": state.last_folded_seq_no,
+        "bookkeeping": {
+            "occurrences": dict(state.occurrences),
+            "last_fired_ms": dict(state.last_fired_ms),
+            "scheduled": [trigger.model_dump(mode="json") for trigger in state.scheduled],
+            "emotion_applications": dict(state.emotion_applications),
+            "reached_states": {
+                role.value: sorted(states) for role, states in state.reached_states.items()
+            },
+        },
+    }
+
+
+def world_engine_state_from_row(row: Mapping[str, Any]) -> WorldEngineState:
+    """Read one `world_engine_states` row back into its application type (additive, E6)."""
+    bookkeeping: Mapping[str, Any] = dict(row["bookkeeping"] or {})
+    return WorldEngineState(
+        incident_id=IncidentId(UUID(str(row["incident_id"]))),
+        last_tick_ms=int(row["last_tick_ms"]),
+        last_folded_seq_no=int(row["last_folded_seq_no"]),
+        occurrences={
+            key: int(value) for key, value in (bookkeeping.get("occurrences") or {}).items()
+        },
+        last_fired_ms={
+            key: int(value) for key, value in (bookkeeping.get("last_fired_ms") or {}).items()
+        },
+        scheduled=tuple(
+            ScheduledTrigger.model_validate(entry) for entry in (bookkeeping.get("scheduled") or ())
+        ),
+        emotion_applications={
+            key: int(value)
+            for key, value in (bookkeeping.get("emotion_applications") or {}).items()
+        },
+        reached_states={
+            RoleType(role): frozenset(states)
+            for role, states in (bookkeeping.get("reached_states") or {}).items()
+        },
     )

@@ -28,6 +28,7 @@ from app.db.models.session import RoleStage as RoleStageRow
 from app.db.models.session import SessionParticipant as ParticipantRow
 from app.db.models.session import SimulationSession as SessionRow
 from app.domain.common.ids import SessionId
+from app.domain.enums import SessionState
 from app.domain.session.session import SimulationSession
 from app.infrastructure.persistence.mappers import (
     incident_row_values,
@@ -136,6 +137,19 @@ class SqlAlchemySessionRepository:
     async def get_for_update(self, session_id: SessionId) -> SimulationSession | None:
         """The aggregate, with `SELECT … FOR UPDATE` on `simulation_sessions` (§20.8)."""
         return await self._load(session_id, for_update=True)
+
+    async def list_active_session_ids(self) -> list[SessionId]:
+        """Every `ACTIVE` session's id, ordered by id — the runner's adoption read (D7).
+
+        Ids only, and no row lock: adoption must not block a command, and the runner takes the
+        §20.8 lock per session when it actually ticks one.
+        """
+        result = await self._session.execute(
+            sa.select(_SESSIONS.c.id)
+            .where(_SESSIONS.c.state == SessionState.ACTIVE.value)
+            .order_by(_SESSIONS.c.id)
+        )
+        return [SessionId(UUID(str(row[0]))) for row in result.all()]
 
     # -- internals ----------------------------------------------------------------------------
 

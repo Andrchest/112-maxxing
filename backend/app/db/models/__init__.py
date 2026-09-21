@@ -35,7 +35,13 @@ from app.db.models.layers import (
 )
 from app.db.models.reference import Scenario, ScenarioVersion, ScoringRule, User
 from app.db.models.scoring import ScoreEvidence, ScoreResult
-from app.db.models.session import Incident, RoleStage, SessionParticipant, SimulationSession
+from app.db.models.session import (
+    Incident,
+    RoleStage,
+    SessionParticipant,
+    SimulationSession,
+    WorldEngineState,
+)
 
 __all__ = [
     "AudioSegment",
@@ -64,4 +70,5 @@ __all__ = [
     "SimulationSession",
     "TranscriptSegment",
     "User",
+    "WorldEngineState",
 ]

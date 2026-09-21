@@ -45,6 +45,7 @@ Conventions used throughout:
 | 23 | `notifications` | additive (D5) | materialized from the event log |
 | 24 | `dialogue_turns` | additive (ratified; `50-voice-pipeline.md` §9, `60-inference-ops.md`) | materialized turn record |
 | 25 | `recording_purge_audit` | additive (ratified; `50-voice-pipeline.md` §9.2) | retention audit |
+| 26 | `world_engine_states` | additive (E6; D7) | 1 row / incident, engine-written bookkeeping |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -236,6 +237,38 @@ FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`.
 Unique `uq_incidents_session (session_id)` — one session, one incident (SPEC §13, §42 test 5): the
 uniqueness constraint is what makes "role changes do not create a new incident" structural.
 `CHECK (closure_reason IS NULL OR closure_reason IN ('RESOLVED','FALSE_CALL','TRANSFERRED','CANCELLED_BY_CALLER'))`.
+
+### `world_engine_states` (additive, E6)
+The world event engine (D7) carries state that is neither a fact about the world nor a fact about
+the caller: how often each world event has already fired, when it last fired, which future firings
+a `TriggerEvent` has queued, how often each `EmotionRule` has been applied, which stage states have
+ever been reached, and how far simulated time has been advanced. D3 forbids merging that into
+`incident_world_states` — that table holds **facts** only — so the bookkeeping is a 1:1 satellite of
+`incidents` with its own table.
+
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `incident_id` | `uuid` | no | |
+| `last_tick_ms` | `integer` | no | `0` |
+| `last_folded_seq_no` | `bigint` | no | `0` |
+| `bookkeeping` | `jsonb` | no | `'{}'::jsonb` |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+PK `(incident_id)`. FK `incident_id → incidents(id) ON DELETE CASCADE`.
+
+**JSONB:** `bookkeeping` is `{occurrences, last_fired_ms, scheduled, emotion_applications,
+reached_states}`. Its keys are scenario-defined (`world_event_id`s and emotion rule ids), so there is
+no fixed column set to model — the same reason §20.4 gives for its own jsonb columns.
+
+`EventIndex` is deliberately **absent**: it is a pure fold of the session's own action events
+(`10-domain-model.md` §10.11 determinism rule 1) and is re-derived from `session_events` on every
+load, so the event log stays the single source of what happened (D5). `last_folded_seq_no` is the
+boundary between "already folded into the index" and "a `PendingAction` for the next tick", which is
+also what makes a backend restart bit-identical to an uninterrupted run (SPEC §39).
+
+Written only by session creation (the zeroed row) and by the `tick_session` use case. A tick that
+fires nothing, folds nothing and moves no resource writes **no** row at all — every draw is indexed
+by absolute simulated time, so re-examining a check tick re-draws the same number.
 
 ## 20.4 The four information layers (D3)
 

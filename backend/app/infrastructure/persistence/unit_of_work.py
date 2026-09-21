@@ -24,8 +24,10 @@ from app.application.ports.event_publisher import EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import SessionEvent
@@ -37,8 +39,12 @@ from app.infrastructure.persistence.handoff_repository import SqlAlchemyHandoffR
 from app.infrastructure.persistence.operator_card_repository import (
     SqlAlchemyOperatorCardRepository,
 )
+from app.infrastructure.persistence.resource_repository import SqlAlchemyResourceRepository
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
 from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
+from app.infrastructure.persistence.world_engine_state_repository import (
+    SqlAlchemyWorldEngineStateRepository,
+)
 from app.infrastructure.persistence.world_truth_repository import SqlAlchemyWorldTruthRepository
 
 __all__ = ["SqlAlchemyUnitOfWork", "unit_of_work_factory"]
@@ -69,6 +75,8 @@ class SqlAlchemyUnitOfWork:
         self._caller_beliefs: SqlAlchemyCallerBeliefRepository | None = None
         self._operator_cards: SqlAlchemyOperatorCardRepository | None = None
         self._handoffs: SqlAlchemyHandoffRepository | None = None
+        self._resources: SqlAlchemyResourceRepository | None = None
+        self._world_engine_states: SqlAlchemyWorldEngineStateRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -84,6 +92,8 @@ class SqlAlchemyUnitOfWork:
         self._caller_beliefs = SqlAlchemyCallerBeliefRepository(session)
         self._operator_cards = SqlAlchemyOperatorCardRepository(session)
         self._handoffs = SqlAlchemyHandoffRepository(session)
+        self._resources = SqlAlchemyResourceRepository(session)
+        self._world_engine_states = SqlAlchemyWorldEngineStateRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -107,6 +117,8 @@ class SqlAlchemyUnitOfWork:
             self._caller_beliefs = None
             self._operator_cards = None
             self._handoffs = None
+            self._resources = None
+            self._world_engine_states = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -160,6 +172,18 @@ class SqlAlchemyUnitOfWork:
         if self._handoffs is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._handoffs
+
+    @property
+    def resources(self) -> ResourceRepository:
+        if self._resources is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._resources
+
+    @property
+    def world_engine_states(self) -> WorldEngineStateRepository:
+        if self._world_engine_states is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._world_engine_states
 
     # -- transaction --------------------------------------------------------------------------
 

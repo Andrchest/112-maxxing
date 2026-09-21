@@ -1,5 +1,5 @@
 """In-memory fakes for the application ports: `FakeClock`, `InMemoryEventPublisher`,
-`FakeInferenceReadiness`, `SequentialIdGenerator`.
+`FakeInferenceReadiness`, `SequentialIdGenerator`, `InMemoryRunnerLock`.
 
 They exist so a test can pin time and inspect the realtime fan-out without PostgreSQL or Redis.
 Production wiring uses `app.infrastructure.clock.SystemClock` and
@@ -19,6 +19,7 @@ __all__ = [
     "FakeClock",
     "FakeInferenceReadiness",
     "InMemoryEventPublisher",
+    "InMemoryRunnerLock",
     "SequentialIdGenerator",
 ]
 
@@ -120,3 +121,44 @@ class SequentialIdGenerator:
         value = UUID(int=(self._namespace << 64) | self._counter, version=4)
         self.issued.append(value)
         return value
+
+
+class InMemoryRunnerLock:
+    """A `RunnerLock` shared by every runner constructed with the same instance (D7, §40.6).
+
+    It reproduces the three semantics the Redis adapter gets from `SET NX EX` and its two
+    compare-and-act scripts, minus the TTL: `acquire` succeeds only while the key is free,
+    `refresh` and `release` act only while the caller still owns it. A test that needs the TTL
+    branch calls `expire`, which is what a lapsed TTL looks like from the outside.
+    """
+
+    def __init__(self) -> None:
+        #: `session_id -> owner`; a session absent from the map is unlocked.
+        self.owners: dict[SessionId, str] = {}
+        #: Every `(operation, session_id, owner)` in call order.
+        self.calls: list[tuple[str, SessionId, str]] = []
+
+    async def acquire(self, session_id: SessionId, owner: str, ttl_s: int) -> bool:
+        """`SET NX`: `True` only when nobody holds the lock."""
+        self.calls.append(("acquire", session_id, owner))
+        if session_id in self.owners:
+            return False
+        self.owners[session_id] = owner
+        return True
+
+    async def refresh(self, session_id: SessionId, owner: str, ttl_s: int) -> bool:
+        """`True` while `owner` still holds the lock."""
+        self.calls.append(("refresh", session_id, owner))
+        return self.owners.get(session_id) == owner
+
+    async def release(self, session_id: SessionId, owner: str) -> bool:
+        """Compare-and-delete: never releases a lock somebody else has taken over."""
+        self.calls.append(("release", session_id, owner))
+        if self.owners.get(session_id) != owner:
+            return False
+        del self.owners[session_id]
+        return True
+
+    def expire(self, session_id: SessionId) -> None:
+        """Drop the key as a lapsed TTL would, so another instance can adopt the session."""
+        self.owners.pop(session_id, None)

@@ -23,8 +23,10 @@ from app.application.ports.caller_belief_repository import CallerBeliefRepositor
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
 
 __all__ = ["UnitOfWork", "UnitOfWorkFactory"]
@@ -67,6 +69,16 @@ class UnitOfWork(Protocol):
     @property
     def handoffs(self) -> HandoffRepository:
         """The `handoff_snapshots` repository bound to this transaction (D3)."""
+        ...
+
+    @property
+    def resources(self) -> ResourceRepository:
+        """The `emergency_resources` repository bound to this transaction (§20.5)."""
+        ...
+
+    @property
+    def world_engine_states(self) -> WorldEngineStateRepository:
+        """The `world_engine_states` repository bound to this transaction (E6, D7)."""
         ...
 
     async def __aenter__(self) -> UnitOfWork:

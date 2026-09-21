@@ -15,8 +15,10 @@ Everything below happens in **one** Unit of Work transaction (D5), in this order
 4. fire `validate` as `SYSTEM`;
 5. instantiate `WorldTruth` and `CallerBelief` from the version through `layers/copies.py` — the
    only conversion path between the information layers (D3) — plus an **empty** `OperatorCard`;
-6. persist the aggregate and the three layer rows through their four separate repositories (no
-   handoff exists yet);
+6. persist the aggregate, the three layer rows, the session's own copy of the scenario's
+   `available_resources` (§20.5: "per-session instances […] so that resource state is
+   session-scoped and two concurrent sessions never collide") and the zeroed `world_engine_states`
+   row the world event engine ticks against (E6, D7);
 7. `lock_scenario_version` in the same transaction (D4, SPEC §42 invariant 6);
 8. append `SESSION_CREATED` and whatever `validate` emitted, then commit.
 
@@ -32,18 +34,22 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.application.ports.id_generator import IdGenerator
+from app.application.ports.resource_repository import StoredResource
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError, ScenarioValidationError
 from app.domain.common.ids import (
     CardId,
     IncidentId,
+    ResourceId,
     RoleStageId,
     ScenarioVersionId,
     SessionId,
     UserId,
 )
 from app.domain.common.state_machine import GuardRuntime
+from app.domain.dds.resources import EmergencyResource
 from app.domain.enums import ActorType, RoleType, SessionMode
 from app.domain.events.session_event import DomainEvent
 from app.domain.layers.copies import instantiate_caller_belief, instantiate_world_truth
@@ -150,10 +156,15 @@ class CreateSession:
     async def _persist(
         self, uow: UnitOfWork, version: ScenarioVersion, session: SimulationSession
     ) -> None:
-        """Write the aggregate and its three starting layer rows through four separate ports.
+        """Write the aggregate, its three starting layer rows, its resources and its engine state.
 
-        Three, not four: a session starts with no `HandoffSnapshot` — the 112 stage produces the
-        first one (SPEC §10), so `uow.handoffs` is deliberately not touched here.
+        Three layer rows, not four: a session starts with no `HandoffSnapshot` — the 112 stage
+        produces the first one (SPEC §10), so `uow.handoffs` is deliberately not touched here.
+
+        The resource board and the `world_engine_states` row are instantiated in the *same*
+        transaction because a session that exists without them cannot be ticked: the first
+        `tick_session` would find no board and no bookkeeping, and there is no second moment at
+        which the scenario's `available_resources` could legitimately be copied (§20.5, D7).
         """
         await uow.sessions.add(session)
 
@@ -163,6 +174,37 @@ class CreateSession:
         await uow.operator_cards.add(
             OperatorCard(card_id=CardId(self._ids.new()), incident_id=incident_id, values={})
         )
+        await uow.resources.add_all(session.id, self._instantiate_resources(version))
+        await uow.world_engine_states.add(WorldEngineState(incident_id=incident_id))
+
+    def _instantiate_resources(self, version: ScenarioVersion) -> list[StoredResource]:
+        """The scenario's `available_resources` as this session's own resource instances (§20.5).
+
+        Every runtime id comes from the `IdGenerator` (D2/D7 — the domain owns no randomness), and
+        the scenario-local `resource_id` (`"ac2"`) is kept beside the resource: effects and
+        selectors name resources by that string, while the board is keyed by the runtime id.
+        A resource starts in its scenario-defined `availability.initial_status`.
+        """
+        return [
+            StoredResource(
+                scenario_resource_id=spec.resource_id,
+                resource=EmergencyResource(
+                    resource_id=ResourceId(self._ids.new()),
+                    service_type=spec.service_type,
+                    resource_type=spec.resource_type,
+                    callsign=spec.callsign,
+                    name_ru=spec.name_ru,
+                    capabilities=frozenset(spec.capabilities),
+                    current_status=spec.availability.initial_status,
+                    availability=spec.availability,
+                    eta=spec.eta,
+                    home_station_ru=spec.home_station_ru,
+                    crew_size=spec.crew_size,
+                    status_changed_at_offset_ms=0,
+                ),
+            )
+            for spec in version.available_resources
+        ]
 
 
 def _parse(document: Mapping[str, Any]) -> ScenarioVersion:

@@ -1,13 +1,19 @@
 """Session aggregate tables (HLD `20-db-schema.md` §20.3).
 
-`simulation_sessions`, `session_participants`, `role_stages`, `incidents`.
+`simulation_sessions`, `session_participants`, `role_stages`, `incidents`, `world_engine_states`.
+
+`world_engine_states` (additive, E6) is a 1:1 satellite of `incidents`, which is why it lives
+here rather than in `layers.py`: it is explicitly **not** a fifth information layer. World truth
+holds facts about the world; the engine's bookkeeping — occurrence counters, queued triggers,
+how far simulated time has been advanced — is not a fact about anything and D3 forbids merging
+the two.
 """
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 
-from app.db.base import GEN_RANDOM_UUID, NOW, TIMESTAMPTZ_T, UUID_T, Base, enum_check
+from app.db.base import GEN_RANDOM_UUID, JSONB_T, NOW, TIMESTAMPTZ_T, UUID_T, Base, enum_check
 from app.domain.enums import (
     ClosureReason,
     DDSStageState,
@@ -135,3 +141,25 @@ class Incident(Base):
             enum_check("closure_reason", ClosureReason, nullable=True), name="closure_reason"
         ),
     )
+
+
+class WorldEngineState(Base):
+    """`world_engine_states` — the world event engine's bookkeeping (additive, E6; D3, D7).
+
+    One row per incident, written only by `tick_session` and created zeroed by session creation.
+    `bookkeeping` is a single jsonb document (`occurrences`, `last_fired_ms`, `scheduled`,
+    `emotion_applications`, `reached_states`) because its shape is scenario-defined — the keys are
+    `world_event_id`s and emotion rule ids — exactly the reason §20.4 gives for its own jsonb
+    columns. `EventIndex` is absent on purpose: it is re-folded from `session_events` on load, so
+    the event log stays the single source of what happened (D5).
+    """
+
+    __tablename__ = "world_engine_states"
+
+    incident_id = sa.Column(
+        UUID_T, sa.ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_tick_ms = sa.Column(sa.Integer(), nullable=False, server_default=sa.text("0"))
+    last_folded_seq_no = sa.Column(sa.BigInteger(), nullable=False, server_default=sa.text("0"))
+    bookkeeping = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    updated_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)

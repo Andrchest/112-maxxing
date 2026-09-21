@@ -151,6 +151,10 @@ voice_agent    -> application, inference, infrastructure
   ACTIVE sessions from PostgreSQL; sim time is derived from the persisted `started_at` plus paused
   intervals, so a restart or refresh never resets a session (§39). A Redis lock
   `lock:session:{id}:runner` guarantees a single runner.
+- The engine's bookkeeping (occurrence counters, `last_fired_ms`, queued `ScheduledTrigger`s,
+  emotion-rule application counts, reached stage states, `last_tick_ms`, `last_folded_seq_no`) lives
+  in its own table `world_engine_states`, one row per incident (§20.3, additive, E6) — never merged
+  into `incident_world_states`, which holds facts only (D3).
 
 ## D8. Commands API and realtime channel (§34)
 

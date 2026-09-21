@@ -1,0 +1,73 @@
+"""`ResourceRepository` port — `emergency_resources` + `resource_state_changes` (§20.5, D5, D7).
+
+Per-session resource instances are created from `scenario_versions.content.available_resources`
+when the incident is instantiated (§20.5), so the repository always speaks in **pairs**: the
+runtime `EmergencyResource` the engine moves, and the scenario-local `scenario_resource_id`
+(`"ac2"`) an `AlterResourceAvailability` effect or a `ResourceSelector` names. §10.7's
+`EmergencyResource` has no field for that string — it is a storage key, not a domain fact — so it
+travels beside the resource in `StoredResource` and ends up in `WorldState.resource_keys`.
+
+`record_state_change` appends the `resource_state_changes` audit row (§20.5) that every fired
+transition owes. It is a separate operation from `save` on purpose: the board write and the audit
+row are two different facts, and a tick that moves a resource owes exactly one row per transition
+even when several transitions of one resource fire in one tick.
+
+This port deliberately reaches **no** information layer: the DDS side holds it (E9) and must not
+gain a path to `WorldTruth` through it (D3).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict
+
+from app.domain.common.ids import SessionId
+from app.domain.dds.resources import EmergencyResource
+from app.domain.enums import ResourceStatus
+
+__all__ = ["ResourceRepository", "ResourceStateChange", "StoredResource"]
+
+
+class StoredResource(BaseModel):
+    """One `emergency_resources` row: the domain resource plus its scenario-local id (§20.5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scenario_resource_id: str
+    resource: EmergencyResource
+
+
+class ResourceStateChange(BaseModel):
+    """One `resource_state_changes` row — the append-only resource audit of §20.5, SPEC §29."""
+
+    model_config = ConfigDict(frozen=True)
+
+    resource: EmergencyResource
+    previous_status: ResourceStatus | None
+    new_status: ResourceStatus
+    trigger: str
+    source_world_event_id: str | None = None
+    at_offset_ms: int
+
+
+@runtime_checkable
+class ResourceRepository(Protocol):
+    """`emergency_resources` and its `resource_state_changes` audit (§20.5)."""
+
+    async def add_all(self, session_id: SessionId, resources: Sequence[StoredResource]) -> None:
+        """Insert the session's whole resource board, as scenario instantiation produced it."""
+        ...
+
+    async def list_for_session(self, session_id: SessionId) -> list[StoredResource]:
+        """Every resource of the session, ordered by `scenario_resource_id`."""
+        ...
+
+    async def save(self, session_id: SessionId, resource: EmergencyResource) -> None:
+        """Write back one resource the engine moved: status, `eta`, `status_changed_at`."""
+        ...
+
+    async def record_state_change(self, change: ResourceStateChange) -> None:
+        """Append one `resource_state_changes` row for a fired transition (§20.5)."""
+        ...
