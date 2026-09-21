@@ -37,6 +37,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.ids import ScenarioId, ScenarioVersionId, UserId
 from app.domain.enums import ActorType, RoleType
 from app.domain.scenario.version import ScenarioVersion
+from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.tools.import_scenarios import YamlScenarioSource
 from sqlalchemy import text
@@ -117,7 +118,9 @@ def start_session(
 ) -> StartSession:
     """`require_inference_ready=False`, the `Makefile`'s test default; a test that wants the
     other branch builds its own `StartSession`."""
-    return StartSession(unit_of_work, clock, inference, require_inference_ready=False)
+    return StartSession(
+        unit_of_work, clock, inference, Uuid4Generator(), require_inference_ready=False
+    )
 
 
 @pytest.fixture

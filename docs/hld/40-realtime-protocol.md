@@ -233,7 +233,7 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 35 | `DDS_STATUS_UPDATE_SENT` | — | ✔ | ✔ | — |
 | 36 | `DDS_INCIDENT_CLOSED` | — | ✔ | ✔ | — |
 | 37 | `NOTIFICATION_CREATED` | ▲ | ▲ | ✔ | pushed only when `audience_role` equals the connection's role; drop `source_world_event_id` for trainees |
-| 38 | `NOTIFICATION_ACKNOWLEDGED` | ▲ | ▲ | ✔ | pushed only to the notification's `audience_role` |
+| 38 | `NOTIFICATION_ACKNOWLEDGED` | ▲ | ▲ | ✔ | pushed only when `audience_role` equals the connection's role (the key is additive, E9 — §10.13) |
 | 39 | `RADIO_MESSAGE_CREATED` | ▲ | ▲ | ✔ | pushed only when `to_role` equals the connection's role; drop `source_world_event_id` for trainees |
 | 40 | `WORLD_TRUTH_MUTATED` | — | — | ✔ | **never** to a trainee — this is the WorldTruth boundary (D3, D8, SPEC §42 tests 1 and 3) |
 | 41 | `CALLER_BELIEF_MUTATED` | — | — | ✔ | **never** to a trainee — it would disclose what the caller knows without asking |

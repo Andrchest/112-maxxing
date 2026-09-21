@@ -31,9 +31,18 @@ async def test_list_scenarios_returns_identity_only(
 
 
 async def test_list_scenario_versions(
-    client: httpx.AsyncClient, tokens: dict[str, str], demo_version_id: ScenarioVersionId
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
 ) -> None:
-    """`listScenarioVersions` lists the versions with `locked_at` still null (D4)."""
+    """`listScenarioVersions` lists the versions with `locked_at` still null (D4).
+
+    `isolated_scenario_catalog` (which must run before `demo_version_id` re-imports into the now-
+    empty catalog) is required here: the shared demo scenario is reused by session-creating tests
+    across the whole suite and gets locked as soon as any of them runs, so only a freshly imported,
+    nobody-else-has-touched-it copy can honestly assert `locked_at is None`.
+    """
     scenarios = await client.get("/api/v1/scenarios", headers=auth(tokens["trainee1"]))
     scenario_id = scenarios.json()["items"][0]["scenario_id"]
 
@@ -175,11 +184,16 @@ async def test_changed_content_under_the_same_version_is_409(
 
 
 async def test_importing_a_broken_document_is_422_with_every_violation(
-    client: httpx.AsyncClient, tokens: dict[str, str], demo_yaml: str
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    demo_yaml: str,
+    isolated_scenario_catalog: None,
 ) -> None:
     """A document that breaks several §30.8 rules answers `422 SCENARIO_INVALID` with all of them.
 
     `openapi.yaml`: "The problem carries the complete `validation_report`; nothing was written."
+    `isolated_scenario_catalog`: the closing assertion needs the catalog to hold *nothing*, and the
+    demo scenario is shared session-wide for speed (see `demo_version_id`).
     """
     broken = yaml.safe_load(demo_yaml)
     # Two independent violations, so "every violation" is a testable claim and not a tautology:
@@ -212,12 +226,17 @@ async def test_importing_a_broken_document_is_422_with_every_violation(
 
 
 async def test_validate_always_answers_200(
-    client: httpx.AsyncClient, tokens: dict[str, str], demo_yaml: str
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    demo_yaml: str,
+    isolated_scenario_catalog: None,
 ) -> None:
     """`validateScenarioFile` reports an invalid document in the body, not as an error status.
 
     `openapi.yaml`: "Always `200`: an invalid document is reported in the body as `valid: false`
     plus issues, because this endpoint's purpose is authoring feedback, not command execution."
+    `isolated_scenario_catalog`: the closing assertion needs the catalog to hold nothing (see
+    `test_importing_a_broken_document_is_422_with_every_violation`).
     """
     good = await client.post(
         "/api/v1/scenarios/validate",

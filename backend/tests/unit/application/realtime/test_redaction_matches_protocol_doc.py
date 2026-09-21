@@ -169,18 +169,20 @@ def test_trainee_verdict_matches_the_protocol_table(event_type: EventType, role:
 def test_the_delivery_filtered_cases_are_the_three_documented_rows() -> None:
     """A guard on the case list: the parametrisation below must not quietly become empty.
 
-    §40.4 has exactly three delivery-filtered rows — 30 `STAGE_STATE_CHANGED.role_type`,
-    37 `NOTIFICATION_CREATED.audience_role` and 39 `RADIO_MESSAGE_CREATED.to_role` — and each is
-    pushed to both trainee roles, so the list is six pairs. Row 38
-    (`NOTIFICATION_ACKNOWLEDGED`) is deliberately absent: its payload carries no audience key
-    (TODO(E9) in `redaction.py`), so the document states no condition to parse.
+    §40.4 has exactly four delivery-filtered rows — 30 `STAGE_STATE_CHANGED.role_type`,
+    37 `NOTIFICATION_CREATED.audience_role`, 38 `NOTIFICATION_ACKNOWLEDGED.audience_role` and
+    39 `RADIO_MESSAGE_CREATED.to_role` — and each is pushed to both trainee roles, so the list is
+    eight pairs. Row 38 joined them in E9, which added the `audience_role` key its filter needs to
+    the `NOTIFICATION_ACKNOWLEDGED` payload (§10.13, additive); until then the document stated a
+    condition no payload key could carry.
     """
     assert {event_type for _, event_type in DELIVERY_FILTERED_CASES} == {
         EventType.STAGE_STATE_CHANGED,
         EventType.NOTIFICATION_CREATED,
+        EventType.NOTIFICATION_ACKNOWLEDGED,
         EventType.RADIO_MESSAGE_CREATED,
     }
-    assert len(DELIVERY_FILTERED_CASES) == 6
+    assert len(DELIVERY_FILTERED_CASES) == 8
 
 
 @pytest.mark.parametrize(("role", "event_type"), DELIVERY_FILTERED_CASES)

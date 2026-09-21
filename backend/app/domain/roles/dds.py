@@ -6,6 +6,17 @@
 update does not move the DDS stage at all. The state machine below is built with `DDS_GUARDS`
 (`session/guards.py`), so every `guard_name` `DDS_TRANSITIONS` references resolves to a real
 predicate.
+
+**Repair (E9).** `dispatch_additional` was unreachable as §10.9 was originally written: its guard
+needs a `SELECTED` unit, `select` was guarded by "assignment state is `RESOURCE_SELECTION`",
+`select_resource` was not an available action in `EN_ROUTE` / `ARRIVED` / `WORKING`, the only way
+back to `RESOURCE_SELECTION` is from `DISPATCHED` and only before the first unit departs, and
+`dispatch` takes *every* selected unit. `select_resource` / `deselect_resource` are therefore
+available actions in those three states here, and `dds/resources.py` widens the two unit-level
+guards to match. `deselect` keeps its "not yet dispatched" guard, so reinforcement can never
+un-send a unit that is already moving. `10-domain-model.md` §10.7 and §10.9 carry the same
+tables, and `tests/unit/domain/roles/test_dds_tables_match_the_hld.py` parses them at test time
+so the two halves cannot drift apart again.
 """
 
 from __future__ import annotations
@@ -87,9 +98,27 @@ _AVAILABLE_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
         _SEND_STATUS_UPDATE,
     ),
     DDSStageState.DISPATCHED: (_OPEN_RESOURCE_SELECTION_ADD, _SEND_STATUS_UPDATE),
-    DDSStageState.EN_ROUTE: (_DISPATCH_ADDITIONAL, _SEND_STATUS_UPDATE),
-    DDSStageState.ARRIVED: (_DISPATCH_ADDITIONAL, _SEND_STATUS_UPDATE),
-    DDSStageState.WORKING: (_DISPATCH_ADDITIONAL, _SEND_STATUS_UPDATE),
+    # Repair (E9, §10.7 / §10.9): `select_resource` and `deselect_resource` are available in the
+    # three states `dispatch_additional` fires from. Without them nothing could ever be `SELECTED`
+    # there, so `dispatch_additional`'s own guard could never hold — see the module docstring.
+    DDSStageState.EN_ROUTE: (
+        _SELECT_RESOURCE,
+        _DESELECT_RESOURCE,
+        _DISPATCH_ADDITIONAL,
+        _SEND_STATUS_UPDATE,
+    ),
+    DDSStageState.ARRIVED: (
+        _SELECT_RESOURCE,
+        _DESELECT_RESOURCE,
+        _DISPATCH_ADDITIONAL,
+        _SEND_STATUS_UPDATE,
+    ),
+    DDSStageState.WORKING: (
+        _SELECT_RESOURCE,
+        _DESELECT_RESOURCE,
+        _DISPATCH_ADDITIONAL,
+        _SEND_STATUS_UPDATE,
+    ),
     DDSStageState.RESOLVED: (_CLOSE, _SEND_STATUS_UPDATE),
     DDSStageState.CLOSED: (),
 }

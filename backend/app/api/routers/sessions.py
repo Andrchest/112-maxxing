@@ -17,6 +17,12 @@ outlive a test; they drive `tick_session` explicitly instead.
 Authorisation is `openapi.yaml`'s, literally: `createSession` and `abortSession` are
 INSTRUCTOR/ADMIN, `startSession` is INSTRUCTOR (and ADMIN, who can do anything an instructor can),
 and the two reads are open to any authenticated caller but filtered by `can_observe`.
+
+`continueToNextStage` (E9) is on this tag rather than on `operator` because the stage it starts is
+not a 112 one — it is whatever `role_chain` names next, which today is DDS. Its own authorisation
+is the next stage's participant, or an instructor/admin; the use case owns that rule
+(`app.application.handoff.continue_to_next_stage`), because it is the one place that knows which
+stage "next" means.
 """
 
 from __future__ import annotations
@@ -176,4 +182,23 @@ async def _detail(
     async with container.unit_of_work() as uow:
         view = await assemble_session_detail(uow, session, viewer=user, clock=container.clock)
         await uow.commit()
+    return session_detail_schema(view)
+
+
+@router.post(
+    "/{session_id}/stage/continue",
+    operation_id="continueToNextStage",
+    summary="Continue to the next role stage after the configurable pause.",
+    response_model=SessionDetailSchema,
+    status_code=200,
+)
+async def continue_to_next_stage(
+    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> SessionDetailSchema:
+    """`ROLE_TRANSITION --finish_role_transition--> ACTIVE`; the same `Incident` carries over.
+
+    Refused with `409 INVALID_TRANSITION` until `policy.transition_pause_seconds` has elapsed
+    since `ROLE_TRANSITION_STARTED` — the pause is the policy's, not a frontend timer (§10.10).
+    """
+    view = await container.continue_to_next_stage()(SessionId(session_id), user)
     return session_detail_schema(view)

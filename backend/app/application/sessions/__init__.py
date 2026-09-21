@@ -6,9 +6,10 @@
 `listSessions` / `getSession` read path and the `SessionDetail` assembler every command returns),
 plus `get_snapshot` (the role-filtered restore payload of SPEC §39, E7-B).
 
-Completing a session is not here: the completing use case owns `SESSION_COMPLETED.total_events`
-and is reachable only once the 112 stage can be *completed*, which needs `completeOperatorStage`
-— TODO(E9), which owns both.
+Completing a session is not here: `app.application.handoff.complete_session` owns
+`SESSION_COMPLETED.total_events` and runs inside the transaction of whichever stage command
+finished the last `role_chain` entry (E9). `start_session` reaches the other way for the same
+reason — a `role_chain` of `[DDS]` has its prefab handoff materialised as the session starts.
 """
 
 from __future__ import annotations

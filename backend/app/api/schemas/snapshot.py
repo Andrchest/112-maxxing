@@ -1,21 +1,21 @@
 """`snapshot` schema (`openapi.yaml`'s `SessionSnapshot`, SPEC §39, §42 test 13; D3, D8).
 
 One model and one mapping function. `card` and `work_item` are both nullable here because the
-contract makes them so, and because a `DDS` active stage legitimately has neither yet: the card is
-one the DDS role may never see (D3) and `DdsWorkItem` is TODO(E9). The decision is made by
-`app.application.sessions.get_snapshot`, never here — a schema that chose which panel to fill
-would be a second place where D3 could be got wrong.
+contract makes them so, and because a stage can legitimately have neither: the card is one the
+DDS role may never see (D3), and a DDS stage that has not been handed off to yet has no work item
+to show. The decision is made by `app.application.sessions.get_snapshot`, never here — a schema
+that chose which panel to fill would be a second place where D3 could be got wrong.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
+from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.operator import (
     ActionDescriptorSchema,
     CallStateViewSchema,
@@ -41,9 +41,7 @@ class SessionSnapshotSchema(ApiModel):
     stage_state: StageStateSchema | None = None
     available_actions: list[ActionDescriptorSchema]
     card: OperatorCardViewSchema | None = None
-    #: `DdsWorkItem` — TODO(E9). Typed loosely rather than modelled, so that nothing here can be
-    #: mistaken for an implementation of a schema this epic does not build.
-    work_item: dict[str, Any] | None = None
+    work_item: DdsWorkItemSchema | None = None
     call_state: CallStateViewSchema
     last_seq_no: int = Field(ge=0)
     visible_sources: list[str]
@@ -60,7 +58,7 @@ def session_snapshot_schema(view: SessionSnapshotView) -> SessionSnapshotSchema:
         stage_state=view.stage_state,
         available_actions=action_schemas(view.available_actions),
         card=None if view.card is None else operator_card_schema(view.card),
-        work_item=view.work_item,
+        work_item=None if view.work_item is None else dds_work_item_schema(view.work_item),
         call_state=call_state_schema(view.call_state),
         last_seq_no=view.last_seq_no,
         visible_sources=list(view.visible_sources),

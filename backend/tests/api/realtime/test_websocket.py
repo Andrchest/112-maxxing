@@ -361,7 +361,10 @@ async def test_token_expiry_after_connect_does_not_drop_the_socket(
     """§40.1: "Token expiry during a live session does **not** drop the socket" (SPEC §39).
 
     The account is deactivated outright, which is strictly stronger than an expiry: every later
-    REST call from that token is `401`, and the socket keeps streaming.
+    REST call from that token is `401`, and the socket keeps streaming. `trainee1` is shared
+    reference data (`tests/api/conftest.py`'s `users`), but `UserRepository.upsert` is
+    `ON CONFLICT DO UPDATE`, so the next test that asks for `users` upserts it straight back to
+    `is_active=True` — this test's deactivation does not leak into whatever runs next.
     """
     async with websocket(session_id, token=tokens["trainee1"]) as socket:
         await socket.send_json({"type": "resume", "after_seq_no": 0})

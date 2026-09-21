@@ -7,12 +7,13 @@ for when it makes the trainee the only writer.
 
 **(a) Structural.** Two assertions over `backend/app/application/**`:
 
-1. only three modules — `operator/set_card_field.py`, `operator/select_service.py`,
-   `operator/deselect_service.py` — call the domain's `set_field` or a *write* method of
-   `OperatorCardRepository`. (`sessions/create_session.py` inserts the empty card at session
-   creation and is allow-listed for `add` alone; E9's `create_handoff` will join the list, and
-   its entry is left commented below so that adding it is a deliberate edit of this file.)
-2. none of those three modules imports anything transcript-, ASR- or voice-related. They cannot
+1. only five modules call the domain's `set_field` or a *write* method of
+   `OperatorCardRepository` — the three trainee card commands
+   (`operator/set_card_field.py`, `operator/select_service.py`, `operator/deselect_service.py`)
+   and E9's two handoff writers (`handoff/create_handoff.py`, `handoff/prefab_handoff.py`).
+   (`sessions/create_session.py` inserts the empty card at session creation and is allow-listed
+   for `add` alone.)
+2. none of those five modules imports anything transcript-, ASR- or voice-related. They cannot
    read a transcript, so they cannot transcribe one into a card.
 
 Together the two make the path from ASR to the card *absent*, not merely unused.
@@ -57,9 +58,14 @@ ALLOWED_WRITERS: dict[str, frozenset[str]] = {
     "operator/deselect_service.py": frozenset({"set_field", "save", "add_revision"}),
     # Session creation inserts the *empty* card row; it writes no value and makes no revision.
     "sessions/create_session.py": frozenset({"add"}),
-    # TODO(E9): `operator/create_handoff.py` freezes the card into a `HandoffSnapshot` and writes
-    # `recipients.comment` first (`CreateHandoffRequest.comment_ru`), so it joins this list:
-    # "operator/create_handoff.py": frozenset({"set_field", "save", "add_revision"}),
+    # E9: `createHandoff` freezes the card into a `HandoffSnapshot` and writes
+    # `recipients.comment` first (`CreateHandoffRequest.comment_ru`), which `openapi.yaml`
+    # requires to be a card field "rather than a side channel around it".
+    "handoff/create_handoff.py": frozenset({"set_field", "save", "add_revision"}),
+    # E9: a `role_chain` of `[DDS]` has no 112 stage, so the scenario's
+    # `expected_response.prefab_handoff` is written onto the card at stage start and frozen from
+    # there (D6, §30.5). The values come from the scenario file; see the module docstring.
+    "handoff/prefab_handoff.py": frozenset({"set_field", "save", "add_revision"}),
 }
 
 #: Substrings that mark a module as transcript-, ASR- or voice-related. A card writer that
@@ -162,7 +168,7 @@ def test_the_scan_actually_sees_the_known_card_writers() -> None:
 
 @pytest.mark.parametrize(
     "relative",
-    [name for name in ALLOWED_WRITERS if name.startswith("operator/")],
+    [name for name in ALLOWED_WRITERS if not name.startswith("sessions/")],
 )
 def test_a_card_writer_cannot_reach_a_transcript(relative: str) -> None:
     """The second half of (a): a card writer imports nothing that can tell it what was said."""

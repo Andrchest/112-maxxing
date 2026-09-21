@@ -329,6 +329,13 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "callsigns": "list[str]",
             "capabilities_union": "list[str]",
             "eta_seconds_by_resource": "object",
+            # Additive (E9): `resource_id -> ServiceType` for every dispatched unit. §10.13 L1290
+            # already claims the payload "carries `capabilities_union` and `service_type` per
+            # resource, so no resource table lookup is needed" while the row had no such key.
+            # It is needed because a unit's `assignment_id` does NOT imply its service: an
+            # off-service unit attaches to the primary leg (E9 analyst R4), so `min_units_by_
+            # service` may never be scored through leg -> service.
+            "service_type_by_resource": "object",
             "at_offset_ms": "int",
             "is_additional": "bool",
         },
@@ -549,6 +556,10 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         actor_types=frozenset({ActorType.TRAINEE}),
         payload_keys={
             "notification_id": "uuid",
+            # Additive (E9): the acknowledged notification's audience, copied from
+            # `NOTIFICATION_CREATED`, so the realtime redaction of §40.4 can push the
+            # acknowledgement to that role alone instead of to both trainee roles.
+            "audience_role": "RoleType",
             "at_offset_ms": "int",
             "latency_ms": "int",
             "actor_user_id": "uuid",

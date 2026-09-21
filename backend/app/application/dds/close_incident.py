@@ -1,0 +1,160 @@
+"""`closeDdsIncident` — close the incident and end the session (`openapi.yaml`, §10.8).
+
+One command, two machines, one transaction — the DDS mirror image of `completeOperatorStage`:
+
+1. the **stage** machine fires `close` (`RESOLVED -> CLOSED`, unguarded). `CLOSED` is the DDS
+   stage's terminal state, so `fire_stage_trigger` also produces `ROLE_STAGE_COMPLETED`;
+2. the **session** machine then fires `complete` when the DDS stage is the last `role_chain`
+   entry — through `app.application.handoff.complete_session`, the one place that knows the real
+   `SESSION_COMPLETED.total_events` — or `begin_role_transition` when a further stage follows.
+
+`x-emits` is `[DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED,
+SCORING_RULE_EVALUATED, SESSION_COMPLETED]`, and the events are appended in that order, which is
+why the two stage events are re-ordered out of the aggregate's own order here: the contract lists
+the completion before the state change, and a consumer reading `x-emits` as the promise should get
+exactly that.
+
+**`SCORING_RULE_EVALUATED` is not emitted — TODO(E15).** §10.14 owns the ten evaluators and none of
+them exists yet. Emitting a scoring event with no rule behind it would put a score in the audit
+log that nothing produced, so this command emits the other four and the report stays unavailable
+until E15 lands. `backend/tests/api/dds/test_full_cycle.py` asserts the emitted list equals
+`x-emits` **minus** `SCORING_RULE_EVALUATED`, with that one exception written down once.
+
+**Release (HLD gap, analyst §7 #13).** §10.13 gives `DDS_INCIDENT_CLOSED` a
+`released_resource_ids` key without saying what "released" does. The reading closest to SPEC §11
+is taken: the units still attached to any leg are named in the payload and **detached**
+(`emergency_resources.assignment_id = NULL`) — the work item is over, so nothing hangs on it any
+more — while their statuses are left to the engine, which walks them home through `finish_work`
+and `return_to_base`. The history survives regardless: a leg's `dispatched_resource_ids` is
+projected from the append-only `resource_state_changes`, never from the live attachment.
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.dds.command_context import DdsCommandContext, DdsCommandGate
+from app.application.handoff.complete_session import SYSTEM_ACTOR, complete_session
+from app.application.ports.clock import Clock
+from app.application.sessions.queries import SessionDetailView, assemble_session_detail
+from app.domain.common.ids import ResourceId, SessionId
+from app.domain.enums import ClosureReason
+from app.domain.events.session_event import DomainEvent
+from app.domain.events.types import EventType
+
+__all__ = ["ACTION_ID", "CloseDdsIncident"]
+
+ACTION_ID = "close"
+"""`openapi.yaml`'s `x-action` for `closeDdsIncident`."""
+
+
+class CloseDdsIncident:
+    """`closeDdsIncident` (`openapi.yaml`): `RESOLVED -> CLOSED`, then the session machine."""
+
+    def __init__(self, gate: DdsCommandGate, clock: Clock) -> None:
+        self._gate = gate
+        self._clock = clock
+
+    async def __call__(
+        self,
+        session_id: SessionId,
+        user: AuthenticatedUser,
+        *,
+        closure_reason: ClosureReason,
+        comment_ru: str | None = None,
+    ) -> SessionDetailView:
+        """Close the incident, release the units, complete the session if this was the last stage.
+
+        `comment_ru` is accepted because `CloseIncidentRequest` declares it and is deliberately not
+        recorded: `DDS_INCIDENT_CLOSED` has no key for it in §10.13, and adding one here would put
+        an untyped value in the audit log. TODO(E16): the instructor timeline is where a closure
+        comment would belong if the owner wants one.
+        """
+        async with self._gate.open(session_id, user, ACTION_ID) as ctx:
+            released = _attached_units(ctx)
+
+            session, stage_events = ctx.session.fire_stage_trigger(
+                ctx.stage.role_stage_id,
+                ACTION_ID,
+                actor=ctx.actor,
+                now_ms=ctx.now_ms,
+                runtime=ctx.guard_runtime(),
+                assignment=ctx.primary,
+                resources=ctx.attached_units(),
+            )
+            await ctx.save_session(session)
+            await ctx.mirror_legs(closed_at_offset_ms=ctx.now_ms, closure_reason=closure_reason)
+            for resource_id in released:
+                await ctx.uow.resources.attach(ctx.session_id, resource_id, None)
+
+            await ctx.append(
+                [
+                    _closed(ctx, closure_reason, released),
+                    *_in_contract_order(stage_events),
+                ]
+            )
+
+            if ctx.session.next_stage_after(ctx.stage) is not None:
+                moved, transition_events = ctx.session.begin_role_transition(
+                    actor=SYSTEM_ACTOR, now_ms=ctx.now_ms, runtime=ctx.guard_runtime()
+                )
+                await ctx.save_session(moved)
+                await ctx.append(transition_events)
+            else:
+                ctx.session, _events = await complete_session(
+                    ctx.uow,
+                    ctx.session,
+                    clock=self._clock,
+                    now_ms=ctx.now_ms,
+                    last_seq_no=ctx.last_seq_no,
+                    runtime=ctx.guard_runtime(),
+                )
+
+            return await assemble_session_detail(
+                ctx.uow, ctx.session, viewer=user, clock=self._clock
+            )
+
+
+def _attached_units(ctx: DdsCommandContext) -> tuple[ResourceId, ...]:
+    """Every unit still hanging on any leg of this work item, in `callsign` order."""
+    ids = {leg.assignment_id for leg in ctx.legs}
+    return tuple(
+        stored.resource.resource_id
+        for stored in sorted(ctx.board, key=lambda item: item.resource.callsign)
+        if stored.assignment_id in ids
+    )
+
+
+def _in_contract_order(stage_events: list[DomainEvent]) -> list[DomainEvent]:
+    """`fire_stage_trigger`'s two events in `x-emits` order: completion, then state change.
+
+    The aggregate returns `STAGE_STATE_CHANGED` first and `ROLE_STAGE_COMPLETED` second, which is
+    the order every other stage command appends them in. `closeDdsIncident` is the one operation
+    whose `x-emits` states the opposite order, and the contract is the promise a consumer reads.
+    """
+    completed = [
+        event for event in stage_events if event.event_type is EventType.ROLE_STAGE_COMPLETED
+    ]
+    others = [
+        event for event in stage_events if event.event_type is not EventType.ROLE_STAGE_COMPLETED
+    ]
+    return [*completed, *others]
+
+
+def _closed(
+    ctx: DdsCommandContext, closure_reason: ClosureReason, released: tuple[ResourceId, ...]
+) -> DomainEvent:
+    """`DDS_INCIDENT_CLOSED` (TRAINEE) — one per trainee action, carrying the primary leg (R5)."""
+    return DomainEvent(
+        event_type=EventType.DDS_INCIDENT_CLOSED,
+        actor=ctx.actor,
+        monotonic_offset_ms=ctx.now_ms,
+        payload={
+            "assignment_id": UUID(str(ctx.primary.assignment_id)),
+            "closure_reason": closure_reason.value,
+            "released_resource_ids": [str(resource_id) for resource_id in released],
+            "at_offset_ms": ctx.now_ms,
+            "actor_user_id": UUID(str(ctx.actor.actor_id)),
+        },
+    )

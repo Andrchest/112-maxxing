@@ -1,4 +1,4 @@
-"""The four layer copy functions (HLD `10-domain-model.md` §10.3, §10.7, D3, SPEC §3, §10).
+"""The five layer copy functions (HLD `10-domain-model.md` §10.3, §10.7, D3, SPEC §3, §10).
 
 Conversion between the four information layers is never automatic and never aliased: it happens
 only here, in one named function per direction, and always as an explicit deep copy. Nothing
@@ -6,9 +6,9 @@ mutable is shared between an input and its output.
 
 There is deliberately **no** function whose input is `WorldTruth` or `CallerBelief` and whose
 output is an `OperatorCard`, a `HandoffSnapshot` or a `DDSAssignment` (SPEC §3: "DDS MUST receive
-'72'. It MUST NOT obtain '27' from WorldTruth"). The four functions below are the complete set,
-and `backend/tests/unit/domain/scenario/` asserts that `snapshot_to_assignment` has no parameter
-through which a `WorldTruth` could arrive.
+'72'. It MUST NOT obtain '27' from WorldTruth"). The five functions below are the complete set,
+and `backend/tests/unit/domain/scenario/` asserts that `snapshot_to_assignment` and
+`snapshot_to_assignments` have no parameter through which a `WorldTruth` could arrive.
 
 HLD gap — identity arguments: §10.3 fixes these four signatures literally, and neither
 `freeze_card_to_snapshot` nor `snapshot_to_assignment` receives the id of the aggregate it
@@ -20,9 +20,18 @@ yields the same assignment id — which is also what D7's replay determinism wan
 
 HLD gap — one assignment per recipient service: §10.7 says "one assignment per recipient service",
 while §10.3's `snapshot_to_assignment` returns a single `DDSAssignment`. SPEC §10 step 6 says
-"Create the DDS work item from the snapshot" (singular), so the signature wins: this function
-builds the work item for the snapshot's **first** recipient service. Fanning a multi-service
-handoff out into one assignment per service belongs to the handoff use case — TODO(E9).
+"Create the DDS work item from the snapshot" (singular). E9 reconciles the two rather than
+choosing between them (E9 analyst §1, rules R2/R3): there is **one** work item, owned by the DDS
+`RoleStage` and addressed to N recipient services, and each `DDSAssignment` row is that work
+item's *leg* for one receiving service. `snapshot_to_assignment` keeps its §10.3 signature and
+keeps building the leg of the first recipient service; `snapshot_to_assignments` — additive to
+§10.3, a fifth copy function — builds all N legs, in `snapshot.recipient_services` order.
+
+The two derive their `assignment_id` differently, and deliberately so: the fan-out puts the
+service type inside the `uuid5` name, because without it the N legs of one (snapshot, role stage)
+pair would all collide on a single id. `snapshot_to_assignment` is left exactly as it was — a unit
+test pins its parameter list and its determinism — so the two functions agree on every field
+except that id. The handoff use case persists the fan-out; nothing persists the singular one.
 """
 
 from __future__ import annotations
@@ -58,6 +67,7 @@ __all__ = [
     "instantiate_caller_belief",
     "instantiate_world_truth",
     "snapshot_to_assignment",
+    "snapshot_to_assignments",
 ]
 
 
@@ -152,7 +162,8 @@ def snapshot_to_assignment(
     the DDS work item structurally cannot carry a value the operator did not enter. What the DDS
     trainee reads is `snapshot.card_values` via `snapshot_id`.
 
-    See the module docstring for the `service_type` / multi-service reading (TODO(E9)).
+    See the module docstring for the `service_type` / multi-service reading: this function builds
+    the leg of the **first** recipient service; `snapshot_to_assignments` builds all of them.
     """
     if not snapshot.recipient_services:
         raise ValueError(
@@ -168,4 +179,41 @@ def snapshot_to_assignment(
         service_type=snapshot.recipient_services[0],
         state=DDSStageState.RECEIVED,
         received_at_offset_ms=at_offset_ms,
+    )
+
+
+def snapshot_to_assignments(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId, at_offset_ms: int
+) -> tuple[DDSAssignment, ...]:
+    """One `DDSAssignment` leg per recipient service, in `recipient_services` order (§10.7).
+
+    The parameter list is deliberately the same three as `snapshot_to_assignment`'s: there is no
+    `WorldTruth` parameter here either, so no leg can carry a value the operator did not enter.
+
+    Every leg starts in `DDSStageState.RECEIVED`, which is the DDS stage's own initial state — so
+    the "`role_stages.state` is the authority, `dds_assignments.state` mirrors it" rule holds from
+    the moment the legs exist. The ids are derived with `uuid5` from `(snapshot, role stage,
+    service type)`: the service type is part of the name because the N legs of one handoff share
+    the other two components and would otherwise all be the same id.
+    """
+    if not snapshot.recipient_services:
+        raise ValueError(
+            f"handoff snapshot {snapshot.snapshot_id} has no recipient_services to assign to"
+        )
+    return tuple(
+        DDSAssignment(
+            assignment_id=AssignmentId(
+                uuid5(
+                    _ID_NAMESPACE,
+                    f"assignment:{snapshot.snapshot_id}:{role_stage_id}:{service_type.value}",
+                )
+            ),
+            incident_id=snapshot.incident_id,
+            role_stage_id=role_stage_id,
+            snapshot_id=snapshot.snapshot_id,
+            service_type=service_type,
+            state=DDSStageState.RECEIVED,
+            received_at_offset_ms=at_offset_ms,
+        )
+        for service_type in snapshot.recipient_services
     )

@@ -53,8 +53,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_DIR = REPO_ROOT / "scenarios" / "examples"
 DEMO_SLUG = "apartment-fire"
 
-#: Truncating these two reference tables reaches every other table through `CASCADE`.
-_TRUNCATE = text("TRUNCATE TABLE users, scenarios RESTART IDENTITY CASCADE")
+#: Every table reachable from `simulation_sessions` by `CASCADE` (§20.9's append-only triggers
+#: guard `UPDATE`/`DELETE` only — TRUNCATE is exempt, see `0001_baseline.py`). `users` and
+#: `scenarios`/`scenario_versions` are reference data that stays committed across tests instead of
+#: being wiped and re-seeded every time (E9-0); see the `users` and `demo_version_id` fixtures
+#: below for why that is safe.
+_TRUNCATE_SESSION_TABLES = text("TRUNCATE TABLE simulation_sessions RESTART IDENTITY CASCADE")
 
 #: The seeded accounts' passwords. Test-only values in a test file — never a source default.
 PASSWORDS: dict[str, str] = {
@@ -68,12 +72,37 @@ PASSWORDS: dict[str, str] = {
 
 @pytest.fixture(autouse=True)
 async def clean_database(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
-    """Leave the schema empty before and after every test in this package."""
+    """Leave every per-session table (session/event/card/resource/...) empty around each test.
+
+    No session/event/card/resource row of one test is ever visible to another — this cascades
+    from `simulation_sessions` through every layer table (§20.4-§20.6). Reference data is left
+    alone here; it is not test state.
+    """
     async with migrated_engine.begin() as connection:
-        await connection.execute(_TRUNCATE)
+        await connection.execute(_TRUNCATE_SESSION_TABLES)
     yield
     async with migrated_engine.begin() as connection:
-        await connection.execute(_TRUNCATE)
+        await connection.execute(_TRUNCATE_SESSION_TABLES)
+
+
+@pytest.fixture(scope="package", autouse=True)
+async def _reference_data_lifecycle(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
+    """Leave `users`/`scenarios` exactly as this package found them once every test here has run.
+
+    `migrated_engine` (`backend/tests/conftest.py`) is ONE throwaway database shared with
+    `backend/tests/integration` and `backend/tests/invariants` for the whole pytest session, and
+    `users`/`demo_version_id` below deliberately leave their rows committed instead of truncating
+    them per test (E9-0) — `backend/tests/integration/db/conftest.py`'s `seed_ids`, for one, does a
+    bare `INSERT ... VALUES ('trainee1', ...)` with no `ON CONFLICT`, which a leaked row from here
+    would turn into a unique-violation error. Package scope (not session scope) makes this
+    fixture's teardown run right after the last test under `backend/tests/api/` — before any other
+    package's tests start. `users` and `demo_version_id` are both self-healing (see their
+    docstrings), so `backend/tests/invariants`' own reuse of them (`test_inv_04...py`,
+    `test_inv_13...py`) re-creates whatever this truncated, further into the same session.
+    """
+    yield
+    async with migrated_engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE users, scenarios RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -184,7 +213,16 @@ async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
 async def users(
     unit_of_work: Callable[[], SqlAlchemyUnitOfWork], hasher: FakePasswordHasher
 ) -> dict[str, UserId]:
-    """Five accounts through the real repository: three roles, a second trainee, a retired one."""
+    """Five accounts through the real repository: three roles, a second trainee, a retired one.
+
+    Self-healing by construction (E9-0): `UserRepository.upsert` is `ON CONFLICT (username) DO
+    UPDATE` and keeps the existing row's `id` (`app/infrastructure/persistence/user_repository.py`),
+    so calling this every test is idempotent and cheap once the five rows already exist — it does
+    not re-run the one genuinely expensive seed (see `demo_version_id`), and it also means a test
+    that mutates an account (`realtime/test_websocket.py`'s token-expiry test deactivates
+    `trainee1` mid-session) never leaks that change into the next test: the next `users` call
+    upserts it straight back.
+    """
     accounts = (
         ("instructor1", "Инструктор", UserRole.INSTRUCTOR, True),
         ("trainee1", "Стажёр", UserRole.TRAINEE, True),
@@ -237,7 +275,25 @@ async def tokens(client: httpx.AsyncClient, users: dict[str, UserId]) -> dict[st
 async def demo_version_id(
     unit_of_work: Callable[[], SqlAlchemyUnitOfWork],
 ) -> ScenarioVersionId:
-    """Import the committed demo scenario through the real importer; `role_chain` is 112 → DDS."""
+    """The committed demo scenario's version id; `role_chain` is 112 → DDS. Imported once, shared.
+
+    Self-healing (E9-0): almost every test shares one import — the heavy part (load, §30.8
+    validation, materialising `scoring_rules`) runs once — at the cost of one cheap existence
+    check per test that asks for it. `isolated_scenario_catalog` (`test_scenarios.py`) truncates
+    `scenarios` around the few tests that must see an empty or never-locked catalog, and
+    `_reference_data_lifecycle` truncates it once this whole package is done; either way, the next
+    test to ask for this fixture finds the row gone and re-imports through `ImportScenarios`'s own
+    idempotence, so sharing never corrupts a later test.
+    """
+    async with unit_of_work() as uow:
+        stored = await uow.scenarios.find_scenario_by_slug(DEMO_SLUG)
+        version = (
+            await uow.scenarios.find_version(stored.scenario_id, 1) if stored is not None else None
+        )
+        await uow.commit()
+    if version is not None:
+        return version.scenario_version_id
+
     await ImportScenarios(unit_of_work, YamlScenarioSource())(EXAMPLES_DIR)
     async with unit_of_work() as uow:
         stored = await uow.scenarios.find_scenario_by_slug(DEMO_SLUG)
@@ -246,6 +302,24 @@ async def demo_version_id(
         assert version is not None
         await uow.commit()
         return version.scenario_version_id
+
+
+@pytest.fixture
+async def isolated_scenario_catalog(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
+    """Guarantee an empty `scenarios` table around a test that asserts on the *whole* catalog.
+
+    `scenarios` is shared for the whole session (see `demo_version_id`); the handful of
+    `test_scenarios.py` tests that assert `total == 0` or an unlocked `locked_at` need to see
+    nothing but their own import, so this truncates specifically around them. `demo_version_id` is
+    self-healing, so a later test that wants the shared demo scenario back gets it re-imported
+    without noticing — this leaves no permanent damage.
+    """
+    truncate = text("TRUNCATE TABLE scenarios RESTART IDENTITY CASCADE")
+    async with migrated_engine.begin() as connection:
+        await connection.execute(truncate)
+    yield
+    async with migrated_engine.begin() as connection:
+        await connection.execute(truncate)
 
 
 @pytest.fixture

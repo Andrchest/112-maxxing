@@ -252,13 +252,15 @@ def test_complete_moves_active_to_completed() -> None:
         second_started_ms=20_000,
     )
     updated, events = session.complete(
-        COMPLETED_AT, actor=b.SYSTEM, now_ms=60_000, runtime=GuardRuntime()
+        COMPLETED_AT, total_events=42, actor=b.SYSTEM, now_ms=60_000, runtime=GuardRuntime()
     )
     assert updated.state is SessionState.COMPLETED
     assert updated.completed_at == COMPLETED_AT
     assert [e.event_type for e in events] == [EventType.SESSION_COMPLETED]
     _check_payloads(events)
     assert events[0].payload["final_session_state"] == "COMPLETED"
+    # `total_events` is the completing use case's count of the log rows, not a zero placeholder.
+    assert events[0].payload["total_events"] == 42
     assert updated.incident == session.incident
 
 
@@ -270,7 +272,9 @@ def test_complete_while_a_later_stage_remains_is_rejected() -> None:
     )
     _unchanged(
         session,
-        lambda: session.complete(COMPLETED_AT, actor=b.SYSTEM, runtime=GuardRuntime()),
+        lambda: session.complete(
+            COMPLETED_AT, total_events=7, actor=b.SYSTEM, runtime=GuardRuntime()
+        ),
     )
 
 

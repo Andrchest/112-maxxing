@@ -263,7 +263,18 @@ def freeze_card_to_snapshot(
 def snapshot_to_assignment(
     snapshot: HandoffSnapshot, role_stage_id: RoleStageId, at_offset_ms: int
 ) -> DDSAssignment: ...
+# additive, E9 — the fan-out §10.7's "one assignment per recipient service" asks for
+def snapshot_to_assignments(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId, at_offset_ms: int
+) -> tuple[DDSAssignment, ...]: ...
 ```
+
+`snapshot_to_assignments` (additive, E9) is `snapshot_to_assignment` for every entry of
+`recipient_services`, in that order: one `DDSAssignment` *leg* per receiving service, all
+belonging to the same DDS `RoleStage` and all starting in `RECEIVED`. Its `assignment_id` carries
+the service type inside the `uuid5` name, because the legs of one handoff share every other
+component of that name. `snapshot_to_assignment` keeps its signature and its first-service
+reading; the handoff use case persists the fan-out.
 
 There is deliberately **no** function from `WorldTruth` to `OperatorCard`, from `WorldTruth` to
 `HandoffSnapshot`, or from `WorldTruth` to `DDSAssignment`. `freeze_card_to_snapshot` performs a deep
@@ -531,9 +542,9 @@ the `EtaModel` port implementation `ScenarioDefinedEta` (D7, application layer) 
 
 | From | Trigger | To | Who may fire | Guard |
 |:--|:--|:--|:--|:--|
-| `AVAILABLE` | `select` | `SELECTED` | TRAINEE (DDS) | assignment state is `RESOURCE_SELECTION`; resource within its availability window |
+| `AVAILABLE` | `select` | `SELECTED` | TRAINEE (DDS) | assignment state is one of `RESOURCE_SELECTION`, `EN_ROUTE`, `ARRIVED`, `WORKING` (widened, E9 — see below); resource within its availability window |
 | `SELECTED` | `deselect` | `AVAILABLE` | TRAINEE (DDS) | resource not yet dispatched |
-| `SELECTED` | `dispatch` | `DISPATCHED` | TRAINEE (DDS) | assignment state is `RESOURCE_SELECTION` |
+| `SELECTED` | `dispatch` | `DISPATCHED` | TRAINEE (DDS) | assignment state is one of `RESOURCE_SELECTION`, `EN_ROUTE`, `ARRIVED`, `WORKING` (widened, E9 — see below) |
 | `DISPATCHED` | `depart` | `EN_ROUTE` | SIMULATION | `now_ms ≥ dispatched_at + turnout_delay_seconds·1000` |
 | `EN_ROUTE` | `arrive` | `ON_SCENE` | SIMULATION | `now_ms ≥ departed_at + travel_time_seconds·1000` |
 | `ON_SCENE` | `start_work` | `WORKING` | SIMULATION | `now_ms ≥ arrived_at + setup_seconds·1000` |
@@ -545,6 +556,18 @@ the `EtaModel` port implementation `ScenarioDefinedEta` (D7, application layer) 
 | `UNAVAILABLE` | `make_available` | `AVAILABLE` | SIMULATION | inside `availability` window, or effect |
 
 Every fired transition emits `RESOURCE_STATUS_CHANGED`.
+
+**Repair (E9): `dispatch_additional` was unreachable as originally written.** Its guard needs a
+`SELECTED` unit, but `select` was guarded by "assignment state is `RESOURCE_SELECTION`",
+`select_resource` was not an available action in `EN_ROUTE` / `ARRIVED` / `WORKING`, the only way
+back to `RESOURCE_SELECTION` is from `DISPATCHED` and only before the first unit departs, and
+`dispatch` takes *every* selected unit — so nothing could ever be `SELECTED` in the three states
+`dispatch_additional` fires from. The demo scenario needs the reinforcement it describes
+(`fire_spreads` at 180 s, `ac2_breakdown`). The smallest repair, applied above and in §10.9:
+`select_resource` / `deselect_resource` become available actions in `EN_ROUTE`, `ARRIVED` and
+`WORKING`, and the two unit-level guards (`select`, `dispatch`) accept an assignment state in
+`{RESOURCE_SELECTION, EN_ROUTE, ARRIVED, WORKING}`. Nothing else changes: `deselect` keeps its
+"not yet dispatched" guard, so reinforcement never un-sends a unit that is already moving.
 
 ### `Notification` — `backend/app/domain/dds/notification.py`
 `{notification_id, incident_id, audience_role: RoleType, severity: NotificationSeverity,
@@ -763,11 +786,20 @@ constructed without a world-truth repository, so the data cannot be reached even
 | `ACKNOWLEDGED` | `open_resource_selection` / Подбор сил и средств; `send_status_update` / Отправить статус |
 | `RESOURCE_SELECTION` | `select_resource` / Выбрать; `deselect_resource` / Снять; `dispatch` / Направить; `back_to_acknowledged` / Назад; `send_status_update` |
 | `DISPATCHED` | `open_resource_selection` / Добавить силы; `send_status_update` |
-| `EN_ROUTE` | `dispatch_additional` / Направить дополнительно; `send_status_update` |
-| `ARRIVED` | `dispatch_additional`; `send_status_update` |
-| `WORKING` | `dispatch_additional`; `send_status_update` |
+| `EN_ROUTE` | `select_resource` / Выбрать (added, E9); `deselect_resource` / Снять (added, E9); `dispatch_additional` / Направить дополнительно; `send_status_update` |
+| `ARRIVED` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update` |
+| `WORKING` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update` |
 | `RESOLVED` | `close` / Закрыть происшествие; `send_status_update` |
 | `CLOSED` | — |
+
+Two of the stage triggers above had **no endpoint** in `openapi.yaml` — `open_resource_selection`
+and `back_to_acknowledged` were available actions the console could not perform. E9 closes the gap
+additively with two operations that mirror the operator's `beginHandoffPreparation` /
+`backToInterview` pair: `openDdsResourceSelection`
+(`POST /api/v1/sessions/{session_id}/dds/resources/selection/open`) and `backToDdsAcknowledged`
+(`POST …/dds/resources/selection/cancel`), both with no request body and a `DdsStageView` in
+reply. `dispatch_additional` needs none of its own: it shares `dispatchDdsResources` with
+`dispatch`, which is already how `openapi.yaml` describes it.
 
 ### `EDDSModule` — `backend/app/domain/roles/edds.py` (stub, SPEC §14)
 - `role_type = EDDS`, `implemented = False`
@@ -1094,7 +1126,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceType`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_ACKNOWLEDGED` | `TRAINEE` | `assignment_id: uuid`, `at_offset_ms: int`, `latency_from_handoff_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceType`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
-| `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `at_offset_ms: int`, `is_additional: bool` | DDS, INSTRUCTOR |
+| `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `service_type_by_resource: object` (additive, E9), `at_offset_ms: int`, `is_additional: bool` | DDS, INSTRUCTOR |
 | `RESOURCE_STATUS_CHANGED` | `SIMULATION` | `resource_id: uuid`, `callsign: str`, `previous_status: ResourceStatus`, `new_status: ResourceStatus`, `trigger: str`, `assignment_id: uuid \| null`, `source_world_event_id: str \| null`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `WORLD_EVENT_TRIGGERED` | `SIMULATION` | `world_event_id: str`, `kind: WorldEventKind`, `occurrence: int`, `title_ru: str`, `caller_observable: bool`, `trigger_reason: str`, `effect_kinds: list[EffectKind]`, `at_offset_ms: int` | INSTRUCTOR |
 | `ROLE_STAGE_COMPLETED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `final_state: str`, `duration_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
@@ -1116,7 +1148,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `DDS_STATUS_UPDATE_SENT` | `TRAINEE` | `assignment_id: uuid`, `update_kind: StatusUpdateKind`, `text_ru: str`, `at_offset_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `DDS_INCIDENT_CLOSED` | `TRAINEE` | `assignment_id: uuid`, `closure_reason: ClosureReason`, `released_resource_ids: list[uuid]`, `at_offset_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `NOTIFICATION_CREATED` | `SIMULATION` | `notification_id: uuid`, `audience_role: RoleType`, `severity: NotificationSeverity`, `title_ru: str`, `body_ru: str`, `source_world_event_id: str \| null`, `at_offset_ms: int` | the `audience_role`, INSTRUCTOR |
-| `NOTIFICATION_ACKNOWLEDGED` | `TRAINEE` | `notification_id: uuid`, `at_offset_ms: int`, `latency_ms: int`, `actor_user_id: uuid` | the notification's `audience_role`, INSTRUCTOR |
+| `NOTIFICATION_ACKNOWLEDGED` | `TRAINEE` | `notification_id: uuid`, `audience_role: RoleType` (additive, E9), `at_offset_ms: int`, `latency_ms: int`, `actor_user_id: uuid` | the notification's `audience_role`, INSTRUCTOR |
 | `RADIO_MESSAGE_CREATED` | `SIMULATION` | `radio_message_id: uuid`, `from_callsign: str`, `to_role: RoleType`, `text_ru: str`, `resource_id: uuid \| null`, `source_world_event_id: str \| null`, `at_offset_ms: int` | the `to_role`, INSTRUCTOR |
 | `WORLD_TRUTH_MUTATED` | `SIMULATION` | `revision: int`, `changes: list[{fact_id: str, previous_value: FactValue, new_value: FactValue}]`, `source_world_event_id: str`, `at_offset_ms: int` | INSTRUCTOR only |
 | `CALLER_BELIEF_MUTATED` | `SIMULATION` | `revision: int`, `changes: list[{fact_id: str, previous_value: FactValue, new_value: FactValue, knowledge: KnowledgeState, certainty: float}]`, `source_world_event_id: str`, `at_offset_ms: int` | INSTRUCTOR only |

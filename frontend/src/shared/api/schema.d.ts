@@ -585,9 +585,14 @@ export interface paths {
          *     (`HANDOFF_PREPARATION → HANDED_OFF`, guard `guard_at_least_one_recipient_service` —
          *     otherwise `409 RECIPIENT_SERVICES_EMPTY`).
          *
-         *     In one Unit of Work: `freeze_card_to_snapshot` deep-copies `OperatorCard.values` into an
-         *     immutable `HandoffSnapshot`, `snapshot_to_assignment` creates one `DDSAssignment` per
-         *     recipient service, and both events are appended. Nothing is read from `WorldTruth`
+         *     In one Unit of Work: the optional `comment_ru` is written to the card field
+         *     `recipients.comment` first (a normal revision, so a `CARD_FIELD_CHANGED` precedes the
+         *     three events below), `freeze_card_to_snapshot` deep-copies `OperatorCard.values` into an
+         *     immutable `HandoffSnapshot`, and `snapshot_to_assignments` creates one `DDSAssignment`
+         *     per recipient service. `HANDOFF_CREATED` is emitted exactly once whatever the number of
+         *     recipients — one trainee action, one trainee event — and `HANDOFF_RECEIVED` once per
+         *     assignment, `SIMULATION`-authored; those are the log's only record of which assignment
+         *     belongs to which service. Nothing is read from `WorldTruth`
          *     (SPEC §10, §42 test 3): if the operator entered house `72` where the world says `27`,
          *     DDS receives `72`.
          */
@@ -714,6 +719,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{session_id}/dds/resources/selection/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open the resource-selection screen (additive, E9).
+         * @description (additive, E9) Fires `open_resource_selection`
+         *     (`ACKNOWLEDGED → RESOURCE_SELECTION`, unguarded; and
+         *     `DISPATCHED → RESOURCE_SELECTION`, guard `guard_additional_dispatch_allowed`).
+         *
+         *     §10.9 lists `open_resource_selection` as an available action of both states but §11 gave
+         *     it no endpoint, so the DDS console had a button that could not be pressed. This is that
+         *     endpoint, and it mirrors the operator's `beginHandoffPreparation` / `backToInterview`
+         *     pair exactly: no request body, and the new `DdsStageView` in reply.
+         */
+        post: operations["openDdsResourceSelection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds/resources/selection/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Leave the resource-selection screen without selecting (additive, E9).
+         * @description (additive, E9) Fires `back_to_acknowledged` (`RESOURCE_SELECTION → ACKNOWLEDGED`, guard
+         *     `guard_no_resource_selected` — stepping back may lose no work, so it is refused with
+         *     `409 INVALID_TRANSITION` while a resource is `SELECTED`).
+         *
+         *     The mirror of `openDdsResourceSelection`, and the DDS counterpart of the operator's
+         *     `backToInterview`.
+         */
+        post: operations["backToDdsAcknowledged"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{session_id}/dds/resources/select": {
         parameters: {
             query?: never;
@@ -772,8 +829,12 @@ export interface paths {
          *     self-transition from `EN_ROUTE` / `ARRIVED` / `WORKING`) afterwards — extra units may be
          *     added without losing progress. Guard `guard_at_least_one_selected_available`.
          *
-         *     `RESOURCE_DISPATCHED` carries `capabilities_union` and `eta_seconds_by_resource` so the
-         *     `RESOURCE_SELECTION` evaluator needs no resource-table lookup (D5).
+         *     `RESOURCE_DISPATCHED` carries `capabilities_union`, `eta_seconds_by_resource` and
+         *     `service_type_by_resource` (additive, E9) so the `RESOURCE_SELECTION` evaluator needs no
+         *     resource-table lookup (D5). `service_type_by_resource` maps each dispatched
+         *     `resource_id` to **that unit's own** `service_type`: a unit whose service received no
+         *     handoff leg is attached to the primary leg, so an evaluator may never infer a unit's
+         *     service from the assignment it hangs on.
          */
         post: operations["dispatchDdsResources"];
         delete?: never;
@@ -1697,6 +1758,18 @@ export interface components {
          *     where the world says `27`, `card_values["address.house"]` is `"72"`. A field the
          *     operator never filled is simply absent from `card_values`, and there is no endpoint
          *     through which DDS could repair it.
+         *
+         *     The schema has two documented readings (E9). The **trainee** endpoints —
+         *     `getDdsWorkItem`, `DdsStageView.work_item`, `SessionSnapshot.work_item` — answer with the
+         *     stage-wide *work-item projection*: one work item owned by the DDS `RoleStage` and
+         *     addressed to `recipient_services`, whose `assignment_id` / `service_type` are those of
+         *     the first recipient service, whose `dispatched_at_offset_ms` is the earliest over the
+         *     assignments, and whose `selected_resource_ids` / `dispatched_resource_ids` are the union
+         *     over them. The **instructor and report** views —
+         *     `InstructorSessionOverview.assignments`, `ScoreReport…dds_decisions` — answer with the
+         *     per-service `dds_assignments` rows verbatim, each with its own resource lists and its own
+         *     `dispatched_at_offset_ms` (`null` on a recipient service that received no unit). Same
+         *     schema, two scopes; `recipient_services`, not `service_type`, is "who this went to".
          */
         DdsWorkItem: {
             /** Format: uuid */
@@ -3269,6 +3342,58 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    openDdsResourceSelection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new DDS stage view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsStageView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    backToDdsAcknowledged: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new DDS stage view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsStageView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     selectDdsResource: {

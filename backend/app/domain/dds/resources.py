@@ -289,6 +289,24 @@ def within_availability_window(resource: EmergencyResource, now_ms: int) -> bool
     return window.available_until_ms is None or now_ms < window.available_until_ms
 
 
+SELECTION_OPEN_STATES: frozenset[DDSStageState] = frozenset(
+    {
+        DDSStageState.RESOURCE_SELECTION,
+        DDSStageState.EN_ROUTE,
+        DDSStageState.ARRIVED,
+        DDSStageState.WORKING,
+    }
+)
+"""The assignment states in which a unit may be selected and dispatched (§10.7, repair E9).
+
+§10.7 originally named `RESOURCE_SELECTION` alone, which made `dispatch_additional` unreachable:
+its guard needs a `SELECTED` unit, and no unit could become `SELECTED` in `EN_ROUTE` / `ARRIVED` /
+`WORKING`, the three states it fires from. The repair widens these two unit-level guards and adds
+`select_resource` / `deselect_resource` to §10.9's `available_actions` for those states
+(`roles/dds.py`); `deselect` is untouched, so a unit already dispatched still cannot be un-sent.
+"""
+
+
 def _assignment_state(ctx: GuardContext) -> Any:
     """`ctx.assignment.state`, read loosely — `assignment` is `Any` (§10.8, E3 ruling)."""
     return getattr(ctx.assignment, "state", None)
@@ -317,7 +335,7 @@ def build_resource_guards(
         resource = subject_resource(ctx)
         if resource is None:
             return False
-        if _assignment_state(ctx) is not DDSStageState.RESOURCE_SELECTION:
+        if _assignment_state(ctx) not in SELECTION_OPEN_STATES:
             return False
         return within_availability_window(resource, ctx.now_ms)
 
@@ -330,8 +348,8 @@ def build_resource_guards(
         return resource.resource_id not in tuple(dispatched)
 
     def guard_selection_open(ctx: GuardContext) -> bool:
-        """`SELECTED --dispatch--> DISPATCHED` (§10.7)."""
-        return _assignment_state(ctx) is DDSStageState.RESOURCE_SELECTION
+        """`SELECTED --dispatch--> DISPATCHED` (§10.7, widened by the E9 repair)."""
+        return _assignment_state(ctx) in SELECTION_OPEN_STATES
 
     def guard_turnout_delay_elapsed(ctx: GuardContext) -> bool:
         """`DISPATCHED --depart--> EN_ROUTE`."""

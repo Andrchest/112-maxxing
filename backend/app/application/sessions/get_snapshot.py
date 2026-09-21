@@ -20,10 +20,15 @@ Two properties this module exists to keep:
   `backend/tests/unit/application/sessions/test_layer_repository_isolation.py` asserts. The data
   is unreachable from here, not merely unrequested.
 
-`work_item` is `null` for now: TODO(E9) owns `DdsWorkItem`, which is assembled from
-`handoff_snapshots` and `dds_assignments` alone (`openapi.yaml`, `getDdsWorkItem`). Until it
-exists a `DDS` active stage answers with `card = null` **and** `work_item = null` rather than with
-a card it may not see — an empty panel is a missing feature, a leaked card is a broken invariant.
+`work_item` is the `DdsWorkItem` of `app.application.handoff.work_item`, and it is filled exactly
+when the active stage is a `DDS` one whose `DataVisibilityPolicy` lists `HANDOFF_SNAPSHOT` — the
+mirror image of the `card` branch above it. It is assembled from `handoff_snapshots` and
+`dds_assignments` alone (`openapi.yaml`, `getDdsWorkItem`), which is why the DDS branch reads
+neither `uow.operator_cards` nor anything the engine wrote: a DDS viewer gets the frozen copy of
+what the operator typed, never the live card and never world truth. `openapi.yaml` requires
+exactly one of `card` / `work_item` to be non-null, and the two branches are mutually exclusive by
+the stage's role. Both stay `null` only where there is genuinely neither: before the handoff, a
+`DDS` stage that has not been handed anything yet has no snapshot to project.
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ from datetime import datetime
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.dds.leg_for import project_legs
+from app.application.handoff.work_item import (
+    DdsWorkItemView,
+    legs_in_recipient_order,
+    work_item_view,
+)
 from app.application.operator.views import (
     ActionView,
     CallStateView,
@@ -42,7 +53,7 @@ from app.application.operator.views import (
     project_call_state,
 )
 from app.application.ports.clock import Clock
-from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.sessions.authorisation import can_observe
 from app.application.sessions.queries import (
     ForbiddenForRoleError,
@@ -85,7 +96,7 @@ class SessionSnapshotView:
     stage_state: StageStateView | None
     available_actions: tuple[ActionView, ...]
     card: OperatorCardView | None
-    work_item: None
+    work_item: DdsWorkItemView | None
     call_state: CallStateView
     last_seq_no: int
     visible_sources: tuple[str, ...]
@@ -122,6 +133,14 @@ class GetSnapshot:
             ):
                 card = await uow.operator_cards.get(session.incident.incident_id)
 
+            work_item = None
+            if (
+                stage is not None
+                and stage.role_type is RoleType.DDS
+                and VisibilitySource.HANDOFF_SNAPSHOT in sources
+            ):
+                work_item = await _work_item(uow, session, stage)
+
             await uow.commit()
 
         return SessionSnapshotView(
@@ -132,13 +151,42 @@ class GetSnapshot:
             stage_state=None if stage is None else stage.state,
             available_actions=_available_actions(session, stage, user),
             card=None if card is None else card_view(card),
-            # TODO(E9): `DdsWorkItem`, built from `handoff_snapshots` + `dds_assignments` alone.
-            work_item=None,
+            work_item=work_item,
             call_state=project_call_state(events),
             last_seq_no=last_seq_no,
             visible_sources=tuple(sorted(source.value for source in sources)),
             server_time_utc=self._clock.now(),
         )
+
+
+async def _work_item(
+    uow: UnitOfWork, session: SimulationSession, stage: RoleStage
+) -> DdsWorkItemView | None:
+    """The DDS stage's work item, from its legs and their snapshot and from nothing else (D3).
+
+    `None` while the stage has no legs — a DDS stage that has not been handed off to yet. The
+    snapshot is fetched by the id the legs carry, so there is no path from here to a card or to
+    world truth even in principle.
+
+    `project_legs` fills each leg's `selected_resource_ids` and `dispatched_resource_ids`, which
+    §20.5 gives `dds_assignments` no column for (E9 analyst §7 #7): they are projections over
+    `emergency_resources` and the append-only `resource_state_changes`. Without it the restore
+    snapshot would show an empty selection where `getDdsWorkItem` shows a full one, and a console
+    that reloads after a refresh would lose what the trainee had picked — which is precisely what
+    §42 test 13 exists to prevent.
+    """
+    legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
+    if not legs:
+        return None
+    snapshot = await uow.handoffs.get(legs[0].snapshot_id)
+    if snapshot is None:  # pragma: no cover - the FK is RESTRICT, so the row cannot vanish
+        return None
+    projected = project_legs(
+        legs_in_recipient_order(snapshot, legs),
+        await uow.resources.list_for_session(session.id),
+        await uow.resources.dispatch_history(session.id),
+    )
+    return work_item_view(snapshot, projected)
 
 
 def _my_role_type(session: SimulationSession, user: AuthenticatedUser) -> RoleType | None:

@@ -13,11 +13,13 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.application.ports.notification_repository import StoredNotification
 from app.application.ports.resource_repository import ResourceStateChange, StoredResource
 from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.domain.caller.emotion import EmotionState
 from app.domain.common.actors import ActorRef
 from app.domain.common.ids import (
+    AssignmentId,
     CardId,
     CardRevisionId,
     EventId,
@@ -29,6 +31,7 @@ from app.domain.common.ids import (
     SnapshotId,
     UserId,
 )
+from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.resources import (
     EmergencyResource,
     EtaProfile,
@@ -40,6 +43,7 @@ from app.domain.enums import (
     ClosureReason,
     DDSStageState,
     KnowledgeState,
+    NotificationSeverity,
     Operator112StageState,
     ResourceStatus,
     ResourceType,
@@ -79,6 +83,8 @@ __all__ = [
     "incident_from_row",
     "incident_row_values",
     "json_safe_payload",
+    "notification_from_row",
+    "notification_row_values",
     "operator_card_from_row",
     "operator_card_row_values",
     "participant_from_row",
@@ -572,8 +578,9 @@ def handoff_snapshot_from_row(row: Mapping[str, Any]) -> HandoffSnapshot:
 def emergency_resource_row_values(session_id: SessionId, stored: StoredResource) -> dict[str, Any]:
     """Column values for one `emergency_resources` row (§20.5).
 
-    `assignment_id` is absent: a resource is attached to a DDS assignment by the dispatch use case
-    — TODO(E9) — and the engine never writes that column.
+    `assignment_id` is written here only because scenario instantiation inserts the whole board at
+    once and a fresh board has none; after that the column belongs to the DDS selection use case
+    and is written by `ResourceRepository.attach` alone, never by the engine's `save`.
     """
     resource = stored.resource
     return {
@@ -591,13 +598,18 @@ def emergency_resource_row_values(session_id: SessionId, stored: StoredResource)
         "availability": resource.availability.model_dump(mode="json"),
         "eta": resource.eta.model_dump(mode="json"),
         "status_changed_at_offset_ms": resource.status_changed_at_offset_ms,
+        "assignment_id": (
+            None if stored.assignment_id is None else UUID(str(stored.assignment_id))
+        ),
     }
 
 
 def emergency_resource_from_row(row: Mapping[str, Any]) -> StoredResource:
     """Read one `emergency_resources` row back into its domain type plus its scenario id (§20.5)."""
+    raw_assignment = row.get("assignment_id")
     return StoredResource(
         scenario_resource_id=row["scenario_resource_id"],
+        assignment_id=(None if raw_assignment is None else AssignmentId(UUID(str(raw_assignment)))),
         resource=EmergencyResource(
             resource_id=ResourceId(UUID(str(row["id"]))),
             service_type=ServiceType(row["service_type"]),
@@ -620,12 +632,18 @@ def emergency_resource_from_row(row: Mapping[str, Any]) -> StoredResource:
 def resource_state_change_row_values(change: ResourceStateChange) -> dict[str, Any]:
     """Column values for one `resource_state_changes` row (§20.5, SPEC §29).
 
-    `assignment_id` and `session_event_id` stay null: the first belongs to the dispatch use case
-    and the second would need the `session_events.id` of an event appended later in the same
-    transaction — both TODO(E9).
+    `assignment_id` is the DDS leg the unit hung on when the transition fired, and
+    `session_event_id` is the `session_events` row of the `RESOURCE_STATUS_CHANGED` that records
+    it: the caller appends its events first, then writes these rows with the allocated ids, all
+    inside one transaction (D5). Both stay `None` for a change nobody could attribute — an
+    unattached unit, or a transition fired outside an event append.
     """
     return {
         "resource_id": UUID(str(change.resource.resource_id)),
+        "assignment_id": (
+            None if change.assignment_id is None else UUID(str(change.assignment_id))
+        ),
+        "session_event_id": change.session_event_id,
         "previous_status": (
             change.previous_status.value if change.previous_status is not None else None
         ),
@@ -634,6 +652,104 @@ def resource_state_change_row_values(change: ResourceStateChange) -> dict[str, A
         "source_world_event_id": change.source_world_event_id,
         "at_offset_ms": change.at_offset_ms,
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# DDS assignments (§20.5, §10.7)
+# ---------------------------------------------------------------------------------------------
+
+
+def dds_assignment_row_values(assignment: DDSAssignment) -> dict[str, Any]:
+    """Column values for one `dds_assignments` row — one leg of a DDS work item (§20.5).
+
+    `selected_resource_ids` and `dispatched_resource_ids` are absent: §20.5 gives the table no
+    column for either (analyst §7 #7). They are projections over `emergency_resources` /
+    `resource_state_changes` and are filled by the slice that owns those tables.
+    """
+    return {
+        "id": UUID(str(assignment.assignment_id)),
+        "incident_id": UUID(str(assignment.incident_id)),
+        "role_stage_id": UUID(str(assignment.role_stage_id)),
+        "snapshot_id": UUID(str(assignment.snapshot_id)),
+        "service_type": assignment.service_type.value,
+        "state": assignment.state.value,
+        "received_at_offset_ms": assignment.received_at_offset_ms,
+        "acknowledged_at_offset_ms": assignment.acknowledged_at_offset_ms,
+        "dispatched_at_offset_ms": assignment.dispatched_at_offset_ms,
+        "closed_at_offset_ms": assignment.closed_at_offset_ms,
+        "closure_reason": (
+            assignment.closure_reason.value if assignment.closure_reason is not None else None
+        ),
+    }
+
+
+def dds_assignment_from_row(row: Mapping[str, Any]) -> DDSAssignment:
+    """Read one `dds_assignments` row back into its domain type (§20.5).
+
+    The two resource-id tuples come back empty for the reason `dds_assignment_row_values` states.
+    """
+    closure_reason = row["closure_reason"]
+    return DDSAssignment(
+        assignment_id=AssignmentId(UUID(str(row["id"]))),
+        incident_id=IncidentId(UUID(str(row["incident_id"]))),
+        role_stage_id=RoleStageId(UUID(str(row["role_stage_id"]))),
+        snapshot_id=SnapshotId(UUID(str(row["snapshot_id"]))),
+        service_type=ServiceType(row["service_type"]),
+        state=DDSStageState(row["state"]),
+        received_at_offset_ms=int(row["received_at_offset_ms"]),
+        acknowledged_at_offset_ms=_optional_int(row["acknowledged_at_offset_ms"]),
+        dispatched_at_offset_ms=_optional_int(row["dispatched_at_offset_ms"]),
+        closed_at_offset_ms=_optional_int(row["closed_at_offset_ms"]),
+        closure_reason=None if closure_reason is None else ClosureReason(closure_reason),
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+# ---------------------------------------------------------------------------------------------
+# Notifications (§20.5 additive, §10.7)
+# ---------------------------------------------------------------------------------------------
+
+
+def notification_row_values(notification: StoredNotification) -> dict[str, Any]:
+    """Column values for one `notifications` row (§20.5, additive per D5)."""
+    return {
+        "id": notification.notification_id,
+        "incident_id": UUID(str(notification.incident_id)),
+        "audience_role": notification.audience_role.value,
+        "severity": notification.severity.value,
+        "title_ru": notification.title_ru,
+        "body_ru": notification.body_ru,
+        "source_world_event_id": notification.source_world_event_id,
+        "created_at_offset_ms": notification.created_at_offset_ms,
+        "acknowledged_at_offset_ms": notification.acknowledged_at_offset_ms,
+        "acknowledged_by_user_id": (
+            None
+            if notification.acknowledged_by_user_id is None
+            else UUID(str(notification.acknowledged_by_user_id))
+        ),
+    }
+
+
+def notification_from_row(row: Mapping[str, Any]) -> StoredNotification:
+    """Read one `notifications` row back into its application type (§20.5)."""
+    acknowledged_by = row["acknowledged_by_user_id"]
+    return StoredNotification(
+        notification_id=UUID(str(row["id"])),
+        incident_id=IncidentId(UUID(str(row["incident_id"]))),
+        audience_role=RoleType(row["audience_role"]),
+        severity=NotificationSeverity(row["severity"]),
+        title_ru=row["title_ru"],
+        body_ru=row["body_ru"],
+        source_world_event_id=row["source_world_event_id"],
+        created_at_offset_ms=int(row["created_at_offset_ms"]),
+        acknowledged_at_offset_ms=_optional_int(row["acknowledged_at_offset_ms"]),
+        acknowledged_by_user_id=(
+            None if acknowledged_by is None else UserId(UUID(str(acknowledged_by)))
+        ),
+    )
 
 
 def world_engine_state_row_values(state: WorldEngineState) -> dict[str, Any]:

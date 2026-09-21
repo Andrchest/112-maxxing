@@ -29,6 +29,7 @@ from app.domain.common.errors import InvalidTransitionError
 from app.domain.common.ids import ScenarioVersionId, SessionId, UserId
 from app.domain.enums import SessionState
 from app.domain.session.session import SimulationSession
+from app.infrastructure.ids import Uuid4Generator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -137,7 +138,9 @@ async def test_start_is_refused_when_inference_is_not_ready(
     once, the state unchanged, not one event appended — is unchanged.
     """
     inference = FakeInferenceReadiness(ready=False)
-    use_case = StartSession(unit_of_work, clock, inference, require_inference_ready=True)
+    use_case = StartSession(
+        unit_of_work, clock, inference, Uuid4Generator(), require_inference_ready=True
+    )
 
     before = await event_types(migrated_engine, ready_session.id)
     with pytest.raises(InferenceNotReadyError) as excinfo:
@@ -157,7 +160,9 @@ async def test_the_flag_short_circuits_the_readiness_port(
 ) -> None:
     """`require_inference_ready=False` never asks the port at all (D8)."""
     inference = FakeInferenceReadiness(ready=False)
-    use_case = StartSession(unit_of_work, clock, inference, require_inference_ready=False)
+    use_case = StartSession(
+        unit_of_work, clock, inference, Uuid4Generator(), require_inference_ready=False
+    )
     started = await use_case(ready_session.id, instructor)
     assert started.state is SessionState.ACTIVE
     assert inference.calls == 0
@@ -291,8 +296,8 @@ async def test_abort_of_a_completed_session_is_refused(
     unit_of_work: Callable[..., Any],
     migrated_engine: AsyncEngine,
 ) -> None:
-    """`COMPLETED` has no `abort` row (§10.8). Completing is TODO(E9), so the state is set
-    through the repository rather than through a use case that does not exist yet."""
+    """`COMPLETED` has no `abort` row (§10.8). The state is set through the repository rather
+    than by playing a whole session out, which `backend/tests/api/handoff/` does instead."""
     async with unit_of_work() as uow:
         await uow.sessions.save(ready_session.model_copy(update={"state": SessionState.COMPLETED}))
         await uow.commit()

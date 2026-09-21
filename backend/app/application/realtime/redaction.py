@@ -14,9 +14,10 @@ Three gates, applied in this order:
    the whitelist §40.4's columns are copied into). An `INSTRUCTOR` connection sees every type. A
    type outside the set returns `None`: the push loop never serialises it for that connection, so
    `WORLD_TRUTH_MUTATED` is not "hidden in the UI", it is absent from the socket.
-2. **Delivery filters** — the three `▲` rows whose delivery depends on a payload key rather than
-   on the type: `STAGE_STATE_CHANGED.role_type`, `NOTIFICATION_CREATED.audience_role` and
-   `RADIO_MESSAGE_CREATED.to_role` must equal the connection's role. `ASR_PARTIAL` is §40.4's one
+2. **Delivery filters** — the four `▲` rows whose delivery depends on a payload key rather than
+   on the type: `STAGE_STATE_CHANGED.role_type`, `NOTIFICATION_CREATED.audience_role`,
+   `NOTIFICATION_ACKNOWLEDGED.audience_role` (additive, E9) and `RADIO_MESSAGE_CREATED.to_role`
+   must equal the connection's role. `ASR_PARTIAL` is §40.4's one
    `◆` row and obeys `SessionPolicy.show_asr_partials` (false in `ASSESSMENT`, §10.10).
 3. **Key whitelist** — never a blacklist (D3). The keys a trainee role may see are an explicit
    tuple per event type, defaulting to the event's `EVENT_PAYLOAD_CATALOG` keys. A payload key
@@ -26,13 +27,12 @@ Three gates, applied in this order:
 
 `redacted_keys` is always `[]` for `INSTRUCTOR` (§40.2).
 
-HLD gap (reported): §40.4 row 38 says `NOTIFICATION_ACKNOWLEDGED` is "pushed only to the
-notification's `audience_role`", but neither §10.13's catalog entry for it nor `openapi.yaml`
-carries an audience key in that payload — the discriminator the filter needs does not exist in the
-event. The reading closest to the catalog ("one fact expressed twice") is applied: the event is
-pushed to both trainee roles, which is its static `visible_to` set, and no payload of another
-role's notification is disclosed by it (it carries a `notification_id`, two offsets and the
-acknowledging user's id).
+HLD gap, closed additively by E9: §40.4 row 38 asks for `NOTIFICATION_ACKNOWLEDGED` to be
+"pushed only to the notification's `audience_role`", and neither §10.13's catalog entry nor
+`openapi.yaml` carried an audience key in that payload — the discriminator the filter needs did
+not exist in the event. §10.13 now types `NOTIFICATION_ACKNOWLEDGED.audience_role` (manager ruling
+4), `app.application.dds.acknowledge_notification` copies it from the `notifications` row it just
+stamped, and row 38 is a delivery-filtered row like rows 30, 37 and 39.
 """
 
 from __future__ import annotations
@@ -173,15 +173,12 @@ PAYLOAD_KEY_WHITELIST: Mapping[EventType, frozenset[str]] = {
     ),
 }
 
-#: §40.4's three delivery filters: `event_type -> the payload key that must equal the role`.
+#: §40.4's four delivery filters: `event_type -> the payload key that must equal the role`.
 _ROLE_DISCRIMINATOR: Mapping[EventType, str] = {
     EventType.STAGE_STATE_CHANGED: "role_type",  # row 30
     EventType.NOTIFICATION_CREATED: "audience_role",  # row 37
     EventType.RADIO_MESSAGE_CREATED: "to_role",  # row 39
-    # Row 38, `NOTIFICATION_ACKNOWLEDGED`, is deliberately absent — there is no key to filter on.
-    # TODO(E9): add audience_role to the NOTIFICATION_ACKNOWLEDGED payload (additive, §10.13 +
-    # openapi) and filter on it. E9 owns notifications; until then the event is pushed to both
-    # trainee roles, which is its static `visible_to` set (see this module's docstring).
+    EventType.NOTIFICATION_ACKNOWLEDGED: "audience_role",  # row 38 (the key is additive, E9)
 }
 
 

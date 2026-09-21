@@ -20,8 +20,10 @@ from types import TracebackType
 from typing import Protocol, runtime_checkable
 
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
+from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
@@ -80,6 +82,24 @@ class UnitOfWork(Protocol):
     @property
     def handoffs(self) -> HandoffRepository:
         """The `handoff_snapshots` repository bound to this transaction (D3)."""
+        ...
+
+    @property
+    def dds_assignments(self) -> DDSAssignmentRepository:
+        """The `dds_assignments` repository bound to this transaction (§20.5, E9).
+
+        It reaches no information layer: the DDS side sees the trainee's facts only through the
+        `HandoffSnapshot` the assignment points at (D3, SPEC §42 test 3).
+        """
+        ...
+
+    @property
+    def notifications(self) -> NotificationRepository:
+        """The `notifications` repository bound to this transaction (§20.5 additive, E9).
+
+        The rows are materialized from `NOTIFICATION_CREATED` in the very tick that emits it, so
+        the table and the log commit together (D5). It reaches no information layer either.
+        """
         ...
 
     @property

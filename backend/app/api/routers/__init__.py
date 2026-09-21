@@ -1,8 +1,9 @@
 """The API's routers (D8).
 
-Eight modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
-`health`, `scenarios`, `sessions`, `operator` (the Operator 112 commands), `snapshot`
-(`getSessionSnapshot`) and `realtime` (`listSessionEvents` and the WebSocket). Every one of them
+Nine modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
+`health`, `scenarios`, `sessions`, `operator` (the Operator 112 commands), `dds` (the DDS stage
+commands and reads), `snapshot` (`getSessionSnapshot`) and `realtime` (`listSessionEvents` and the
+WebSocket). Every one of them
 is included by `create_app`, and the contract test walks the registered routes, so an operation
 added to an existing module needs no change to `create_app` and is checked against the contract
 automatically.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 from app.api.routers import (
     auth,
+    dds,
     health,
     operator,
     realtime,
@@ -28,6 +30,7 @@ from app.api.routers import (
 
 __all__ = [
     "auth",
+    "dds",
     "health",
     "operator",
     "realtime",

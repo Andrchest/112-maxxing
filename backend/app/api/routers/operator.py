@@ -1,6 +1,6 @@
 """`operator` router — Operator 112 stage commands (`Operator112Module`, SPEC §7, §9, §10; D8).
 
-Nine of the `operator` tag's eleven operations. Each endpoint is three lines of work: ask the
+All eleven of the `operator` tag's operations. Each endpoint is three lines of work: ask the
 container for the use case, call it, map the result — the authorisation, the transaction, the
 domain call and the event append all live in `app.application.operator` (see that package's
 `command_context` for the one pipeline they share). A router that decided any of that would be a
@@ -11,16 +11,16 @@ Every **command** awaits `tick_after_command` after its use case has committed, 
 the runner carries, see the command's effects at once rather than up to one `SIM_TICK_MS` later.
 The two reads (`getOperatorCard`, `listCardRevisions`) do not tick — a read changes nothing.
 
-Not here, and deliberately:
+All eleven operations of the tag are here. `createHandoff` and `completeOperatorStage` (E9) are
+the handover into the DDS side: the first freezes the card into a `HandoffSnapshot` and creates
+the `DDSAssignment` legs, the second ends the 112 stage and moves the session on. Their third
+half, `continueToNextStage`, is on the `sessions` tag and lives in that router — the stage it
+starts is not a 112 one.
 
-* `createHandoff` and `completeOperatorStage` — TODO(E9). They freeze the card into a
-  `HandoffSnapshot`, create the `DDSAssignment`s and complete the 112 stage, which is the
-  handover into the DDS side this epic does not build;
-* `continueToNextStage` (`POST /api/v1/sessions/{session_id}/stage/continue`) — TODO(E9). It
-  fires `finish_role_transition`, which a session can only reach through `complete_stage`, i.e.
-  through `completeOperatorStage`. Registering it now would publish an endpoint that no sequence
-  of implemented operations can make reachable, and whose 409-before-the-pause behaviour could
-  not be exercised at all; E9 owns both halves and should land them together.
+`completeOperatorStage` is the one endpoint here that may end the *session* (a `role_chain` of
+`[OPERATOR_112]` alone), so it releases the runner after its commit, exactly as `abortSession`
+does (D7). On the usual 112 -> DDS chain it releases nothing: the session keeps ticking for the
+DDS stage.
 """
 
 from __future__ import annotations
@@ -31,6 +31,11 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from app.api.deps import ContainerDep, TickAfterCommandDep
+from app.api.schemas.handoff import (
+    CreateHandoffRequestSchema,
+    HandoffCreatedViewSchema,
+    handoff_created_schema,
+)
 from app.api.schemas.operator import (
     CardRevisionPageSchema,
     EndCallRequestSchema,
@@ -46,8 +51,10 @@ from app.api.schemas.operator import (
     service_selection_schema,
     set_card_field_response_schema,
 )
+from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
 from app.api.security import CurrentUserDep
 from app.domain.common.ids import SessionId
+from app.domain.enums import SessionState
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["operator"])
 
@@ -236,3 +243,49 @@ async def back_to_interview(
     view = await container.back_to_interview()(SessionId(session_id), user)
     await tick(SessionId(session_id))
     return operator_stage_schema(view)
+
+
+@router.post(
+    "/{session_id}/operator/handoff",
+    operation_id="createHandoff",
+    summary="Freeze the card and send it to DDS.",
+    response_model=HandoffCreatedViewSchema,
+    status_code=201,
+)
+async def create_handoff(
+    session_id: UUID,
+    body: CreateHandoffRequestSchema | None,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> HandoffCreatedViewSchema:
+    """`HANDOFF_PREPARATION --create_handoff--> HANDED_OFF`; one snapshot, N assignment legs."""
+    view = await container.create_handoff()(
+        SessionId(session_id), user, None if body is None else body.comment_ru
+    )
+    await tick(SessionId(session_id))
+    return handoff_created_schema(view)
+
+
+@router.post(
+    "/{session_id}/operator/stage/complete",
+    operation_id="completeOperatorStage",
+    summary="Complete the Operator 112 stage.",
+    response_model=SessionDetailSchema,
+    status_code=200,
+)
+async def complete_operator_stage(
+    session_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> SessionDetailSchema:
+    """`HANDED_OFF --complete_stage--> STAGE_COMPLETED`, then the session machine (see above)."""
+    view = await container.complete_operator_stage()(SessionId(session_id), user)
+    if view.session.state is SessionState.COMPLETED and container.settings.runner_enabled:
+        # After the commit, exactly as `abortSession` does: a completed session must stop being
+        # ticked and must give up `lock:session:{id}:runner` (D7).
+        await container.runner.release(view.session.id)
+    else:
+        await tick(SessionId(session_id))
+    return session_detail_schema(view)

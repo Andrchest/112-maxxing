@@ -57,6 +57,7 @@ from app.domain.session.transitions import (
     OPERATOR_112_TRANSITIONS,
     SESSION_TRANSITIONS,
 )
+from app.infrastructure.ids import Uuid4Generator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -281,6 +282,7 @@ async def test_a_trainee_may_not_start_a_session(
         unit_of_work,  # type: ignore[arg-type]
         clock,
         FakeInferenceReadiness(ready=True),
+        Uuid4Generator(),
         require_inference_ready=False,
     )
     with pytest.raises(InvalidTransitionError) as excinfo:

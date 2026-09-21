@@ -76,10 +76,20 @@ def _is_terminal(stage: RoleStage) -> bool:
 def _reached(ctx: GuardContext, status: ResourceStatus) -> bool:
     """True when some projected resource is at `status` or later in `_RESOURCE_PROGRESSION`.
 
-    TODO(E9): per-resource status timestamps — this is status-based only, so a resource that has
-    already progressed past `status` and back (e.g. `RETURNING`) still counts as having reached
-    it, and a resource that broke down after passing `status` no longer does. The world engine
-    slice owns the per-resource `…_at_offset_ms` history that would make this exact.
+    Status-based, and that is now the settled reading. §10.7's five per-resource timestamps
+    (`dispatched_at`, `departed_at`, `arrived_at`, `work_started_at`, `returning_at`) all collapse
+    into the single `EmergencyResource.status_changed_at_offset_ms` — the moment the *current*
+    status was entered (`dds/resources.py`) — so the domain holds no per-resource history a richer
+    reading could be built from, and inventing one would mean a new field on a §10.7 type.
+
+    Two consequences, both intended. A resource past `status` and back (`RETURNING` after
+    `WORKING`) still counts as having reached it, which is true. A resource that left the
+    progression sideways (`OUT_OF_SERVICE`, `UNAVAILABLE`) stops counting — but the DDS stage
+    triggers this guard serves are monotonic and are fired by `app.application.dds.stage_automation`
+    on the same tick the movement happened, so a unit that breaks down later cannot take the stage
+    back to `DISPATCHED`. That application also passes **only the units attached to the stage's
+    assignment legs** (E9 analyst R6): `ResourceAvailability.initial_status` may be any status, so
+    a scenario unit that starts `WORKING` elsewhere must not satisfy `first_en_route` on its own.
     """
     if ctx.resources is None:
         return False

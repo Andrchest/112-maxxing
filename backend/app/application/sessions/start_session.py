@@ -15,17 +15,30 @@ An illegal `start` (wrong state, wrong actor) raises `InvalidTransitionError` *b
 is written, and the transaction is never committed: no state change, no event. A stack that is
 merely not warm yet raises `InferenceNotReadyError` instead — see that class for why the two are
 deliberately different answers.
+
+One thing happens here that `start` itself does not describe: when the session's **first** stage
+is the DDS one — a `role_chain` of `[DDS]` under `SINGLE_ROLE` / `ASSESSMENT` (D6) — there is no
+112 stage to produce the `HandoffSnapshot` that stage exists to work on, so the scenario's
+`expected_response.prefab_handoff` is materialised in this same transaction, right after
+`ROLE_STAGE_STARTED`. See `app.application.handoff.prefab_handoff` for what that writes and why
+it emits `HANDOFF_RECEIVED` but no `HANDOFF_CREATED`. A chain that starts at `OPERATOR_112` is
+untouched by this: its handoff is the trainee's to make.
 """
 
 from __future__ import annotations
 
+from app.application.handoff.prefab_handoff import materialise_prefab_handoff
 from app.application.ports.clock import Clock
+from app.application.ports.id_generator import IdGenerator
 from app.application.ports.inference_readiness import InferenceReadiness
-from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.sessions.guard_context import build_guard_runtime
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
+from app.domain.enums import RoleType
+from app.domain.events.session_event import DomainEvent
+from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession
 
 __all__ = ["InferenceNotReadyError", "SessionNotFoundError", "StartSession"]
@@ -71,12 +84,15 @@ class StartSession:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         inference: InferenceReadiness,
+        ids: IdGenerator,
         *,
         require_inference_ready: bool,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._inference = inference
+        #: The prefab handoff's card-revision ids; the domain owns no randomness (D2/D7).
+        self._ids = ids
         #: D8's `REQUIRE_INFERENCE_READY`, injected — never read from `app.config` here.
         self._require_inference_ready = require_inference_ready
 
@@ -101,11 +117,34 @@ class StartSession:
             )
 
             await uow.sessions.save(started)
-            await uow.events.append(session_id, events)
+            await uow.events.append(session_id, [*events, *await self._prefab(uow, started)])
             await uow.commit()
         return started
 
     # -- internals ----------------------------------------------------------------------------
+
+    async def _prefab(self, uow: UnitOfWork, started: SimulationSession) -> list[DomainEvent]:
+        """The prefab handoff's events, or nothing at all for a chain that starts at 112.
+
+        `create_session` already refused a DDS-first scenario without a prefab
+        (`PrefabHandoffRequiredError`), so the absent-prefab branch is unreachable through the
+        API; it returns nothing rather than raising, because a session that is already `ACTIVE`
+        must not be undone by a scenario defect this use case did not cause.
+        """
+        stage = started.current_stage
+        if stage is None or stage.role_type is not RoleType.DDS:
+            return []
+        document = await uow.scenarios.get_version_document(started.scenario_version_id)
+        if document is None:  # pragma: no cover - the session exists, so its version does
+            return []
+        prefab = ScenarioVersion.model_validate(dict(document)).expected_response.prefab_handoff
+        if prefab is None:  # pragma: no cover - refused at session creation (D6)
+            return []
+        # `now_ms=0`: the start is the origin every offset is measured from, and the prefab
+        # handoff is handed to DDS at the instant the stage opens.
+        return await materialise_prefab_handoff(
+            uow, started, prefab, stage.role_stage_id, ids=self._ids, now_ms=0
+        )
 
     async def _inference_ready(self) -> bool:
         """`REQUIRE_INFERENCE_READY is false` **or** every component reports `READY` (D8)."""

@@ -33,6 +33,7 @@ from app.api.container import Container, build_container
 from app.api.errors import install_exception_handlers
 from app.api.routers import (
     auth,
+    dds,
     health,
     operator,
     realtime,
@@ -90,6 +91,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(scenarios.router)
     app.include_router(sessions.router)
     app.include_router(operator.router)
+    app.include_router(dds.router)
     app.include_router(snapshot.router)
     app.include_router(realtime.router)
 

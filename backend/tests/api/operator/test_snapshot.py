@@ -6,9 +6,11 @@ Two properties, and the second is the one that matters most:
    the `last_seq_no` the WebSocket resumes from;
 2. **a DDS viewer never receives the live `OperatorCard`.** That is tested by building a session
    whose *active* stage is a DDS one, through the repositories, and asking for the snapshot as
-   the DDS trainee: `card` must be `null`. `work_item` is `null` too, because `DdsWorkItem` is
-   TODO(E9) — an empty panel is a missing feature; a card on a DDS screen is a broken invariant
-   (D3, SPEC §10).
+   the DDS trainee: `card` must be `null`. `work_item` is `null` here too — the stage was moved
+   by hand and was never handed off to, so there is no `HandoffSnapshot` to project (the full
+   112 -> DDS run is `backend/tests/api/handoff/` and
+   `backend/tests/invariants/test_inv_03_dds_never_reads_world_truth.py`). An empty panel is a
+   missing handoff; a card on a DDS screen is a broken invariant (D3, SPEC §10).
 """
 
 from __future__ import annotations
@@ -85,9 +87,10 @@ async def test_a_dds_active_stage_never_yields_the_card(
 ) -> None:
     """§42 test 3, structurally: with the DDS stage *active*, `card` is still `null`.
 
-    The 112 stage is driven to its terminal state through the repositories, because the trainee
-    route to it (`createHandoff`, `completeOperatorStage`) is TODO(E9). What matters is the
-    resulting shape: an `ACTIVE` session whose `current_stage` is the DDS one.
+    The 112 stage is driven to its terminal state through the repositories rather than through
+    `createHandoff` / `completeOperatorStage`, so that this test keeps asserting the *shape* —
+    an `ACTIVE` session whose `current_stage` is the DDS one — independently of the handoff path
+    that `backend/tests/api/handoff/` covers end to end.
     """
     await interview.set_field("incident.type", "FIRE")
     await interview.set_field("address.house", "5")
@@ -121,7 +124,7 @@ async def test_a_dds_active_stage_never_yields_the_card(
     assert as_dds["active_role_type"] == "DDS"
     assert as_dds["stage_state"] == "RECEIVED"
     assert as_dds["card"] is None, "a DDS viewer never receives the live OperatorCard (D3)"
-    assert as_dds["work_item"] is None, "TODO(E9) owns DdsWorkItem"
+    assert as_dds["work_item"] is None, "no handoff was made, so there is nothing to project"
 
     # And not even the 112 trainee gets the card through a DDS-active stage: the decision is the
     # *active stage's*, so the panel is gone for everyone but the instructor.

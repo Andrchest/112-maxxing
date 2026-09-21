@@ -23,9 +23,12 @@ Every *command* runs through the single pipeline of `command_context.OperatorCom
 Unit of Work, one row lock, D8's two gates, one commit. `views` holds the materialized views they
 answer with and the pure fold that gives call state without a table.
 
-Two operations of the tag are **not** here: `createHandoff` and `completeOperatorStage` are
-TODO(E9), together with the session-completing use case that owns `SESSION_COMPLETED.total_events`
-and the `continueToNextStage` role transition that only a completed 112 stage can reach.
+Two operations of the tag are **not** here: `createHandoff` and `completeOperatorStage` live in
+`app.application.handoff` (E9), together with the session-completing use case that owns
+`SESSION_COMPLETED.total_events` and the `continueToNextStage` role transition that only a
+completed 112 stage can reach. They run through *this* package's `OperatorCommandGate` — they are
+112 stage commands — but what they produce belongs to the handoff and to the session, not to the
+operator's console.
 
 INV 4 (SPEC §42 test 4) is why the card writers are exactly three modules — `set_card_field`,
 `select_service`, `deselect_service` — and why none of them can see a transcript:

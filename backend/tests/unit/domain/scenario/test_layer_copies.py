@@ -8,7 +8,10 @@ The load-bearing assertions:
   occur anywhere in a serialised `CallerBelief` (SPEC §5: the caller LLM must never receive it);
 * a `HandoffSnapshot` keeps the card's value even when it contradicts world truth ("72" vs "27"),
   and later card edits cannot reach it;
-* `snapshot_to_assignment` has no parameter through which a `WorldTruth` could arrive.
+* `snapshot_to_assignment` and `snapshot_to_assignments` have no parameter through which a
+  `WorldTruth` could arrive;
+* `snapshot_to_assignments` fans one snapshot out into one leg per recipient service, in order,
+  with distinct ids and the same snapshot behind every one of them (E9).
 """
 
 from __future__ import annotations
@@ -27,13 +30,14 @@ from app.domain.common.ids import (
     RoleStageId,
     UserId,
 )
-from app.domain.enums import ActorType, KnowledgeState, ServiceType
+from app.domain.enums import ActorType, DDSStageState, KnowledgeState, ServiceType
 from app.domain.layers.caller_belief import CallerBelief
 from app.domain.layers.copies import (
     freeze_card_to_snapshot,
     instantiate_caller_belief,
     instantiate_world_truth,
     snapshot_to_assignment,
+    snapshot_to_assignments,
 )
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import OperatorCard, set_field
@@ -270,4 +274,76 @@ def test_derived_ids_are_deterministic(incident_id: IncidentId) -> None:
     assert (
         snapshot_to_assignment(first, role_stage_id, 61_000).assignment_id
         == snapshot_to_assignment(second, role_stage_id, 61_000).assignment_id
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# snapshot_to_assignments (additive, E9)
+# ---------------------------------------------------------------------------------------------
+
+
+def test_one_leg_per_recipient_service_in_order(incident_id: IncidentId) -> None:
+    """§10.7's "one assignment per recipient service", as the fan-out the use case persists."""
+    snapshot = _snapshot(incident_id)
+    role_stage_id = RoleStageId(uuid4())
+
+    legs = snapshot_to_assignments(snapshot, role_stage_id, 61_000)
+
+    assert [leg.service_type for leg in legs] == list(snapshot.recipient_services)
+    assert {leg.snapshot_id for leg in legs} == {snapshot.snapshot_id}
+    assert {leg.role_stage_id for leg in legs} == {role_stage_id}
+    assert {leg.incident_id for leg in legs} == {snapshot.incident_id}
+    assert all(leg.received_at_offset_ms == 61_000 for leg in legs)
+    assert all(leg.state is DDSStageState.RECEIVED for leg in legs)
+
+
+def test_every_leg_has_its_own_id(incident_id: IncidentId) -> None:
+    """The service type is inside the `uuid5` name; without it the N legs would collide."""
+    snapshot = _snapshot(incident_id)
+    legs = snapshot_to_assignments(snapshot, RoleStageId(uuid4()), 61_000)
+
+    assert len(legs) == 2
+    assert len({leg.assignment_id for leg in legs}) == 2
+
+
+def test_the_fan_out_is_deterministic(incident_id: IncidentId) -> None:
+    """D7's replay determinism: the same inputs always derive the same leg ids."""
+    snapshot = _snapshot(incident_id)
+    role_stage_id = RoleStageId(uuid4())
+
+    first = snapshot_to_assignments(snapshot, role_stage_id, 61_000)
+    second = snapshot_to_assignments(snapshot, role_stage_id, 61_000)
+
+    assert [leg.assignment_id for leg in first] == [leg.assignment_id for leg in second]
+
+
+def test_the_fan_out_carries_the_card_value_not_the_world_value(incident_id: IncidentId) -> None:
+    """SPEC §3: every leg points at the snapshot that says "72", and at nothing else."""
+    snapshot = _snapshot(incident_id)
+    legs = snapshot_to_assignments(snapshot, RoleStageId(uuid4()), 61_000)
+
+    assert all(leg.snapshot_id == snapshot.snapshot_id for leg in legs)
+    assert snapshot.card_values["address.house"] == "72"
+
+
+def test_a_snapshot_with_no_recipient_service_cannot_be_fanned_out(
+    incident_id: IncidentId,
+) -> None:
+    """The `create_handoff` guard refuses first; the domain refuses too rather than making none."""
+    empty = freeze_card_to_snapshot(
+        _card_with_house_72(incident_id), CardRevisionId(uuid4()), (), UserId(uuid4()), 60_000
+    )
+    with pytest.raises(ValueError, match="recipient_services"):
+        snapshot_to_assignments(empty, RoleStageId(uuid4()), 61_000)
+
+
+def test_snapshot_to_assignments_accepts_no_world_truth() -> None:
+    """The fan-out's parameter list is the singular function's: no layer can arrive through it."""
+    signature = inspect.signature(snapshot_to_assignments)
+    hints = get_type_hints(snapshot_to_assignments)
+
+    assert list(signature.parameters) == ["snapshot", "role_stage_id", "at_offset_ms"]
+    assert not any(
+        "WorldTruth" in str(hints[name]) or "CallerBelief" in str(hints[name])
+        for name in signature.parameters
     )

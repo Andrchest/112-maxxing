@@ -535,18 +535,18 @@ class SimulationSession(BaseModel):
         self,
         completed_at: datetime,
         *,
+        total_events: int,
         actor: ActorRef,
         now_ms: int = 0,
         runtime: GuardRuntime = NO_RUNTIME_FACTS,
     ) -> tuple[SimulationSession, list[DomainEvent]]:
         """`ACTIVE --complete--> COMPLETED` (SYSTEM). Emits `SESSION_COMPLETED`.
 
-        TODO(E9): the `total_events` payload key counts the session's event-log rows, which only
-        the event store knows (`next_seq_no` is deliberately not a field of this aggregate). It is
-        emitted as `0` here and overwritten by the completing use case, which holds the
-        repository. A session is completed by finishing its last role stage, which today means
-        completing the DDS stage, so E9 owns that use case; E5 ships create/start/abort only
-        (E5-B ruling R2) and E7 ships the Operator-112 commands only.
+        `total_events` counts the session's event-log rows *including* the `SESSION_COMPLETED`
+        row this call produces. Only the event store knows it — `next_seq_no` is deliberately not
+        a field of this aggregate — so it is a required keyword the completing use case supplies
+        (`app.application.handoff.complete_session`, which holds the repository), rather than a
+        number this pure aggregate invents.
         """
         ctx = self._ctx(
             actor=actor, role_type=None, now_ms=now_ms, runtime=runtime, stage=self.active_stage
@@ -560,7 +560,7 @@ class SimulationSession(BaseModel):
             payload={
                 "at_offset_ms": now_ms,
                 "final_session_state": new_state.value,
-                "total_events": 0,
+                "total_events": total_events,
             },
         )
         return updated, [event]
@@ -584,11 +584,15 @@ class SimulationSession(BaseModel):
         Emits `STAGE_STATE_CHANGED`, plus `ROLE_STAGE_COMPLETED` when the target state is
         terminal — and nothing else.
 
-        TODO(E9): the trigger-specific event named by `Transition.emits` (`HANDOFF_CREATED`,
+        The trigger-specific event named by `Transition.emits` (`HANDOFF_CREATED`,
         `DDS_ACKNOWLEDGED`, `RESOURCE_DISPATCHED`, `DDS_INCIDENT_CLOSED`) needs payload this
-        aggregate does not hold — the handoff snapshot id, the dispatched resource ids. The owning
-        use case appends it alongside the events returned here, which is what E7 already does for
-        `CALL_RINGING` and `CALL_ANSWERED` (`app.application.operator`).
+        aggregate does not hold — the handoff snapshot id, the dispatched resource ids — so the
+        owning use case appends it alongside the events returned here, which is what E7 already
+        does for `CALL_RINGING` / `CALL_ANSWERED` (`app.application.operator`), what
+        `app.application.handoff.create_handoff` does for `HANDOFF_CREATED`, and what
+        `app.application.dds` does for `DDS_ACKNOWLEDGED`, `RESOURCE_DISPATCHED` and
+        `DDS_INCIDENT_CLOSED` — each of those three is appended by the command that fired the
+        trigger, in the `x-emits` order its operation declares.
         """
         stage = self.stage(stage_id)
         previous_state = stage.state

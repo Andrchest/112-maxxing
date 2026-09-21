@@ -32,6 +32,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.auth.list_users import ListUsers
 from app.application.auth.login import Login
+from app.application.dds.acknowledge import AcknowledgeDdsAssignment
+from app.application.dds.acknowledge_notification import AcknowledgeNotification
+from app.application.dds.back_to_acknowledged import BackToDdsAcknowledged
+from app.application.dds.close_incident import CloseDdsIncident
+from app.application.dds.command_context import DdsCommandGate
+from app.application.dds.deselect_resource import DeselectDdsResource
+from app.application.dds.dispatch import DispatchDdsResources
+from app.application.dds.get_work_item import GetDdsWorkItem
+from app.application.dds.list_notifications import ListNotifications
+from app.application.dds.list_radio_messages import ListRadioMessages
+from app.application.dds.list_resources import ListDdsResources
+from app.application.dds.open_resource_selection import OpenDdsResourceSelection
+from app.application.dds.select_resource import SelectDdsResource
+from app.application.dds.send_status_update import SendDdsStatusUpdate
+from app.application.dds.stage_automation import DdsStageAutomation
+from app.application.handoff.complete_operator_stage import CompleteOperatorStage
+from app.application.handoff.continue_to_next_stage import ContinueToNextStage
+from app.application.handoff.create_handoff import CreateHandoff
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
 from app.application.operator.begin_handoff_preparation import BeginHandoffPreparation
@@ -187,7 +205,7 @@ class Container:
                 tick_ms=settings.sim_tick_ms,
                 lock_ttl_s=settings.sim_runner_lock_ttl_s,
                 lock_refresh_s=settings.sim_runner_lock_refresh_s,
-                after_tick=(self._advance_call_flow,),
+                after_tick=(self._advance_call_flow, self._dds_stage_automation),
             )
         )
         self.hasher: PasswordHasher = hasher if hasher is not None else Argon2PasswordHasher()
@@ -259,6 +277,7 @@ class Container:
             self.unit_of_work,
             self.clock,
             self.inference,
+            self.ids,
             require_inference_ready=self.settings.require_inference_ready,
         )
 
@@ -378,6 +397,106 @@ class Container:
         addition to `__init__` instead of a reordering of it, and costs one object per tick.
         """
         return await self.advance_call_flow()(session_id)
+
+    # -- E9-A: the handoff and the role transition (SPEC §10, §13; §10.7-§10.9) ----------------
+    #
+    # Everything below this line belongs to task E9-A and nothing above it does. The two operator
+    # commands share the same `OperatorCommandGate` as E7-B's nine; `continueToNextStage` has its
+    # own Unit of Work, because by the time it runs the session is in `ROLE_TRANSITION` and the
+    # 112 pipeline's preconditions no longer hold.
+
+    def create_handoff(self) -> CreateHandoff:
+        """`createHandoff`."""
+        return CreateHandoff(self.operator_command_gate(), self.ids)
+
+    def complete_operator_stage(self) -> CompleteOperatorStage:
+        """`completeOperatorStage`."""
+        return CompleteOperatorStage(self.operator_command_gate(), self.clock)
+
+    def continue_to_next_stage(self) -> ContinueToNextStage:
+        """`continueToNextStage`."""
+        return ContinueToNextStage(self.unit_of_work, self.clock)
+
+    # -- E9-B: the DDS commands, the DDS reads and the DDS stage automation (SPEC §11, §12) -----
+    #
+    # Everything below this line belongs to task E9-B and nothing above it does. The eight
+    # commands share one `DdsCommandGate`, so D8's two gates are constructed in exactly one place
+    # for this side too; the four reads take the Unit of Work directly, because a read fires no
+    # action and has no transition to check.
+    #
+    # Not one of these is given a world-truth, caller-belief or operator-card repository — that is
+    # what SPEC §42 test 3 asserts on the constructor signatures (D3).
+
+    def dds_command_gate(self) -> DdsCommandGate:
+        """The single DDS command pipeline (`application/dds/command_context`)."""
+        return DdsCommandGate(self.unit_of_work, self.clock)
+
+    def get_dds_work_item(self) -> GetDdsWorkItem:
+        """`getDdsWorkItem`."""
+        return GetDdsWorkItem(self.unit_of_work)
+
+    def list_dds_resources(self) -> ListDdsResources:
+        """`listDdsResources`."""
+        return ListDdsResources(self.unit_of_work, self.clock)
+
+    def acknowledge_dds_assignment(self) -> AcknowledgeDdsAssignment:
+        """`acknowledgeDdsAssignment`."""
+        return AcknowledgeDdsAssignment(self.dds_command_gate())
+
+    def open_dds_resource_selection(self) -> OpenDdsResourceSelection:
+        """`openDdsResourceSelection` (additive, E9)."""
+        return OpenDdsResourceSelection(self.dds_command_gate())
+
+    def back_to_dds_acknowledged(self) -> BackToDdsAcknowledged:
+        """`backToDdsAcknowledged` (additive, E9)."""
+        return BackToDdsAcknowledged(self.dds_command_gate())
+
+    def select_dds_resource(self) -> SelectDdsResource:
+        """`selectDdsResource`."""
+        return SelectDdsResource(self.dds_command_gate())
+
+    def deselect_dds_resource(self) -> DeselectDdsResource:
+        """`deselectDdsResource`."""
+        return DeselectDdsResource(self.dds_command_gate())
+
+    def dispatch_dds_resources(self) -> DispatchDdsResources:
+        """`dispatchDdsResources`."""
+        return DispatchDdsResources(self.dds_command_gate())
+
+    def send_dds_status_update(self) -> SendDdsStatusUpdate:
+        """`sendDdsStatusUpdate`."""
+        return SendDdsStatusUpdate(self.dds_command_gate())
+
+    def list_notifications(self) -> ListNotifications:
+        """`listNotifications`."""
+        return ListNotifications(self.unit_of_work)
+
+    def acknowledge_notification(self) -> AcknowledgeNotification:
+        """`acknowledgeNotification`. Its own gate: both trainee roles hold the permission."""
+        return AcknowledgeNotification(self.unit_of_work, self.clock)
+
+    def list_radio_messages(self) -> ListRadioMessages:
+        """`listRadioMessages`."""
+        return ListRadioMessages(self.unit_of_work)
+
+    def close_dds_incident(self) -> CloseDdsIncident:
+        """`closeDdsIncident`."""
+        return CloseDdsIncident(self.dds_command_gate(), self.clock)
+
+    def dds_stage_automation(self) -> DdsStageAutomation:
+        """The `SIMULATION`-fired DDS stage triggers (§10.8, D6, D7).
+
+        The resolution verdict is `TickSession.resolution_condition_met`, bound here: evaluating
+        `expected_response.resolution_condition` needs the live `WorldState`, which only the
+        simulation slice may hold (D3), so the DDS slice is handed a boolean and nothing else.
+        """
+        return DdsStageAutomation(
+            self.unit_of_work, self.clock, self.tick_session.resolution_condition_met
+        )
+
+    async def _dds_stage_automation(self, session_id: SessionId) -> bool:
+        """The `SimulationRunner`'s second `after_tick` hook, beside `_advance_call_flow`."""
+        return await self.dds_stage_automation()(session_id)
 
     # -- lifecycle -----------------------------------------------------------------------------
 

@@ -30,6 +30,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.ids import IncidentId, ResourceId, SessionId, UserId
 from app.domain.enums import ActorType, ResourceStatus, SessionMode
 from app.domain.events.session_event import DomainEvent
+from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.tools.import_scenarios import YamlScenarioSource
 from sqlalchemy import text
@@ -151,7 +152,11 @@ async def build_session(
         )
     )
     await StartSession(
-        unit_of_work, clock, FakeInferenceReadiness(ready=True), require_inference_ready=False
+        unit_of_work,
+        clock,
+        FakeInferenceReadiness(ready=True),
+        Uuid4Generator(),
+        require_inference_ready=False,
     )(session.id, actor)
 
     return SimHarness(
