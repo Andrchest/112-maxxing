@@ -47,6 +47,23 @@ plugins = ["pydantic.mypy"]
 module = ["app.domain.*", "app.application.*"]
 strict = true
 
+# Heavy ML packages (E12): only installed via the `asr-gigaam`/`asr-whisper`/`vad-silero` extras
+# (backend/pyproject.toml), never a hard dependency, and imported lazily inside adapter
+# warm_up()/constructors. mypy runs against the plain dev venv (no extras) in `make gate`, so it
+# has no stubs for these — ignore missing imports for exactly these modules, nothing broader.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchaudio.*",
+    "transformers.*",
+    "onnxruntime.*",
+    "faster_whisper.*",
+    "hydra.*",
+    "omegaconf.*",
+    "sentencepiece.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["backend/tests", "workers/voice_agent/tests"]

@@ -831,3 +831,25 @@ stack (`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains onl
 4. The Russian voice ids for Piper, Qwen3-TTS and Chatterbox are UNVERIFIED placeholders.
 5. `--ctx-size` vs `--parallel` (§8, first note) is the one place this document had to choose a
    mechanism the frame did not name; it is listed for ratification in the task report.
+
+---
+
+## 11. Model sources, pinned revisions and licences (E12)
+
+Additive to §2's `asr.model_path` / `vad.model_path` keys — this table is where each path's
+provenance is recorded, since the profile itself only points at a directory. Fuller detail (exact
+URLs, sha256, `make` target) lives in `models/README.md`; this table is the cross-reference SPEC §41
+("everything local, nothing downloaded at runtime") expects a reader of this document to find.
+
+| Model | `model_version` | Source | Pinned revision | Licence | Fetched by |
+|:--|:--|:--|:--|:--|:--|
+| Silero VAD | (`vad.provider: silero`) | `github.com/snakers4/silero-vad`, `src/silero_vad/data/silero_vad.onnx` | tag `v5.1.2` (the v5 model interface this port's `SileroVAD` is written against — `v6.x` changed the graph) | MIT | `make models-silero`, sha256-checked |
+| GigaAM Conformer-CTC | `v3_e2e_ctc` (primary, SPEC §19) | local HF-format checkpoint (owner-provided; exact upstream repo/revision UNVERIFIED by this task — see `models/README.md`) | n/a — files placed manually, not re-fetched by any `make` target | MIT (per the checkpoint's own `README.md`) | manual; `models/` is gitignored (SPEC §41) |
+| GigaAM Conformer-CTC | `v3_ctc` (benchmarked alternative, SPEC §19) | same as above | same as above | MIT | manual |
+| faster-whisper (optional) | whisper size per `SIM_WHISPER_MODEL_PATH` | not fetched by this project at all (E12 ruling 4) | n/a | n/a | never — a developer points `SIM_WHISPER_MODEL_PATH` at a CTranslate2 model they already have |
+| Qwen3-4B (LLM, `llm.provider: llama_cpp`, DEV_3060TI, SPEC §22) | `Qwen3-4B-Q4_K_M` | `huggingface.co/Qwen/Qwen3-4B-GGUF`, file `Qwen3-4B-Q4_K_M.gguf` | HF repo `main` at fetch time; file identity is the sha256 below, not a git commit (E13-B1 measured 2026-09-21: 2 497 280 256 bytes, sha256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5` — matches the HF repo's own LFS `sha256` for this file, queried via `HfApi.model_info(files_metadata=True)`) | Apache-2.0 (per the repo's own licence file) | `make models-llm` (`hf download`, `curl -C -` fallback), sha256 not re-verified by the target itself — see this task's report |
+
+`GigaAMProvider` (`backend/app/inference/asr/gigaam_provider.py`) loads the local directory with
+`AutoModel.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)` and
+`HF_HUB_OFFLINE=1`, and never calls the checkpoint's own `transcribe()` — see that module's
+docstring for the ffmpeg/pyannote reasons and for the long-audio window-splitting it does instead.

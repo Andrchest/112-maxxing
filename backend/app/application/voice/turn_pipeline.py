@@ -12,10 +12,16 @@ Three long-lived tasks per call, exactly as §3.7 specifies:
 3. `_control` — the transport's `events()` and the cross-process cancellation signal
    (`voice:cancel:{session_id}`, consumed by `voice_agent.main` and pushed in here).
 
-**E11 owns no dialogue.** ASR, the interpreter, the Fact Access Gate, the generator, the validator
-and TTS are the `TurnResponder` seam; E11 ships `NullTurnResponder`, which emits nothing at all.
-E12–E14 supply the real one, and the seam is typed so that they add a class rather than rewrite
-this file.
+**The pipeline owns no dialogue.** ASR, the interpreter, the Fact Access Gate, the generator, the
+validator and TTS are the `TurnResponder` seam; E11 shipped `NullTurnResponder`, which emits
+nothing at all, and E12's `app.application.voice.asr_responder.AsrTurnResponder` is the first real
+one. The seam is typed and chained so that an epic adds a class rather than rewriting this file.
+
+The one stage the pipeline runs *itself* is §4.5's partial ASR, and it does so for a structural
+reason: a partial describes the **open** turn, which only the `_ingest` task and the detector can
+see. It is handed to a `PartialAsrEmitter` that reads the detector's accumulation read-only and
+whose every task is cancelled at `USER_SPEECH_ENDED` — a partial never outlives its turn, never
+becomes a transcript row and never reaches a responder (SPEC §17).
 
 Two robustness properties this file is responsible for:
 
@@ -32,10 +38,12 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
+from app.application.ports.asr import ASRProvider
 from app.application.ports.audio_segment_repository import StoredAudioSegment
 from app.application.ports.call_transport import (
     AudioFrame,
@@ -54,15 +62,30 @@ from app.application.voice.events import (
     user_speech_ended_event,
     user_speech_started_event,
 )
+from app.application.voice.partial_asr import PartialAsrEmitter
 from app.application.voice.recorder import SessionRecorder
 from app.application.voice.resampler import Resampler
 from app.application.voice.turn_detector import DetectedTurn, TurnDetector
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
 
-__all__ = ["NullTurnResponder", "TurnContext", "TurnPipeline", "TurnResponder"]
+__all__ = [
+    "NullTurnResponder",
+    "ShowAsrPartials",
+    "TurnContext",
+    "TurnPipeline",
+    "TurnResponder",
+]
 
 logger = logging.getLogger(__name__)
+
+ShowAsrPartials = Callable[[SessionId], Awaitable[bool]]
+"""Reads `SessionPolicy.show_asr_partials` for one session (§4.5, D6).
+
+It is a coroutine because the policy comes from the session aggregate, and it is called **once**,
+when the call's pipeline starts: a session's mode cannot change mid-call, and a database round
+trip per audio frame would be in the worst possible place.
+"""
 
 _CALL_ENDED_TRANSPORT_CLOSED = "TRANSPORT_CLOSED"
 _CALL_ENDED_CANCELLED = "CANCELLED"
@@ -83,6 +106,14 @@ class TurnContext:
     transport: CallTransport
     appender: VoiceEventAppender
     recorder: SessionRecorder | None
+    audio_segment_ids: Mapping[uuid.UUID, uuid.UUID] = field(default_factory=dict)
+    """`turn_id -> audio_segments.id` for every finalized, recorded turn of this call (§9.1).
+
+    The recording row is created by `_finish_turn`, before the responder ever sees the turn, so
+    `transcript_segments.audio_segment_id` can point at the very segment the `USER_SPEECH_ENDED`
+    of the same turn named. It is a read-only view of the pipeline's own mapping — a responder
+    looks a turn up, it never registers one.
+    """
 
 
 @runtime_checkable
@@ -108,8 +139,9 @@ class NullTurnResponder:
     `responded` records the turns it was handed, so the pipeline's wiring is assertable without a
     single model.
 
-    TODO(E12): `AsrTurnResponder` — the first real implementation, which adds ASR and the
-    `ASR_PARTIAL` / `ASR_FINAL` events of §4.5.
+    E12 replaced it in the wiring with `AsrTurnResponder`; it stays because a pipeline test that
+    is about the *pipeline* should not need a model, fake or otherwise.
+
     TODO(E13): the interpreter, the Fact Access Gate, the generator and the validator.
     TODO(E14): streaming TTS and the outbound half of barge-in (§6.1 steps 2, 5, 6).
     """
@@ -141,6 +173,8 @@ class TurnPipeline:
         recorder: SessionRecorder | None = None,
         responder: TurnResponder | None = None,
         cancel_signals: AsyncIterator[str] | None = None,
+        asr: ASRProvider | None = None,
+        show_asr_partials: ShowAsrPartials | None = None,
     ) -> None:
         self._session_id = session_id
         self._call_id = call_id
@@ -156,6 +190,12 @@ class TurnPipeline:
         self._recorder = recorder
         self._responder: TurnResponder = responder or NullTurnResponder()
         self._cancel_signals = cancel_signals
+        #: §4.5's partials are the pipeline's own stage; without a provider there are none.
+        self._asr = asr
+        self._show_asr_partials = show_asr_partials
+        self._partials: PartialAsrEmitter | None = None
+        #: `turn_id -> audio_segments.id`, handed to every responder through `TurnContext`.
+        self._audio_segment_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._turns: asyncio.Queue[DetectedTurn] = asyncio.Queue(maxsize=1)
         self._append_lock = asyncio.Lock()
         self._response_task: asyncio.Task[None] | None = None
@@ -180,6 +220,7 @@ class TurnPipeline:
             transport=self._transport,
             appender=self._appender,
             recorder=self._recorder,
+            audio_segment_ids=MappingProxyType(self._audio_segment_ids),
         )
 
     @property
@@ -198,6 +239,7 @@ class TurnPipeline:
         self._resampler.reset()
         self._vad.reset()
         self._call_started_offset_ms = self._appender.offset_ms()
+        await self._start_partials()
         ingest = asyncio.create_task(self._ingest(), name="voice-ingest")
         respond = asyncio.create_task(self._respond(), name="voice-respond")
         control = asyncio.create_task(self._control(), name="voice-control")
@@ -214,6 +256,34 @@ class TurnPipeline:
         for task in self._tasks:
             if not task.done():
                 task.cancel()
+
+    async def _start_partials(self) -> None:
+        """Build the `PartialAsrEmitter` for this call, if §4.5's two gates are both open.
+
+        The session policy is read here and only here — once per call. A session that switches
+        partials off (`ASSESSMENT`, §10.10) gets an emitter that is constructed and disabled
+        rather than no emitter at all, so the "why are there no partials" answer is one attribute
+        rather than a `None` that could mean three different things.
+        """
+        if self._asr is None:
+            self._partials = None
+            return
+        enabled = self._config.partial_asr_enabled
+        if enabled and self._show_asr_partials is not None:
+            enabled = await self._show_asr_partials(self._session_id)
+        self._partials = PartialAsrEmitter(
+            asr=self._asr,
+            append=self._append,
+            call_id=self._call_id,
+            config=self._config,
+            offset_ms=self._appender.offset_ms,
+            enabled=enabled,
+        )
+
+    @property
+    def partials(self) -> PartialAsrEmitter | None:
+        """The call's partial-ASR emitter, once `run()` has started it."""
+        return self._partials
 
     # -- task 1: ingest -----------------------------------------------------------------------
 
@@ -235,6 +305,12 @@ class TurnPipeline:
         result = await self._vad.process(frame)
         step = self._detector.process(frame, result, playback_active=self.playback_active)
         if step.started is not None:
+            if self._partials is not None:
+                self._partials.start_turn(
+                    turn_id=step.started.turn_id,
+                    turn_index=step.started.turn_index,
+                    start_ms=step.started.start_ms,
+                )
             await self._append(
                 [
                     user_speech_started_event(
@@ -247,7 +323,17 @@ class TurnPipeline:
             )
             if step.started.was_during_playback:
                 await self._barge_in()
+        if self._partials is not None and self._detector.turn_open:
+            await self._partials.on_frame(
+                frame,
+                accumulated=self._detector.accumulated_audio,
+                accumulated_ms=self._detector.accumulated_ms,
+            )
         if step.finished is not None:
+            # §4.5: every partial task dies with the turn it was describing, before the final
+            # transcription starts. Its result is discarded, never merged.
+            if self._partials is not None:
+                await self._partials.end_turn()
             await self._finish_turn(step.finished)
 
     async def _finish_turn(self, turn: DetectedTurn) -> None:
@@ -259,6 +345,7 @@ class TurnPipeline:
             )
             segments.append(segment)
             payload_extra["audio_segment_id"] = str(segment.id)
+            self._audio_segment_ids[turn.turn_id] = segment.id
         event = user_speech_ended_event(
             turn,
             call_id=self._call_id,
@@ -376,6 +463,8 @@ class TurnPipeline:
                 )
             ]
         )
+        if self._partials is not None:
+            await self._partials.aclose()
         if self._recorder is not None:
             self._recorder.close()
 

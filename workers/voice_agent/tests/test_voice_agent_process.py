@@ -22,7 +22,14 @@ from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.turn_pipeline import NullTurnResponder, TurnPipeline
 from app.config.settings import Settings
 from app.domain.common.ids import SessionId
-from voice_agent.main import STATE_READY, VoiceAgent
+from voice_agent.main import (
+    ASR_SERVICE,
+    STATE_NOT_READY,
+    STATE_READY,
+    VAD_SERVICE,
+    VoiceAgent,
+    synthetic_tone,
+)
 from voice_agent.transport.sip_transport import SIP_STUB_MESSAGE, SipCallTransport
 from voice_agent.wiring import VoiceAgentDeps, build_pipeline, build_transport, build_vad
 
@@ -45,11 +52,41 @@ class _CollectingUnitOfWork:
     def audio_segments(self) -> Any:
         return self
 
+    @property
+    def transcript_segments(self) -> Any:
+        return self
+
+    @property
+    def dialogue_turns(self) -> Any:
+        return self
+
+    @property
+    def inference_metrics(self) -> Any:
+        return self
+
+    @property
+    def sessions(self) -> Any:
+        return self
+
     async def append(self, session_id: SessionId, events: Any) -> list[Any]:
         self._pending.extend(events)
         return list(events)
 
     async def add_all(self, segments: Any) -> None:
+        return None
+
+    async def add(self, row: Any) -> None:
+        return None
+
+    async def upsert(self, row: Any) -> Any:
+        return row.id
+
+    async def get(self, *args: Any, **kwargs: Any) -> None:
+        """No session aggregate here: the stage resolver and the policy read both answer `None`.
+
+        That is the honest answer for a process test with no database — the `dialogue_turns` row
+        is skipped and partials stay off — and it keeps this test about the task graph.
+        """
         return None
 
     async def __aenter__(self) -> _CollectingUnitOfWork:
@@ -179,17 +216,71 @@ async def test_the_heartbeat_key_is_the_documented_one_with_the_documented_ttl()
     redis = FakeRedis()
     agent = make_agent(clock, redis)
 
+    await agent.warm_up()
     await agent.publish_health()
 
     assert agent.health_key() == "voice:health:vad"
+    assert set(redis.values) == {"voice:health:vad", "voice:health:asr"}
     assert redis.expiries["voice:health:vad"] == agent._deps.settings.voice_health_ttl_s == 15
     assert agent._deps.settings.voice_health_heartbeat_s == 5
     payload = json.loads(redis.values["voice:health:vad"])
     assert payload["state"] == STATE_READY
     assert payload["provider"] == "energy"
+    asr_payload = json.loads(redis.values["voice:health:asr"])
+    assert asr_payload["state"] == STATE_READY
+    assert asr_payload["provider"] == "fake"
+    assert asr_payload["model_version"] == "fake-1"
 
 
-async def test_clearing_the_health_key_is_part_of_a_graceful_shutdown() -> None:
+async def test_a_component_is_not_ready_until_it_has_been_warmed_up() -> None:
+    """§4.1's `HealthStatus`: NOT_READY is the state of a process that has not warmed up yet."""
+    agent = make_agent(FakeClock(), FakeRedis())
+    assert agent.health_state(VAD_SERVICE) == STATE_NOT_READY
+    assert agent.health_state(ASR_SERVICE) == STATE_NOT_READY
+
+    await agent.warm_up()
+
+    assert agent.health_state(VAD_SERVICE) == STATE_READY
+    assert agent.health_state(ASR_SERVICE) == STATE_READY
+
+
+async def test_a_failing_warm_up_leaves_the_component_not_ready_without_killing_the_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken ASR must not take the VAD — or the process — down with it (§4.1)."""
+    import voice_agent.main as main_module
+
+    def explode(_settings: Any) -> Any:
+        raise RuntimeError("no weights on this machine")
+
+    monkeypatch.setattr(main_module, "build_asr", explode)
+    redis = FakeRedis()
+    agent = make_agent(FakeClock(), redis)
+
+    await agent.warm_up()
+
+    assert agent.health_state(VAD_SERVICE) == STATE_READY
+    assert agent.health_state(ASR_SERVICE) == STATE_NOT_READY
+    payload = json.loads(redis.values["voice:health:asr"])
+    assert payload["state"] == STATE_NOT_READY
+    assert "no weights on this machine" in payload["detail"]
+
+
+async def test_the_warm_up_transcribes_a_second_of_audio_rather_than_silence() -> None:
+    """§4.2 step 2: the ASR warm-up runs a real recognition, not an empty buffer."""
+    agent = make_agent(FakeClock(), FakeRedis())
+    await agent.warm_up()
+
+    asr = agent._asr
+    assert asr is not None
+    assert [call.request_id for call in asr.calls] == ["warmup:asr"]  # type: ignore[attr-defined]
+    expected_bytes = len(synthetic_tone(asr.required_sample_rate))
+    assert asr.calls[0].audio_bytes == expected_bytes  # type: ignore[attr-defined]
+    assert expected_bytes == asr.required_sample_rate * 2, "one second of mono s16le"
+    assert set(synthetic_tone(asr.required_sample_rate)) != {0}, "the tone is not silence"
+
+
+async def test_clearing_the_health_keys_is_part_of_a_graceful_shutdown() -> None:
     """A stopped agent must read NOT_READY at once, not after the TTL (the `ring` guard, §10.8)."""
     redis = FakeRedis()
     agent = make_agent(FakeClock(), redis)
@@ -197,8 +288,8 @@ async def test_clearing_the_health_key_is_part_of_a_graceful_shutdown() -> None:
 
     await agent.clear_health()
 
-    assert "voice:health:vad" not in redis.values
-    assert redis.deleted == ["voice:health:vad"]
+    assert redis.values == {}
+    assert sorted(redis.deleted) == ["voice:health:asr", "voice:health:vad"]
 
 
 async def test_a_repeated_voice_join_does_not_start_a_second_pipeline() -> None:
@@ -284,9 +375,14 @@ async def test_the_whole_agent_path_runs_against_the_fake_transport() -> None:
 
     await asyncio.wait_for(pipeline.run(), timeout=10)
 
+    # E12 added the ASR stage to this exact path: the same three tasks, now with a real
+    # `AsrTurnResponder` over `FakeASR` (`SIM_ASR_PROVIDER=fake`, D13). The session aggregate is
+    # unreadable here, so the policy denies partials and the `dialogue_turns` row is skipped —
+    # the `ASR_FINAL` is not, because the event log is the audit source (D5).
     assert [event.event_type.value for event in committed] == [
         "USER_SPEECH_STARTED",
         "USER_SPEECH_ENDED",
+        "ASR_FINAL",
         "CALL_ENDED",
     ]
     assert transport.call_id == CALL_ID

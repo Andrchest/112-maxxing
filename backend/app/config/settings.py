@@ -79,7 +79,9 @@ class Settings(BaseSettings):
     # SPEC §17: "Make this configuration, not a hard-coded magic value." Every key of §4.1's
     # table gets one `SIM_VOICE_*` variable; `app.application.voice.config.VoiceTurnConfig`
     # validates the ranges and the cross-field rules, and the `TurnDetector` reads nothing else.
-    # TODO(E12): the active model profile's `voice_turn.*` block overlays this env block.
+    # TODO(E18): the active model profile's `voice_turn.*` block overlays this env block.
+    # Profiles (`backend/app/config/profiles/*.yaml`, `60-inference-ops.md` §2) are E18's epic;
+    # until one is loaded the env block is the whole of the configuration.
     voice_speech_start_threshold: float = 0.55
     voice_speech_end_threshold: float = 0.35
     voice_speech_start_min_ms: int = 96
@@ -98,9 +100,54 @@ class Settings(BaseSettings):
     #: `VOICE_JOIN_RETRY_MS` of §40.6: how often the backend re-publishes `voice:join` while a
     #: call is RINGING (D9, E11-B). The default is §40.6's, literally.
     voice_join_retry_ms: int = 2000
-    #: How long the voice agent's `voice:health:vad` heartbeat key lives (HLD 60 §4.3).
+    #: How long the voice agent's `voice:health:{service}` heartbeat key lives (HLD 60 §4.3).
     voice_health_heartbeat_s: int = 5
     voice_health_ttl_s: int = 15
+    # -- E12: which VAD and ASR the voice agent loads (`60-inference-ops.md` §1, SPEC §19) -----
+    # SPEC §19: "Domain code must not depend on a specific model." These keys are the *only*
+    # place a model is named; `voice_agent.providers` turns them into a port implementation and
+    # nothing above that seam ever sees the value. `energy` + `fake` is the gate's selection
+    # (D13); every model profile selects `silero` + `gigaam`.
+    #: `energy` | `silero`.
+    vad_provider: str = "energy"
+    vad_model_path: str = "models/silero-vad/silero_vad.onnx"
+    #: `fake` | `gigaam` | `faster_whisper`.
+    asr_provider: str = "fake"
+    #: GigaAM v3: `v3_e2e_ctc` (primary, emits punctuation) or `v3_ctc` (benchmarked). The
+    #: version and the directory travel together — `v3_ctc` pairs with `models/gigaam-v3-ctc`.
+    asr_model_version: str = "v3_e2e_ctc"
+    asr_model_dir: str = "models/gigaam-v3-e2e_ctc"
+    asr_device: str = "cuda"
+    asr_compute_type: str = "float16"
+    #: How long one `transcribe()` may take before the turn ends with `MODEL_ERROR{TIMEOUT}`
+    #: (SPEC §42 item 14). §8 budgets 250 ms for ASR at RTF ≤ 0.08, so 4 s is "the model is
+    #: wedged", not "the model is slow today".
+    asr_timeout_ms: int = 4000
+    #: A real Russian WAV the ASR warm-up transcribes (`60-inference-ops.md` §4.2: "a real RU
+    #: WAV, not silence"). Empty means "synthesise one second of tone", which warms the graph
+    #: without shipping an audio file the repository has no other use for.
+    asr_warmup_sample_path: str = ""
+    # -- E13: the local LLM — interpreter + (E13-B2) generator (`60-inference-ops.md` §1, D10,
+    # SPEC §20-§22, §41) -------------------------------------------------------------------------
+    #: `fake` | `llama_cpp`. `fake` is what `make gate` runs (D13); every model profile selects
+    #: `llama_cpp`.
+    llm_provider: str = "fake"
+    llm_model_name: str = "Qwen3-4B"
+    llm_n_ctx: int = 4096
+    #: The local `models/*.gguf` path `LlamaCppClient`'s launcher (not this client itself, which
+    #: only ever dials `llm_base_url`) and `make models-llm` agree on.
+    llm_model_path: str = "models/Qwen3-4B-Q4_K_M.gguf"
+    #: Compose-internal service names `validate_llm_base_url` (SPEC §41) accepts besides loopback.
+    llm_allowed_internal_hosts: list[str] = Field(default_factory=lambda: ["llama-server"])
+    #: §5.1/§5.3 interpreter call params not fixed by the HLD text itself.
+    llm_interpreter_max_tokens: int = 200
+    llm_interpreter_timeout_ms: int = 2500
+    #: §5.2/§5.3 caller-generator call params (E13-B2 reads these; E13-B1 only declares them so
+    #: `.env.example` documents the whole `SIM_LLM_*` family in one place).
+    llm_generator_max_tokens: int = 80
+    llm_generator_timeout_ms: int = 3000
+    llm_generator_temperature: float = 0.7
+    llm_generator_top_p: float = 0.9
     # -- E11-B: the LiveKit access tokens the backend mints (D9, `openapi.yaml`) ---------------
     #: `createVoiceToken` lifetime. Ten minutes: long enough to join a call that is still ringing,
     #: short enough that a leaked token is worthless. The token is re-minted, not refreshed.

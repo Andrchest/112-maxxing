@@ -22,13 +22,16 @@ from typing import Protocol, runtime_checkable
 from app.application.ports.audio_segment_repository import AudioSegmentRepository
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
+from app.application.ports.dialogue_turn_repository import DialogueTurnRepository
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.transcript_segment_repository import TranscriptSegmentRepository
 from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
@@ -51,6 +54,32 @@ class UnitOfWork(Protocol):
 
         The recording index commits with the event append that names it, so
         `transcript_segments.audio_segment_id` is never dangling (`50-voice-pipeline.md` §9.1).
+        """
+        ...
+
+    @property
+    def transcript_segments(self) -> TranscriptSegmentRepository:
+        """The `transcript_segments` repository bound to this transaction (§20.6, §9.1, E12).
+
+        The row commits with the `ASR_FINAL` that names it (§9.1), which is what makes
+        `ASR_FINAL.transcript_segment_id` a reference that always resolves.
+        """
+        ...
+
+    @property
+    def dialogue_turns(self) -> DialogueTurnRepository:
+        """The `dialogue_turns` materialized turn record bound to this transaction (§20.6, E12).
+
+        A read model for the report, never read by scoring (D5, D11).
+        """
+        ...
+
+    @property
+    def inference_metrics(self) -> InferenceMetricRepository:
+        """The `inference_metrics` telemetry table bound to this transaction (§20.6, SPEC §27).
+
+        Written through `MetricsRecorder`, which opens a Unit of Work of its **own** so that a
+        telemetry failure can never fail the turn it was measuring.
         """
         ...
 

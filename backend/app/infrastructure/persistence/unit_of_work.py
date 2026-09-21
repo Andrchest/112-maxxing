@@ -22,14 +22,17 @@ from app.application.ports.audio_segment_repository import AudioSegmentRepositor
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
+from app.application.ports.dialogue_turn_repository import DialogueTurnRepository
 from app.application.ports.event_publisher import EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
+from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.transcript_segment_repository import TranscriptSegmentRepository
 from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
 from app.application.ports.world_truth_repository import WorldTruthRepository
@@ -44,8 +47,14 @@ from app.infrastructure.persistence.caller_belief_repository import (
 from app.infrastructure.persistence.dds_assignment_repository import (
     SqlAlchemyDDSAssignmentRepository,
 )
+from app.infrastructure.persistence.dialogue_turn_repository import (
+    SqlAlchemyDialogueTurnRepository,
+)
 from app.infrastructure.persistence.event_store import SqlAlchemyEventStore
 from app.infrastructure.persistence.handoff_repository import SqlAlchemyHandoffRepository
+from app.infrastructure.persistence.inference_metric_repository import (
+    SqlAlchemyInferenceMetricRepository,
+)
 from app.infrastructure.persistence.notification_repository import (
     SqlAlchemyNotificationRepository,
 )
@@ -55,6 +64,9 @@ from app.infrastructure.persistence.operator_card_repository import (
 from app.infrastructure.persistence.resource_repository import SqlAlchemyResourceRepository
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
 from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
+from app.infrastructure.persistence.transcript_segment_repository import (
+    SqlAlchemyTranscriptSegmentRepository,
+)
 from app.infrastructure.persistence.user_repository import SqlAlchemyUserRepository
 from app.infrastructure.persistence.world_engine_state_repository import (
     SqlAlchemyWorldEngineStateRepository,
@@ -84,6 +96,9 @@ class SqlAlchemyUnitOfWork:
         self._session: AsyncSession | None = None
         self._event_store: SqlAlchemyEventStore | None = None
         self._audio_segments: SqlAlchemyAudioSegmentRepository | None = None
+        self._transcript_segments: SqlAlchemyTranscriptSegmentRepository | None = None
+        self._dialogue_turns: SqlAlchemyDialogueTurnRepository | None = None
+        self._inference_metrics: SqlAlchemyInferenceMetricRepository | None = None
         self._scenarios: SqlAlchemyScenarioRepository | None = None
         self._sessions: SqlAlchemySessionRepository | None = None
         self._users: SqlAlchemyUserRepository | None = None
@@ -105,6 +120,9 @@ class SqlAlchemyUnitOfWork:
         self._session = session
         self._event_store = SqlAlchemyEventStore(session, self._clock, on_append=self._record)
         self._audio_segments = SqlAlchemyAudioSegmentRepository(session)
+        self._transcript_segments = SqlAlchemyTranscriptSegmentRepository(session)
+        self._dialogue_turns = SqlAlchemyDialogueTurnRepository(session)
+        self._inference_metrics = SqlAlchemyInferenceMetricRepository(session)
         self._scenarios = SqlAlchemyScenarioRepository(session)
         self._sessions = SqlAlchemySessionRepository(session)
         self._users = SqlAlchemyUserRepository(session)
@@ -134,6 +152,9 @@ class SqlAlchemyUnitOfWork:
             self._session = None
             self._event_store = None
             self._audio_segments = None
+            self._transcript_segments = None
+            self._dialogue_turns = None
+            self._inference_metrics = None
             self._scenarios = None
             self._sessions = None
             self._users = None
@@ -168,6 +189,24 @@ class SqlAlchemyUnitOfWork:
         if self._audio_segments is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._audio_segments
+
+    @property
+    def transcript_segments(self) -> TranscriptSegmentRepository:
+        if self._transcript_segments is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._transcript_segments
+
+    @property
+    def dialogue_turns(self) -> DialogueTurnRepository:
+        if self._dialogue_turns is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._dialogue_turns
+
+    @property
+    def inference_metrics(self) -> InferenceMetricRepository:
+        if self._inference_metrics is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._inference_metrics
 
     @property
     def scenarios(self) -> ScenarioRepository:

@@ -15,6 +15,8 @@ from types import TracebackType
 import pytest
 from app.application.ports.audio_segment_repository import StoredAudioSegment
 from app.application.ports.call_transport import AudioFrame
+from app.application.ports.dialogue_turn_repository import DialogueTurnUpsert
+from app.application.ports.transcript_segment_repository import StoredTranscriptSegment
 from app.application.testing.fakes import FakeClock, silence_frames, sine_burst_frames
 from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.turn_detector import DetectorStep, TurnDetector
@@ -103,10 +105,14 @@ class VoiceStore:
 
     events: list[SessionEvent] = field(default_factory=list)
     segments: list[StoredAudioSegment] = field(default_factory=list)
+    transcripts: list[StoredTranscriptSegment] = field(default_factory=list)
+    turns: list[DialogueTurnUpsert] = field(default_factory=list)
     commits: int = 0
     rollbacks: int = 0
     next_seq_no: int = 1
     fail_on_commit: Exception | None = None
+    fail_on_event_append: Exception | None = None
+    fail_on_transcript_add: Exception | None = None
 
 
 class _FakeEventStore:
@@ -118,6 +124,8 @@ class _FakeEventStore:
     async def append(
         self, session_id: SessionId, events: Sequence[DomainEvent]
     ) -> list[SessionEvent]:
+        if self._store.fail_on_event_append is not None:
+            raise self._store.fail_on_event_append
         appended: list[SessionEvent] = []
         for event in events:
             appended.append(
@@ -147,6 +155,26 @@ class _FakeAudioSegments:
         self._pending.extend(segments)
 
 
+class _FakeTranscriptSegments:
+    def __init__(self, store: VoiceStore, pending: list[StoredTranscriptSegment]) -> None:
+        self._store = store
+        self._pending = pending
+
+    async def add(self, segment: StoredTranscriptSegment) -> None:
+        if self._store.fail_on_transcript_add is not None:
+            raise self._store.fail_on_transcript_add
+        self._pending.append(segment)
+
+
+class _FakeDialogueTurns:
+    def __init__(self, pending: list[DialogueTurnUpsert]) -> None:
+        self._pending = pending
+
+    async def upsert(self, turn: DialogueTurnUpsert) -> uuid.UUID:
+        self._pending.append(turn)
+        return turn.id
+
+
 class InMemoryVoiceUnitOfWork:
     """The two repositories `VoiceEventAppender` uses, plus commit/rollback semantics."""
 
@@ -155,6 +183,8 @@ class InMemoryVoiceUnitOfWork:
         self._clock = clock
         self._events: list[SessionEvent] = []
         self._segments: list[StoredAudioSegment] = []
+        self._transcripts: list[StoredTranscriptSegment] = []
+        self._turns: list[DialogueTurnUpsert] = []
 
     @property
     def events(self) -> _FakeEventStore:
@@ -164,9 +194,19 @@ class InMemoryVoiceUnitOfWork:
     def audio_segments(self) -> _FakeAudioSegments:
         return _FakeAudioSegments(self._segments)
 
+    @property
+    def transcript_segments(self) -> _FakeTranscriptSegments:
+        return _FakeTranscriptSegments(self._store, self._transcripts)
+
+    @property
+    def dialogue_turns(self) -> _FakeDialogueTurns:
+        return _FakeDialogueTurns(self._turns)
+
     async def __aenter__(self) -> InMemoryVoiceUnitOfWork:
         self._events = []
         self._segments = []
+        self._transcripts = []
+        self._turns = []
         return self
 
     async def __aexit__(
@@ -183,6 +223,8 @@ class InMemoryVoiceUnitOfWork:
             raise self._store.fail_on_commit
         self._store.events.extend(self._events)
         self._store.segments.extend(self._segments)
+        self._store.transcripts.extend(self._transcripts)
+        self._store.turns.extend(self._turns)
         self._store.commits += 1
 
     async def rollback(self) -> None:

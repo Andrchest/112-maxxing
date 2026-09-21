@@ -657,8 +657,10 @@ manually; `actor_user_id` is null exactly when `actor_type = 'SYSTEM'`.
 | `gpu_memory_mb` | `integer` | yes | |
 | `fallback_count` | `smallint` | no | `0` |
 | `retry_count` | `smallint` | no | `0` |
+| `status` | `text` | no | `'OK'` |
+| `error_kind` | `text` | yes | |
 
-Columns are exactly SPEC §27. PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`.
+Columns are SPEC §27 plus `status` / `error_kind` (migration `0004_inference_metric_status`, E12): `50-voice-pipeline.md` §2.6 defines both on `InferenceMetric`, and without them a timed-out or failed call is indistinguishable from a successful one in telemetry (SPEC §42 invariant 14 would be unobservable there). `CHECK (status IN ('OK','TIMEOUT','ERROR','CANCELLED'))`. PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`.
 Unique `uq_inference_metrics_request (request_id)`.
 Index `ix_inference_metrics_session_component (session_id, component, started_at)`.
 `CHECK (component IN ('ASR','LLM_INTERPRETER','LLM_GENERATOR','TTS','VAD'))`.

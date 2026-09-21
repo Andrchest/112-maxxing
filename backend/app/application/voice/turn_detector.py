@@ -137,6 +137,38 @@ class TurnDetector:
         """True while a turn is accumulating (IN_SPEECH or ENDPOINTING)."""
         return self._turn_id is not None
 
+    @property
+    def accumulated_audio(self) -> bytes:
+        """The open turn's audio **so far**, pre-roll included — a read-only copy (§4.5).
+
+        §4.5's pseudo-streamed partials transcribe "the accumulation so far", so they need to see
+        inside an open turn. They must not be able to *change* it: the bytes are joined into a new
+        object on every read, so a partial task holding this value cannot alias the accumulator
+        the state machine is still appending to. The machine itself is untouched — reading this
+        advances nothing and finalizes nothing.
+        """
+        return b"".join(self._accumulator)
+
+    @property
+    def accumulated_ms(self) -> int:
+        """Milliseconds accumulated in the open turn, or 0 when no turn is open (§4.5)."""
+        return self._accumulated_ms()
+
+    @property
+    def open_turn_id(self) -> uuid.UUID | None:
+        """The open turn's uuid, or `None`."""
+        return self._turn_id
+
+    @property
+    def open_turn_index(self) -> int | None:
+        """The open turn's index, or `None`."""
+        return self._turn_index if self._turn_id is not None else None
+
+    @property
+    def open_turn_start_ms(self) -> int:
+        """The open turn's session-relative start; meaningful only while `turn_open`."""
+        return self._start_ms
+
     def reset(self) -> None:
         """Return to IDLE and drop every buffer. Called at the start of a call."""
         self._pre_roll.clear()

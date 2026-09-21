@@ -17,6 +17,16 @@ from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.health_probe import ComponentReading, HealthProbe
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.inference_readiness import InferenceReadiness
+from app.application.ports.llm import (
+    ChatMessage,
+    JsonSchemaSpec,
+    LLMClient,
+    LlmCompletion,
+    LlmStreamDelta,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    LlmUsage,
+)
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.scenario_repository import (
@@ -48,6 +58,7 @@ __all__ = [
     "CallStateCache",
     "CallTransportStatus",
     "CallerBeliefRepository",
+    "ChatMessage",
     "Clock",
     "ComponentReading",
     "EventEnvelope",
@@ -59,6 +70,13 @@ __all__ = [
     "InferenceReadiness",
     "InvalidTokenError",
     "IssuedToken",
+    "JsonSchemaSpec",
+    "LLMClient",
+    "LlmCompletion",
+    "LlmStreamDelta",
+    "LlmTimeoutError",
+    "LlmUnavailableError",
+    "LlmUsage",
     "MintedVoiceToken",
     "OperatorCardRepository",
     "PasswordHasher",

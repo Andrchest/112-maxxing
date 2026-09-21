@@ -4,7 +4,8 @@ This is the voice agent's counterpart to `app.api.container`: the one module tha
 application layer and the adapters, so that nothing else has to. It builds, per call:
 
 * the `VoiceTurnConfig` from `Settings` (§4.1) — never literals;
-* the `VADProvider` for the configured provider (`energy` today; TODO(E12) `silero`);
+* the `VADProvider` and the `ASRProvider` for the configured providers, through
+  `voice_agent.providers` — the one module that knows a model's name (SPEC §19);
 * the `CallTransport` for `SIM_CALL_TRANSPORT` (`fake` / `livekit`; `sip` is the documented stub);
 * the `SessionRecorder` over two `WavFileSink`s under `Settings.data_dir` (§9.1, SPEC §41);
 * the `VoiceEventAppender` over the **same** `UnitOfWork` the backend uses, so `seq_no` is
@@ -20,31 +21,46 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
 from app.application.ports.clock import Clock
+from app.application.ports.metrics_recorder import MetricsRecorder
 from app.application.ports.unit_of_work import UnitOfWorkFactory
-from app.application.ports.vad import VADProvider
+from app.application.voice.asr_responder import (
+    AsrTurnResponder,
+    UnitOfWorkSessionStageResolver,
+)
 from app.application.voice.config import VoiceTurnConfig, voice_turn_config_from_settings
 from app.application.voice.events import VoiceEventAppender
 from app.application.voice.recorder import RecordingPaths, SessionRecorder
 from app.application.voice.resampler import Resampler
 from app.application.voice.turn_detector import TurnDetector
-from app.application.voice.turn_pipeline import TurnPipeline, TurnResponder
+from app.application.voice.turn_pipeline import ShowAsrPartials, TurnPipeline, TurnResponder
 from app.config.settings import Settings
 from app.domain.common.ids import SessionId
-from app.inference.vad import EnergyVAD
+from app.domain.session.policy import SESSION_POLICIES
+from app.infrastructure.metrics import PgMetricsRecorder
 from app.infrastructure.recording.wav_writer import WavFileSink
 
-__all__ = ["VoiceAgentDeps", "build_pipeline", "build_transport", "build_vad"]
+from voice_agent.providers import VAD_ENERGY, VAD_SILERO, build_asr, build_vad
+
+__all__ = [
+    "VAD_ENERGY",
+    "VAD_SILERO",
+    "VoiceAgentDeps",
+    "build_asr",
+    "build_metrics",
+    "build_pipeline",
+    "build_responder",
+    "build_transport",
+    "build_vad",
+    "show_asr_partials",
+]
 
 #: `SIM_CALL_TRANSPORT` values this process understands (D9).
 TRANSPORT_FAKE = "fake"
 TRANSPORT_LIVEKIT = "livekit"
 TRANSPORT_SIP = "sip"
-
-#: `vad.provider` values. `energy` is the gate's and the fallback (`60-inference-ops.md` §1).
-VAD_ENERGY = "energy"
-VAD_SILERO = "silero"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,20 +81,6 @@ class VoiceAgentDeps:
             uow_factory=uow_factory,
             config=voice_turn_config_from_settings(settings),
         )
-
-
-def build_vad(settings: Settings, config: VoiceTurnConfig) -> VADProvider:
-    """The configured `VADProvider`.
-
-    TODO(E12): `SileroVAD` for `SIM_VAD_PROVIDER=silero`, which every model profile selects. Until
-    then the value is accepted and falls back to `EnergyVAD` with a warning rather than refusing
-    to start, because §2.2 names the energy detector as the documented fallback when the onnx
-    model is absent.
-    """
-    provider = getattr(settings, "vad_provider", VAD_ENERGY)
-    if provider not in (VAD_ENERGY, VAD_SILERO):
-        raise ValueError(f"unknown VAD provider {provider!r}")
-    return EnergyVAD(frame_samples=config.frame_samples, required_sample_rate=config.sample_rate)
 
 
 def build_transport(
@@ -137,6 +139,54 @@ def build_recorder(
     )
 
 
+def build_metrics(deps: VoiceAgentDeps) -> MetricsRecorder:
+    """`PgMetricsRecorder` over the same Unit of Work the events go through (§2.6, SPEC §27)."""
+    return PgMetricsRecorder(deps.uow_factory)
+
+
+def build_responder(
+    deps: VoiceAgentDeps,
+    *,
+    asr: ASRProvider,
+    metrics: MetricsRecorder | None = None,
+    next_stage: TurnResponder | None = None,
+) -> AsrTurnResponder:
+    """The head of the responder chain: ASR (§3.7, §4.5).
+
+    `next_stage` is where E13 attaches the interpreter → gate → generator → validator chain and
+    E14 the TTS playback behind it. With `None` the turn ends after `ASR_FINAL`, which is exactly
+    what E12 owns.
+    """
+    return AsrTurnResponder(
+        asr=asr,
+        metrics=metrics if metrics is not None else build_metrics(deps),
+        clock=deps.clock,
+        config=deps.config,
+        stage_resolver=UnitOfWorkSessionStageResolver(deps.uow_factory),
+        timeout_ms=deps.settings.asr_timeout_ms,
+        next_stage=next_stage,
+    )
+
+
+def show_asr_partials(deps: VoiceAgentDeps) -> ShowAsrPartials:
+    """Reads `SessionPolicy.show_asr_partials` for the session, once per call (§4.5, D6).
+
+    The policy is a pure function of the session's mode (§10.10), so this is one aggregate read
+    and a dictionary lookup — no new table and no new port. A session that cannot be read denies
+    partials, which is the conservative answer: an assessment run must never leak interim text
+    because a database hiccup made the default the permissive one.
+    """
+
+    async def read(session_id: SessionId) -> bool:
+        async with deps.uow_factory() as uow:
+            session = await uow.sessions.get(session_id)
+        if session is None:
+            return False
+        return SESSION_POLICIES[session.session_mode].show_asr_partials
+
+    return read
+
+
 def build_pipeline(
     deps: VoiceAgentDeps,
     *,
@@ -145,10 +195,17 @@ def build_pipeline(
     transport: CallTransport,
     started_at: datetime | None = None,
     responder: TurnResponder | None = None,
+    asr: ASRProvider | None = None,
     record: bool = True,
 ) -> TurnPipeline:
-    """One `TurnPipeline` for one call (§3.7)."""
+    """One `TurnPipeline` for one call (§3.7).
+
+    `asr` is built from `SIM_ASR_PROVIDER` when the caller does not supply one; the voice-agent
+    process builds it **once** and passes it here so that a long-lived model is loaded per
+    process, not per call.
+    """
     vad = build_vad(deps.settings, deps.config)
+    provider = asr if asr is not None else build_asr(deps.settings)
     return TurnPipeline(
         session_id=session_id,
         call_id=call_id,
@@ -167,5 +224,7 @@ def build_pipeline(
             target_sample_rate=deps.config.sample_rate, frame_samples=vad.frame_samples
         ),
         recorder=build_recorder(deps, session_id=session_id, call_id=call_id) if record else None,
-        responder=responder,
+        responder=responder if responder is not None else build_responder(deps, asr=provider),
+        asr=provider,
+        show_asr_partials=show_asr_partials(deps),
     )

@@ -18,6 +18,18 @@ for when it makes the trainee the only writer.
 
 Together the two make the path from ASR to the card *absent*, not merely unused.
 
+**(a′) The ASR path itself (E12).** Once the voice path has a real ASR stage, the scan has to run
+in the other direction too: not only "no card writer can read a transcript" but "nothing that
+*produces* a transcript can reach a card". Two more assertions cover
+`backend/app/application/voice/**` and `backend/app/inference/**`:
+
+3. neither package uses any card writer or the `operator_cards` repository attribute;
+4. neither package imports the operator-card, DDS or handoff command modules — the modules that
+   would let it issue the write indirectly.
+
+`app/application/**` is already swept by assertion 1, which includes `voice/`; `app/inference/**`
+is outside that sweep (it is the inference layer, not the application layer) and is added here.
+
 **(b) Behavioural.** Append `ASR_PARTIAL` and `ASR_FINAL` whose text literally contains an
 address and a service name — exactly what a naive auto-filler would seize on — and assert that
 the card row, the revision count, the `CARD_FIELD_CHANGED` count and the snapshot's card are all
@@ -38,6 +50,25 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 BACKEND = Path(__file__).resolve().parents[2]
 APPLICATION = BACKEND / "app" / "application"
+#: The two packages that own the ASR path (E12): the voice turn stages and the model adapters.
+ASR_PATH_ROOTS: tuple[Path, ...] = (
+    APPLICATION / "voice",
+    BACKEND / "app" / "inference",
+)
+
+#: Modules whose import would let the ASR path reach a card, a service selection or a handoff
+#: *indirectly* — by calling the use case rather than the repository. Dotted prefixes, matched
+#: against the module a `from … import …` names.
+CARD_COMMAND_MODULES: tuple[str, ...] = (
+    "app.application.operator.set_card_field",
+    "app.application.operator.select_service",
+    "app.application.operator.deselect_service",
+    "app.application.operator.views",
+    "app.application.handoff",
+    "app.application.dds",
+    "app.application.ports.operator_card_repository",
+    "app.domain.layers.operator_card",
+)
 
 # ---------------------------------------------------------------------------------------------
 # (a) Structural
@@ -177,6 +208,75 @@ def test_a_card_writer_cannot_reach_a_transcript(relative: str) -> None:
     assert not offenders, (
         f"{relative} imports {offenders}: a module that may write the card must not be able to "
         "read a transcript (SPEC §9, §42 test 4)"
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# (a′) The ASR path (E12)
+# ---------------------------------------------------------------------------------------------
+
+
+def _asr_path_modules() -> list[Path]:
+    """Every module of `application/voice/**` and `inference/**`, `__init__.py` included.
+
+    `__init__.py` is *not* skipped here, unlike in `_application_modules`: a package initialiser
+    that re-exported a card command would be exactly the hole this scan is for.
+    """
+    modules: list[Path] = []
+    for root in ASR_PATH_ROOTS:
+        modules.extend(sorted(root.rglob("*.py")))
+    return modules
+
+
+def _imported_modules(path: Path) -> set[str]:
+    """Every dotted module name this file imports, as written."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def test_the_asr_path_scan_actually_sees_some_modules() -> None:
+    """A guard on the guard: an empty sweep would pass the two tests below vacuously."""
+    modules = _asr_path_modules()
+    assert len(modules) >= 10, f"the ASR-path sweep found only {len(modules)} modules"
+    for root in ASR_PATH_ROOTS:
+        assert root.is_dir(), f"{root} does not exist"
+
+
+def test_the_asr_path_writes_no_card() -> None:
+    """SPEC §42 test 4 for E12: nothing that produces a transcript can write a card."""
+    offenders: list[str] = []
+    for path in _asr_path_modules():
+        used = sorted(_card_writers_used(path))
+        if used:
+            offenders.append(f"{path.relative_to(BACKEND).as_posix()}: {used}")
+    assert not offenders, (
+        "these modules of the ASR path write the operator card, which SPEC §9 reserves for the "
+        f"trainee: {offenders}"
+    )
+
+
+def test_the_asr_path_imports_no_card_command() -> None:
+    """…and cannot issue the write indirectly either, by calling the use case."""
+    offenders: list[str] = []
+    for path in _asr_path_modules():
+        forbidden = sorted(
+            name
+            for name in _imported_modules(path)
+            if any(
+                name == prefix or name.startswith(prefix + ".") for prefix in CARD_COMMAND_MODULES
+            )
+        )
+        if forbidden:
+            offenders.append(f"{path.relative_to(BACKEND).as_posix()}: {forbidden}")
+    assert not offenders, (
+        "these modules of the ASR path import a card / service / handoff command module, which "
+        f"would let ASR text reach the incident card (SPEC §9, §42 test 4): {offenders}"
     )
 
 

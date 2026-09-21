@@ -19,10 +19,10 @@ The `turn_id` / `turn_index` duality is an HLD gap, resolved here in favour of c
 which is what correlates an event with an in-flight response across processes). Dropping either
 would break a documented consumer. See this task's report under "HLD gaps".
 
-This module emits the E11 events only — the boundary signals, the transport transitions and the
-end of the call. `ASR_*`, `DIALOGUE_INTERPRETED`, `FACT_GATE_EVALUATED`, `CALLER_*` and
-`FACTS_DELIVERED` are TODO(E12) / TODO(E13) / TODO(E14): the epics that first produce the fact are
-the epics that get to say what it is.
+This module emits the boundary signals, the transport transitions, the end of the call and — from
+E12 — the ASR events and `MODEL_ERROR`. `DIALOGUE_INTERPRETED`, `FACT_GATE_EVALUATED`, `CALLER_*`
+and `FACTS_DELIVERED` are TODO(E13) / TODO(E14): the epics that first produce the fact are the
+epics that get to say what it is.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from typing import Any
 from app.application.ports.audio_segment_repository import StoredAudioSegment
 from app.application.ports.call_transport import TransportEvent, TransportEventType
 from app.application.ports.clock import Clock
+from app.application.ports.dialogue_turn_repository import DialogueTurnUpsert
+from app.application.ports.transcript_segment_repository import StoredTranscriptSegment
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.timebase import session_offset_ms
 from app.application.voice.turn_detector import DetectedTurn, SpeechStarted
@@ -46,13 +48,17 @@ from app.domain.events.types import EventType
 
 __all__ = [
     "VoiceEventAppender",
+    "asr_final_event",
+    "asr_partial_event",
     "call_ended_event",
+    "model_error_event",
     "transport_event_to_domain_event",
     "user_speech_ended_event",
     "user_speech_started_event",
 ]
 
 _TRAINEE = ActorRef(actor_type=ActorType.TRAINEE)
+_MODEL = ActorRef(actor_type=ActorType.MODEL)
 _SYSTEM = ActorRef(actor_type=ActorType.SYSTEM)
 _SIMULATION = ActorRef(actor_type=ActorType.SIMULATION)
 
@@ -141,6 +147,129 @@ def user_speech_ended_event(
             "is_barge_in": turn.is_barge_in,
         },
         correlation_id=turn.turn_id,
+    )
+
+
+def asr_partial_event(
+    *,
+    call_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    text: str,
+    start_ms: int,
+    end_ms: int,
+    asr_provider: str,
+    asr_model: str,
+    stability: float | None = None,
+) -> DomainEvent:
+    """`ASR_PARTIAL` — an incremental hypothesis, and nothing more (§4.5, SPEC §17).
+
+    A partial is an **event only**. It never becomes a `transcript_segments` row, never reaches
+    the interpreter, never touches the incident card (SPEC §9, §42 item 4) and never counts
+    toward the turn's latency: SPEC §17 says the response begins from the finalized turn. Whether
+    it is produced at all is `VoiceTurnConfig.partial_asr_enabled`; whether the trainee is shown
+    it is `SessionPolicy.show_asr_partials`, enforced by `app.application.realtime.redaction`.
+
+    `stability` is §4.5's field and has no §10.13 catalog key, so it rides beside the catalogued
+    ones like `turn_id` does.
+    """
+    return _event(
+        EventType.ASR_PARTIAL,
+        _MODEL,
+        offset_ms,
+        {
+            "call_id": call_id,
+            "turn_index": turn_index,
+            "text": text,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "asr_provider": asr_provider,
+            "asr_model": asr_model,
+            "turn_id": str(turn_id),
+            "stability": stability,
+        },
+        correlation_id=turn_id,
+    )
+
+
+def asr_final_event(
+    *,
+    call_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    turn_index: int,
+    offset_ms: int,
+    transcript_segment_id: uuid.UUID,
+    audio_segment_id: uuid.UUID | None,
+    text: str,
+    start_ms: int,
+    end_ms: int,
+    confidence: float | None,
+    asr_provider: str,
+    asr_model: str,
+) -> DomainEvent:
+    """`ASR_FINAL` — once per surviving turn (§4.5).
+
+    This is the event the `begin_interview` guard watches (`10-domain-model.md` §10.8): the first
+    one moves the operator stage CONNECTED → INTERVIEW. It does so through the simulation runner's
+    existing `after_tick` hook and `build_guard_runtime`, never by this module firing a trigger —
+    appending an event and deciding a state are two different jobs (D5, D7).
+    """
+    return _event(
+        EventType.ASR_FINAL,
+        _MODEL,
+        offset_ms,
+        {
+            "call_id": call_id,
+            "turn_index": turn_index,
+            "transcript_segment_id": str(transcript_segment_id),
+            "audio_segment_id": None if audio_segment_id is None else str(audio_segment_id),
+            "text": text,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "confidence": confidence,
+            "asr_provider": asr_provider,
+            "asr_model": asr_model,
+            "turn_id": str(turn_id),
+        },
+        correlation_id=turn_id,
+    )
+
+
+def model_error_event(
+    *,
+    offset_ms: int,
+    component: str,
+    provider: str,
+    model: str,
+    error_code: str,
+    message: str,
+    recoverable: bool,
+    turn_index: int | None,
+    turn_id: uuid.UUID | None = None,
+) -> DomainEvent:
+    """`MODEL_ERROR` — a model call failed and the turn ends quietly (SPEC §42 item 14).
+
+    The payload is §10.13's row. What matters as much as the keys is what this event does *not*
+    do: it changes no session state, rolls back no card, discards no earlier event and deletes no
+    `audio_segments` row. `60-inference-ops.md` puts it plainly — a failing model "never calls a
+    session use case, aborts a session, rolls back an incident or clears a card".
+    """
+    return _event(
+        EventType.MODEL_ERROR,
+        _SYSTEM,
+        offset_ms,
+        {
+            "component": component,
+            "provider": provider,
+            "model": model,
+            "error_code": error_code,
+            "message": message,
+            "recoverable": recoverable,
+            "turn_index": turn_index,
+            "turn_id": None if turn_id is None else str(turn_id),
+        },
+        correlation_id=turn_id,
     )
 
 
@@ -240,13 +369,25 @@ class VoiceEventAppender:
         events: Sequence[DomainEvent],
         *,
         segments: Sequence[StoredAudioSegment] = (),
+        transcript_segments: Sequence[StoredTranscriptSegment] = (),
+        dialogue_turns: Sequence[DialogueTurnUpsert] = (),
     ) -> list[SessionEvent]:
-        """Append the events and the audio-segment rows in one transaction."""
-        if not events and not segments:
+        """Append the events and every row that must commit with them, in one transaction.
+
+        §9.1's ordering guarantee covers the transcript exactly as it covers the recording index:
+        the `transcript_segments` row and the `ASR_FINAL` that names it are one write, so
+        `ASR_FINAL.transcript_segment_id` never points at a row that is not there — and a failure
+        on either side leaves neither (E12's atomicity test asserts both directions).
+        """
+        if not events and not segments and not transcript_segments and not dialogue_turns:
             return []
         async with self._uow_factory() as uow:
             if segments:
                 await uow.audio_segments.add_all(segments)
+            for segment in transcript_segments:
+                await uow.transcript_segments.add(segment)
+            for turn in dialogue_turns:
+                await uow.dialogue_turns.upsert(turn)
             appended = await uow.events.append(self._session_id, events)
             await uow.commit()
         return appended

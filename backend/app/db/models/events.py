@@ -28,6 +28,10 @@ from app.domain.events.types import EventType
 SPEAKERS: tuple[str, ...] = ("TRAINEE", "CALLER")
 #: `inference_metrics.component` (SPEC §27); likewise literal in the HLD.
 INFERENCE_COMPONENTS: tuple[str, ...] = ("ASR", "LLM_INTERPRETER", "LLM_GENERATOR", "TTS", "VAD")
+#: `inference_metrics.status` — `50-voice-pipeline.md` §2.6's four `InferenceMetric.status`
+#: values. §20.6's column list predates §2.6's type and does not name the column; see E12-A's
+#: report under "HLD gaps" and migration `0004_inference_metric_status`.
+METRIC_STATUSES: tuple[str, ...] = ("OK", "TIMEOUT", "ERROR", "CANCELLED")
 #: `recording_purge_audit.reason` (SPEC §41, D9); likewise literal in the HLD.
 PURGE_REASONS: tuple[str, ...] = ("RETENTION_WINDOW", "MANUAL_REQUEST", "ADMIN_DELETE")
 
@@ -233,9 +237,12 @@ class InferenceMetric(Base):
     gpu_memory_mb = sa.Column(sa.Integer(), nullable=True)
     fallback_count = sa.Column(sa.SmallInteger(), nullable=False, server_default=sa.text("0"))
     retry_count = sa.Column(sa.SmallInteger(), nullable=False, server_default=sa.text("0"))
+    status = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'OK'"))
+    error_kind = sa.Column(sa.Text(), nullable=True)
 
     __table_args__ = (
         sa.UniqueConstraint("request_id", name="uq_inference_metrics_request"),
         sa.Index("ix_inference_metrics_session_component", "session_id", "component", "started_at"),
         sa.CheckConstraint(enum_check("component", INFERENCE_COMPONENTS), name="component"),
+        sa.CheckConstraint(enum_check("status", METRIC_STATUSES), name="status"),
     )

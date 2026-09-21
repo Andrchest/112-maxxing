@@ -187,9 +187,9 @@ class VoiceTurnConfig(BaseModel):
 def voice_turn_config_from_settings(settings: Settings) -> VoiceTurnConfig:
     """Build the config from the `SIM_VOICE_*` environment block (§4.1, D9).
 
-    TODO(E12): the active model profile's `voice_turn.*` block (HLD `60-inference-ops.md` §2)
-    overlays these values once `app.config.profile.ModelProfile` exists; the env block is the
-    base layer and stays the source for a process that runs without a profile.
+    TODO(E18): the active model profile's `voice_turn.*` block (HLD `60-inference-ops.md` §2)
+    overlays these values once `app.config.profile.ModelProfile` exists — profiles are E18's
+    epic. The env block is the base layer and stays the source for a process without a profile.
     """
     return VoiceTurnConfig(
         speech_start_threshold=settings.voice_speech_start_threshold,

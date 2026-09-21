@@ -22,12 +22,31 @@ dependencies = [
     "numpy",
 ]
 
-# Heavy ML dependencies are optional extras (D1); adapters import them lazily.
-# Left empty-but-named here — filled in E12 (ASR/VAD) and E14 (TTS).
+# Heavy ML dependencies are optional extras (D1); adapters import them lazily (E12: warm_up()/
+# constructor only, never at module import — `import app.inference.asr`/`app.inference.vad` must
+# work in the plain dev venv without any of these installed).
 [project.optional-dependencies]
-asr-gigaam = []
-asr-whisper = []
-vad-silero = []
+# GigaAMProvider (backend/app/inference/asr/gigaam_provider.py): loads the local HF-format
+# checkpoint (`AutoModel.from_pretrained(..., trust_remote_code=True)`), which pulls in torch,
+# torchaudio (imported by modeling_gigaam.py even though we bypass its ffmpeg-based `transcribe`),
+# transformers, hydra-core/omegaconf (the model config is a Hydra/OmegaConf tree) and
+# sentencepiece (the v3_e2e_ctc tokenizer; v3_ctc is char-vocab and does not need it, but both
+# checkpoints share the same modeling_gigaam.py import list).
+asr-gigaam = [
+    # >=2.6 is a hard floor, not a preference: transformers' `check_torch_load_is_safe` (CVE-2025-32434)
+    # refuses to `torch.load` this checkpoint's legacy-pickle `pytorch_model.bin` on any older torch,
+    # even with `weights_only=True` — measured against this checkpoint on 2026-09-21.
+    "torch>=2.6,<2.9",
+    "torchaudio>=2.6,<2.9",
+    "transformers>=4.44,<5",
+    "hydra-core>=1.3,<2",
+    "omegaconf>=2.3,<3",
+    "sentencepiece>=0.2,<0.3",
+]
+# FasterWhisperProvider (backend/app/inference/asr/faster_whisper_provider.py): optional fallback.
+asr-whisper = ["faster-whisper>=1.0,<2"]
+# SileroVAD (backend/app/inference/vad/silero_vad.py): onnxruntime CPU execution provider only.
+vad-silero = ["onnxruntime>=1.19,<2"]
 tts-piper = []
 tts-qwen3 = []
 tts-chatterbox = []
