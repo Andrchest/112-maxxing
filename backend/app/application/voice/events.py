@@ -20,9 +20,10 @@ which is what correlates an event with an in-flight response across processes). 
 would break a documented consumer. See this task's report under "HLD gaps".
 
 This module emits the boundary signals, the transport transitions, the end of the call and — from
-E12 — the ASR events and `MODEL_ERROR`. `DIALOGUE_INTERPRETED`, `FACT_GATE_EVALUATED`, `CALLER_*`
-and `FACTS_DELIVERED` are TODO(E13) / TODO(E14): the epics that first produce the fact are the
-epics that get to say what it is.
+E12 — the ASR events and `MODEL_ERROR`. The dialogue-chain payloads (`DIALOGUE_INTERPRETED`,
+`FACT_GATE_EVALUATED`, `CALLER_RESPONSE_PLANNED`, `CALLER_RESPONSE_GENERATED`) live beside the
+stage that produces them, in `app.application.dialogue.events` (E13-B2); `CALLER_TTS_*` and
+`FACTS_DELIVERED` are TODO(E14), the epic that first produces the fact.
 """
 
 from __future__ import annotations

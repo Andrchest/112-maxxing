@@ -66,12 +66,14 @@ from app.application.voice.partial_asr import PartialAsrEmitter
 from app.application.voice.recorder import SessionRecorder
 from app.application.voice.resampler import Resampler
 from app.application.voice.turn_detector import DetectedTurn, TurnDetector
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import RoleStageId, SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
 
 __all__ = [
     "NullTurnResponder",
     "ShowAsrPartials",
+    "TranscribedTurn",
+    "TranscribedTurnResponder",
     "TurnContext",
     "TurnPipeline",
     "TurnResponder",
@@ -131,6 +133,45 @@ class TurnResponder(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class TranscribedTurn:
+    """A finalized trainee turn **plus its text** — the seam between ASR and the dialogue chain.
+
+    `TurnResponder.respond` hands over a `DetectedTurn`, which is audio and timing and nothing
+    else, so the stage behind ASR could not start: it would have to transcribe the audio a second
+    time to learn what was said. This carries the values `AsrTurnResponder` already has after its
+    one transaction, so the chain starts from the *same* transcript the `ASR_FINAL` event and the
+    `transcript_segments` row carry, and can never drift from them (R1).
+
+    `role_stage_id` is optional for the same reason `AsrTurnResponder._persist` tolerates a
+    missing one: §20.6 makes `dialogue_turns.role_stage_id` NOT NULL, and a session with no role
+    stage gets a transcript and an event but no turn row. The dialogue chain still runs — losing
+    a read-model row must not lose the caller's answer.
+    """
+
+    turn: DetectedTurn
+    text: str
+    confidence: float | None
+    turn_index: int
+    role_stage_id: RoleStageId | None
+    transcript_segment_id: uuid.UUID | None
+
+
+@runtime_checkable
+class TranscribedTurnResponder(Protocol):
+    """What `AsrTurnResponder` hands a non-empty final transcript to (§3.7, R1).
+
+    The second link of the responder chain: E13's interpret → gate → generate → validate, and
+    behind it E14's TTS. Like `TurnResponder` it is cancelled — not asked to stop — when a newer
+    turn arrives, so an implementation must treat `asyncio.CancelledError` as "the trainee is
+    talking again" (§6.1 step 2).
+    """
+
+    async def respond_transcribed(self, transcribed: TranscribedTurn, context: TurnContext) -> None:
+        """Produce the caller's answer to the transcribed turn."""
+        ...
+
+
 class NullTurnResponder:
     """A `TurnResponder` that does nothing (D13, E11).
 
@@ -142,7 +183,10 @@ class NullTurnResponder:
     E12 replaced it in the wiring with `AsrTurnResponder`; it stays because a pipeline test that
     is about the *pipeline* should not need a model, fake or otherwise.
 
-    TODO(E13): the interpreter, the Fact Access Gate, the generator and the validator.
+    E13 put the interpreter → Fact Access Gate → generator → validator chain behind
+    `AsrTurnResponder.next_stage` (`app.application.dialogue.responder.DialogueResponder`), not
+    here: this responder is the *pipeline's* stub and stays modelless on purpose.
+
     TODO(E14): streaming TTS and the outbound half of barge-in (§6.1 steps 2, 5, 6).
     """
 

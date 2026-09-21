@@ -672,6 +672,7 @@ def build_fact_definitions(version: ScenarioVersion) -> dict[str, FactDefinition
             aliases_ru=disclosure_spec.aliases_ru,
             categories=disclosure_spec.categories,
             available_after=disclosure_spec.available_after,
+            enum_name=world_spec.enum_name,
         )
     return definitions
 

@@ -50,7 +50,11 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S, VoiceTurnConfig
 from app.application.voice.events import asr_final_event, model_error_event
 from app.application.voice.turn_detector import DetectedTurn
-from app.application.voice.turn_pipeline import TurnContext, TurnResponder
+from app.application.voice.turn_pipeline import (
+    TranscribedTurn,
+    TranscribedTurnResponder,
+    TurnContext,
+)
 from app.domain.common.ids import RoleStageId, SessionId
 
 __all__ = [
@@ -119,7 +123,7 @@ class AsrTurnResponder:
         config: VoiceTurnConfig,
         stage_resolver: SessionStageResolver,
         timeout_ms: int,
-        next_stage: TurnResponder | None = None,
+        next_stage: TranscribedTurnResponder | None = None,
     ) -> None:
         self._asr = asr
         self._metrics = metrics
@@ -127,15 +131,16 @@ class AsrTurnResponder:
         self._config = config
         self._stage_resolver = stage_resolver
         self._timeout_ms = timeout_ms
-        # TODO(E13): the interpreter → Fact Access Gate → generator → validator chain plugs in
-        # here. With `None` the turn stops after `ASR_FINAL`, which is E12's whole scope: SPEC
-        # §16 fixes the stage order, and a responder that invented a caller answer would be
-        # exactly the "LLM is the simulation" failure SPEC §2 forbids.
+        # E13's `DialogueResponder` (interpreter → Fact Access Gate → generator → validator) is
+        # what goes here; with `None` the turn stops after `ASR_FINAL`. SPEC §16 fixes the stage
+        # order, and a responder that invented a caller answer would be exactly the "LLM is the
+        # simulation" failure SPEC §2 forbids.
+        # TODO(E14): the TTS stage sits behind E13's, through `CallerSpeechSink`.
         self._next_stage = next_stage
 
     @property
-    def next_stage(self) -> TurnResponder | None:
-        """The stage this responder hands a non-empty final turn to, if any."""
+    def next_stage(self) -> TranscribedTurnResponder | None:
+        """The stage this responder hands a non-empty final, transcribed turn to, if any (R1)."""
         return self._next_stage
 
     async def respond(self, turn: DetectedTurn, context: TurnContext) -> None:
@@ -192,7 +197,7 @@ class AsrTurnResponder:
             )
             return
 
-        await self._persist(turn, context, result)
+        transcribed = await self._persist(turn, context, result)
         await self._record(
             context,
             turn,
@@ -209,12 +214,19 @@ class AsrTurnResponder:
             return
         next_stage = self._next_stage
         if next_stage is not None:
-            await next_stage.respond(turn, context)
+            await next_stage.respond_transcribed(transcribed, context)
 
     # -- the one transaction ------------------------------------------------------------------
 
-    async def _persist(self, turn: DetectedTurn, context: TurnContext, result: AsrResult) -> None:
-        """Transcript row + `dialogue_turns` upsert + `ASR_FINAL`, in one Unit of Work (§9.1)."""
+    async def _persist(
+        self, turn: DetectedTurn, context: TurnContext, result: AsrResult
+    ) -> TranscribedTurn:
+        """Transcript row + `dialogue_turns` upsert + `ASR_FINAL`, in one Unit of Work (§9.1).
+
+        Returns the `TranscribedTurn` the next stage is handed (R1): the same text, confidence,
+        turn index, role stage and transcript id this transaction just committed, so the dialogue
+        chain and the audit record can never disagree about what was said.
+        """
         transcript_segment_id = uuid.uuid4()
         audio_segment_id = context.audio_segment_ids.get(turn.turn_id)
         segment = StoredTranscriptSegment(
@@ -254,8 +266,9 @@ class AsrTurnResponder:
                     operator_transcript_segment_id=transcript_segment_id,
                     correlation_id=turn.turn_id,
                 )
-                # TODO(E13): `interpretation`, `gate_output` and `fallback_used` on this row.
-                # TODO(E14): `caller_transcript_segment_id`, `planned_text`, `delivered_text`,
+                # E13 fills `interpretation`, `gate_output`, `planned_text` and `fallback_used`
+                # through `DialogueTurnRepository.set_dialogue_outcome` once the chain has run.
+                # TODO(E14): `caller_transcript_segment_id`, `delivered_text`,
                 # `interrupted` and `speech_end_to_first_audio_ms`.
             )
         await context.appender.append(
@@ -277,6 +290,14 @@ class AsrTurnResponder:
             ],
             transcript_segments=[segment],
             dialogue_turns=turns,
+        )
+        return TranscribedTurn(
+            turn=turn,
+            text=result.text,
+            confidence=result.confidence,
+            turn_index=turn.turn_index,
+            role_stage_id=role_stage_id,
+            transcript_segment_id=transcript_segment_id,
         )
 
     # -- the failure path ---------------------------------------------------------------------

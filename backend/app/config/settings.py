@@ -140,14 +140,43 @@ class Settings(BaseSettings):
     #: Compose-internal service names `validate_llm_base_url` (SPEC §41) accepts besides loopback.
     llm_allowed_internal_hosts: list[str] = Field(default_factory=lambda: ["llama-server"])
     #: §5.1/§5.3 interpreter call params not fixed by the HLD text itself.
-    llm_interpreter_max_tokens: int = 200
+    #: E13-B3, CHANGE item 4: 200 -> 138. Measured: with compact-JSON + GBNF-grammar output, the
+    #: eval set's completion-token count across all 4 models run
+    #: (`benchmarks/results/interpreter_eval/20260921T180708Z/`, n=148 calls) has p99 = 110.3
+    #: tokens (max observed 132); 110.3 * 1.25 = 137.9, rounded up to 138. See this task's report.
+    llm_interpreter_max_tokens: int = 138
     llm_interpreter_timeout_ms: int = 2500
+    #: E13-B3, CHANGE item 1: GBNF `grammar` (generated, `app.application.dialogue.grammar`) when
+    #: true (the default); `response_format=json_schema` when false. Both are enforced compact
+    #: JSON on the wire; this only chooses the mechanism.
+    llm_interpreter_use_grammar: bool = True
     #: §5.2/§5.3 caller-generator call params (E13-B2 reads these; E13-B1 only declares them so
     #: `.env.example` documents the whole `SIM_LLM_*` family in one place).
+    #: E13-B4, CHANGE item 3: measured, not changed. The 42-case eval set's completion-token count
+    #: across 3 real models (`benchmarks/results/caller_eval/`, n=126 calls, max_tokens=200
+    #: headroom) has p99 = 167.5, but that number is inflated by 2 degenerate `SCHEMA_INVALID`
+    #: completions from the smallest model that ran to the cap regardless of its size (garbage
+    #: output, not genuine content — Qwen3.5-2B/4B never came close to 200 tokens on any of the 42
+    #: cases). Excluding those 2: n=124, max=70, p99=57.5, `57.5 * 1.25 = 71.9` — already *below*
+    #: 80. See this task's report; `80` is kept.
     llm_generator_max_tokens: int = 80
     llm_generator_timeout_ms: int = 3000
     llm_generator_temperature: float = 0.7
     llm_generator_top_p: float = 0.9
+    #: E13-B4, CHANGE item 3: GBNF `grammar` (generated, `app.application.dialogue.grammar.
+    #: build_caller_response_grammar`) when true (the default); `response_format=json_schema` when
+    #: false — the same lever `llm_interpreter_use_grammar` is for the interpreter.
+    llm_generator_use_grammar: bool = True
+    # -- E13-B2: the caller prompt builder and the response validator (§5.2, §5.3, §7) --------
+    #: §5.2's turn window: "the last 6 turns … but never drops below 4" (valid 4-6, SPEC §22).
+    dialogue_window_turns: int = 6
+    #: §7.1's character guard, which is also `CALLER_JSON_SCHEMA`'s `maxLength`.
+    caller_max_chars: int = 400
+    #: §7.1 names no sentence limit; SPEC §23's "ОДНОЙ короткой репликой" is what this bounds.
+    #: See the HLD gap in `app.application.dialogue.validator`.
+    caller_max_sentences: int = 3
+    #: §5.3's `prompt_token_budget` — a hard refusal, not a truncation.
+    caller_prompt_token_budget: int = 2700
     # -- E11-B: the LiveKit access tokens the backend mints (D9, `openapi.yaml`) ---------------
     #: `createVoiceToken` lifetime. Ten minutes: long enough to join a call that is still ringing,
     #: short enough that a leaked token is worthless. The token is re-minted, not refreshed.

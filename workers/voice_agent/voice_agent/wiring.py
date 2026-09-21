@@ -18,12 +18,40 @@ belongs to the backend's use cases.
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
+from app.application.dialogue.dialogue_context import DialogueContextLoader
+from app.application.dialogue.fallbacks import FallbackTemplates
+from app.application.dialogue.generator import (
+    CALLER_JSON_SCHEMA,
+    CallerResponseGenerator,
+    generator_config_from_settings,
+)
+from app.application.dialogue.interpreter import (
+    DialogueInterpreter,
+    interpreter_config_from_settings,
+)
+from app.application.dialogue.prompt_builder import (
+    CallerPromptBuilder,
+    caller_prompt_config_from_settings,
+)
+from app.application.dialogue.responder import DialogueResponder
+from app.application.dialogue.speech_sink import CallerSpeechSink, NullCallerSpeechSink
+from app.application.dialogue.validator import ResponseValidator, validator_config_from_settings
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
 from app.application.ports.clock import Clock
+from app.application.ports.llm import (
+    ChatMessage,
+    JsonSchemaSpec,
+    LLMClient,
+    LlmCompletion,
+    LlmStreamDelta,
+    LlmUsage,
+)
 from app.application.ports.metrics_recorder import MetricsRecorder
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.voice.asr_responder import (
@@ -35,20 +63,35 @@ from app.application.voice.events import VoiceEventAppender
 from app.application.voice.recorder import RecordingPaths, SessionRecorder
 from app.application.voice.resampler import Resampler
 from app.application.voice.turn_detector import TurnDetector
-from app.application.voice.turn_pipeline import ShowAsrPartials, TurnPipeline, TurnResponder
+from app.application.voice.turn_pipeline import (
+    ShowAsrPartials,
+    TranscribedTurnResponder,
+    TurnPipeline,
+    TurnResponder,
+)
 from app.config.settings import Settings
 from app.domain.common.ids import SessionId
 from app.domain.session.policy import SESSION_POLICIES
 from app.infrastructure.metrics import PgMetricsRecorder
 from app.infrastructure.recording.wav_writer import WavFileSink
 
-from voice_agent.providers import VAD_ENERGY, VAD_SILERO, build_asr, build_vad
+from voice_agent.providers import (
+    LLM_FAKE,
+    VAD_ENERGY,
+    VAD_SILERO,
+    build_asr,
+    build_llm,
+    build_vad,
+)
 
 __all__ = [
     "VAD_ENERGY",
     "VAD_SILERO",
+    "ScriptedFakeDialogueLLM",
     "VoiceAgentDeps",
     "build_asr",
+    "build_dialogue_responder",
+    "build_llm",
     "build_metrics",
     "build_pipeline",
     "build_responder",
@@ -149,13 +192,13 @@ def build_responder(
     *,
     asr: ASRProvider,
     metrics: MetricsRecorder | None = None,
-    next_stage: TurnResponder | None = None,
+    next_stage: TranscribedTurnResponder | None = None,
 ) -> AsrTurnResponder:
     """The head of the responder chain: ASR (§3.7, §4.5).
 
-    `next_stage` is where E13 attaches the interpreter → gate → generator → validator chain and
-    E14 the TTS playback behind it. With `None` the turn ends after `ASR_FINAL`, which is exactly
-    what E12 owns.
+    `next_stage` is E13's `DialogueResponder` (interpreter → gate → generator → validator), and
+    E14's TTS sits behind it through `CallerSpeechSink`. With `None` the turn ends after
+    `ASR_FINAL`, which is exactly what E12 owns.
     """
     return AsrTurnResponder(
         asr=asr,
@@ -165,6 +208,168 @@ def build_responder(
         stage_resolver=UnitOfWorkSessionStageResolver(deps.uow_factory),
         timeout_ms=deps.settings.asr_timeout_ms,
         next_stage=next_stage,
+    )
+
+
+class ScriptedFakeDialogueLLM:
+    """A settings-free `LLMClient` that answers both dialogue calls *validly* (D13, R10).
+
+    `FakeLLM` is a script reader with an empty script by default, so a gate run with
+    `SIM_LLM_PROVIDER=fake` would see an empty completion, fall back at the interpreter and fall
+    back again at the generator — a chain that is wired but never actually exercised. This
+    decorator gives the fake a default script instead: a schema-valid `InterpretedUtterance` for
+    an interpreter call and a schema-valid, validator-clean caller reply for a generation call, so
+    the whole chain runs end to end with no model, no weights and no settings.
+
+    It lives here rather than in `app.inference.llm.fake_llm` deliberately: the fake is a *test
+    double* owned by the inference package, and a default script is a property of how this process
+    wires it, not of the double.
+    """
+
+    def __init__(self, inner: LLMClient) -> None:
+        self._inner = inner
+
+    @property
+    def model_name(self) -> str:
+        """The wrapped fake's model name."""
+        return self._inner.model_name
+
+    @property
+    def n_ctx(self) -> int:
+        """The wrapped fake's context size."""
+        return self._inner.n_ctx
+
+    async def warm_up(self) -> None:
+        """Warm the wrapped fake up."""
+        await self._inner.warm_up()
+
+    async def cancel(self, request_id: str) -> None:
+        """Cancel on the wrapped fake."""
+        await self._inner.cancel(request_id)
+
+    async def close(self) -> None:
+        """Close the wrapped fake."""
+        await self._inner.close()
+
+    async def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        request_id: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float = 0.95,
+        response_format: JsonSchemaSpec | None = None,
+        stop: Sequence[str] = (),
+        extra_body: dict[str, Any] | None = None,
+        timeout_ms: int,
+    ) -> LlmCompletion:
+        """A valid answer for whichever of the two dialogue calls this is."""
+        await self._inner.complete(
+            messages,
+            request_id=request_id,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            response_format=response_format,
+            stop=stop,
+            extra_body=extra_body,
+            timeout_ms=timeout_ms,
+        )
+        text = _default_fake_answer(response_format)
+        return LlmCompletion(
+            text=text,
+            finish_reason="stop",
+            usage=LlmUsage(prompt_tokens=0, completion_tokens=len(text) // 3),
+            model=self._inner.model_name,
+            request_id=request_id,
+        )
+
+    def stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        request_id: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float = 0.95,
+        response_format: JsonSchemaSpec | None = None,
+        stop: Sequence[str] = (),
+        extra_body: dict[str, Any] | None = None,
+        timeout_ms: int,
+    ) -> AsyncIterator[LlmStreamDelta]:
+        """One delta carrying the whole default answer."""
+
+        async def _one() -> AsyncIterator[LlmStreamDelta]:
+            yield LlmStreamDelta(text=_default_fake_answer(response_format), index=0, is_first=True)
+
+        return _one()
+
+
+#: The `JsonSchemaSpec.name` `CallerResponseGenerator` sends (`generator.py`).
+_CALLER_SCHEMA_NAME = "caller_utterance"
+#: A schema-valid `InterpretedUtterance`: it asks for nothing, so the gate's spontaneous pass is
+#: what decides the turn — the deterministic half of the chain, which is what a fake should drive.
+_DEFAULT_INTERPRETATION = (
+    '{"speech_act": "QUESTION", "requested_facts": [], "operator_assertions": [], '
+    '"confirmation_targets": [], "semantic_confidence": 0.5}'
+)
+#: A caller reply that passes every §7 check: no number, no name, no Latin run, one sentence.
+_DEFAULT_CALLER_UTTERANCE = '{"utterance": "Да, я слушаю."}'
+
+
+def _default_fake_answer(response_format: JsonSchemaSpec | None) -> str:
+    if response_format is not None and response_format.name == _CALLER_SCHEMA_NAME:
+        return _DEFAULT_CALLER_UTTERANCE
+    if response_format is not None and response_format.schema is CALLER_JSON_SCHEMA:
+        return _DEFAULT_CALLER_UTTERANCE
+    return _DEFAULT_INTERPRETATION
+
+
+def build_dialogue_llm(deps: VoiceAgentDeps) -> LLMClient:
+    """`SIM_LLM_PROVIDER`'s client; the fake gets `ScriptedFakeDialogueLLM`'s default script."""
+    llm = build_llm(deps.settings)
+    if deps.settings.llm_provider == LLM_FAKE:
+        return ScriptedFakeDialogueLLM(llm)
+    return llm
+
+
+def build_dialogue_responder(
+    deps: VoiceAgentDeps,
+    *,
+    llm: LLMClient | None = None,
+    metrics: MetricsRecorder | None = None,
+    sink: CallerSpeechSink | None = None,
+) -> DialogueResponder:
+    """The whole E13 chain: interpreter → Fact Access Gate → generator → validator → §7.8 (R10).
+
+    Every stage is its own object and every literal comes from `Settings` (§5.1, §5.2, §5.3, §7).
+    The Fact Access Gate is not built here because it is a pure function, not a collaborator —
+    `DialogueResponder` calls `evaluate_fact_access` directly, which is what keeps "the gate is
+    deterministic domain code" (SPEC §21) true rather than configurable.
+    """
+    settings = deps.settings
+    client = llm if llm is not None else build_dialogue_llm(deps)
+    recorder = metrics if metrics is not None else build_metrics(deps)
+    validator = ResponseValidator(validator_config_from_settings(settings))
+    return DialogueResponder(
+        loader=DialogueContextLoader(
+            deps.uow_factory, deps.clock, window_turns=settings.dialogue_window_turns
+        ),
+        interpreter=DialogueInterpreter(
+            client, recorder, config=interpreter_config_from_settings(settings)
+        ),
+        generator=CallerResponseGenerator(
+            client,
+            recorder,
+            CallerPromptBuilder(caller_prompt_config_from_settings(settings)),
+            validator,
+            config=generator_config_from_settings(settings),
+        ),
+        fallbacks=FallbackTemplates(),
+        # TODO(E14): `TtsSpeechSink` replaces this one; see `NullCallerSpeechSink`'s docstring.
+        sink=sink if sink is not None else NullCallerSpeechSink(),
+        uow_factory=deps.uow_factory,
     )
 
 
@@ -196,13 +401,14 @@ def build_pipeline(
     started_at: datetime | None = None,
     responder: TurnResponder | None = None,
     asr: ASRProvider | None = None,
+    llm: LLMClient | None = None,
     record: bool = True,
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
 
-    `asr` is built from `SIM_ASR_PROVIDER` when the caller does not supply one; the voice-agent
-    process builds it **once** and passes it here so that a long-lived model is loaded per
-    process, not per call.
+    `asr` and `llm` are built from `SIM_ASR_PROVIDER` / `SIM_LLM_PROVIDER` when the caller does
+    not supply them; the voice-agent process builds each **once** and passes it here so that a
+    long-lived model is loaded per process, not per call.
     """
     vad = build_vad(deps.settings, deps.config)
     provider = asr if asr is not None else build_asr(deps.settings)
@@ -224,7 +430,13 @@ def build_pipeline(
             target_sample_rate=deps.config.sample_rate, frame_samples=vad.frame_samples
         ),
         recorder=build_recorder(deps, session_id=session_id, call_id=call_id) if record else None,
-        responder=responder if responder is not None else build_responder(deps, asr=provider),
+        responder=(
+            responder
+            if responder is not None
+            else build_responder(
+                deps, asr=provider, next_stage=build_dialogue_responder(deps, llm=llm)
+            )
+        ),
         asr=provider,
         show_asr_partials=show_asr_partials(deps),
     )

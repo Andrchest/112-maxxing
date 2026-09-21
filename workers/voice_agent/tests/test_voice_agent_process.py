@@ -220,7 +220,7 @@ async def test_the_heartbeat_key_is_the_documented_one_with_the_documented_ttl()
     await agent.publish_health()
 
     assert agent.health_key() == "voice:health:vad"
-    assert set(redis.values) == {"voice:health:vad", "voice:health:asr"}
+    assert set(redis.values) == {"voice:health:vad", "voice:health:asr", "voice:health:llm"}
     assert redis.expiries["voice:health:vad"] == agent._deps.settings.voice_health_ttl_s == 15
     assert agent._deps.settings.voice_health_heartbeat_s == 5
     payload = json.loads(redis.values["voice:health:vad"])
@@ -230,6 +230,11 @@ async def test_the_heartbeat_key_is_the_documented_one_with_the_documented_ttl()
     assert asr_payload["state"] == STATE_READY
     assert asr_payload["provider"] == "fake"
     assert asr_payload["model_version"] == "fake-1"
+    # E13-B2: §4.2's third warm-up step publishes its own key, like VAD and ASR do.
+    llm_payload = json.loads(redis.values["voice:health:llm"])
+    assert llm_payload["state"] == STATE_READY
+    assert llm_payload["provider"] == "fake"
+    assert llm_payload["model_version"] == "fake-llm"
 
 
 async def test_a_component_is_not_ready_until_it_has_been_warmed_up() -> None:
@@ -289,7 +294,7 @@ async def test_clearing_the_health_keys_is_part_of_a_graceful_shutdown() -> None
     await agent.clear_health()
 
     assert redis.values == {}
-    assert sorted(redis.deleted) == ["voice:health:asr", "voice:health:vad"]
+    assert sorted(redis.deleted) == ["voice:health:asr", "voice:health:llm", "voice:health:vad"]
 
 
 async def test_a_repeated_voice_join_does_not_start_a_second_pipeline() -> None:

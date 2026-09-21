@@ -63,6 +63,12 @@ class FactDefinition(BaseModel):
     aliases_ru: tuple[str, ...] = ()
     categories: tuple[str, ...] = ()
     available_after: AvailableAfter | None = None
+    enum_name: str | None = None
+    """`world_truth.facts[fact_id].enum_name` (`WorldFactSpec.enum_name`, §30.2), joined through so
+    an `ENUM`-typed value can be rendered into Russian (`app.domain.facts.value_labels_ru`) without
+    every reader of a `FactDefinition` needing the raw `ScenarioVersion` back. E13-B4 item 0 HLD
+    gap: §10.4's join table does not list this field; added because `evaluate_fact_access` has no
+    other route to a fact's `enum_name` — see that task's report."""
 
 
 class FactCatalogEntry(BaseModel):

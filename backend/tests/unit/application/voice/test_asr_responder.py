@@ -18,7 +18,11 @@ from app.application.voice.asr_responder import AsrTurnResponder, audio_duration
 from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.events import VoiceEventAppender
 from app.application.voice.turn_detector import DetectedTurn, TurnEndReason
-from app.application.voice.turn_pipeline import TurnContext, TurnResponder
+from app.application.voice.turn_pipeline import (
+    TranscribedTurn,
+    TranscribedTurnResponder,
+    TurnContext,
+)
 from app.domain.common.ids import RoleStageId, SessionId
 from app.domain.events.types import EventType
 from app.inference.asr import FakeASR
@@ -31,13 +35,22 @@ TEXT_RU = "Горит квартира на пятом этаже"
 
 
 class RecordingNextStage:
-    """A `TurnResponder` that only remembers what it was handed."""
+    """A `TranscribedTurnResponder` that only remembers what it was handed (R1).
+
+    The seam carries the transcript, not just the audio: E13's chain starts from the very text
+    `ASR_FINAL` and the `transcript_segments` row were written from, so the two can never drift.
+    """
 
     def __init__(self) -> None:
-        self.turns: list[DetectedTurn] = []
+        self.handed: list[TranscribedTurn] = []
 
-    async def respond(self, turn: DetectedTurn, context: TurnContext) -> None:
-        self.turns.append(turn)
+    @property
+    def turns(self) -> list[DetectedTurn]:
+        """The `DetectedTurn` of each handover, for the assertions E12 already had."""
+        return [transcribed.turn for transcribed in self.handed]
+
+    async def respond_transcribed(self, transcribed: TranscribedTurn, context: TurnContext) -> None:
+        self.handed.append(transcribed)
 
 
 def a_turn(config: VoiceTurnConfig, *, index: int = 0, speech_ms: int = 640) -> DetectedTurn:
@@ -115,7 +128,7 @@ def make_responder(
     clock: FakeClock,
     config: VoiceTurnConfig,
     *,
-    next_stage: TurnResponder | None = None,
+    next_stage: TranscribedTurnResponder | None = None,
     timeout_ms: int = 4000,
     stage: Callable[[SessionId], object] = a_stage,
 ) -> AsrTurnResponder:

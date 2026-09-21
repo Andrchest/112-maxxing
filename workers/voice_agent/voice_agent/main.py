@@ -8,8 +8,9 @@ A separate process, not a backend thread. It:
 2. subscribes to `voice:join` (§40.6, `{session_id, room, call_id}`) and starts one `TurnPipeline`
    per call, plus a `voice:cancel:{session_id}` subscription for that call's hang-up/abort;
 3. warms the inference components up in `60-inference-ops.md` §4.2's **sequential** order — VAD,
-   then ASR — and heartbeats one `voice:health:{service}` key per warmed component with
-   `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A missing key means
+   then ASR, then the LLM — and heartbeats one `voice:health:{service}` key per warmed
+   component with `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A
+   missing key means
    NOT_READY, which is what the backend's `ring` guard reads as "the media plane cannot take a
    call" (E11's ruling on §10.8). A component goes WARMING → READY on a successful warm-up and
    WARMING → NOT_READY on a failure, and it keeps heartbeating NOT_READY rather than going
@@ -21,10 +22,10 @@ A separate process, not a backend thread. It:
 The agent owns no domain rule (D9). It never decides a session's state; it produces audio,
 recordings and events.
 
-`voice:health:{llm,tts}` are deliberately still absent: §4.2's sequence has four steps and this
-process owns two of them today. Publishing READY for a component that does not exist would be a
-lie the `ring` guard then trusts, so the LLM and TTS keys arrive with the epics that bring the
-components — TODO(E13) for `llm`, TODO(E14) for `tts`.
+`voice:health:tts` is deliberately still absent: §4.2's sequence has four steps and this process
+owns three of them today. Publishing READY for a component that does not exist would be a lie the
+`ring` guard then trusts, so the TTS key arrives with the epic that brings the component —
+TODO(E14).
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from typing import Any
 
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
+from app.application.ports.llm import LLMClient
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
 from app.config.settings import Settings, get_settings
@@ -51,7 +53,12 @@ from app.infrastructure.clock import SystemClock
 from app.infrastructure.transport.redis_voice_signals import JOIN_CHANNEL, cancel_channel
 
 from voice_agent.providers import build_asr, build_vad
-from voice_agent.wiring import VoiceAgentDeps, build_pipeline, build_transport
+from voice_agent.wiring import (
+    VoiceAgentDeps,
+    build_dialogue_llm,
+    build_pipeline,
+    build_transport,
+)
 
 __all__ = ["VoiceAgent", "main", "run", "synthetic_tone"]
 
@@ -61,9 +68,10 @@ logger = logging.getLogger(__name__)
 HEALTH_KEY_PREFIX = "voice:health:"
 VAD_SERVICE = "vad"
 ASR_SERVICE = "asr"
+LLM_SERVICE = "llm"
 #: The components this process warms up and heartbeats, in §4.2's warm-up order.
-#: TODO(E13): `"llm"`. TODO(E14): `"tts"`.
-HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE)
+#: TODO(E14): `"tts"`.
+HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE)
 #: `HealthStatus` (§4.1). `FATAL` is E18's admin-clearable state and is not published here.
 STATE_READY = "READY"
 STATE_WARMING = "WARMING"
@@ -128,6 +136,7 @@ class VoiceAgent:
         #: Built once per process, warmed once, shared by every call (§4.2).
         self._vad: VADProvider | None = None
         self._asr: ASRProvider | None = None
+        self._llm: LLMClient | None = None
         #: `service -> (state, provider, model_version, warmup_ms, detail)`, what the heartbeat
         #: republishes every `voice_health_heartbeat_s` seconds (§4.3).
         self._health: dict[str, _ComponentHealth] = {
@@ -196,7 +205,7 @@ class VoiceAgent:
     # -- warm-up (`60-inference-ops.md` §4.2) -------------------------------------------------
 
     async def warm_up(self) -> None:
-        """§4.2's sequence, in order and **not** concurrently: VAD, then ASR.
+        """§4.2's sequence, in order and **not** concurrently: VAD, then ASR, then the LLM.
 
         Sequential because the two share one GPU and one page cache: warming them at the same
         time measures contention rather than readiness, and on the 8 GB dev card it is how an
@@ -210,6 +219,7 @@ class VoiceAgent:
         """
         await self._warm_component(VAD_SERVICE, self._warm_vad)
         await self._warm_component(ASR_SERVICE, self._warm_asr)
+        await self._warm_component(LLM_SERVICE, self._warm_llm)
 
     async def _warm_component(
         self, service: str, warm: Callable[[], Awaitable[tuple[str, str | None]]]
@@ -252,6 +262,20 @@ class VoiceAgent:
         audio = self._warmup_audio(asr.required_sample_rate)
         await asr.transcribe(audio, asr.required_sample_rate, request_id=f"warmup:{ASR_SERVICE}")
         return asr.provider_name, asr.model_version
+
+    async def _warm_llm(self) -> tuple[str, str | None]:
+        """§4.2 step 3: build the dialogue `LLMClient` once per process and warm it up.
+
+        `LLMClient.warm_up()` is the port's own "load and be ready" call; the client — not this
+        process — knows whether that means an HTTP probe against llama-server or nothing at all
+        (`FakeLLM`). A failure leaves `voice:health:llm` at NOT_READY and the process running, the
+        same as a failed ASR warm-up: `REQUIRE_INFERENCE_READY` decides whether a session may
+        start, and crashing here would take the working components down with the broken one.
+        """
+        llm = build_dialogue_llm(self._deps)
+        self._llm = llm
+        await llm.warm_up()
+        return self._deps.settings.llm_provider, llm.model_name
 
     def _warmup_audio(self, sample_rate: int) -> bytes:
         """`SIM_ASR_WARMUP_SAMPLE_PATH`'s PCM, or a synthesised tone (§4.2).
@@ -333,6 +357,7 @@ class VoiceAgent:
             call_id=call_id,
             transport=transport,
             asr=self._asr,
+            llm=self._llm,
         )
         try:
             await transport.connect(call_id)

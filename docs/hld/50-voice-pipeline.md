@@ -54,7 +54,7 @@ backend/app/application/dialogue/generator.py        CallerResponseGenerator, Ca
                                                      GeneratedResponse
 backend/app/application/dialogue/validator.py        ResponseValidator, ValidationVerdict,
                                                      ValidationFailure, FallbackTemplates
-backend/app/domain/dialogue/fact_gate.py             FactAccessGate  (specified in 10-domain-model.md)
+backend/app/domain/facts/gate.py                     FactAccessGate  (specified in 10-domain-model.md)
 workers/voice_agent/transport/livekit_transport.py   LiveKitCallTransport
 workers/voice_agent/transport/sip_transport.py       SipCallTransport  (documented TODO stub)
 workers/voice_agent/audio/resampler.py               Resampler
@@ -629,13 +629,17 @@ the LLM call itself fails (timeout, transport, HTTP 5xx).
 
 ### 3.4 `FactAccessGate`
 
-Target file: `backend/app/domain/dialogue/fact_gate.py`.
+Target file: `backend/app/domain/facts/gate.py`.
 **Specified in `docs/hld/10-domain-model.md`** — its decision table (knowledge state × disclosure
 policy × `available_after` × explicitness → released / withheld / unavailable / not_yet) is owned
 there and is **not** restated or altered here. This document only fixes its place in the pipeline and
 its I/O shape as D10 states them:
-**Input:** `InterpretedUtterance`, `ScenarioVersion`, current `WorldTruth`, current `CallerBelief`,
-previously revealed fact ids, current simulation time/state.
+**Input (§10.12's literal signature):** `requests: Sequence[FactRequest]`,
+`definitions: Mapping[str, FactDefinition]`, `caller_belief: CallerBelief`,
+`revealed_fact_ids: frozenset[str]`, `now_ms: int`, `condition_ctx: GateConditionContext`,
+`max_spontaneous_per_turn: int`. `world_truth` is **not** a parameter (SPEC §21, D3, shared ruling
+(3) of this epic's manager rulings) — this line previously listed a current `WorldTruth` among the
+gate's inputs, contradicting §10.12 and D3; corrected (E13-B4 item 0).
 **Output:** `AllowedFactsPackage {allowed[], unavailable[], withheld_count, metadata}` — caller
 values only; a world value can never appear in it.
 **Events:** `FACT_GATE_EVALUATED {turn_id, requested, allowed, unavailable, withheld_count}`.
@@ -656,6 +660,13 @@ turns + the current utterance, and has no parameter through which a `WorldTruth`
 fails; `CALLER_RESPONSE_GENERATED {turn_id, text, attempt, prompt_tokens, completion_tokens,
 validated}` after the response has passed `ResponseValidator`;
 `MODEL_ERROR {turn_id, stage: "GENERATOR", error_kind}` on call failure.
+**TTS seam:** the decided utterance leaves the dialogue chain through
+`CallerSpeechSink.speak(planned: PlannedCallerUtterance, context)` (target file
+`backend/app/application/dialogue/speech_sink.py`), called **last**, after every event and row of
+the turn is committed. `PlannedCallerUtterance {turn_id, turn_index, text, fact_ids, emotion,
+source: "LLM" | "FALLBACK", template_row}` carries what the utterance *would* reveal; E13 ships
+`NullCallerSpeechSink` and emits no `CALLER_TTS_*` and no `FACTS_DELIVERED`, because a fact is
+revealed by playback and E14 owns playback (D10).
 
 ### 3.6 `ResponseValidator`
 
@@ -683,6 +694,14 @@ It runs three long-lived tasks per call:
    ASR → interpret → gate → generate → validate → TTS → play.
 3. `_control` — `events()` from the transport, and the Redis subscriptions
    `voice:cancel:{session_id}` (hang-up / abort) and `voice:join`.
+
+**The responder seam.** The pipeline hands a finalized `DetectedTurn` to a `TurnResponder`
+(`respond(turn, context)`) — audio and timing, no text. The ASR stage transcribes it and hands the
+turn on through a **second** seam, `TranscribedTurnResponder.respond_transcribed(transcribed,
+context)`, where `TranscribedTurn {turn, text, confidence, turn_index, role_stage_id,
+transcript_segment_id}` carries the values the ASR transaction just committed. The dialogue chain
+therefore starts from the same transcript `ASR_FINAL` and the `transcript_segments` row carry, and
+cannot drift from them; `AsrTurnResponder.next_stage` is a `TranscribedTurnResponder | None`.
 
 **Events emitted by `TurnPipeline` itself:** `ASR_PARTIAL`, `ASR_FINAL`, `CALLER_TTS_STARTED`,
 `CALLER_TTS_ENDED`, `CALLER_UTTERANCE_INTERRUPTED`, `FACTS_DELIVERED`, `TRANSPORT_DISCONNECTED`,
@@ -820,8 +839,17 @@ audio_segment_id, transcript_segment_id}` is emitted once per surviving turn, fr
 ### 5.1 Interpreter
 
 Schema (SPEC §20, D10). Target file: `backend/app/application/dialogue/interpreter.py`, exported as
-`INTERPRETER_JSON_SCHEMA` and handed to `LLMClient.complete(response_format=JsonSchemaSpec(
-name="operator_utterance_interpretation", schema=INTERPRETER_JSON_SCHEMA, strict=True))`.
+`INTERPRETER_JSON_SCHEMA`.
+
+**Two wire mechanisms for the same schema (E13-B3, SPEC §22 "thinking off, context 4096, max
+response small").** `backend/app/application/dialogue/grammar.py` generates a whitespace-free GBNF
+grammar (`INTERPRETER_GRAMMAR`) from the SAME `InterpretedUtterance` pydantic model
+`INTERPRETER_JSON_SCHEMA` is generated from — one source, two renderings; a code-enum change to
+`SpeechAct` changes both without either being hand-edited. `LlamaCppClient.complete()` sends
+`grammar=INTERPRETER_GRAMMAR` in the request body (llama-server's own field, alongside the
+OpenAI-compatible body — accepted) when `SIM_LLM_INTERPRETER_USE_GRAMMAR=true` (the default), and
+falls back to `response_format=JsonSchemaSpec(name="operator_utterance_interpretation",
+schema=INTERPRETER_JSON_SCHEMA, strict=True)` when it is false. Never both in one request.
 
 ```json
 {
@@ -832,8 +860,8 @@ name="operator_utterance_interpretation", schema=INTERPRETER_JSON_SCHEMA, strict
   "properties": {
     "speech_act": {
       "type": "string",
-      "enum": ["QUESTION", "STATEMENT", "CONFIRMATION", "INSTRUCTION",
-               "GREETING", "CLOSING", "OTHER", "UNINTELLIGIBLE"]
+      "enum": ["QUESTION", "ANSWER", "STATEMENT", "CONFIRMATION", "INSTRUCTION",
+               "GREETING", "CLOSING", "REASSURANCE", "REPEAT_REQUEST", "UNINTELLIGIBLE"]
     },
     "requested_facts": {
       "type": "array", "maxItems": 8,
@@ -872,18 +900,22 @@ member of the catalog handed to this call; unknown ids are a validation failure,
 silently (SPEC §20 last line). `explicit = true` only when the operator named the fact or one of its
 `aliases_ru`; a broad category question such as «что случилось?» yields `explicit=false` (D10).
 
-System prompt (`INTERPRETER_SYSTEM_PROMPT_RU`, Russian, verbatim):
+System prompt (`INTERPRETER_SYSTEM_PROMPT_RU`, Russian, verbatim; rule 1 and the compact-format
+example are E13-B3):
 
 ```
 Ты — анализатор реплик оператора службы 112. Ты НЕ отвечаешь оператору и НЕ ведёшь диалог.
 Твоя единственная задача — превратить реплику оператора в строгий JSON по заданной схеме.
 
 Правила:
-1. Возвращай только JSON. Никакого текста до или после, никаких пояснений.
-2. Поле speech_act: QUESTION — оператор спрашивает; STATEMENT — сообщает или инструктирует
-   без вопроса; CONFIRMATION — переспрашивает или уточняет уже названное; INSTRUCTION — даёт
-   указание («выйдите из здания»); GREETING — приветствие; CLOSING — завершение разговора;
-   OTHER — иное; UNINTELLIGIBLE — реплика непонятна или пуста.
+1. Возвращай только JSON, ОДНОЙ СТРОКОЙ, без пробелов и переносов строк между элементами
+   (компактный формат — см. пример ниже). Никакого текста до или после, никаких пояснений.
+2. Поле speech_act: QUESTION — оператор спрашивает; ANSWER — оператор отвечает на вопрос
+   звонящего; STATEMENT — сообщает или инструктирует без вопроса; CONFIRMATION — переспрашивает
+   или уточняет уже названное; INSTRUCTION — даёт указание («выйдите из здания»);
+   GREETING — приветствие; CLOSING — завершение разговора; REASSURANCE — успокаивает или
+   подбадривает звонящего; REPEAT_REQUEST — просит повторить или говорит громче;
+   UNINTELLIGIBLE — реплика непонятна или пуста.
 3. В requested_facts указывай ТОЛЬКО fact_id из КАТАЛОГА ФАКТОВ ниже. Никаких новых
    идентификаторов не придумывай. Если подходящего факта в каталоге нет — не добавляй ничего.
 4. Для каждого запрошенного факта укажи explicit:
@@ -895,6 +927,11 @@ System prompt (`INTERPRETER_SYSTEM_PROMPT_RU`, Russian, verbatim):
 7. semantic_confidence — твоя уверенность в разборе, число от 0 до 1.
 8. Не угадывай. Пустой список лучше выдуманного значения.
 
+ПРИМЕР КОМПАКТНОГО ФОРМАТА (структура, не реальный ответ):
+{"speech_act":"GREETING","requested_facts":[],"operator_assertions":[],"confirmation_targets":[],"semantic_confidence":1.0}
+
+Далее — несколько примеров разбора (ПРИМЕРЫ), затем КАТАЛОГ ФАКТОВ этого звонка.
+
 КАТАЛОГ ФАКТОВ:
 {fact_catalog}
 ```
@@ -904,6 +941,25 @@ System prompt (`INTERPRETER_SYSTEM_PROMPT_RU`, Russian, verbatim):
 ```
 - <fact_id> | <label_ru> | синонимы: <alias_1>, <alias_2>, … | категории: <cat_1>, <cat_2>
 ```
+
+**Few-shot prefix (E13-B3).** Between the system message and the turn's user message,
+`few_shot_messages_ru()` (`backend/app/application/dialogue/prompts/interpreter.py`) inserts 4-8
+`user`/`assistant` message pairs — Russian operator utterances paired with the compact JSON they
+should produce — built deterministically from the catalog's own fact ids and categories (a
+category the catalog lacks drops that example; never a caller/world value). It covers, when the
+catalog has the matching category: a direct address question, a victims question, a name question,
+a general "what happened" question, plus the always-present INSTRUCTION ("оставайтесь на линии"),
+a CONFIRMATION with an asserted value, REASSURANCE and REPEAT_REQUEST.
+
+**Prompt layout: fixed prefix, then a variable suffix (E13-B3, prompt-cache reuse).** The system
+message + few-shot pairs + catalog are all a function of the catalog alone, never of a per-turn
+value, so they are byte-identical across every turn of one call session; only the final `user`
+message (turn window + the current utterance) varies. `LlamaCppClient` sends this fixed part first
+and the variable part last, with `cache_prompt: true` and `id_slot: 0` in the request body (both
+via `extra_body` — no port change was needed), so llama-server's KV cache reuses the fixed prefix
+turn over turn instead of re-evaluating it. `--parallel 1` (the launched server's own flag) already
+gives the interpreter its own single slot; `id_slot` pins it explicitly for a build run with more
+slots.
 
 User message:
 
@@ -917,7 +973,11 @@ User message:
 
 `{recent_turns}` is the same 4–6 turn window as §5.3, rendered `ОПЕРАТОР: …` / `ЗВОНЯЩИЙ: …`.
 
-Call parameters: `max_tokens = 200`, `temperature = 0.0`, `top_p = 1.0`, `timeout_ms = 2500`.
+Call parameters: `max_tokens` = `SIM_LLM_INTERPRETER_MAX_TOKENS` = 138 (E13-B3: measured p99
+completion-token count with compact JSON + grammar, 110.3 tokens over 148 calls across 4 real
+models, + 25% — see `benchmarks/results/interpreter_eval/20260921T180708Z/`, not the old flat
+200), `temperature = 0.0`, `top_p = 1.0`,
+`timeout_ms = 2500`.
 
 **Repair prompt** (`INTERPRETER_REPAIR_PROMPT_RU`) — one retry only (SPEC §20, §39). The failed raw
 output and the validator's message are appended as an extra user message; the system prompt is
@@ -1354,7 +1414,7 @@ Selected by `FallbackTemplates.select(package, interpreted)`; first matching row
 | 3 | `allowed` empty and every requested fact is `unavailable(reason=UNKNOWN)` | «Я не знаю, простите.» |
 | 4 | `allowed` empty and some requested fact is `unavailable(reason=NEVER_DISCLOSE)` or withheld | «Я… я не могу сейчас сказать.» |
 | 5 | `allowed` empty and some requested fact is `not_yet` | «Я пока не знаю.» |
-| 6 | `requested_facts` empty, `speech_act ∈ {GREETING, OTHER}` | «Да, я слушаю.» |
+| 6 | `requested_facts` empty, `speech_act == GREETING` or any act with no requested facts that is not `CLOSING` | «Да, я слушаю.» |
 | 7 | `speech_act == CLOSING` | «Хорошо. Спасибо.» |
 | 8 | anything else | «Я не знаю, что сказать.» |
 
@@ -1362,7 +1422,9 @@ Row 2 is the only row that reveals facts, and it reveals them through the normal
 to TTS, `CALLER_TTS_ENDED` fires, `FACTS_DELIVERED` follows. Rows 1 and 3–8 reveal nothing. Every
 fallback also emits `MODEL_FALLBACK_USED {turn_id, stage, reason, failure_codes, template_row}`.
 Templates are data in `backend/app/application/dialogue/fallback_templates_ru.py` and contain no
-scenario values other than the caller values passed in for row 2.
+scenario values other than the caller values passed in for row 2; the selector
+`FallbackTemplates.select` that reads them lives beside it in
+`backend/app/application/dialogue/fallbacks.py`.
 
 ---
 
@@ -1375,17 +1437,30 @@ p50 < 1.2 s / p95 < 2.0 s; development acceptable p50 < 1.5 s / p95 < 2.5 s.
 |:--|:--|--:|:--|
 | 1 | Endpoint detection already elapsed | 0 | `endpoint_silence_ms` is before the measurement point by definition (the offset of `USER_SPEECH_ENDED` is the trimmed end of speech) |
 | 2 | `ASRProvider.transcribe` of the finalized turn | 250 | GigaAM v3 CTC, single pass, ~4 s of audio; RTF target ≤ 0.08 measured by `benchmark_asr.py` |
-| 3 | `DialogueInterpreter` LLM call (schema-constrained, ≤ 200 tokens) | 300 | prompt ≈ 2200 tokens; dominated by prefill; grammar constraint keeps output short |
+| 3 | `DialogueInterpreter` LLM call (grammar-constrained compact JSON) | see note | E13-B3 measured this for real (compact JSON, GBNF grammar, few-shot prefix, `cache_prompt`) across Qwen3-4B and Qwen3.5-{0.8B,2B,4B} on the shared dev GPU instead of asserting a number here — see `benchmarks/results/interpreter_eval/<UTC timestamp>/report.md` and this task's report for the measured p50/p95/max and which model is the current DEV recommendation |
 | 4 | `FactAccessGate` | ≤ 5 | pure Python over ≤ 60 facts |
-| 5 | `CallerResponseGenerator` — TTFT only | 200 | the generator streams; validation runs on the completed text (see below) |
-| 6 | Generation to end of response (≤ 80 tokens) | 250 | at ≥ 40 tok/s; `benchmark_llm.py` measures the real rate |
+| 5 | `CallerResponseGenerator` — TTFT | see note | E13-B4 measured the generator call for real (`cache_prompt`, `id_slot=1`, GBNF grammar) across Qwen3.5-{0.8B,2B,4B} on the shared dev GPU instead of asserting a number here — see `benchmarks/results/caller_eval/<UTC timestamp>/report.md` and this task's report. The current `CallerResponseGenerator` makes one **non-streaming** `LLMClient.complete()` call (§2.6) — `LlmCompletion` carries no TTFT field (same HLD gap `interpreter_eval` already reports), so this row's "TTFT" and row 6's "generation" are one measured round trip, not two |
+| 6 | Generation to end of response (≤ 80 tokens) | see note | folded into row 5's measured round trip (no separate TTFT signal exists yet) — see the same results file; `completion_tokens_p50`/`p99` and tok/s are reported per model |
 | 7 | `ResponseValidator` | ≤ 10 | pure Python, no model |
 | 8 | `TTSProvider.stream` first chunk | 200 | first-audio latency, `benchmark_tts.py` |
 | 9 | Transport + browser jitter buffer to audible | 60 | **UNVERIFIED**; measured by `benchmark_e2e.py` |
-| | **Total (baseline, validate-then-speak)** | **1275** | inside the development p50 target, above the final p50 target |
+| | **Total (baseline, validate-then-speak)** | **525 + row 3 + row 5/6** | fixed rows (1, 2, 4, 7, 8, 9) sum to 525 ms; rows 3 and 5/6 are each a measured LLM round trip, not a literal (E13-B3 for row 3, E13-B4 for rows 5/6) — inside the development p50 target only for a model whose measured p50s are small, see the notes on those rows |
 
-The gap between 1275 ms and the final-demo p50 of 1200 ms is closed by the levers below, not by
-removing a stage.
+The gap between the total row and the final-demo p50 of 1200 ms is closed by the levers below, not
+by removing a stage. Row 3's old flat 300 ms placeholder is gone (E13-B3 measured it instead of
+guessing): on this repository's shared/contended dev GPU (~3.2 GB free, a second process holding
+the rest), a fully-GPU-offloaded model (Qwen3.5-0.8B/2B) measured p50 ≈ 184-221 ms — inside the
+old 300 ms placeholder — while a model too large to fully offload here (Qwen3.5-4B, Qwen3-4B; both
+partial-GPU) measured p50 ≈ 1.17 s, which alone exceeds the whole-turn development budget. Rows
+5/6's old flat 200+250 ms placeholder is gone the same way (E13-B4): the same fully-offloaded
+models measured a generator round trip p50 ≈ 178-184 ms (comfortably under the old 450 ms), the
+GPU_PARTIAL Qwen3.5-4B measured ≈ 606 ms, and Qwen3-4B could not be measured at all here —
+`--parallel 2` (needed so the interpreter's `id_slot=0` and the generator's `id_slot=1` do not
+contend for one slot) doubles the KV-cache allocation and this model's 32-layer partial offload no
+longer fits the ~3.2 GB free on this machine (a real `CUDA out of memory` at server start, not a
+guess — see `benchmarks/results/caller_eval/<UTC timestamp>/results.json`'s `Qwen3-4B` row, status
+`FAILED`). The lever that actually closes this gap for a larger model is a dedicated (non-shared)
+GPU profile with more free VRAM, not a code change to either stage.
 
 **Permitted optimisation levers** (none of them violates SPEC §44):
 

@@ -18,10 +18,13 @@ for when it makes the trainee the only writer.
 
 Together the two make the path from ASR to the card *absent*, not merely unused.
 
-**(a′) The ASR path itself (E12).** Once the voice path has a real ASR stage, the scan has to run
-in the other direction too: not only "no card writer can read a transcript" but "nothing that
-*produces* a transcript can reach a card". Two more assertions cover
-`backend/app/application/voice/**` and `backend/app/inference/**`:
+**(a′) The ASR and dialogue path itself (E12, E13).** Once the voice path has a real ASR stage and
+a dialogue chain behind it, the scan has to run in the other direction too: not only "no card
+writer can read a transcript" but "nothing that *produces* a transcript, or an answer to one, can
+reach a card". SPEC §2 says it for the model in so many words — the LLM never fills the trainee's
+card, decides a service or completes a trainee action. Two more assertions cover
+`backend/app/application/voice/**`, `backend/app/application/dialogue/**` and
+`backend/app/inference/**`:
 
 3. neither package uses any card writer or the `operator_cards` repository attribute;
 4. neither package imports the operator-card, DDS or handoff command modules — the modules that
@@ -50,9 +53,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 BACKEND = Path(__file__).resolve().parents[2]
 APPLICATION = BACKEND / "app" / "application"
-#: The two packages that own the ASR path (E12): the voice turn stages and the model adapters.
+#: The packages that own the ASR path (E12) and the dialogue chain behind it (E13): the voice
+#: turn stages, the interpreter/gate/generator/validator chain, and the model adapters.
 ASR_PATH_ROOTS: tuple[Path, ...] = (
     APPLICATION / "voice",
+    APPLICATION / "dialogue",
     BACKEND / "app" / "inference",
 )
 

@@ -50,6 +50,8 @@ def _from_row(row: Mapping[str, Any]) -> StoredDialogueTurn:
         fallback_used=row["fallback_used"],
         speech_end_to_first_audio_ms=row["speech_end_to_first_audio_ms"],
         correlation_id=row["correlation_id"],
+        interpretation=row["interpretation"] or {},
+        gate_output=row["gate_output"] or {},
     )
 
 
@@ -87,6 +89,31 @@ class SqlAlchemyDialogueTurnRepository:
         result = await self._session.execute(statement)
         row_id = result.scalar_one()
         return UUID(str(row_id))
+
+    async def set_dialogue_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        interpretation: Mapping[str, Any],
+        gate_output: Mapping[str, Any],
+        planned_text: str,
+        fallback_used: bool,
+    ) -> None:
+        """E13's four columns on an existing row; no row, no write (§20.6)."""
+        await self._session.execute(
+            sa.update(_DIALOGUE_TURNS)
+            .where(
+                _DIALOGUE_TURNS.c.session_id == UUID(str(session_id)),
+                _DIALOGUE_TURNS.c.turn_index == turn_index,
+            )
+            .values(
+                interpretation=dict(interpretation),
+                gate_output=dict(gate_output),
+                planned_text=planned_text,
+                fallback_used=fallback_used,
+            )
+        )
 
     async def set_speech_end_to_first_audio_ms(
         self, session_id: SessionId, turn_index: int, value: int

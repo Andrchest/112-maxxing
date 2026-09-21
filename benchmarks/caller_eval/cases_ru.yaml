@@ -1,0 +1,483 @@
+# Caller-generator eval set (E13-B4 item 2). Hand-labelled: this eval isolates the GENERATOR, so
+# each case's `interpreted` block plays the role a real DialogueInterpreter output would — it is
+# fed straight to the real `evaluate_fact_access` and `FallbackTemplates.select`, never produced by
+# a model. `fact_id`s are checked against the demo scenario's fact catalog at load time
+# (`run_eval.py` / the gate-side test both do this the same way the interpreter eval's
+# `_validate_items_against_catalog` does).
+#
+# 10 SPEC §43 categories, >= 4 cases each (45 total): facts_known, facts_unknown,
+# incorrect_assumptions, leading_questions, numerics, addresses, names, hazards, victims, causes.
+scenario: scenarios/examples/apartment-fire/v1.yaml
+
+cases:
+  # -- facts_known --------------------------------------------------------------------------
+  - id: known_street
+    category: facts_known
+    operator_utterance: "Назовите улицу."
+    session_offset_ms: 15000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.street, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.95
+
+  - id: known_house
+    category: facts_known
+    operator_utterance: "Какой номер дома?"
+    session_offset_ms: 16000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.house, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.95
+
+  - id: known_full_name
+    category: facts_known
+    operator_utterance: "Как вас зовут?"
+    session_offset_ms: 17000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: caller.full_name, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.93
+
+  - id: known_incident_type
+    category: facts_known
+    operator_utterance: "Что у вас случилось?"
+    session_offset_ms: 5000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.type, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: known_floor_count
+    category: facts_known
+    operator_utterance: "Сколько всего этажей в доме?"
+    session_offset_ms: 40000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.floor_count, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.92
+
+  # -- facts_unknown --------------------------------------------------------------------------
+  - id: unknown_fire_source
+    category: facts_unknown
+    operator_utterance: "Откуда начался пожар?"
+    session_offset_ms: 20000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.fire_source, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: unknown_cause
+    category: facts_unknown
+    operator_utterance: "Почему загорелось?"
+    session_offset_ms: 21000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.cause, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: unknown_gas_cylinder
+    category: facts_unknown
+    operator_utterance: "Есть баллон с газом на балконе?"
+    session_offset_ms: 22000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: hazards.gas_cylinder, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.88
+
+  - id: unknown_cause_variant
+    category: facts_unknown
+    operator_utterance: "Что стало причиной возгорания?"
+    session_offset_ms: 23000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.cause, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  # -- incorrect_assumptions ------------------------------------------------------------------
+  - id: incorrect_floor
+    category: incorrect_assumptions
+    operator_utterance: "Вы ведь на четвёртом этаже?"
+    session_offset_ms: 25000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: address.floor, explicit: true}]
+      operator_assertions: [{fact_id: address.floor, asserted_value: "4"}]
+      confirmation_targets: [address.floor]
+      semantic_confidence: 0.85
+
+  - id: incorrect_electrical
+    category: incorrect_assumptions
+    operator_utterance: "Проводка ведь в порядке?"
+    session_offset_ms: 26000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: [{fact_id: hazards.electrical, asserted_value: "false"}]
+      confirmation_targets: [hazards.electrical]
+      semantic_confidence: 0.85
+
+  - id: incorrect_total_inside
+    category: incorrect_assumptions
+    operator_utterance: "Там всего два человека, верно?"
+    session_offset_ms: 27000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: people.total_inside, explicit: true}]
+      operator_assertions: [{fact_id: people.total_inside, asserted_value: "2"}]
+      confirmation_targets: [people.total_inside]
+      semantic_confidence: 0.8
+
+  - id: incorrect_gas_cylinder
+    category: incorrect_assumptions
+    operator_utterance: "У вас на балконе баллон, да?"
+    session_offset_ms: 28000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: hazards.gas_cylinder, explicit: true}]
+      operator_assertions: [{fact_id: hazards.gas_cylinder, asserted_value: "true"}]
+      confirmation_targets: [hazards.gas_cylinder]
+      semantic_confidence: 0.8
+
+  # -- leading_questions ------------------------------------------------------------------------
+  - id: leading_fire_source
+    category: leading_questions
+    operator_utterance: "Пожар начался на кухне, да?"
+    session_offset_ms: 30000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: incident.fire_source, explicit: true}]
+      operator_assertions: [{fact_id: incident.fire_source, asserted_value: "KITCHEN"}]
+      confirmation_targets: [incident.fire_source]
+      semantic_confidence: 0.75
+
+  - id: leading_cause_wiring
+    category: leading_questions
+    operator_utterance: "Это точно проводка виновата?"
+    session_offset_ms: 31000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: incident.cause, explicit: true}, {fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: [{fact_id: incident.cause, asserted_value: "проводка"}]
+      confirmation_targets: [incident.cause]
+      semantic_confidence: 0.7
+
+  - id: leading_incident_type
+    category: leading_questions
+    operator_utterance: "У вас там пожар, верно?"
+    session_offset_ms: 6000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: incident.type, explicit: true}]
+      operator_assertions: [{fact_id: incident.type, asserted_value: "FIRE"}]
+      confirmation_targets: [incident.type]
+      semantic_confidence: 0.9
+
+  - id: leading_victim_inside
+    category: leading_questions
+    operator_utterance: "Скорее всего, внутри никого нет?"
+    session_offset_ms: 32000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: people.victim_01.inside, explicit: true}]
+      operator_assertions: [{fact_id: people.victim_01.inside, asserted_value: "false"}]
+      confirmation_targets: [people.victim_01.inside]
+      semantic_confidence: 0.7
+
+  # -- numerics -----------------------------------------------------------------------------
+  - id: numeric_floor_count
+    category: numerics
+    operator_utterance: "Сколько этажей в доме?"
+    session_offset_ms: 33000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.floor_count, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: numeric_floor
+    category: numerics
+    operator_utterance: "На каком этаже квартира?"
+    session_offset_ms: 34000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.floor, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.92
+
+  - id: numeric_total_inside
+    category: numerics
+    operator_utterance: "Сколько человек внутри квартиры?"
+    session_offset_ms: 35000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.total_inside, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  - id: numeric_victim_age
+    category: numerics
+    operator_utterance: "Сколько лет пострадавшей?"
+    session_offset_ms: 36000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.victim_01.age, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  # -- addresses ----------------------------------------------------------------------------
+  - id: address_locality
+    category: addresses
+    operator_utterance: "Какой населённый пункт?"
+    session_offset_ms: 14000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.locality, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: address_street_and_house
+    category: addresses
+    operator_utterance: "Назовите улицу и номер дома."
+    session_offset_ms: 15500
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.street, explicit: true}, {fact_id: address.house, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.93
+
+  - id: address_entrance
+    category: addresses
+    operator_utterance: "Какой подъезд?"
+    session_offset_ms: 18000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.entrance, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: address_apartment
+    category: addresses
+    operator_utterance: "Квартира какая?"
+    session_offset_ms: 19000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.apartment, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: address_landmark
+    category: addresses
+    operator_utterance: "Есть какой-нибудь ориентир рядом?"
+    session_offset_ms: 37000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: address.landmark, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.75
+
+  # -- names --------------------------------------------------------------------------------
+  - id: name_full_name
+    category: names
+    operator_utterance: "Представьтесь, пожалуйста."
+    session_offset_ms: 4000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: caller.full_name, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.92
+
+  - id: name_phone
+    category: names
+    operator_utterance: "Назовите ваш номер телефона."
+    session_offset_ms: 38000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: caller.phone, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: name_full_name_variant
+    category: names
+    operator_utterance: "Ваше полное имя, пожалуйста."
+    session_offset_ms: 39000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: caller.full_name, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: name_phone_variant
+    category: names
+    operator_utterance: "Оставьте контактный телефон."
+    session_offset_ms: 41000
+    interpreted:
+      speech_act: INSTRUCTION
+      requested_facts: [{fact_id: caller.phone, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.8
+
+  # -- hazards ------------------------------------------------------------------------------
+  - id: hazard_gas_cylinder
+    category: hazards
+    operator_utterance: "Газовый баллон на балконе есть?"
+    session_offset_ms: 42000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: hazards.gas_cylinder, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.88
+
+  - id: hazard_electrical
+    category: hazards
+    operator_utterance: "С проводкой всё в порядке?"
+    session_offset_ms: 43000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  - id: hazard_both
+    category: hazards
+    operator_utterance: "Есть ли другие опасности — газ, проводка?"
+    session_offset_ms: 44000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: hazards.gas_cylinder, explicit: true}, {fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.8
+
+  - id: hazard_electrical_off
+    category: hazards
+    operator_utterance: "Электричество в квартире отключено?"
+    session_offset_ms: 45000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  # -- victims ------------------------------------------------------------------------------
+  - id: victim_inside
+    category: victims
+    operator_utterance: "Есть пострадавшие внутри квартиры?"
+    session_offset_ms: 24000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.victim_01.inside, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  - id: victim_age
+    category: victims
+    operator_utterance: "Сколько лет пострадавшей внутри?"
+    session_offset_ms: 46000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.victim_01.age, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.8
+
+  - id: victim_total
+    category: victims
+    operator_utterance: "Сколько всего человек внутри?"
+    session_offset_ms: 47000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.total_inside, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  - id: victim_inside_variant
+    category: victims
+    operator_utterance: "Кто-нибудь остался внутри?"
+    session_offset_ms: 48000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: people.victim_01.inside, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.85
+
+  # -- causes -------------------------------------------------------------------------------
+  - id: cause_general
+    category: causes
+    operator_utterance: "Из-за чего начался пожар?"
+    session_offset_ms: 49000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.cause, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.9
+
+  - id: cause_arson
+    category: causes
+    operator_utterance: "Это был поджог?"
+    session_offset_ms: 50000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: incident.cause, explicit: true}]
+      operator_assertions: [{fact_id: incident.cause, asserted_value: "поджог"}]
+      confirmation_targets: [incident.cause]
+      semantic_confidence: 0.75
+
+  - id: cause_wiring_question
+    category: causes
+    operator_utterance: "Проводка виновата в пожаре?"
+    session_offset_ms: 51000
+    interpreted:
+      speech_act: CONFIRMATION
+      requested_facts: [{fact_id: incident.cause, explicit: true}, {fact_id: hazards.electrical, explicit: true}]
+      operator_assertions: [{fact_id: incident.cause, asserted_value: "проводка"}]
+      confirmation_targets: [incident.cause]
+      semantic_confidence: 0.7
+
+  - id: cause_smoke_first
+    category: causes
+    operator_utterance: "Откуда пошёл огонь, вы видели?"
+    session_offset_ms: 52000
+    interpreted:
+      speech_act: QUESTION
+      requested_facts: [{fact_id: incident.fire_source, explicit: true}, {fact_id: incident.cause, explicit: true}]
+      operator_assertions: []
+      confirmation_targets: []
+      semantic_confidence: 0.75

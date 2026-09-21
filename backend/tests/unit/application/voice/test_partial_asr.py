@@ -19,8 +19,8 @@ from app.application.voice.asr_responder import AsrTurnResponder
 from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.events import VoiceEventAppender
 from app.application.voice.partial_asr import PartialAsrEmitter, partial_request_id
-from app.application.voice.turn_detector import DetectedTurn, TurnDetector
-from app.application.voice.turn_pipeline import TurnContext, TurnPipeline
+from app.application.voice.turn_detector import TurnDetector
+from app.application.voice.turn_pipeline import TranscribedTurn, TurnContext, TurnPipeline
 from app.domain.common.ids import RoleStageId, SessionId
 from app.domain.events.types import EventType
 from app.inference.asr import FakeASR
@@ -401,11 +401,13 @@ async def test_a_partial_never_reaches_the_next_stage(
     clock: FakeClock,
 ) -> None:
     """SPEC §17: only the finalized turn drives a response, and only once."""
-    handed: list[DetectedTurn] = []
+    handed: list[TranscribedTurn] = []
 
     class Recording:
-        async def respond(self, turn: DetectedTurn, context: TurnContext) -> None:
-            handed.append(turn)
+        async def respond_transcribed(
+            self, transcribed: TranscribedTurn, context: TurnContext
+        ) -> None:
+            handed.append(transcribed)
 
     asr = ConstantASR(TEXT_RU)
     pipeline = make_pipeline(

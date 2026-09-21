@@ -300,9 +300,14 @@ scenario sections keyed by the same `fact_id`:
 | `aliases_ru` | `tuple[str, ...]` | `disclosure_rules.facts[fact_id]` | `aliases_ru` |
 | `categories` | `tuple[str, ...]` | `disclosure_rules.facts[fact_id]` | `categories` |
 | `available_after` | `AvailableAfter \| None` | `disclosure_rules.facts[fact_id]` | `available_after` |
+| `enum_name` | `str \| None` (default `None`) | `world_truth.facts[fact_id]` | `enum_name` |
 
 `AvailableAfter` = `{"sim_time_ms": int}` **or** `{"world_event_id": str}` **or** `{"condition": Condition}`
 (exactly one key).
+
+`enum_name` (E13-B4 item 0): this table previously dropped `WorldFactSpec.enum_name` at the join, so
+an `ENUM`-typed value had no route to a Russian rendering (§10.12's `AllowedFact.value_ru`). Joined
+through unchanged, `world_truth.facts[fact_id].enum_name`, `None` for every non-`ENUM` fact.
 
 `build_fact_definitions(version) -> dict[str, FactDefinition]` performs the join and raises
 `ScenarioValidationError` on the D4 rules (§10.15).
@@ -1001,6 +1006,9 @@ class AllowedFact(BaseModel):
     fact_id: str
     label_ru: str
     value: FactValue          # the CALLER value, never the world value
+    value_ru: str              # `value`, rendered caller-style Russian (app.domain.facts.
+                               # value_labels_ru.render_value_ru); an ENUM value is «пожар»,
+                               # never the raw member name `FIRE` (E13-B4 item 0)
     certainty: float
     hedge: bool               # true when knowledge is UNCERTAIN
     spontaneous: bool

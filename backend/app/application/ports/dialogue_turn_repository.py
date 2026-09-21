@@ -23,10 +23,11 @@ able to blank an earlier one's, and vice versa.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.common.ids import RoleStageId, SessionId
 
@@ -70,6 +71,11 @@ class StoredDialogueTurn(BaseModel):
     delivered_text: str | None = None
     interrupted: bool = False
     fallback_used: bool = False
+    interpretation: Mapping[str, Any] = Field(default_factory=dict)
+    """E13's `DIALOGUE_INTERPRETED` document; `{}` until the turn has been interpreted (§20.6)."""
+    gate_output: Mapping[str, Any] = Field(default_factory=dict)
+    """E13's gate document — the `AllowedFactsPackage` losslessly, caller values only (INV 1).
+    `DialogueContextLoader` rebuilds `ALREADY_REVEALED` from this column of earlier turns."""
     speech_end_to_first_audio_ms: int | None = None
     correlation_id: UUID | None = None
 
@@ -83,6 +89,25 @@ class DialogueTurnRepository(Protocol):
 
         Only the columns `DialogueTurnUpsert` carries are written. Columns E13 and E14 own keep
         whatever they already hold, and their defaults apply on insert.
+        """
+        ...
+
+    async def set_dialogue_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        interpretation: Mapping[str, Any],
+        gate_output: Mapping[str, Any],
+        planned_text: str,
+        fallback_used: bool,
+    ) -> None:
+        """The four columns E13 owns, on an existing turn row (§20.6, `50-voice-pipeline.md` §9).
+
+        Like `set_speech_end_to_first_audio_ms`, it does **not** create a row: the turn was
+        recorded by `AsrTurnResponder` before the dialogue chain ran, and a row invented here
+        would need a `role_stage_id` this port has no way to know. It writes only E13's columns,
+        so E12's speech boundaries and E14's caller side are never blanked.
         """
         ...
 

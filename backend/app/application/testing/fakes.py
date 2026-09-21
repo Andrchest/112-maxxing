@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+import uuid
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from random import Random
+from typing import Any
 from uuid import UUID
 
 from app.application.ports.call_transport import (
@@ -22,6 +24,10 @@ from app.application.ports.call_transport import (
     PlaybackHandle,
     TransportEvent,
     TransportEventType,
+)
+from app.application.ports.dialogue_turn_repository import (
+    DialogueTurnUpsert,
+    StoredDialogueTurn,
 )
 from app.application.ports.event_publisher import EventEnvelope
 from app.application.ports.voice_token_service import MintedVoiceToken
@@ -35,6 +41,7 @@ __all__ = [
     "FakeInferenceReadiness",
     "FakePasswordHasher",
     "InMemoryCallStateCache",
+    "InMemoryDialogueTurnRepository",
     "InMemoryEventPublisher",
     "InMemoryEventSubscriber",
     "InMemoryEventSubscription",
@@ -695,3 +702,94 @@ class InMemoryCallStateCache:
     def forget(self, session_id: SessionId) -> None:
         """Drop the key, as a lapsed TTL or a `FLUSHALL` would (§40.6's documented loss)."""
         self.values.pop(session_id, None)
+
+
+class InMemoryDialogueTurnRepository:
+    """A `DialogueTurnRepository` in a dict (§20.6, D13).
+
+    Three epics fill a `dialogue_turns` row in three passes (E12 the speech boundaries, E13 the
+    interpretation and the gate output, E14 the caller side), and none may blank another's work.
+    This fake has to reproduce that or a unit test would pass against it while the real
+    `INSERT … ON CONFLICT DO UPDATE` lost a column — so `upsert` writes only the fields the caller
+    actually set (`model_fields_set`), exactly as `SqlAlchemyDialogueTurnRepository` does.
+    """
+
+    def __init__(self) -> None:
+        #: `(session_id, turn_index) -> the row as it stands`.
+        self.rows: dict[tuple[SessionId, int], StoredDialogueTurn] = {}
+
+    async def upsert(self, turn: DialogueTurnUpsert) -> uuid.UUID:
+        """Insert or update `(session_id, turn_index)`; returns the row's id."""
+        key = (turn.session_id, turn.turn_index)
+        existing = self.rows.get(key)
+        supplied: dict[str, Any] = {
+            name: getattr(turn, name)
+            for name in (
+                "user_speech_ended_offset_ms",
+                "operator_transcript_segment_id",
+                "correlation_id",
+            )
+            if name in turn.model_fields_set
+        }
+        if existing is None:
+            self.rows[key] = StoredDialogueTurn(
+                id=turn.id,
+                session_id=turn.session_id,
+                role_stage_id=turn.role_stage_id,
+                turn_index=turn.turn_index,
+                user_speech_started_offset_ms=turn.user_speech_started_offset_ms,
+                **supplied,
+            )
+        else:
+            self.rows[key] = existing.model_copy(
+                update={
+                    "user_speech_started_offset_ms": turn.user_speech_started_offset_ms,
+                    **supplied,
+                }
+            )
+        return self.rows[key].id
+
+    async def set_dialogue_outcome(
+        self,
+        session_id: SessionId,
+        turn_index: int,
+        *,
+        interpretation: Mapping[str, Any],
+        gate_output: Mapping[str, Any],
+        planned_text: str,
+        fallback_used: bool,
+    ) -> None:
+        """E13's four columns on an existing row; a missing row is not created (the port's rule)."""
+        row = self.rows.get((session_id, turn_index))
+        if row is None:
+            return
+        self.rows[(session_id, turn_index)] = row.model_copy(
+            update={
+                "interpretation": dict(interpretation),
+                "gate_output": dict(gate_output),
+                "planned_text": planned_text,
+                "fallback_used": fallback_used,
+            }
+        )
+
+    async def set_speech_end_to_first_audio_ms(
+        self, session_id: SessionId, turn_index: int, value: int
+    ) -> None:
+        """SPEC §27's critical product metric on an existing row; no row, no write."""
+        row = self.rows.get((session_id, turn_index))
+        if row is None:
+            return
+        self.rows[(session_id, turn_index)] = row.model_copy(
+            update={"speech_end_to_first_audio_ms": value}
+        )
+
+    async def get(self, session_id: SessionId, turn_index: int) -> StoredDialogueTurn | None:
+        """One row by its natural key, or `None`."""
+        return self.rows.get((session_id, turn_index))
+
+    async def list_for_session(self, session_id: SessionId) -> list[StoredDialogueTurn]:
+        """Every turn of one session in `turn_index` order."""
+        return sorted(
+            (row for key, row in self.rows.items() if key[0] == session_id),
+            key=lambda row: row.turn_index,
+        )
