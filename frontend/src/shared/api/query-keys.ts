@@ -1,0 +1,22 @@
+// Central TanStack Query key factories (D12). One canonical shape per resource so every
+// feature invalidates and prefetches the same cache entry instead of hand-rolling arrays.
+export const queryKeys = {
+  auth: {
+    me: () => ['auth', 'me'] as const,
+  },
+  users: {
+    list: (role?: string) => ['users', 'list', role ?? 'ALL'] as const,
+  },
+  health: {
+    ready: () => ['health', 'ready'] as const,
+  },
+  scenarios: {
+    list: () => ['scenarios'] as const,
+    versions: (scenarioId: string) => ['scenarios', scenarioId, 'versions'] as const,
+  },
+  sessions: {
+    list: (scope: 'MINE' | 'ALL' = 'MINE') => ['sessions', 'list', scope] as const,
+    detail: (sessionId: string) => ['sessions', sessionId] as const,
+    snapshot: (sessionId: string) => ['sessions', sessionId, 'snapshot'] as const,
+  },
+} as const;

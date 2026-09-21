@@ -57,7 +57,7 @@ test-backend: infra-up
 	$(UV) run pytest -q
 gate-backend: lint typecheck boundaries scenarios db-check test-backend
 gate-frontend:
-	cd frontend && npm run lint && npm run typecheck && npm run test -- --run && npm run build
+	cd frontend && npm run check:api && npm run lint && npm run typecheck && npm run test -- --run && npm run build
 gate: gate-backend gate-frontend
 	@echo "GATE GREEN"
 test: test-backend

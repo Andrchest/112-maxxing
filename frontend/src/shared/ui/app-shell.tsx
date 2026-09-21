@@ -2,23 +2,63 @@ import type { ReactNode } from 'react';
 import { Badge } from '@/shared/ui/badge';
 import { Separator } from '@/shared/ui/separator';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
+import type { ConnectionStatus } from '@/shared/realtime/ws-client';
+import type { HealthStatus } from '@/shared/api';
+
+const CONNECTION_LABEL_KEY: Record<ConnectionStatus, keyof typeof ru> = {
+  idle: 'connectionPlaceholder',
+  connecting: 'connectionConnecting',
+  reconnecting: 'connectionConnecting',
+  open: 'connectionConnected',
+  closed: 'connectionDisconnected',
+};
+
+const CONNECTION_DOT_CLASS: Record<ConnectionStatus, string> = {
+  idle: 'bg-muted-foreground/50',
+  connecting: 'bg-amber-500 animate-pulse',
+  reconnecting: 'bg-amber-500 animate-pulse',
+  open: 'bg-emerald-500',
+  closed: 'bg-muted-foreground/50',
+};
+
+const READINESS_LABEL_KEY: Record<HealthStatus, keyof typeof ru> = {
+  READY: 'readinessReady',
+  WARMING: 'readinessWarming',
+  NOT_READY: 'readinessNotReady',
+  FATAL: 'readinessFatal',
+};
+
+const READINESS_BADGE_VARIANT: Record<HealthStatus, 'default' | 'outline' | 'destructive'> = {
+  READY: 'default',
+  WARMING: 'outline',
+  NOT_READY: 'outline',
+  FATAL: 'destructive',
+};
 
 interface AppShellProps {
   /** Current screen title, shown next to the product name. */
   title: string;
   /** Trainee's current role in this session, if any has been assigned yet. */
   role?: string;
+  /** Signed-in account's display name, when the caller has that data (authenticated routes). */
+  userLabel?: string;
+  /** Realtime WebSocket status (D8, HLD §40); omitted where no page connects one yet. */
+  connectionStatus?: ConnectionStatus;
+  /** `GET /health/ready` overall status (SPEC §37); omitted while it has not loaded yet. */
+  readiness?: HealthStatus;
   children: ReactNode;
 }
 
 /**
  * Dense, dark "operations console" chrome shared by every route (D12,
- * SPEC §32): product name, role badge and a connection-status placeholder
- * (wired to the realtime channel starting E7). There is no chat UI here or
- * anywhere else in the app — the caller's dialogue is a phone widget added
- * in E11, not a message thread.
+ * SPEC §32): product name, user + role badge, connection status and
+ * inference readiness. There is no chat UI here or anywhere else in the
+ * app — the caller's dialogue is a phone widget added in E11, not a
+ * message thread. Purely presentational: every value it shows is passed in
+ * by the caller, which is the layer allowed to fetch or subscribe to it.
  */
-export function AppShell({ title, role, children }: AppShellProps) {
+export function AppShell({ title, role, userLabel, connectionStatus, readiness, children }: AppShellProps) {
   return (
     <div className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
@@ -26,15 +66,32 @@ export function AppShell({ title, role, children }: AppShellProps) {
         <Separator orientation="vertical" className="h-5" />
         <span className="font-mono text-xs text-muted-foreground">{title}</span>
         <div className="ml-auto flex items-center gap-3">
+          {userLabel ? (
+            <span className="font-mono text-xs text-muted-foreground" data-slot="user-label">
+              {userLabel}
+            </span>
+          ) : null}
           <Badge variant="outline" className="font-mono text-xs" data-slot="role-badge">
             {role ?? t('roleBadgeNone')}
           </Badge>
+          {readiness ? (
+            <Badge
+              variant={READINESS_BADGE_VARIANT[readiness]}
+              className="font-mono text-xs"
+              data-slot="readiness-badge"
+            >
+              {t('readinessLabel')}: {t(READINESS_LABEL_KEY[readiness])}
+            </Badge>
+          ) : null}
           <span
             className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
             data-slot="connection-indicator"
           >
-            <span className="size-2 rounded-full bg-muted-foreground/50" aria-hidden="true" />
-            {t('connectionPlaceholder')}
+            <span
+              className={`size-2 rounded-full ${CONNECTION_DOT_CLASS[connectionStatus ?? 'idle']}`}
+              aria-hidden="true"
+            />
+            {t(CONNECTION_LABEL_KEY[connectionStatus ?? 'idle'])}
           </span>
         </div>
       </header>

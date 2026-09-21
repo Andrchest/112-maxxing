@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, ProblemError } from './api';
+import { apiFetch, ProblemError, setAuthToken, setUnauthorizedHandler } from './api';
 
 describe('apiFetch', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    setAuthToken(null);
+    setUnauthorizedHandler(null);
   });
 
   it('turns a problem+json 409 response into a ProblemError carrying code', async () => {
@@ -54,5 +56,60 @@ describe('apiFetch', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(apiFetch('/health')).resolves.toEqual({ ok: true });
+  });
+
+  it('injects the bearer token set by setAuthToken', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    setAuthToken('the-jwt');
+
+    await apiFetch('/sessions');
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer the-jwt');
+  });
+
+  it('sends no Authorization header when no token is set', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch('/sessions');
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+
+  it('calls the registered unauthorized handler on a 401 response', async () => {
+    const problemBody = {
+      title: 'Unauthorized',
+      status: 401,
+      code: 'UNAUTHENTICATED',
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(problemBody), {
+          status: 401,
+          headers: { 'content-type': 'application/problem+json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(apiFetch('/auth/me')).rejects.toBeInstanceOf(ProblemError);
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 });
