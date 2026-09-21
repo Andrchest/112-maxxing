@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StageActionBar } from './stage-action-bar';
 import { useStageStore } from '@/entities/stage';
+import { ru } from '@/shared/i18n/ru';
 import { ACTIONS_BY_STAGE_STATE, makeCard, makeCallState } from './test-fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -78,15 +79,59 @@ describe('StageActionBar — buttons strictly follow available_actions', () => {
     await waitFor(() => expect(useStageStore.getState().stageState).toBe('INTERVIEW'));
   });
 
-  it('clicking create_handoff shows the TODO(E10) toast instead of calling a command', async () => {
+  it('clicking create_handoff opens a comment dialog, then calls createHandoff and onCommandNeedsRefresh (E10)', async () => {
     const user = userEvent.setup();
     seedStage('HANDOFF_PREPARATION');
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/api/v1/sessions/sess-1/operator/handoff');
+      expect(JSON.parse(String(init?.body))).toEqual({ comment_ru: 'Priority call' });
+      return jsonResponse(
+        {
+          snapshot: {
+            snapshot_id: 'snap-1', incident_id: 'inc-1', card_id: 'card-1', card_revision_id: 'rev-1',
+            card_values: {}, recipient_services: ['FIRE_RESCUE'], created_by_user_id: 'u1',
+            created_at_offset_ms: 1000, content_sha256: 'sha',
+          },
+          assignment_ids: ['assign-1'],
+          stage_state: 'HANDED_OFF',
+          session_state: 'ACTIVE',
+        },
+        201,
+      );
+    });
     vi.stubGlobal('fetch', fetchMock);
+    const onCommandNeedsRefresh = vi.fn();
 
-    render(<StageActionBar sessionId="sess-1" />);
+    render(<StageActionBar sessionId="sess-1" onCommandNeedsRefresh={onCommandNeedsRefresh} />);
     await user.click(screen.getByRole('button', { name: 'Create handoff' }));
+    await user.type(await screen.findByLabelText(ru.operatorHandoffCommentLabel), 'Priority call');
+    await user.click(screen.getByRole('button', { name: ru.operatorCreateHandoffConfirmButton }));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(onCommandNeedsRefresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('clicking complete_stage calls completeOperatorStage and onCommandNeedsRefresh (E10)', async () => {
+    const user = userEvent.setup();
+    seedStage('HANDED_OFF');
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('/api/v1/sessions/sess-1/operator/stage/complete');
+      return jsonResponse({
+        id: 'sess-1', scenario_version_id: 'v1', scenario_slug: 'apartment-fire', scenario_version: 1,
+        session_mode: 'FULL_CYCLE_SINGLE_TRAINEE', state: 'ROLE_TRANSITION', session_seed: 'seed', time_scale: 1,
+        incident_id: 'inc-1', role_chain: ['OPERATOR_112', 'DDS'], stages: [], active_role_stage_id: null,
+        participants: [], created_by_user_id: 'instr-1', created_at: '2026-09-21T00:00:00Z',
+        started_at: '2026-09-21T00:00:00Z', completed_at: null, abort_reason: null, monotonic_offset_ms: 60000,
+        last_seq_no: 12, transition_pause_seconds: 20, transition_continue_available_at_offset_ms: 80000,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onCommandNeedsRefresh = vi.fn();
+
+    render(<StageActionBar sessionId="sess-1" onCommandNeedsRefresh={onCommandNeedsRefresh} />);
+    await user.click(screen.getByRole('button', { name: 'Complete stage' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(onCommandNeedsRefresh).toHaveBeenCalledTimes(1));
   });
 });

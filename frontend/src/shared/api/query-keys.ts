@@ -19,4 +19,11 @@ export const queryKeys = {
     detail: (sessionId: string) => ['sessions', sessionId] as const,
     snapshot: (sessionId: string) => ['sessions', sessionId, 'snapshot'] as const,
   },
+  // -- E10: the DDS console's own REST reads (openapi.yaml; D12) ------------------------------
+  dds: {
+    workItem: (sessionId: string) => ['dds', sessionId, 'work-item'] as const,
+    resources: (sessionId: string) => ['dds', sessionId, 'resources'] as const,
+    notifications: (sessionId: string) => ['dds', sessionId, 'notifications'] as const,
+    radioMessages: (sessionId: string) => ['dds', sessionId, 'radio-messages'] as const,
+  },
 } as const;

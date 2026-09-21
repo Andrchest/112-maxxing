@@ -65,6 +65,61 @@ describe('SessionsLandingPage — lists only what listSessions returned', () => 
     expect(screen.getByRole('link', { name: ru.sessionsOpenButton })).toHaveAttribute('href', '/operator/sess-1');
   });
 
+  it('routes a FULL_CYCLE_SINGLE_TRAINEE participant (my_role_type null) through the resolver (E10)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          items: [
+            {
+              id: 'sess-3',
+              scenario_slug: 'apartment-fire',
+              scenario_version: 1,
+              session_mode: 'FULL_CYCLE_SINGLE_TRAINEE',
+              state: 'ACTIVE',
+              created_at: '2026-09-21T00:00:00Z',
+              created_by_user_id: 'instr-1',
+              my_role_type: null,
+            },
+          ],
+          total: 1,
+        }),
+      ),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole('link', { name: ru.sessionsOpenButton })).toHaveAttribute('href', '/sessions/sess-3/open');
+  });
+
+  it('shows "no console yet" for a true observer (my_role_type null, not FULL_CYCLE_SINGLE_TRAINEE)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          items: [
+            {
+              id: 'sess-4',
+              scenario_slug: 'apartment-fire',
+              scenario_version: 1,
+              session_mode: 'MULTI_TRAINEE',
+              state: 'ACTIVE',
+              created_at: '2026-09-21T00:00:00Z',
+              created_by_user_id: 'instr-1',
+              my_role_type: null,
+            },
+          ],
+          total: 1,
+        }),
+      ),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText(ru.sessionsNoConsoleYet)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: ru.sessionsOpenButton })).not.toBeInTheDocument();
+  });
+
   it('renders the empty state when listSessions returns no items', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [], total: 0 }));
     vi.stubGlobal('fetch', fetchMock);

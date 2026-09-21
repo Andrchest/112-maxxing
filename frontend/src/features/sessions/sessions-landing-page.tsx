@@ -20,9 +20,16 @@ const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
   ASSESSMENT: 'instructorSessionModeAssessment',
 };
 
-function consoleHrefFor(sessionId: string, myRoleType: RoleType | null): string | null {
+/** `SessionListItem.my_role_type` is `session_participants.assigned_role_type` verbatim — under
+ * `FULL_CYCLE_SINGLE_TRAINEE` (`ALL_STAGES_ONE_PARTICIPANT`, D6) it is deliberately `null` even
+ * for the one trainee playing every stage (SPEC §10.10: `assigned_role_type` is per-stage
+ * assignment; a single-trainee-plays-all session assigns no fixed one). Route that case through
+ * `/sessions/:id/open`, which resolves the *active* stage's role from the snapshot server-side
+ * (E10) — never a client-side guess. A `null` role outside that mode means a true observer. */
+function consoleHrefFor(sessionId: string, myRoleType: RoleType | null, sessionMode: SessionMode): string | null {
   if (myRoleType === 'OPERATOR_112') return `/operator/${sessionId}`;
   if (myRoleType === 'DDS') return `/dds/${sessionId}`;
+  if (myRoleType === null && sessionMode === 'FULL_CYCLE_SINGLE_TRAINEE') return `/sessions/${sessionId}/open`;
   return null;
 }
 
@@ -49,7 +56,7 @@ export function SessionsLandingPage() {
       ) : null}
       <ul className="mt-3 flex flex-col gap-2">
         {(sessionsQuery.data?.items ?? []).map((session) => {
-          const href = consoleHrefFor(session.id, session.my_role_type);
+          const href = consoleHrefFor(session.id, session.my_role_type, session.session_mode);
           return (
             <li key={session.id}>
               <Card>

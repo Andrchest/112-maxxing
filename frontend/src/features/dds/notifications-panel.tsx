@@ -1,34 +1,28 @@
-// Right-column notifications panel (SPEC §9/§32 console layout; D12; E10 resolves the previous
-// placeholder). `listNotifications`/`acknowledgeNotification` are the same endpoints the DDS
-// console's own panel uses (`features/dds/notifications-panel.tsx`) — the backend filters by the
-// caller's role, `OPERATOR_112` here.
+// DDS notifications panel (SPEC §12; D5). `listNotifications`/`acknowledgeNotification` are the
+// same endpoints the Operator 112 console's own panel uses (`features/operator/
+// notifications-placeholder.tsx`) — the backend filters by the caller's role.
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
-import { ru } from '@/shared/i18n/ru';
-import { useNotificationStore, countUnacknowledged, type NotificationSeverity } from '@/entities/notification';
+import { useNotificationStore, countUnacknowledged } from '@/entities/notification';
 import { listNotifications, acknowledgeNotification, queryKeys, problemMessageRu, type ProblemCode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { notificationSeverityLabelRu } from './dds-labels';
 
-const SEVERITY_LABEL_KEY: Record<NotificationSeverity, keyof typeof ru> = {
-  INFO: 'notificationSeverityInfo',
-  WARNING: 'notificationSeverityWarning',
-  CRITICAL: 'notificationSeverityCritical',
-};
-const SEVERITY_BADGE_VARIANT: Record<NotificationSeverity, 'outline' | 'secondary' | 'destructive'> = {
+const SEVERITY_BADGE_VARIANT: Record<string, 'outline' | 'secondary' | 'destructive'> = {
   INFO: 'outline',
   WARNING: 'secondary',
   CRITICAL: 'destructive',
 };
 
-interface NotificationsPlaceholderProps {
+interface NotificationsPanelProps {
   sessionId: string;
 }
 
-export function NotificationsPlaceholder({ sessionId }: NotificationsPlaceholderProps) {
+export function NotificationsPanel({ sessionId }: NotificationsPanelProps) {
   const items = useNotificationStore((state) => state.items);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -73,7 +67,7 @@ export function NotificationsPlaceholder({ sessionId }: NotificationsPlaceholder
           {items.map((item) => (
             <li key={item.notification_id} className="flex flex-col gap-1 rounded-lg border border-border p-2">
               <div className="flex items-center justify-between gap-2">
-                <Badge variant={SEVERITY_BADGE_VARIANT[item.severity]}>{t(SEVERITY_LABEL_KEY[item.severity])}</Badge>
+                <Badge variant={SEVERITY_BADGE_VARIANT[item.severity] ?? 'outline'}>{notificationSeverityLabelRu(item.severity)}</Badge>
                 {item.acknowledged_at_offset_ms === null ? (
                   <Button
                     type="button"

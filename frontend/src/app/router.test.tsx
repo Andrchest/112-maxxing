@@ -110,6 +110,24 @@ describe('AppRoutes', () => {
       renderAt('/operator/session-1');
       expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
     });
+
+    it('renders the DDS console for a signed-in TRAINEE at /dds/:sessionId (E10)', () => {
+      signIn('TRAINEE');
+      renderAt('/dds/session-1');
+      expect(screen.getByText(ru.ddsConsoleLoading)).toBeInTheDocument();
+    });
+
+    it('redirects an INSTRUCTOR away from /dds/:sessionId to their own home route', () => {
+      signIn('INSTRUCTOR');
+      renderAt('/dds/session-1');
+      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+    });
+
+    it('renders the session-open resolver for a signed-in TRAINEE at /sessions/:sessionId/open (E10)', () => {
+      signIn('TRAINEE');
+      renderAt('/sessions/session-1/open');
+      expect(screen.getByText(ru.sessionsOpeningConsole)).toBeInTheDocument();
+    });
   });
 
   describe('RequireRole — INSTRUCTOR|ADMIN routes', () => {

@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,11 +8,26 @@ import { ru } from '@/shared/i18n/ru';
 import { useAuthStore, useCallStateStore, useSessionEventsStore } from '@/entities/session';
 import { useCardStore } from '@/entities/card';
 import { useStageStore } from '@/entities/stage';
+import { useNotificationStore } from '@/entities/notification';
 import { ACTIONS_BY_STAGE_STATE, makeCallState, makeCard } from './test-fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
+
+/** Routes a fetch mock by URL suffix — the console now issues both the snapshot GET and the
+ * notifications-panel GET (E10), so a single-URL assertion no longer covers every call. */
+function stubFetchByPath(handlers: Record<string, () => Response>): ReturnType<typeof vi.fn> {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    for (const [suffix, handler] of Object.entries(handlers)) {
+      if (url.endsWith(suffix)) return handler();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+}
+
+const EMPTY_NOTIFICATIONS = () => jsonResponse({ items: [], total: 0 });
 
 /** Never opens (no `onopen` call) — enough to prove the page does not crash while a real socket
  * would still be connecting, without attempting a real network connection in jsdom. Tests that
@@ -88,19 +104,26 @@ function renderConsole(sessionId = 'sess-1') {
       <MemoryRouter initialEntries={[`/operator/${sessionId}`]}>
         <Routes>
           <Route path="/operator/:sessionId" element={<OperatorConsolePage />} />
+          <Route path="/dds/:sessionId" element={<div>dds console</div>} />
+          <Route path="/sessions" element={<div>sessions landing</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
+function resetStores(): void {
+  useCardStore.getState().setCard(null);
+  useStageStore.getState().reset();
+  useCallStateStore.setState({ callState: null });
+  useSessionEventsStore.getState().reset('none', 0);
+  useNotificationStore.getState().reset();
+  useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+}
+
 describe('OperatorConsolePage — refresh restore (SPEC §39, §42 test 13)', () => {
   afterEach(() => {
-    useCardStore.getState().setCard(null);
-    useStageStore.getState().reset();
-    useCallStateStore.setState({ callState: null });
-    useSessionEventsStore.getState().reset('none', 0);
-    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+    resetStores();
     vi.unstubAllGlobals();
   });
 
@@ -109,11 +132,13 @@ describe('OperatorConsolePage — refresh restore (SPEC §39, §42 test 13)', ()
     async (stageState) => {
       signIn();
       vi.stubGlobal('WebSocket', InertSocket);
-      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-        expect(String(input)).toBe('/api/v1/sessions/sess-1/snapshot');
-        return jsonResponse(makeSnapshot({ stage_state: stageState, available_actions: ACTIONS_BY_STAGE_STATE[stageState] }));
-      });
-      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal(
+        'fetch',
+        stubFetchByPath({
+          '/snapshot': () => jsonResponse(makeSnapshot({ stage_state: stageState, available_actions: ACTIONS_BY_STAGE_STATE[stageState] })),
+          '/dds/notifications': EMPTY_NOTIFICATIONS,
+        }),
+      );
 
       renderConsole();
 
@@ -134,7 +159,7 @@ describe('OperatorConsolePage — refresh restore (SPEC §39, §42 test 13)', ()
     vi.stubGlobal('WebSocket', InertSocket);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse(makeSnapshot({ card: null }))),
+      stubFetchByPath({ '/snapshot': () => jsonResponse(makeSnapshot({ card: null })) }),
     );
 
     renderConsole();
@@ -145,11 +170,7 @@ describe('OperatorConsolePage — refresh restore (SPEC §39, §42 test 13)', ()
 
 describe('OperatorConsolePage — CARD_FIELD_CHANGED event/response convergence (D12 design decision #5)', () => {
   afterEach(() => {
-    useCardStore.getState().setCard(null);
-    useStageStore.getState().reset();
-    useCallStateStore.setState({ callState: null });
-    useSessionEventsStore.getState().reset('none', 0);
-    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+    resetStores();
     vi.unstubAllGlobals();
   });
 
@@ -165,7 +186,10 @@ describe('OperatorConsolePage — CARD_FIELD_CHANGED event/response convergence 
     vi.stubGlobal('WebSocket', CapturingSocket);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse(makeSnapshot())),
+      stubFetchByPath({
+        '/snapshot': () => jsonResponse(makeSnapshot()),
+        '/dds/notifications': EMPTY_NOTIFICATIONS,
+      }),
     );
 
     renderConsole();
@@ -211,5 +235,95 @@ describe('OperatorConsolePage — CARD_FIELD_CHANGED event/response convergence 
 
     expect(useCardStore.getState().card?.values['address.house']).toBe('72');
     expect(useCardStore.getState().card?.revision_counter).toBe(2);
+  });
+});
+
+describe('OperatorConsolePage — ROLE_TRANSITION screen (E10; SPEC §10.10)', () => {
+  afterEach(() => {
+    resetStores();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders the pause countdown derived from server data, not a client guess', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () =>
+          jsonResponse(
+            makeSnapshot({
+              session: {
+                ...makeSnapshot().session,
+                state: 'ROLE_TRANSITION',
+                monotonic_offset_ms: 60000,
+                transition_pause_seconds: 20,
+                transition_continue_available_at_offset_ms: 80000,
+              },
+            }),
+          ),
+      }),
+    );
+
+    renderConsole();
+
+    expect(await screen.findByText(ru.operatorRoleTransitionTitle)).toBeInTheDocument();
+    expect(await screen.findByText(`${ru.operatorRoleTransitionCountdownLabel}: 20`)).toBeInTheDocument();
+  });
+
+  it('clicking continue calls continueToNextStage and routes to /dds/:sessionId when the next role is DDS', async () => {
+    const user = userEvent.setup();
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    let continueCalled = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/stage/continue')) {
+          expect(url).toBe('/api/v1/sessions/sess-1/stage/continue');
+          continueCalled = true;
+          return jsonResponse({
+            id: 'sess-1', scenario_version_id: 'v1', scenario_slug: 'apartment-fire', scenario_version: 1,
+            session_mode: 'FULL_CYCLE_SINGLE_TRAINEE', state: 'ACTIVE', session_seed: 'seed', time_scale: 1,
+            incident_id: 'inc-1', role_chain: ['OPERATOR_112', 'DDS'], stages: [], active_role_stage_id: 'stage-dds-1',
+            participants: [], created_by_user_id: 'instr-1', created_at: '2026-09-21T00:00:00Z',
+            started_at: '2026-09-21T00:00:00Z', completed_at: null, abort_reason: null, monotonic_offset_ms: 80000,
+            last_seq_no: 13, transition_pause_seconds: 20, transition_continue_available_at_offset_ms: null,
+          });
+        }
+        if (url.endsWith('/snapshot')) {
+          return jsonResponse(
+            continueCalled
+              ? makeSnapshot({
+                  my_role_type: 'DDS',
+                  active_role_type: 'DDS',
+                  stage_state: 'RECEIVED',
+                  card: null,
+                  work_item: null,
+                  session: { ...makeSnapshot().session, state: 'ACTIVE' },
+                })
+              : makeSnapshot({
+                  session: {
+                    ...makeSnapshot().session,
+                    state: 'ROLE_TRANSITION',
+                    monotonic_offset_ms: 80000,
+                    transition_pause_seconds: 20,
+                    transition_continue_available_at_offset_ms: 80000,
+                  },
+                }),
+          );
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderConsole();
+
+    const continueButton = await screen.findByRole('button', { name: ru.operatorContinueButton });
+    await user.click(continueButton);
+
+    await waitFor(() => expect(continueCalled).toBe(true));
+    expect(await screen.findByText('dds console')).toBeInTheDocument();
   });
 });

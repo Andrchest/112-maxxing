@@ -99,6 +99,151 @@ export function backToInterview(sessionId: string): Promise<OperatorStageView> {
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/handoff/cancel`, { method: 'POST' });
 }
 
+// -- E10: handoff/complete_stage/continue + the DDS console (SPEC §10, §11, §32, §39; D3, D12) ---
+// Every DDS command returns a `DdsStageView` (D8 materialized view) — wholesale-replaced by the
+// caller, same pattern as `OperatorStageView` above (D12 design decision #1).
+export type CreateHandoffRequest = NonNullable<operations['createHandoff']['requestBody']>['content']['application/json'];
+export type HandoffSnapshotView = components['schemas']['HandoffSnapshotView'];
+export type HandoffCreatedView = components['schemas']['HandoffCreatedView'];
+export type DdsWorkItem = components['schemas']['DdsWorkItem'];
+export type DdsStageView = components['schemas']['DdsStageView'];
+export type DDSStageState = components['schemas']['DDSStageState'];
+export type ResourceType = components['schemas']['ResourceType'];
+export type ResourceStatus = components['schemas']['ResourceStatus'];
+export type ResourceCapability = components['schemas']['ResourceCapability'];
+export type EtaProfileView = components['schemas']['EtaProfileView'];
+export type EmergencyResourceView = components['schemas']['EmergencyResourceView'];
+export type ResourceSelectionRequest = components['schemas']['ResourceSelectionRequest'];
+export type DispatchRequest = components['schemas']['DispatchRequest'];
+export type DispatchResultView = components['schemas']['DispatchResultView'];
+export type StatusUpdateKind = components['schemas']['StatusUpdateKind'];
+export type StatusUpdateRequest = components['schemas']['StatusUpdateRequest'];
+export type StatusUpdateView = components['schemas']['StatusUpdateView'];
+export type NotificationSeverity = components['schemas']['NotificationSeverity'];
+export type NotificationView = components['schemas']['NotificationView'];
+export type RadioMessageView = components['schemas']['RadioMessageView'];
+export type ClosureReason = components['schemas']['ClosureReason'];
+export type CloseIncidentRequest = components['schemas']['CloseIncidentRequest'];
+
+/** Freezes the card into a `HandoffSnapshot` and creates one `DDSAssignment` per recipient
+ * service (SPEC §10). `comment_ru` is optional trainee-entered context, not a required field. */
+export function createHandoff(sessionId: string, body: CreateHandoffRequest = {}): Promise<HandoffCreatedView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/handoff`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function completeOperatorStage(sessionId: string): Promise<SessionDetail> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/stage/complete`, { method: 'POST' });
+}
+
+/** Fires `finish_role_transition`; refused with `409 INVALID_TRANSITION` before the pause elapses
+ * or before the next stage has an assigned participant (SPEC §10.10). */
+export function continueToNextStage(sessionId: string): Promise<SessionDetail> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/stage/continue`, { method: 'POST' });
+}
+
+/** Assembled from `handoff_snapshots` + `dds_assignments` only — never `WorldTruth` (D3, SPEC §42
+ * test 3). Rarely called directly; the snapshot/`DdsStageView` already embed it. */
+export function getDdsWorkItem(sessionId: string): Promise<DdsWorkItem> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/work-item`);
+}
+
+export function acknowledgeDdsAssignment(sessionId: string): Promise<DdsStageView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/acknowledge`, { method: 'POST' });
+}
+
+/** Fires `open_resource_selection` (`ACKNOWLEDGED`/`DISPATCHED`/`EN_ROUTE`/`ARRIVED`/`WORKING` ->
+ * `RESOURCE_SELECTION`, additive endpoint landed after this epic's initial cut — see the report's
+ * "Follow-up"). */
+export function openDdsResourceSelection(sessionId: string): Promise<DdsStageView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources/selection/open`, { method: 'POST' });
+}
+
+/** Fires `back_to_acknowledged` (`RESOURCE_SELECTION` -> `ACKNOWLEDGED`, guard
+ * `guard_no_resource_selected`) — the mirror of {@link openDdsResourceSelection}. */
+export function backToDdsAcknowledged(sessionId: string): Promise<DdsStageView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources/selection/cancel`, { method: 'POST' });
+}
+
+export function listDdsResources(
+  sessionId: string,
+  params: { serviceType?: ServiceType; status?: ResourceStatus[] } = {},
+): Promise<{ items: EmergencyResourceView[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.serviceType) query.set('service_type', params.serviceType);
+  for (const status of params.status ?? []) query.append('status', status);
+  const qs = query.toString();
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources${qs ? `?${qs}` : ''}`);
+}
+
+export function selectDdsResource(sessionId: string, resourceId: string): Promise<DdsStageView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources/select`, {
+    method: 'POST',
+    body: JSON.stringify({ resource_id: resourceId } satisfies ResourceSelectionRequest),
+  });
+}
+
+export function deselectDdsResource(sessionId: string, resourceId: string): Promise<DdsStageView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources/deselect`, {
+    method: 'POST',
+    body: JSON.stringify({ resource_id: resourceId } satisfies ResourceSelectionRequest),
+  });
+}
+
+/** Fires `dispatch` the first time, `dispatch_additional` afterwards — same endpoint either way
+ * (`DispatchResultView.is_additional` tells the two apart), per the manager's E10 addendum. */
+export function dispatchDdsResources(sessionId: string, body: DispatchRequest = {}): Promise<DispatchResultView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/resources/dispatch`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function sendDdsStatusUpdate(sessionId: string, body: StatusUpdateRequest): Promise<StatusUpdateView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/status-updates`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `GET /dds/notifications` — same endpoint for the Operator 112 and DDS consoles (both hold
+ * `ACKNOWLEDGE_NOTIFICATION`); the backend filters by the caller's role server-side. */
+export function listNotifications(
+  sessionId: string,
+  params: { unacknowledgedOnly?: boolean } = {},
+): Promise<{ items: NotificationView[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.unacknowledgedOnly) query.set('unacknowledged_only', 'true');
+  const qs = query.toString();
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/notifications${qs ? `?${qs}` : ''}`);
+}
+
+export function acknowledgeNotification(sessionId: string, notificationId: string): Promise<NotificationView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/notifications/${encodeURIComponent(notificationId)}/acknowledge`, {
+    method: 'POST',
+  });
+}
+
+export function listRadioMessages(
+  sessionId: string,
+  params: { afterSeqNo?: number; limit?: number } = {},
+): Promise<{ items: RadioMessageView[]; last_seq_no: number }> {
+  const query = new URLSearchParams();
+  if (params.afterSeqNo !== undefined) query.set('after_seq_no', String(params.afterSeqNo));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/radio-messages${qs ? `?${qs}` : ''}`);
+}
+
+export function closeDdsIncident(sessionId: string, body: CloseIncidentRequest): Promise<SessionDetail> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/close`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export function login(body: LoginRequest): Promise<TokenResponse> {
   return apiFetch<TokenResponse>('/auth/login', {
     method: 'POST',

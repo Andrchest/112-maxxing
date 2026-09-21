@@ -3,16 +3,27 @@
 // hydrate the stage/card/call-state stores -> open the WebSocket and resume from
 // `snapshot.last_seq_no`. Every store write here comes from a server response or a server event
 // payload (D12 design decision #1) — this page decides nothing about the simulation itself.
+//
+// E10: once `complete_stage` fires, the session may enter `ROLE_TRANSITION` (SPEC §10.10) — this
+// page then swaps the normal card layout for a countdown screen. The countdown is ticked locally
+// between snapshot refreshes (DESIGN: "no client clock authority beyond ticking a countdown
+// between events") from `session.transition_continue_available_at_offset_ms` minus
+// `session.monotonic_offset_ms`, both server-sent; `continueToNextStage` is refused with
+// `409 INVALID_TRANSITION` before that offset and before the next stage has an assigned
+// participant, so an early click is harmless. After it succeeds this page re-fetches the snapshot
+// and routes a `FULL_CYCLE_SINGLE_TRAINEE` trainee whose next stage is `DDS` to `/dds/:sessionId`.
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { useParams, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
+import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
 import { useAuthStore, useSessionEventsStore, useCallStateStore } from '@/entities/session';
 import { useCardStore, applyCardEvent } from '@/entities/card';
 import { applyCallEvent } from '@/entities/call';
 import { useStageStore } from '@/entities/stage';
-import { getSessionSnapshot, problemMessageRu, queryKeys, type ProblemCode } from '@/shared/api';
+import { useNotificationStore, applyNotificationEvent } from '@/entities/notification';
+import { getSessionSnapshot, continueToNextStage, problemMessageRu, queryKeys, type ProblemCode, type SessionDetail } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
 import { PhoneWidget } from './phone-widget';
@@ -27,10 +38,100 @@ import { NotificationsPlaceholder } from './notifications-placeholder';
  * of these the page re-fetches the snapshot rather than guessing the new state locally (D12
  * design decision #1: "no optimistic stage changes"; a re-fetch is still "the server's
  * response", just triggered reactively instead of by a click). */
-const STAGE_REFRESH_EVENT_TYPES = new Set(['STAGE_STATE_CHANGED', 'CALL_RINGING', 'CALL_ANSWERED', 'CALL_ENDED', 'HANDOFF_CREATED']);
+const STAGE_REFRESH_EVENT_TYPES = new Set([
+  'STAGE_STATE_CHANGED',
+  'CALL_RINGING',
+  'CALL_ANSWERED',
+  'CALL_ENDED',
+  'HANDOFF_CREATED',
+  'ROLE_TRANSITION_STARTED',
+  'ROLE_TRANSITION_COMPLETED',
+]);
+
+function computeRemainingSeconds(targetOffsetMs: number | null, nowOffsetMs: number): number {
+  return targetOffsetMs === null ? 0 : Math.max(0, Math.ceil((targetOffsetMs - nowOffsetMs) / 1000));
+}
+
+/** Ticks a countdown, in whole seconds, from `targetOffsetMs - nowOffsetMs` down to 0, purely
+ * locally between server refreshes (DESIGN: no client clock authority beyond this). Resetting the
+ * baseline when a fresh `targetOffsetMs`/`nowOffsetMs` pair arrives happens during render itself
+ * (React docs: "adjusting state when a prop changes"), the same idiom `card-form.tsx`'s
+ * `CardFieldRow` already uses — not a synchronous `setState` inside the effect body. */
+function useCountdownSeconds(targetOffsetMs: number | null, nowOffsetMs: number): number {
+  const [remaining, setRemaining] = useState(() => computeRemainingSeconds(targetOffsetMs, nowOffsetMs));
+  const [trackedTarget, setTrackedTarget] = useState(targetOffsetMs);
+  const [trackedNow, setTrackedNow] = useState(nowOffsetMs);
+  if (trackedTarget !== targetOffsetMs || trackedNow !== nowOffsetMs) {
+    setTrackedTarget(targetOffsetMs);
+    setTrackedNow(nowOffsetMs);
+    setRemaining(computeRemainingSeconds(targetOffsetMs, nowOffsetMs));
+  }
+
+  useEffect(() => {
+    if (targetOffsetMs === null) return;
+    const interval = setInterval(() => {
+      setRemaining((previous) => Math.max(0, previous - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [targetOffsetMs, nowOffsetMs]);
+
+  return remaining;
+}
+
+interface RoleTransitionScreenProps {
+  session: SessionDetail;
+  sessionId: string;
+  userLabel: string | undefined;
+  connectionStatus: ConnectionStatus;
+  onContinued: () => Promise<void>;
+}
+
+function RoleTransitionScreen({ session, sessionId, userLabel, connectionStatus, onContinued }: RoleTransitionScreenProps) {
+  const remainingSeconds = useCountdownSeconds(session.transition_continue_available_at_offset_ms, session.monotonic_offset_ms);
+  const [pending, setPending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  async function handleContinue(): Promise<void> {
+    setErrorMessage(null);
+    setPending(true);
+    try {
+      await continueToNextStage(sessionId);
+      await onContinued();
+    } catch (error) {
+      setErrorMessage(error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown'));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
+        <h1 className="font-heading text-lg font-medium">{t('operatorRoleTransitionTitle')}</h1>
+        {remainingSeconds > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t('operatorRoleTransitionCountdownLabel')}: {remainingSeconds}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t('operatorRoleTransitionReady')}</p>
+        )}
+        <Button type="button" disabled={pending} onClick={() => void handleContinue()}>
+          {t('operatorContinueButton')}
+        </Button>
+        {pending ? <p className="text-xs text-muted-foreground">{t('operatorRoleTransitionWaiting')}</p> : null}
+        {errorMessage ? (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage}
+          </p>
+        ) : null}
+      </div>
+    </AppShell>
+  );
+}
 
 export function OperatorConsolePage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
   const stageState = useStageStore((state) => state.stageState);
@@ -75,6 +176,11 @@ export function OperatorConsolePage() {
         // same value regardless of which arrives first (D12 design decision #5).
         useCardStore.setState((state) => ({ card: applyCardEvent(state.card, event) }));
         useCallStateStore.setState((state) => ({ callState: applyCallEvent(state.callState, event) }));
+        // E10: the notifications panel (`NotificationsPlaceholder`) is a real panel now, fed the
+        // same way the DDS console's own panel is.
+        useNotificationStore.setState((state) => ({
+          items: applyNotificationEvent(state.items, event, { incidentId: snapshot.session.incident_id }),
+        }));
         if (STAGE_REFRESH_EVENT_TYPES.has(event.event_type)) {
           void snapshotQuery.refetch();
         }
@@ -118,7 +224,34 @@ export function OperatorConsolePage() {
   }
 
   const snapshot = snapshotQuery.data;
-  if (!snapshot || snapshot.card === null) {
+  if (!snapshot) {
+    return null;
+  }
+
+  // E10: the session-wide transition screen — reached only through this trainee's own
+  // complete_stage (whose response is a SessionDetail refetch drives us to see here), not
+  // rendered from a locally-guessed stage_state.
+  if (snapshot.session.state === 'ROLE_TRANSITION') {
+    return (
+      <RoleTransitionScreen
+        session={snapshot.session}
+        sessionId={sessionId}
+        userLabel={userLabel}
+        connectionStatus={connectionStatus}
+        onContinued={async () => {
+          const refreshed = await snapshotQuery.refetch();
+          const role = refreshed.data?.my_role_type ?? refreshed.data?.active_role_type ?? null;
+          if (role === 'DDS') {
+            navigate(`/dds/${sessionId}`);
+          } else if (role === null) {
+            navigate('/sessions');
+          }
+        }}
+      />
+    );
+  }
+
+  if (snapshot.card === null) {
     return (
       <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleWrongRole')}</p>
@@ -136,7 +269,7 @@ export function OperatorConsolePage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr_320px]">
         <div className="flex flex-col gap-4">
           <PhoneWidget sessionId={sessionId} />
-          <StageActionBar sessionId={sessionId} />
+          <StageActionBar sessionId={sessionId} onCommandNeedsRefresh={() => void snapshotQuery.refetch()} />
         </div>
         <div>
           {stageState === 'HANDOFF_PREPARATION' ? (
@@ -148,7 +281,7 @@ export function OperatorConsolePage() {
         <div className="flex flex-col gap-4">
           <ServicesPanel sessionId={sessionId} />
           <TranscriptPanel />
-          <NotificationsPlaceholder />
+          <NotificationsPlaceholder sessionId={sessionId} />
         </div>
       </div>
     </AppShell>

@@ -5,9 +5,11 @@ import { RequireRole } from '@/features/auth/require-role';
 import { OperatorPage } from '@/features/operator/operator-page';
 import { OperatorConsolePage } from '@/features/operator/console-page';
 import { DdsPage } from '@/features/dds/dds-page';
+import { DdsConsolePage } from '@/features/dds/console-page';
 import { InstructorPage } from '@/features/instructor/instructor-page';
 import { ReportPage } from '@/features/report/report-page';
 import { SessionsLandingPage } from '@/features/sessions/sessions-landing-page';
+import { SessionOpenRedirect } from '@/features/sessions/session-open-redirect';
 import { NotFoundPage } from '@/app/not-found-page';
 import { useAuthStore, homeRouteForRole } from '@/entities/session';
 
@@ -41,11 +43,15 @@ export function AppRoutes() {
       <Route element={<RequireAuth />}>
         <Route element={<RequireRole roles={['TRAINEE']} />}>
           <Route path="/sessions" element={<SessionsLandingPage />} />
-          {/* E8-B: the Operator 112 console for one session (SPEC §9, §10, §32, §39). More
-              specific than /operator/* below, so react-router ranks it first regardless of
-              declaration order. */}
+          {/* E10: resolves a FULL_CYCLE_SINGLE_TRAINEE participant's own console by the session's
+              active stage, when `SessionListItem.my_role_type` is null (`session_participants.
+              assigned_role_type` is deliberately null under `ALL_STAGES_ONE_PARTICIPANT`, D6). */}
+          <Route path="/sessions/:sessionId/open" element={<SessionOpenRedirect />} />
+          {/* E8-B/E10: the per-session consoles. More specific than /operator/*, /dds/* below, so
+              react-router ranks them first regardless of declaration order. */}
           <Route path="/operator/:sessionId" element={<OperatorConsolePage />} />
           <Route path="/operator/*" element={<OperatorPage />} />
+          <Route path="/dds/:sessionId" element={<DdsConsolePage />} />
           <Route path="/dds/*" element={<DdsPage />} />
         </Route>
         <Route element={<RequireRole roles={['INSTRUCTOR', 'ADMIN']} />}>
