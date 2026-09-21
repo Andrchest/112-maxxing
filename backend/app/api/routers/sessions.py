@@ -42,6 +42,7 @@ from app.api.schemas.sessions import (
     session_detail_schema,
     session_list_item_schema,
 )
+from app.api.schemas.voice import VoiceTokenResponseSchema, voice_token_response_schema
 from app.api.security import AdminOrInstructorDep, CurrentUserDep, actor_of
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.sessions.create_session import CreateSessionCommand
@@ -183,6 +184,29 @@ async def _detail(
         view = await assemble_session_detail(uow, session, viewer=user, clock=container.clock)
         await uow.commit()
     return session_detail_schema(view)
+
+
+@router.post(
+    "/{session_id}/voice-token",
+    operation_id="createVoiceToken",
+    summary="Mint a LiveKit access token for the calling participant.",
+    response_model=VoiceTokenResponseSchema,
+    status_code=200,
+)
+async def create_voice_token(
+    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> VoiceTokenResponseSchema:
+    """One room-scoped LiveKit token for this session's live call (D9).
+
+    `x-action` is `'-'` and `x-emits` is `[]`: nothing is appended and nothing moves. The use case
+    refuses a non-`ACTIVE` session with `409 SESSION_NOT_ACTIVE`, a caller who is not the active
+    `OPERATOR_112` participant with `403`, and a session whose call is neither `RINGING` nor
+    `CONNECTED` with `409 ACTION_NOT_AVAILABLE`.
+
+    The minted token is never logged (SPEC §41): it goes into this response body and nowhere else.
+    """
+    minted = await container.create_voice_token()(SessionId(session_id), user)
+    return voice_token_response_schema(minted)
 
 
 @router.post(

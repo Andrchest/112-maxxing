@@ -5,3 +5,4 @@
 // a store.
 export * from './apply-call-event';
 export * from './format';
+export * from './media-state-store';

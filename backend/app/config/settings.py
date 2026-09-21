@@ -75,6 +75,49 @@ class Settings(BaseSettings):
     livekit_api_key: str
     livekit_api_secret: str
     llm_base_url: str
+    # -- the voice turn path (HLD `50-voice-pipeline.md` §4.1, D9, SPEC §17) ------------------
+    # SPEC §17: "Make this configuration, not a hard-coded magic value." Every key of §4.1's
+    # table gets one `SIM_VOICE_*` variable; `app.application.voice.config.VoiceTurnConfig`
+    # validates the ranges and the cross-field rules, and the `TurnDetector` reads nothing else.
+    # TODO(E12): the active model profile's `voice_turn.*` block overlays this env block.
+    voice_speech_start_threshold: float = 0.55
+    voice_speech_end_threshold: float = 0.35
+    voice_speech_start_min_ms: int = 96
+    voice_endpoint_silence_ms: int = 300
+    voice_pre_roll_ms: int = 300
+    voice_barge_in_min_speech_ms: int = 120
+    voice_max_turn_ms: int = 30000
+    voice_min_turn_ms: int = 200
+    voice_vad_frame_ms: int = 32
+    voice_trailing_pad_ms: int = 100
+    voice_outbound_queue_ms: int = 200
+    voice_tts_chunk_ms: int = 40
+    voice_partial_asr_enabled: bool = True
+    voice_partial_interval_ms: int = 500
+    voice_sample_rate: int = 16000
+    #: `VOICE_JOIN_RETRY_MS` of §40.6: how often the backend re-publishes `voice:join` while a
+    #: call is RINGING (D9, E11-B). The default is §40.6's, literally.
+    voice_join_retry_ms: int = 2000
+    #: How long the voice agent's `voice:health:vad` heartbeat key lives (HLD 60 §4.3).
+    voice_health_heartbeat_s: int = 5
+    voice_health_ttl_s: int = 15
+    # -- E11-B: the LiveKit access tokens the backend mints (D9, `openapi.yaml`) ---------------
+    #: `createVoiceToken` lifetime. Ten minutes: long enough to join a call that is still ringing,
+    #: short enough that a leaked token is worthless. The token is re-minted, not refreshed.
+    livekit_token_ttl_minutes: int = 10
+    #: The URL a BROWSER dials, which is not always the one this process dials. Under
+    #: `infra/docker-compose.yml` the backend and the voice-agent reach the SFU at its
+    #: compose-internal name (`SIM_LIVEKIT_URL`, e.g. `ws://livekit:7880`) while the trainee's
+    #: browser must be told a URL that resolves on their machine (`ws://localhost:7880`).
+    #: `VoiceTokenResponse.livekit_url` carries this one; the readiness probe and the voice-agent
+    #: keep using `livekit_url`. Empty (the default) means "they are the same", which is what a
+    #: plain local run wants — see `livekit_browser_url`.
+    livekit_public_url: str = ""
+
+    @property
+    def livekit_browser_url(self) -> str:
+        """`SIM_LIVEKIT_PUBLIC_URL` when it is set, else `SIM_LIVEKIT_URL` (see that field)."""
+        return self.livekit_public_url or self.livekit_url
 
 
 @lru_cache

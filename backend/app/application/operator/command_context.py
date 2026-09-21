@@ -242,7 +242,7 @@ class OperatorCommandGate:
                 stage=stage,
                 actor=ActorRef(actor_type=ActorType.TRAINEE, actor_id=user.user_id),
                 now_ms=session_offset_ms(self._clock.now(), session.started_at),
-                transport_ready=await self._call_transport.caller_joined(session_id),
+                transport_ready=await self._call_transport.transport_ready(session_id),
                 log=tuple(await uow.events.read(session_id)),
             )
             yield context

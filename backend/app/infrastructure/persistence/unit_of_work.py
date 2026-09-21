@@ -18,6 +18,7 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.audio_segment_repository import AudioSegmentRepository
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
@@ -34,6 +35,9 @@ from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.application.ports.world_truth_repository import WorldTruthRepository
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import SessionEvent
+from app.infrastructure.persistence.audio_segment_repository import (
+    SqlAlchemyAudioSegmentRepository,
+)
 from app.infrastructure.persistence.caller_belief_repository import (
     SqlAlchemyCallerBeliefRepository,
 )
@@ -79,6 +83,7 @@ class SqlAlchemyUnitOfWork:
         self._close_session = close_session
         self._session: AsyncSession | None = None
         self._event_store: SqlAlchemyEventStore | None = None
+        self._audio_segments: SqlAlchemyAudioSegmentRepository | None = None
         self._scenarios: SqlAlchemyScenarioRepository | None = None
         self._sessions: SqlAlchemySessionRepository | None = None
         self._users: SqlAlchemyUserRepository | None = None
@@ -99,6 +104,7 @@ class SqlAlchemyUnitOfWork:
         session = self._session_factory()
         self._session = session
         self._event_store = SqlAlchemyEventStore(session, self._clock, on_append=self._record)
+        self._audio_segments = SqlAlchemyAudioSegmentRepository(session)
         self._scenarios = SqlAlchemyScenarioRepository(session)
         self._sessions = SqlAlchemySessionRepository(session)
         self._users = SqlAlchemyUserRepository(session)
@@ -127,6 +133,7 @@ class SqlAlchemyUnitOfWork:
             session = self._session
             self._session = None
             self._event_store = None
+            self._audio_segments = None
             self._scenarios = None
             self._sessions = None
             self._users = None
@@ -155,6 +162,12 @@ class SqlAlchemyUnitOfWork:
         if self._event_store is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._event_store
+
+    @property
+    def audio_segments(self) -> AudioSegmentRepository:
+        if self._audio_segments is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._audio_segments
 
     @property
     def scenarios(self) -> ScenarioRepository:

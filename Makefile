@@ -1,6 +1,13 @@
 SHELL := /bin/bash
 UV := uv
+# `-n auto` (pytest-xdist) parallelizes the backend suite across the machine's idle cores;
+# `PYTEST_WORKERS=0` on the invocation gives a serial run (E11-0). Left out of `addopts` on
+# purpose: a bare `uv run pytest path::test` must stay serial and debuggable.
+PYTEST_WORKERS ?= auto
 COMPOSE_TEST := docker compose -f infra/docker-compose.test.yml -p sim112test
+# The local development stack (postgres, redis, livekit). Separate project name and separate
+# ports from COMPOSE_TEST, so the two can run side by side.
+COMPOSE_DEV := docker compose -f infra/docker-compose.yml
 export SIM_DATABASE_URL ?= postgresql+asyncpg://sim:sim@localhost:55432/sim_test
 export SIM_REDIS_URL ?= redis://localhost:56379/0
 export SIM_JWT_SECRET ?= test-only-secret
@@ -14,7 +21,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps infra-up infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test
+.PHONY: deps infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test
 deps:
 	$(UV) sync --all-packages --group dev
 	cd frontend && npm ci
@@ -22,6 +29,12 @@ infra-up:
 	$(COMPOSE_TEST) up -d --wait
 infra-down:
 	$(COMPOSE_TEST) down -v
+# The development stack of infra/docker-compose.yml (SPEC §36, D9). Named volumes, so `down`
+# deliberately does NOT take `-v`: a developer's local database survives a restart of the stack.
+dev-infra-up:
+	$(COMPOSE_DEV) up -d --wait
+dev-infra-down:
+	$(COMPOSE_DEV) down
 fmt:
 	$(UV) run ruff format . && $(UV) run ruff check --fix .
 lint:
@@ -54,7 +67,7 @@ run-api:
 seed-users:
 	$(UV) run python -m app.tools.seed_users
 test-backend: infra-up
-	$(UV) run pytest -q
+	$(UV) run pytest -q -n $(PYTEST_WORKERS) --dist loadfile
 gate-backend: lint typecheck boundaries scenarios db-check test-backend
 gate-frontend:
 	cd frontend && npm run check:api && npm run lint && npm run typecheck && npm run test -- --run && npm run build

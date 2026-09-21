@@ -16,6 +16,8 @@ Pure tests over `app.application.handoff.work_item` — no database, no HTTP. Wh
 
 from __future__ import annotations
 
+import typing
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,9 +40,47 @@ from app.domain.common.ids import (
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.enums import ClosureReason, DDSStageState, ServiceType
 from app.domain.layers.handoff import HandoffSnapshot
+from pydantic import BaseModel
 
 FIRE = ServiceType.FIRE_RESCUE
 AMBULANCE = ServiceType.AMBULANCE
+
+
+def _is_identifier_or_timestamp_annotation(annotation: object) -> bool:
+    """`True` for a `UUID`- or `datetime`-typed annotation, `X | None`/`tuple[X, ...]` included.
+
+    Recurses into a generic's type arguments (`get_args`), so `tuple[UUID, ...]` and `datetime |
+    None` both count, exactly like the bare `UUID`/`datetime` they wrap.
+    """
+    origin = typing.get_origin(annotation)
+    if origin is not None:
+        return any(
+            _is_identifier_or_timestamp_annotation(argument)
+            for argument in typing.get_args(annotation)
+        )
+    return isinstance(annotation, type) and issubclass(annotation, (UUID, datetime))
+
+
+def _free_text_dump(model: BaseModel) -> str:
+    """`str(model.model_dump())`, minus every field a random value could spuriously match.
+
+    A random UUID, a sha256 digest or a timestamp is exactly the kind of value that occasionally
+    contains a short digit string like "27" by chance — which is what made
+    `test_the_snapshot_supplies_every_frozen_field` flaky (E11-0). This derives the exclusion from
+    the model's own field types instead of hand-listing `DdsWorkItemView`'s field names, so a new
+    free-text field is still checked by default and only an identifier/timestamp-shaped field (or
+    one whose name says it is a hash — Python has no dedicated "sha256 digest" type to introspect)
+    is ever left out.
+    """
+    fields = type(model).model_fields
+    excluded = {
+        name
+        for name, info in fields.items()
+        if _is_identifier_or_timestamp_annotation(info.annotation) or name.endswith("_sha256")
+    }
+    included = set(fields) - excluded
+    return str(model.model_dump(include=included))
+
 
 #: The card the demo operator types: the caller's "72" where world truth says "27", and no floor.
 CARD_VALUES: dict[str, object] = {
@@ -122,7 +162,11 @@ def test_the_snapshot_supplies_every_frozen_field(
     assert view.recipient_services == (FIRE, AMBULANCE)
     assert view.handoff_content_sha256 == snapshot.content_sha256
     assert view.snapshot_id == UUID(str(snapshot.snapshot_id))
-    assert "27" not in str(view.model_dump())
+    # Every identifier/hash/timestamp field is excluded first (they are random and occasionally
+    # contain "27" by chance, e.g. inside a UUID or a sha256 digest — see `_free_text_dump`); what
+    # is left is the free-text/enum data the projection actually copies from the snapshot, and
+    # that must never contain the world-truth house number.
+    assert "27" not in _free_text_dump(view)
 
 
 def test_a_work_item_needs_at_least_one_leg(snapshot: HandoffSnapshot) -> None:

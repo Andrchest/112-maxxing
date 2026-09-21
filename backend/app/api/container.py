@@ -61,6 +61,7 @@ from app.application.operator.get_card import GetOperatorCard
 from app.application.operator.list_card_revisions import ListCardRevisions
 from app.application.operator.select_service import SelectRecipientService
 from app.application.operator.set_card_field import SetCardField
+from app.application.ports.call_state_cache import CallStateCache
 from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.clock import Clock
 from app.application.ports.event_publisher import EventPublisher
@@ -74,6 +75,8 @@ from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.runner_lock import RunnerLock
 from app.application.ports.token_service import TokenService
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
+from app.application.ports.voice_token_service import VoiceTokenService
 from app.application.realtime.event_stream import SessionEventStream
 from app.application.realtime.list_events import ListSessionEvents
 from app.application.scenarios.import_scenario_version import ImportScenarioVersion
@@ -91,6 +94,7 @@ from app.application.sessions.queries import GetSession, ListSessions
 from app.application.sessions.start_session import StartSession
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
+from app.application.voice_token.create_voice_token import CreateVoiceToken
 from app.config.settings import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
@@ -98,6 +102,7 @@ from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
 from app.infrastructure.auth.jwt_token_service import JwtTokenService
 from app.infrastructure.clock import SystemClock
 from app.infrastructure.health import (
+    LiveKitHealthProbe,
     PlaceholderHealthProbe,
     PostgresHealthProbe,
     RedisHealthProbe,
@@ -109,7 +114,11 @@ from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCa
 from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
+from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
+from app.infrastructure.transport.livekit_transport_status import LiveKitTransportStatus
 from app.infrastructure.transport.local_call_transport_status import LocalCallTransportStatus
+from app.infrastructure.transport.redis_call_state_cache import RedisCallStateCache
+from app.infrastructure.transport.redis_voice_signals import RedisVoiceSignals
 
 __all__ = ["Container", "build_container"]
 
@@ -155,6 +164,9 @@ class Container:
         hasher: PasswordHasher | None = None,
         tokens: TokenService | None = None,
         call_transport_status: CallTransportStatus | None = None,
+        voice_tokens: VoiceTokenService | None = None,
+        voice_signals: VoiceSignalPublisher | None = None,
+        call_state_cache: CallStateCache | None = None,
         health_probes: Sequence[HealthProbe] | None = None,
         idempotency: IdempotencyStore | None = None,
         owns_engine: bool = True,
@@ -217,7 +229,7 @@ class Container:
         self.call_transport_status: CallTransportStatus = (
             call_transport_status
             if call_transport_status is not None
-            else _call_transport_status(settings)
+            else _call_transport_status(settings, self.redis)
         )
         self.health_probes: tuple[HealthProbe, ...] = tuple(
             health_probes if health_probes is not None else self._default_probes()
@@ -229,6 +241,31 @@ class Container:
             if idempotency is not None
             else RedisIdempotencyStore(self.redis, ttl_s=settings.idempotency_ttl_s)
         )
+        # -- E11-B: the backend half of the call (D9, §40.6, SPEC §15, §34) --------------------
+        #
+        # Three ports, all appended at the end of `__init__` so nothing above them moves. The
+        # token service mints plain HS256 JWTs with `pyjwt` — no `livekit` import ever enters
+        # `backend/` (D2) — and it is handed `livekit_browser_url`, the URL a BROWSER dials, which
+        # under compose is not the one this process dials (`SIM_LIVEKIT_PUBLIC_URL`).
+        self.voice_tokens: VoiceTokenService = (
+            voice_tokens
+            if voice_tokens is not None
+            else LiveKitTokenService(
+                settings.livekit_api_key,
+                settings.livekit_api_secret,
+                livekit_url=settings.livekit_browser_url,
+                ttl_minutes=settings.livekit_token_ttl_minutes,
+            )
+        )
+        self.voice_signals: VoiceSignalPublisher = (
+            voice_signals if voice_signals is not None else RedisVoiceSignals(self.redis)
+        )
+        self.call_state_cache: CallStateCache = (
+            call_state_cache
+            if call_state_cache is not None
+            else RedisCallStateCache(self.redis, settings.session_cache_ttl_s)
+        )
+        # -- end E11-B -------------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -282,8 +319,8 @@ class Container:
         )
 
     def abort_session(self) -> AbortSession:
-        """`abortSession`."""
-        return AbortSession(self.unit_of_work, self.clock)
+        """`abortSession`; publishes `voice:cancel:{session_id}` after the commit (§40.6)."""
+        return AbortSession(self.unit_of_work, self.clock, self.voice_signals)
 
     def list_sessions(self) -> ListSessions:
         """`listSessions`."""
@@ -347,11 +384,21 @@ class Container:
 
     def answer_call(self) -> AnswerCall:
         """`answerCall`."""
-        return AnswerCall(self.operator_command_gate(), self.ids)
+        return AnswerCall(self.operator_command_gate(), self.ids, self.clock, self.call_state_cache)
 
     def end_call(self) -> EndCall:
-        """`endCall`."""
-        return EndCall(self.operator_command_gate(), self.ids)
+        """`endCall`; publishes `voice:cancel:{session_id}` after the commit (§40.6, E11-B)."""
+        return EndCall(
+            self.operator_command_gate(),
+            self.ids,
+            self.clock,
+            self.voice_signals,
+            self.call_state_cache,
+        )
+
+    def create_voice_token(self) -> CreateVoiceToken:
+        """`createVoiceToken` (E11-B)."""
+        return CreateVoiceToken(self.unit_of_work, self.voice_tokens)
 
     def get_operator_card(self) -> GetOperatorCard:
         """`getOperatorCard`."""
@@ -386,8 +433,26 @@ class Container:
         return GetSnapshot(self.unit_of_work, self.clock)
 
     def advance_call_flow(self) -> AdvanceCallFlow:
-        """The `SIMULATION`-fired `ring` / `begin_interview` triggers (§10.8, D7)."""
-        return AdvanceCallFlow(self.unit_of_work, self.clock, self.call_transport_status, self.ids)
+        """The `SIMULATION`-fired `ring` / `begin_interview` triggers (§10.8, D7).
+
+        Built once and cached, unlike the command use cases above: §40.6's `voice:join` retry is
+        rate-limited per session by `VOICE_JOIN_RETRY_MS`, and a use case rebuilt on every tick
+        would carry a fresh, empty timer and re-publish on every tick instead (E11-B).
+        """
+        cached: AdvanceCallFlow | None = getattr(self, "_advance_call_flow_use_case", None)
+        if cached is not None:
+            return cached
+        built = AdvanceCallFlow(
+            self.unit_of_work,
+            self.clock,
+            self.call_transport_status,
+            self.ids,
+            self.voice_signals,
+            self.call_state_cache,
+            join_retry_ms=self.settings.voice_join_retry_ms,
+        )
+        self._advance_call_flow_use_case: AdvanceCallFlow = built
+        return built
 
     async def _advance_call_flow(self, session_id: SessionId) -> bool:
         """The `SimulationRunner`'s one `after_tick` hook.
@@ -534,7 +599,7 @@ class Container:
         return [
             PostgresHealthProbe(self.engine),
             RedisHealthProbe(self.redis),
-            PlaceholderHealthProbe("livekit", "E11"),
+            LiveKitHealthProbe(self.settings.livekit_url),
             PlaceholderHealthProbe("llm", "E18"),
             PlaceholderHealthProbe("asr", "E18"),
             PlaceholderHealthProbe("tts", "E18"),
@@ -557,16 +622,13 @@ class _PlaceholderInferenceReadiness:
         return False
 
 
-def _call_transport_status(settings: Settings) -> CallTransportStatus:
+def _call_transport_status(settings: Settings, redis: Redis) -> CallTransportStatus:
     """The `CallTransportStatus` adapter `SIM_CALL_TRANSPORT` names (D9)."""
     transport = settings.call_transport.lower()
     if transport == "fake":
         return LocalCallTransportStatus()
     if transport == "livekit":
-        raise NotImplementedError(
-            "SIM_CALL_TRANSPORT=livekit has no CallTransportStatus adapter yet — TODO(E11) owns "
-            "the LiveKit transport (D9). Use SIM_CALL_TRANSPORT=fake until E11 lands."
-        )
+        return LiveKitTransportStatus(settings.livekit_url, redis)
     raise ValueError(
         f"SIM_CALL_TRANSPORT={settings.call_transport!r} is not a known transport; "
         f"expected 'fake' or 'livekit'"

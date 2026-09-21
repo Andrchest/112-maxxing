@@ -14,6 +14,7 @@ members = ["backend", "workers/voice_agent", "benchmarks"]
 dev = [
     "pytest",
     "pytest-asyncio",
+    "pytest-xdist",
     "ruff",
     "mypy",
     "types-PyYAML",
@@ -52,4 +53,5 @@ testpaths = ["backend/tests", "workers/voice_agent/tests"]
 markers = [
     "integration: requires live PostgreSQL/Redis test infra (make infra-up)",
     "requires_models: requires real ML model weights/extras to be installed",
+    "requires_livekit: requires a live LiveKit server on SIM_LIVEKIT_URL (E11)",
 ]

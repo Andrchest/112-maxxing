@@ -1,0 +1,31 @@
+# LiveKit SFU configuration for local development (SPEC §15, D9, HLD 60 §6).
+#
+# There are **no keys in this file**. `livekit-server` reads its API key/secret pairs from the
+# `LIVEKIT_KEYS` environment variable, which `infra/docker-compose.yml` fills from
+# `SIM_LIVEKIT_API_KEY` / `SIM_LIVEKIT_API_SECRET` in your `.env` — SPEC §41: "Secrets in
+# env/config, not source."
+#
+# Single node, no Redis backend: one SFU serves one training box, and the simulator never reads
+# LiveKit's own Redis keys anyway (§40.6). A multi-node deployment is not in scope for the demo.
+
+port: 7880
+
+rtc:
+  # A fixed pair of media ports instead of a range, so the compose file can publish exactly two
+  # and nothing has to open 50 000 ports on a developer's machine.
+  tcp_port: 7881
+  udp_port: 7882
+  # Everything runs on one host and is reached as `localhost`; asking a STUN server for an
+  # external IP would hand the browser an address it cannot route to, and would make a local,
+  # network-free run (SPEC §41) depend on the internet.
+  use_external_ip: false
+
+# The trainee's browser and the voice-agent both hold the room open for the length of a call; a
+# room with nobody in it is a finished call and is not worth keeping.
+room:
+  empty_timeout: 60
+  departure_timeout: 20
+
+logging:
+  level: info
+  json: false

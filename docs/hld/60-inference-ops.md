@@ -800,6 +800,10 @@ Notes that matter for this project:
 - Env: `MODEL_PROFILE`, `DATABASE_URL`, `REDIS_URL`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
   `LIVEKIT_API_SECRET`, `DATA_DIR`, `RECORDING_RETENTION_DAYS`, `REQUIRE_INFERENCE_READY`.
   All from `.env`; none in source (SPEC §41).
+- `LIVEKIT_URL` is the URL a *server process* dials (compose-internal, e.g. `ws://livekit:7880`).
+  `LIVEKIT_PUBLIC_URL` (E11) is the URL a *browser* dials, e.g. `ws://localhost:7880`; it is what
+  `VoiceTokenResponse.livekit_url` carries, and it defaults to `LIVEKIT_URL` when unset. The
+  readiness probe and the voice-agent always use `LIVEKIT_URL`.
 - Healthcheck: `python -m voice_agent.cli health`, which returns 0 only when every
   `voice:health:{service}` key it owns is READY or WARMING — a FATAL service makes the container
   unhealthy and visible, without restarting it into the same OOM.

@@ -7,6 +7,7 @@ vendor SDK; `backend/tools/check_imports.py` enforces it.
 
 from __future__ import annotations
 
+from app.application.ports.call_state_cache import CallStateCache
 from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
@@ -38,9 +39,13 @@ from app.application.ports.token_service import (
 )
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import StoredUser, UserRepository, UserRole
+from app.application.ports.voice_signal_publisher import CANCEL_REASONS, VoiceSignalPublisher
+from app.application.ports.voice_token_service import MintedVoiceToken, VoiceTokenService
 from app.application.ports.world_truth_repository import WorldTruthRepository
 
 __all__ = [
+    "CANCEL_REASONS",
+    "CallStateCache",
     "CallTransportStatus",
     "CallerBeliefRepository",
     "Clock",
@@ -54,6 +59,7 @@ __all__ = [
     "InferenceReadiness",
     "InvalidTokenError",
     "IssuedToken",
+    "MintedVoiceToken",
     "OperatorCardRepository",
     "PasswordHasher",
     "ScenarioRepository",
@@ -71,6 +77,8 @@ __all__ = [
     "UnitOfWorkFactory",
     "UserRepository",
     "UserRole",
+    "VoiceSignalPublisher",
+    "VoiceTokenService",
     "WorldTruthRepository",
     "envelope_of",
 ]

@@ -68,6 +68,17 @@ export function endCall(sessionId: string, body: EndCallRequest): Promise<Operat
   });
 }
 
+// -- E11-C: the LiveKit call widget (SPEC §15, §32, §34; D9, D12) ---------------------------
+export type VoiceTokenResponse = components['schemas']['VoiceTokenResponse'];
+
+/** Mints a room-scoped LiveKit token for the calling participant (D9: "the backend is the only
+ * minter of LiveKit tokens — the frontend never holds the LiveKit API secret"). Call this only
+ * once per join, after the server reports the call CONNECTED; the widget itself is responsible
+ * for not requesting a second token for the same call. */
+export function createVoiceToken(sessionId: string): Promise<VoiceTokenResponse> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/voice-token`, { method: 'POST' });
+}
+
 /** Exactly one `field_path` per command (SPEC §9: every mutation stored with actor/previous/new
  * value). */
 export function setCardField(sessionId: string, body: SetCardFieldRequest): Promise<SetCardFieldResponse> {

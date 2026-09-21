@@ -1,8 +1,9 @@
 """`project_call_state` — the phone widget's state, folded from the log alone (D5, SPEC §8).
 
-Call state has no table and no Redis hash of its own (the `session:{id}:call_state` key of §40.6
-is deliberately not implemented — TODO(E11)). It is a pure fold over `session_events`, which is
-the audit source, so these tests are pure too: no database, no clock, no container.
+Call state has no table. §40.6's `session:{id}:call_state` key is a *cache* of this fold and never
+an authority (E11; see `read_cached_call_state` and `backend/tests/unit/application/operator/
+test_call_state_cache.py`). The fold itself is pure, so these tests are pure too: no database, no
+clock, no container.
 """
 
 from __future__ import annotations

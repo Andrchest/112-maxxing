@@ -93,7 +93,11 @@ export const ru = {
   operatorPhoneEnded: 'Вызов завершён',
   operatorCallerSpeaking: 'Говорит абонент',
   operatorMuteButton: 'Без звука',
+  operatorUnmuteButton: 'Включить звук',
   operatorLevelMeterLabel: 'Уровень сигнала',
+  // -- E11-C: the LiveKit call widget going live (SPEC §15, §32, §34; D9, D12) --------------
+  operatorCallReconnecting: 'Переподключение…',
+  operatorMicPermissionDenied: 'Нет доступа к микрофону. Разрешите доступ в браузере — вызов при этом остаётся под контролем.',
 
   operatorCardTitle: 'Карточка происшествия',
   operatorCardRevisionCounter: 'Изменений внесено',

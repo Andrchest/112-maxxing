@@ -1,19 +1,42 @@
 // The phone widget (SPEC §32: "the caller's dialogue should primarily be experienced as a phone
 // call, not as a giant chat window"; D12: "ringing, answer, timer, mute, hang-up, level meter").
 // States come from `CallStateView.phase`; `answer`/`end_call` are rendered only when the server
-// currently offers them (D12 design decision #1). Mute and the level meter are visually present
-// but inert — LiveKit audio arrives in E11 (SPEC §15, D9).
-import { useEffect, useState } from 'react';
+// currently offers them (D12 design decision #1).
+//
+// E11-C: the LiveKit call itself goes live here (SPEC §15, D9). The widget joins the room only
+// once the server reports CONNECTED (the `answer` command succeeded), using a token from
+// `createVoiceToken` — never earlier, and it requests that token at most once per `call_id`. It
+// leaves on ENDED, on unmount and therefore on route change too (this component only renders
+// inside the operator console's normal layout; navigating away or entering ROLE_TRANSITION
+// unmounts it). Mute is local-track mute only — never a backend command — and the level meter
+// reads the local microphone via `shared/media/call-media.ts`'s `CallMedia`, never the caller's
+// audio. A microphone permission failure never blocks a REST command (hang-up keeps working) and
+// never changes simulation state (SPEC §39): it only shows a Russian message. A LiveKit reconnect
+// shows the `operatorCallReconnecting` message (ru.ts) through `entities/call`'s own
+// `useMediaStateStore` — a store fed exclusively by `CallMedia`'s callbacks, never by the
+// application WebSocket (D9 DESIGN).
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useCallStateStore, type CallStateView } from '@/entities/session';
-import { formatCallDurationMs } from '@/entities/call';
+import { formatCallDurationMs, useMediaStateStore } from '@/entities/call';
 import { useCardStore } from '@/entities/card';
 import { useStageStore, type OperatorStageView } from '@/entities/stage';
-import { answerCall, endCall, problemMessageRu, type ProblemCode } from '@/shared/api';
+import { answerCall, createVoiceToken, endCall, problemMessageRu, type ProblemCode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { CallMedia } from '@/shared/media/call-media';
+
+// Follow-up ruling (coordinator, after the HLD-gap flag in this task's report): the backend now
+// mints `VoiceTokenResponse.livekit_url` as a browser-facing URL (its `livekit_public_url`
+// setting, E11-B owns it), so that response is the normal source of truth. `VITE_LIVEKIT_URL`
+// (see `.env.example`) is only a developer override — when set and non-empty it wins, but an
+// unset/empty env var must never shadow the response.
+function resolveLiveKitUrl(responseLiveKitUrl: string): string {
+  const override = import.meta.env.VITE_LIVEKIT_URL as string | undefined;
+  return override && override.length > 0 ? override : responseLiveKitUrl;
+}
 
 const PHASE_LABEL_KEY: Record<CallStateView['phase'], keyof typeof ru> = {
   NO_CALL: 'operatorPhoneNoCall',
@@ -62,6 +85,67 @@ export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
     const id = setInterval(() => setConnectedElapsedMs(Date.now() - startedAtWallClock), 1000);
     return () => clearInterval(id);
   }, [phase]);
+
+  // -- E11-C: the LiveKit media session (SPEC §15, D9) ----------------------------------------
+  const mediaPhase = useMediaStateStore((state) => state.phase);
+  const muted = useMediaStateStore((state) => state.muted);
+  const level = useMediaStateStore((state) => state.level);
+  const micPermissionDenied = useMediaStateStore((state) => state.micPermissionDenied);
+
+  // One `CallMedia` per widget lifetime, created lazily during render the first time (React
+  // docs: "How to create expensive objects lazily") — its callbacks only ever write to
+  // `useMediaStateStore`, never to a store the application WebSocket also feeds (D9 DESIGN).
+  const callMediaRef = useRef<CallMedia | null>(null);
+  if (callMediaRef.current === null) {
+    callMediaRef.current = new CallMedia({
+      onPhaseChange: (nextPhase) => useMediaStateStore.getState().setPhase(nextPhase),
+      onLevel: (nextLevel) => useMediaStateStore.getState().setLevel(nextLevel),
+      onMicPermissionDenied: () => useMediaStateStore.getState().setMicPermissionDenied(true),
+    });
+  }
+
+  // The call_id already joined (or left), so a re-render while the server is still CONNECTED
+  // never re-requests a token (D9 DESIGN: "token requested once per join") and a refresh that
+  // restores straight into CONNECTED (browser refresh mid-call) still joins exactly once.
+  const joinedCallIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const media = callMediaRef.current;
+    if (!media) return;
+    const callId = callState?.call_id ?? null;
+
+    if (phase === 'CONNECTED' && callId && joinedCallIdRef.current !== callId) {
+      joinedCallIdRef.current = callId;
+      useMediaStateStore.getState().reset();
+      void (async () => {
+        try {
+          const tokenResponse = await createVoiceToken(sessionId);
+          await media.connect(resolveLiveKitUrl(tokenResponse.livekit_url), tokenResponse.token);
+        } catch {
+          // A token/join failure never blocks a REST command (SPEC §39) — the call stays
+          // controllable through `answer`/`end_call`; only the media phase reflects it.
+          useMediaStateStore.getState().setPhase('failed');
+        }
+      })();
+    } else if (phase !== 'CONNECTED' && joinedCallIdRef.current !== null) {
+      joinedCallIdRef.current = null;
+      void media.disconnect();
+    }
+  }, [phase, callState?.call_id, sessionId]);
+
+  // Leaves the room on unmount — covers both this component going away on ENDED-driven
+  // navigation and a plain route change away from the operator console (D9 DESIGN).
+  useEffect(() => {
+    return () => {
+      void callMediaRef.current?.disconnect();
+    };
+  }, []);
+
+  function handleToggleMute(): void {
+    const nextMuted = !muted;
+    useMediaStateStore.getState().setMuted(nextMuted);
+    callMediaRef.current?.setMuted(nextMuted);
+  }
 
   function applyStageView(view: OperatorStageView): void {
     useStageStore.getState().setFromStageView(view);
@@ -120,6 +204,11 @@ export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
             {t('operatorCallerSpeaking')}
           </p>
         ) : null}
+        {mediaPhase === 'reconnecting' ? (
+          <p className="text-xs text-amber-600" data-slot="media-reconnecting">
+            {t('operatorCallReconnecting')}
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {answerAction ? (
             <Button type="button" disabled={pending} onClick={() => void handleAnswer()}>
@@ -131,14 +220,25 @@ export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
               {endCallAction.label_ru}
             </Button>
           ) : null}
-          {/* TODO(E11): mute + level meter go live with LiveKit audio (SPEC §15, D9); inert until then. */}
-          <Button type="button" variant="outline" size="sm" disabled>
-            {t('operatorMuteButton')}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={mediaPhase === 'idle' || mediaPhase === 'failed'}
+            aria-pressed={muted}
+            onClick={handleToggleMute}
+          >
+            {muted ? t('operatorUnmuteButton') : t('operatorMuteButton')}
           </Button>
           <span className="text-xs text-muted-foreground" data-slot="level-meter">
-            {t('operatorLevelMeterLabel')}: —
+            {t('operatorLevelMeterLabel')}: {mediaPhase === 'connected' ? Math.round(level * 100) : '—'}
           </span>
         </div>
+        {micPermissionDenied ? (
+          <p role="alert" className="text-sm text-destructive" data-slot="mic-permission-denied">
+            {t('operatorMicPermissionDenied')}
+          </p>
+        ) : null}
         {errorMessage ? (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage}

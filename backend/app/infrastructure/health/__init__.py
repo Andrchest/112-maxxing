@@ -1,9 +1,8 @@
 """Readiness probes (D8, SPEC §37, `openapi.yaml` `getHealthReady`).
 
-`openapi.yaml` names seven components. Two are probed for real here — `postgres` and `redis` — and
-five are not yet probeable at all:
+`openapi.yaml` names seven components. Three are probed for real here — `postgres`, `redis` and
+`livekit` (E11) — and four are not yet probeable at all:
 
-* `livekit` — TODO(E11): the SFU is not wired until the voice transport slice;
 * `llm`, `asr`, `tts`, `vad` — TODO(E18): §40.6 reads them from `voice:health:{service}`, whose
   **writer is the voice-agent process** ("a missing key is `NOT_READY`, never `READY`"). Until the
   agent exists there is no key to read, and a probe that invented `READY` would let a demo session
@@ -21,11 +20,13 @@ from datetime import UTC, datetime
 
 from app.application.ports.health_probe import ComponentReading
 from app.domain.enums import HealthStatus
+from app.infrastructure.health.livekit_probe import LiveKitHealthProbe
 from app.infrastructure.health.postgres_probe import PROBE_TIMEOUT_S, PostgresHealthProbe
 from app.infrastructure.health.redis_probe import RedisHealthProbe
 
 __all__ = [
     "PROBE_TIMEOUT_S",
+    "LiveKitHealthProbe",
     "PlaceholderHealthProbe",
     "PostgresHealthProbe",
     "RedisHealthProbe",

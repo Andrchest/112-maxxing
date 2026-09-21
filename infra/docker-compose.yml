@@ -1,0 +1,80 @@
+# The local development stack (SPEC §36, §41, D1, HLD 60 §6).
+#
+# Three services today — `postgres`, `redis`, `livekit` — because E11 is the slice that needs a
+# media plane and nothing more. The remaining services D1 names are deliberately absent rather
+# than half-written:
+#
+#   * `backend`        — TODO(E18)
+#   * `frontend`       — TODO(E18)
+#   * `llama-server`   — TODO(E18) (pinned ggml-org/llama.cpp CUDA tag, `nvidia` runtime,
+#                        `${MODELS_DIR}:/models:ro`, no published port — HLD 60 §6)
+#   * `voice-agent`    — TODO(E18) (built from `workers/voice_agent/Dockerfile`, depends on
+#                        redis/postgres/livekit/llama-server, publishes no port — HLD 60 §6)
+#
+# This file is for `make dev-infra-up`. It is **not** the test stack: `infra/docker-compose.test.yml`
+# owns that, uses tmpfs storage and different ports, and the two are meant to be able to run side
+# by side. No port here is 8000 or 8001 — those belong to another project on the developer machine.
+#
+# Every secret comes from the environment (`.env`, see `.env.example`); SPEC §41 forbids a real
+# credential in source, and the defaults below are the same fake dev placeholders `.env.example`
+# documents.
+
+name: sim112dev
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${SIM_POSTGRES_USER:-sim}
+      POSTGRES_PASSWORD: ${SIM_POSTGRES_PASSWORD:-sim}
+      POSTGRES_DB: ${SIM_POSTGRES_DB:-sim}
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SIM_POSTGRES_USER:-sim} -d ${SIM_POSTGRES_DB:-sim}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis:
+    image: redis:7
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  livekit:
+    # Pinned, never `:latest`: an SFU that changes under a running demo is a demo that fails for
+    # reasons nobody can reproduce (HLD 60 §6).
+    image: livekit/livekit-server:v1.13.7
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # `livekit-server` takes its key/secret pairs from this one variable, as `key: secret`.
+      # The values come from the same `.env` the backend reads, so the token the backend mints
+      # and the token this server verifies are signed with one secret (D9).
+      LIVEKIT_KEYS: "${SIM_LIVEKIT_API_KEY:-devkey}: ${SIM_LIVEKIT_API_SECRET:-devsecret1234567890}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # 7880 signalling (HTTP/WebSocket), 7881 TCP media fallback, 7882/udp media.
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    healthcheck:
+      # The SFU serves `/` on its signalling port; answering at all is the readiness fact the
+      # backend's own `livekit` probe reads (`app.infrastructure.health.livekit_probe`).
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:7880/ >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -108,6 +108,30 @@ class LayerRule:
     forbidden: tuple[str, ...]
 
 
+#: Path-scoped rules (E11). The module-name rules below key on a file's *dotted* name, which only
+#: exists inside a `PACKAGE_ROOTS` entry — so `backend/tests/**` and `backend/tools/**` are covered
+#: by the "(anywhere)" rule alone. Two E11 facts need more than that and are expressed here, by
+#: directory, because that is what they are about:
+#:
+#: * **`backend/` never imports `livekit`** (D9, SPEC §15: "Domain logic must not import LiveKit
+#:   objects", and the wider rule that the SDK lives in one process). The backend mints LiveKit
+#:   access tokens as plain HS256 JWTs with `pyjwt`, so it needs nothing from the SDK — including
+#:   in its own tests, which is exactly where an `import livekit` would otherwise sneak in and
+#:   make the dependency real;
+#: * **`workers/voice_agent/voice_agent/transport/` may import `livekit` but not `livekit.agents`**
+#:   (D9: "plain rtc + api, NOT the livekit-agents framework"). `livekit-agents` brings its own
+#:   session, turn-detection and pipeline abstractions, which would duplicate — and quietly
+#:   compete with — the `TurnPipeline` of `50-voice-pipeline.md`.
+PATH_RULES: list[tuple[str, str, tuple[str, ...]]] = [
+    ("workers/voice_agent/voice_agent/transport", "voice_agent.transport", ("livekit.agents",)),
+    ("backend", "backend", ("livekit",)),
+    # The voice agent's own tests are not under `PACKAGE_ROOTS` either, and the transport
+    # contract test drives `LiveKitCallTransport` through the adapter rather than the SDK.
+    ("workers/voice_agent/tests", "workers/voice_agent/tests", ("livekit",)),
+    ("benchmarks", "benchmarks", ("livekit",)),
+]
+
+
 RULES: list[LayerRule] = [
     LayerRule(
         label="app.domain",
@@ -255,9 +279,27 @@ def _resolve_from_import(node: ast.ImportFrom, package: str | None) -> str | Non
     return ".".join(base_parts) if base_parts else None
 
 
-def _merged_forbidden(module_name: str | None) -> dict[str, str]:
-    """Merge forbidden-prefix -> layer-label for every rule that applies to `module_name`."""
+def _path_forbidden(path: Path, root: Path) -> dict[str, str]:
+    """Merge forbidden-prefix -> label for every `PATH_RULES` entry whose directory holds `path`."""
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:  # pragma: no cover - `iter_python_files` only yields paths under `root`
+        return {}
     merged: dict[str, str] = {}
+    for directory, label, forbidden in PATH_RULES:
+        if relative == directory or relative.startswith(directory + "/"):
+            for prefix in forbidden:
+                merged.setdefault(prefix, label)
+    return merged
+
+
+def _merged_forbidden(module_name: str | None, seeded: dict[str, str]) -> dict[str, str]:
+    """Merge forbidden-prefix -> layer-label for every rule that applies to `module_name`.
+
+    `seeded` holds the path-scoped rules, which are the most specific there are and therefore win
+    over any module-name rule for the same prefix.
+    """
+    merged: dict[str, str] = dict(seeded)
     for rule in RULES:
         if not rule.applies_to(module_name):
             continue
@@ -275,6 +317,24 @@ def _forbidden_violation(
     return None
 
 
+def _forbidden_symbol_violation(
+    path: Path, line: int, module: str, symbol: str, forbidden: dict[str, str]
+) -> Violation | None:
+    """Catch `from livekit import agents` for a dotted forbidden prefix like `livekit.agents`.
+
+    `from X import Y` resolves to module `X`, so a rule that names the submodule `X.Y` would miss
+    it. A dotted prefix is therefore also matched against `module + "." + symbol`; the imported
+    name is reported in its dotted form, which is the one the rule talks about.
+    """
+    for prefix, label in forbidden.items():
+        if "." not in prefix:
+            continue
+        candidate = f"{module}.{symbol}"
+        if _in_package(candidate, prefix):
+            return Violation(path, line, f"{label} must not import {candidate}")
+    return None
+
+
 def check_file(path: Path, root: Path) -> list[Violation]:
     try:
         source = path.read_text(encoding="utf-8")
@@ -287,7 +347,7 @@ def check_file(path: Path, root: Path) -> list[Violation]:
         return [Violation(path, exc.lineno or 1, f"could not parse file: {exc.msg}")]
 
     module_name, package_name = module_and_package(path, root)
-    forbidden = _merged_forbidden(module_name)
+    forbidden = _merged_forbidden(module_name, _path_forbidden(path, root))
     is_domain = _is_domain(module_name)
 
     violations: list[Violation] = []
@@ -326,6 +386,13 @@ def check_file(path: Path, root: Path) -> list[Violation]:
             violation = _forbidden_violation(path, node.lineno, resolved, forbidden)
             if violation is not None:
                 violations.append(violation)
+                continue
+            for alias in node.names:
+                symbol_violation = _forbidden_symbol_violation(
+                    path, node.lineno, resolved, alias.name, forbidden
+                )
+                if symbol_violation is not None:
+                    violations.append(symbol_violation)
 
     return violations
 

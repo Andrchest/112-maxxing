@@ -649,7 +649,7 @@ by the creation use case before the machine exists. `start` emits `SESSION_START
 
 | From | Trigger | To | Who may fire | Guard |
 |:--|:--|:--|:--|:--|
-| `WAITING_FOR_CALL` | `ring` | `RINGING` | SIMULATION | `guard_session_active_and_transport_ready`: session is `ACTIVE` and the `CallTransport` reports the caller joined |
+| `WAITING_FOR_CALL` | `ring` | `RINGING` | SIMULATION | `guard_session_active_and_transport_ready`: session is `ACTIVE` and the `CallTransport` reports the media plane can take a call — the LiveKit server is reachable and the voice-agent heartbeat (`voice:health:vad`, §40.6) is `READY` |
 | `RINGING` | `answer` | `CONNECTED` | TRAINEE (OPERATOR_112) | `guard_participant_assigned_to_stage` |
 | `CONNECTED` | `begin_interview` | `INTERVIEW` | SIMULATION | `guard_first_finalized_turn`: the first `ASR_FINAL` for this call has been appended |
 | `INTERVIEW` | `open_handoff_preparation` | `HANDOFF_PREPARATION` | TRAINEE (OPERATOR_112) | — (an incomplete card must stay possible: SPEC §10) |
@@ -658,6 +658,12 @@ by the creation use case before the machine exists. `start` emits `SESSION_START
 | `HANDED_OFF` | `complete_stage` | `STAGE_COMPLETED` | TRAINEE (OPERATOR_112), SIMULATION | `guard_call_ended`: `CALL_ENDED` has been appended for this call |
 | `WAITING_FOR_CALL`, `RINGING`, `CONNECTED`, `INTERVIEW`, `HANDOFF_PREPARATION`, `HANDED_OFF` | `abort_stage` | `STAGE_COMPLETED` | INSTRUCTOR, SYSTEM | fired only as part of session `abort` |
 | `STAGE_COMPLETED` | — | — | — | terminal |
+
+`transport_ready` deliberately does **not** mean "the caller has joined the room": D9 has the
+voice-agent join on the `voice:join` message the backend publishes *at* `CALL_RINGING`, so a guard
+that waited for a participant would wait for the room this very transition names. It means what its
+name says — the media plane can take a call — and is read through
+`app.application.ports.call_transport_status.CallTransportStatus` (E11).
 
 `ring` emits `CALL_RINGING`, `answer` emits `CALL_ANSWERED`, `create_handoff` emits
 `HANDOFF_CREATED`, `complete_stage` emits `ROLE_STAGE_COMPLETED`; every transition additionally emits
@@ -1109,7 +1115,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]`, `created_by_user_id: uuid` | INSTRUCTOR |
 | `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType` | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_STAGE_STARTED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `order_index: int`, `initial_state: str`, `participant_user_id: uuid \| null` | OPERATOR_112, DDS, INSTRUCTOR |
-| `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str` (a neutral incoming-call line, **never** `CallerProfile.identity_ru` — see below), `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CALL_ANSWERED` | `TRAINEE` | `call_id: uuid`, `at_offset_ms: int`, `ring_duration_ms: int`, `answered_by_user_id: uuid` | OPERATOR_112, INSTRUCTOR |
 | `USER_SPEECH_STARTED` | `TRAINEE` | `call_id: uuid`, `turn_index: int`, `at_offset_ms: int`, `vad_provider: str` | OPERATOR_112, INSTRUCTOR |
 | `USER_SPEECH_ENDED` | `TRAINEE` | `call_id: uuid`, `turn_index: int`, `at_offset_ms: int`, `speech_duration_ms: int`, `endpoint_silence_ms: int` | OPERATOR_112, INSTRUCTOR |
@@ -1134,6 +1140,16 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `SESSION_COMPLETED` | `SIMULATION` | `at_offset_ms: int`, `final_session_state: SessionState`, `total_events: int` | OPERATOR_112, DDS, INSTRUCTOR |
 | `MODEL_FALLBACK_USED` | `SYSTEM` | `component: "INTERPRETER"\|"GENERATOR"\|"VALIDATOR"\|"ASR"\|"TTS"`, `reason: str`, `attempt: int`, `fallback_kind: str`, `turn_index: int \| null` | INSTRUCTOR |
 | `MODEL_ERROR` | `SYSTEM` | `component: str`, `provider: str`, `model: str`, `error_code: str`, `message: str`, `recoverable: bool`, `turn_index: int \| null` | INSTRUCTOR |
+
+**`CALL_RINGING.caller_display_ru`** is a fixed, neutral incoming-call line
+(`app.application.operator.call_flow.CALLER_DISPLAY_RU`, "Входящий вызов 112"), not the scenario
+persona's `identity_ru`. The persona's identity typically contains facts the trainee is scored on
+obtaining by asking — in the demo scenario it is "Соседка Ирина Петровна из квартиры 41", which
+names `caller.full_name` and `address.apartment` — so putting it on the OPERATOR_112 phone widget
+would move Caller Knowledge into the Operator view, which D3 separates and `openapi.yaml`'s
+`CallStateView` already forbids ("nothing about the caller's hidden knowledge appears here").
+`ScenarioVersionSummary.caller_display_ru`, an instructor-facing catalogue field with the same
+property name, does remain `CallerProfile.identity_ru`.
 
 ### Additive events (D5)
 

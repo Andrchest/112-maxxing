@@ -11,20 +11,27 @@ round-trips through `model_dump_json()` / `model_validate_json()` makes that sto
 instead of a hand-written serialiser that can drift from the view.
 
 **Call state has no table.** `project_call_state` is a pure fold over the session's event log —
-the audit source (SPEC §8, §31) — and nothing else. §40.6 lists a `session:{id}:call_state` Redis
-hash; it is deliberately not implemented, because a cache that the snapshot read from would make
-Redis authoritative for a trainee-visible fact. TODO(E11): that cache, as a *cache* of this fold,
-once the LiveKit transport gives the fold a real `room_name`/`call_id` to carry.
+the audit source (SPEC §8, §31) — and nothing else. §40.6's `session:{id}:call_state` key is a
+*cache* of that fold and never an authority: `CachedCallState` below carries exactly the five keys
+§40.6 lists, `call_state_document` is what a call use case writes after its commit, and
+`read_cached_call_state` answers from the key when it is there and **from the fold when it is
+not**. Losing the key — a lapsed TTL, a `FLUSHALL`, an unreachable Redis — therefore costs one
+PostgreSQL read and changes no answer, which is §40.6's stated invariant.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Sequence
+from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.application.ports.call_state_cache import CallStateCache
+from app.domain.common.ids import SessionId
 from app.domain.enums import Operator112StageState, ServiceType, SessionState, ValueType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
@@ -36,6 +43,7 @@ from app.domain.session.session import RoleStage, SimulationSession
 __all__ = [
     "ActionView",
     "ActorRefView",
+    "CachedCallState",
     "CallPhase",
     "CallStateView",
     "CardFieldSpecView",
@@ -44,11 +52,16 @@ __all__ = [
     "OperatorStageView",
     "ServiceSelectionView",
     "action_views",
+    "call_state_document",
     "card_view",
     "operator_stage_view",
     "project_call_state",
+    "read_cached_call_state",
     "revision_view",
+    "write_call_state_cache",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class CallPhase(str, Enum):
@@ -317,4 +330,83 @@ def operator_stage_view(
         call_state=project_call_state(events),
         session_state=session.state,
         last_seq_no=last_seq_no,
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# §40.6's `session:{id}:call_state` — a cache of the fold above, never an authority
+# ---------------------------------------------------------------------------------------------
+
+
+class CachedCallState(BaseModel):
+    """§40.6's `session:{id}:call_state` value: `{call_id, room_name, phase, caller_speaking,
+    updated_at}`, key for key.
+
+    It is deliberately *narrower* than `CallStateView`: §40.6 lists five keys and this carries
+    exactly those five. Everything else the phone widget shows — the offsets and the duration —
+    comes from the fold, which is the authority, so a reader can never mistake a stale cache for
+    the call's history.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    call_id: UUID | None
+    room_name: str | None
+    phase: CallPhase
+    caller_speaking: bool
+    updated_at: datetime
+
+
+def call_state_document(view: CallStateView, updated_at: datetime) -> str:
+    """The JSON a call use case writes into `session:{id}:call_state` after its commit."""
+    cached = CachedCallState(
+        call_id=view.call_id,
+        room_name=view.room_name,
+        phase=view.phase,
+        caller_speaking=view.caller_speaking,
+        updated_at=updated_at,
+    )
+    return cached.model_dump_json()
+
+
+async def write_call_state_cache(
+    cache: CallStateCache | None,
+    session_id: SessionId,
+    view: CallStateView,
+    updated_at: datetime,
+) -> None:
+    """Cache `view`'s five §40.6 keys. A `None` cache (no Redis) is a no-op, never an error."""
+    if cache is None:
+        return
+    await cache.put(session_id, call_state_document(view, updated_at))
+
+
+async def read_cached_call_state(
+    cache: CallStateCache | None,
+    session_id: SessionId,
+    events: Sequence[SessionEvent],
+    updated_at: datetime,
+) -> CachedCallState:
+    """The cached call state, falling back to the fold over `events` whenever the key is not there.
+
+    "Not there" covers every documented loss: no cache wired at all, a lapsed TTL, a `FLUSHALL`, an
+    unreachable Redis (the adapter answers `None`) and a value that is not the document this module
+    writes. Each of those costs the caller one fold and yields the same answer, which is what makes
+    §40.6's "Redis holds nothing that cannot be rebuilt from PostgreSQL" true here.
+    """
+    document = await cache.get(session_id) if cache is not None else None
+    if document is not None:
+        try:
+            return CachedCallState.model_validate(json.loads(document))
+        except (ValueError, ValidationError):
+            # A foreign or half-written value is a miss, not a failure: the fold below is the
+            # authority and answering from it is always correct.
+            logger.warning("session %s: unreadable call_state cache; folding instead", session_id)
+    view = project_call_state(events)
+    return CachedCallState(
+        call_id=view.call_id,
+        room_name=view.room_name,
+        phase=view.phase,
+        caller_speaking=view.caller_speaking,
+        updated_at=updated_at,
     )

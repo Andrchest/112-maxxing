@@ -19,6 +19,7 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Protocol, runtime_checkable
 
+from app.application.ports.audio_segment_repository import AudioSegmentRepository
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
 from app.application.ports.event_store import EventStore
@@ -42,6 +43,15 @@ class UnitOfWork(Protocol):
     @property
     def events(self) -> EventStore:
         """The event store bound to this transaction."""
+        ...
+
+    @property
+    def audio_segments(self) -> AudioSegmentRepository:
+        """The `audio_segments` repository bound to this transaction (§20.6, §9.1, D9).
+
+        The recording index commits with the event append that names it, so
+        `transcript_segments.audio_segment_id` is never dangling (`50-voice-pipeline.md` §9.1).
+        """
         ...
 
     @property

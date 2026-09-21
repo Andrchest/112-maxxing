@@ -247,3 +247,86 @@ def test_sabotage_file_removed_goes_green_again(
 
     assert exit_code == 0
     assert out == ""
+
+
+# ---------------------------------------------------------------------------------------------
+# E11: the two LiveKit facts of D9 / SPEC §15
+# ---------------------------------------------------------------------------------------------
+
+
+def test_backend_must_not_import_livekit_even_outside_the_app_package(
+    clean_tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The SDK lives in one process. `backend/tests` is where it would otherwise sneak in.
+
+    The `app` layer rule already covers `backend/app/**`; this is the path rule, which covers the
+    rest of `backend/` — tests, tools, conftest — none of which has a dotted `app.*` module name.
+    """
+    (clean_tree / "backend/tests").mkdir(parents=True, exist_ok=True)
+    (clean_tree / "backend/tests/test_sabotage.py").write_text("import livekit\n", encoding="utf-8")
+
+    exit_code, out = _run(clean_tree, capsys)
+
+    assert exit_code == 1
+    assert "backend/tests/test_sabotage.py:1: backend must not import livekit" in out
+
+
+def test_backend_must_not_import_a_livekit_submodule(
+    clean_tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (clean_tree / "backend/tools/_sabotage.py").write_text(
+        "from livekit import api\n", encoding="utf-8"
+    )
+
+    exit_code, out = _run(clean_tree, capsys)
+
+    assert exit_code == 1
+    assert "backend/tools/_sabotage.py:1: backend must not import livekit" in out
+
+
+def test_voice_agent_transport_must_not_import_the_livekit_agents_framework(
+    clean_tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D9: "plain `livekit` rtc + `livekit-api`, NOT the livekit-agents framework"."""
+    (clean_tree / "workers/voice_agent/voice_agent/transport/_sabotage.py").write_text(
+        "import livekit.agents\n", encoding="utf-8"
+    )
+
+    exit_code, out = _run(clean_tree, capsys)
+
+    assert exit_code == 1
+    assert (
+        "workers/voice_agent/voice_agent/transport/_sabotage.py:1: voice_agent.transport "
+        "must not import livekit.agents" in out
+    )
+
+
+def test_the_from_livekit_import_agents_spelling_is_caught_too(
+    clean_tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`from X import Y` resolves to `X`, so the submodule rule has to look at the symbol too."""
+    (clean_tree / "workers/voice_agent/voice_agent/transport/_sabotage.py").write_text(
+        "from livekit import agents\n", encoding="utf-8"
+    )
+
+    exit_code, out = _run(clean_tree, capsys)
+
+    assert exit_code == 1
+    assert (
+        "workers/voice_agent/voice_agent/transport/_sabotage.py:1: voice_agent.transport "
+        "must not import livekit.agents" in out
+    )
+
+
+def test_voice_agent_transport_still_imports_plain_livekit_rtc_and_api(
+    clean_tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The allowance is the point of the rule: the transport IS the one place that speaks WebRTC."""
+    (clean_tree / "workers/voice_agent/voice_agent/transport/_ok.py").write_text(
+        "import livekit\nfrom livekit import rtc\nfrom livekit import api\n", encoding="utf-8"
+    )
+
+    exit_code, out = _run(clean_tree, capsys)
+
+    assert exit_code == 0
+    assert out == ""

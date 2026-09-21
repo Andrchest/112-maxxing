@@ -4,12 +4,46 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from app.config.settings import Settings
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
+
+#: `gw<N>` -> `(N % 15) + 1`, as `pytest-xdist` names its worker processes.
+_XDIST_WORKER = re.compile(r"^gw(\d+)$")
+
+
+def _redis_url_for_worker(url: str) -> str:
+    """Give this xdist worker its own Redis logical database (E11-0).
+
+    PostgreSQL isolation comes for free — `migrated_engine` below creates a randomly named
+    database per (session-scoped, so per worker process) fixture instance — but Redis has no
+    equivalent of "create me a throwaway database": the compose instance is shared with whatever
+    else the developer is running (see `Makefile`), so every worker must pick a different one of
+    Redis's 16 logical databases by index instead.
+
+    `PYTEST_XDIST_WORKER` is unset when pytest is not running under `-n` (a bare
+    `uv run pytest path::test`, or `make test-backend PYTEST_WORKERS=0`), so `url` passes through
+    unchanged — the pre-E11-0 behaviour. Under xdist, `gw<N>` maps to db `(N % 15) + 1`: db 0 is
+    reserved for that serial/no-xdist case and is never reused by a worker, and capping at 15
+    keeps every worker inside Redis's default 16 databases even if `-n auto` starts more than 15
+    workers, in which case two workers share a db index. That is safe only because every Redis key
+    and pub/sub channel the tests (and the production code they exercise) use is namespaced by a
+    per-test/per-session UUID — see the E11-0 report for the audit — so two workers sharing a db
+    index never observe each other's keys or channels by accident.
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    if worker == "master":
+        return url
+    match = _XDIST_WORKER.match(worker)
+    if match is None:  # pragma: no cover - defensive: an xdist worker id pytest-xdist never emits
+        return url
+    db_index = (int(match.group(1)) % 15) + 1
+    base, _, _current_db = url.rpartition("/")
+    return f"{base}/{db_index}"
 
 
 @pytest.fixture
@@ -19,7 +53,9 @@ def test_settings() -> Settings:
         database_url=os.environ.get(
             "SIM_DATABASE_URL", "postgresql+asyncpg://sim:sim@localhost:55432/sim_test"
         ),
-        redis_url=os.environ.get("SIM_REDIS_URL", "redis://localhost:56379/0"),
+        redis_url=_redis_url_for_worker(
+            os.environ.get("SIM_REDIS_URL", "redis://localhost:56379/0")
+        ),
         jwt_secret=os.environ.get("SIM_JWT_SECRET", "test-only-secret"),
         require_inference_ready=False,
         livekit_url=os.environ.get("SIM_LIVEKIT_URL", "ws://localhost:7880"),

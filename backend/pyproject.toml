@@ -16,6 +16,10 @@ dependencies = [
     "pyjwt",
     "argon2-cffi",
     "httpx",
+    # The voice path's audio maths (E11): the `Resampler` and `EnergyVAD` are numpy, not a
+    # hand-rolled loop over `array`. Not an optional extra — `app.application.voice` is imported
+    # by the backend itself and numpy is pure-CPU, ~15 MB, and already a `sim-voice-agent` dep.
+    "numpy",
 ]
 
 # Heavy ML dependencies are optional extras (D1); adapters import them lazily.

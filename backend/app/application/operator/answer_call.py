@@ -10,6 +10,14 @@ A *transition* command: it goes through `SimulationSession.fire_stage_trigger`, 
 call id and the ring duration, which the aggregate does not hold. This module is that use case:
 it appends `CALL_ANSWERED` before `STAGE_STATE_CHANGED`, which is the order `openapi.yaml`'s
 `x-emits` lists for this operation.
+
+After the commit — and only after it — §40.6's `session:{id}:call_state` cache is refreshed from
+the view this command just produced. It is a cache of `project_call_state` and nothing reads it as
+an authority (`app.application.operator.views`), so a failure to write it is invisible.
+
+Answering also *stops* the `voice:join` retry of §40.6 without doing anything: the retry fires only
+while the stage is `RINGING`, and this command is what leaves that state (D9 — the agent is already
+in the room, having joined on the `voice:join` published at `CALL_RINGING`).
 """
 
 from __future__ import annotations
@@ -18,7 +26,13 @@ from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.operator.command_context import OperatorCommandGate
-from app.application.operator.views import OperatorStageView, project_call_state
+from app.application.operator.views import (
+    OperatorStageView,
+    project_call_state,
+    write_call_state_cache,
+)
+from app.application.ports.call_state_cache import CallStateCache
+from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.domain.common.ids import SessionId
 from app.domain.events.session_event import DomainEvent
@@ -33,9 +47,17 @@ ACTION_ID = "answer"
 class AnswerCall:
     """`answerCall` (`openapi.yaml`): answer the ringing call."""
 
-    def __init__(self, gate: OperatorCommandGate, ids: IdGenerator) -> None:
+    def __init__(
+        self,
+        gate: OperatorCommandGate,
+        ids: IdGenerator,
+        clock: Clock | None = None,
+        call_state_cache: CallStateCache | None = None,
+    ) -> None:
         self._gate = gate
         self._ids = ids
+        self._clock = clock
+        self._call_state_cache = call_state_cache
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> OperatorStageView:
         """Fire `answer`, emit `CALL_ANSWERED` then `STAGE_STATE_CHANGED`, return the new view."""
@@ -68,4 +90,10 @@ class AnswerCall:
                 },
             )
             await ctx.append([answered, *stage_events])
-            return ctx.stage_view(await ctx.card())
+            view = ctx.stage_view(await ctx.card())
+        # The gate committed when the block above closed; the cache is written only now (§40.6).
+        if self._clock is not None:
+            await write_call_state_cache(
+                self._call_state_cache, session_id, view.call_state, self._clock.now()
+            )
+        return view

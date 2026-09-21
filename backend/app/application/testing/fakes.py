@@ -10,26 +10,43 @@ Production wiring uses `app.infrastructure.clock.SystemClock` and
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+import math
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from random import Random
 from uuid import UUID
 
+from app.application.ports.call_transport import (
+    AudioFrame,
+    PlaybackHandle,
+    TransportEvent,
+    TransportEventType,
+)
 from app.application.ports.event_publisher import EventEnvelope
+from app.application.ports.voice_token_service import MintedVoiceToken
+from app.application.voice.playback import ChunkedPlayback, OutboundQueue
 from app.domain.common.ids import SessionId
 
 __all__ = [
+    "FakeCallTransport",
     "FakeCallTransportStatus",
     "FakeClock",
     "FakeInferenceReadiness",
     "FakePasswordHasher",
+    "InMemoryCallStateCache",
     "InMemoryEventPublisher",
     "InMemoryEventSubscriber",
     "InMemoryEventSubscription",
     "InMemoryIdempotencyStore",
     "InMemoryLastSeqNoCache",
     "InMemoryRunnerLock",
+    "InMemoryVoiceSignals",
     "SequentialIdGenerator",
+    "StubVoiceTokenService",
+    "noise_frames",
+    "silence_frames",
+    "sine_burst_frames",
 ]
 
 
@@ -183,25 +200,25 @@ class InMemoryRunnerLock:
 class FakeCallTransportStatus:
     """A scriptable `CallTransportStatus` (D9, §10.8 `ring`).
 
-    `joined` is the blanket answer; `per_session` overrides it for one session, so a test can have
-    the caller present on one session and absent on another in the same process. This is the
+    `ready` is the blanket answer; `per_session` overrides it for one session, so a test can have
+    the media plane up for one session and down for another in the same process. This is the
     *test* fake: production wiring never imports `app.application.testing` (D13), and
     `SIM_CALL_TRANSPORT=fake` wires
     `app.infrastructure.transport.local_call_transport_status.LocalCallTransportStatus` instead.
     """
 
-    def __init__(self, joined: bool = True) -> None:
+    def __init__(self, ready: bool = True) -> None:
         #: The answer for every session that has no override.
-        self.joined = joined
-        #: `session_id -> answer`, checked before `joined`.
+        self.ready = ready
+        #: `session_id -> answer`, checked before `ready`.
         self.per_session: dict[SessionId, bool] = {}
         #: Every session asked about, in call order.
         self.calls: list[SessionId] = []
 
-    async def caller_joined(self, session_id: SessionId) -> bool:
+    async def transport_ready(self, session_id: SessionId) -> bool:
         """The scripted answer."""
         self.calls.append(session_id)
-        return self.per_session.get(session_id, self.joined)
+        return self.per_session.get(session_id, self.ready)
 
 
 class FakePasswordHasher:
@@ -338,3 +355,343 @@ class InMemoryIdempotencyStore:
     def forget(self, key: str) -> None:
         """Drop the key, as a lapsed TTL or a `FLUSHALL` would (§40.6's documented loss)."""
         self.values.pop(key, None)
+
+
+# ---------------------------------------------------------------------------------------------
+# The voice path (HLD `50-voice-pipeline.md` §2.1, §6.2; D9, D13; SPEC §18, §42 test 12)
+# ---------------------------------------------------------------------------------------------
+
+_INT16_MAX = 32767
+_BYTES_PER_SAMPLE = 2
+_MS_PER_S = 1000
+
+
+def _pcm(samples: Sequence[float]) -> bytes:
+    """Clamp `samples` (full-scale floats) to s16le bytes."""
+    out = bytearray()
+    for value in samples:
+        scaled = round(max(-1.0, min(1.0, value)) * _INT16_MAX)
+        out += scaled.to_bytes(_BYTES_PER_SAMPLE, "little", signed=True)
+    return bytes(out)
+
+
+def _frames(
+    values: Sequence[float],
+    *,
+    frame_samples: int,
+    sample_rate: int,
+    start_offset_ms: int,
+) -> list[AudioFrame]:
+    frame_ms = (frame_samples * _MS_PER_S) // sample_rate
+    frames: list[AudioFrame] = []
+    for index in range(len(values) // frame_samples):
+        block = values[index * frame_samples : (index + 1) * frame_samples]
+        frames.append(
+            AudioFrame(
+                pcm=_pcm(block),
+                sample_rate=sample_rate,
+                num_channels=1,
+                samples_per_channel=frame_samples,
+                capture_offset_ms=start_offset_ms + index * frame_ms,
+            )
+        )
+    return frames
+
+
+def sine_burst_frames(
+    *,
+    duration_ms: int,
+    frame_samples: int = 512,
+    sample_rate: int = 16_000,
+    start_offset_ms: int = 0,
+    amplitude: float = 0.3,
+    frequency_hz: float = 220.0,
+) -> list[AudioFrame]:
+    """Voiced-sounding synthetic speech: a steady tone loud enough to cross any VAD threshold.
+
+    A sine is not speech, but it is what a *deterministic* turn-detector test needs — the same
+    bytes every run, an RMS that is exactly `amplitude / sqrt(2)`, and no model in the loop.
+    """
+    count = (duration_ms * sample_rate) // _MS_PER_S
+    step = 2.0 * math.pi * frequency_hz / sample_rate
+    values = [amplitude * math.sin(step * n) for n in range(count)]
+    return _frames(
+        values,
+        frame_samples=frame_samples,
+        sample_rate=sample_rate,
+        start_offset_ms=start_offset_ms,
+    )
+
+
+def silence_frames(
+    *,
+    duration_ms: int,
+    frame_samples: int = 512,
+    sample_rate: int = 16_000,
+    start_offset_ms: int = 0,
+) -> list[AudioFrame]:
+    """Digital silence: every VAD scores it 0.0, which is what closes a turn."""
+    count = (duration_ms * sample_rate) // _MS_PER_S
+    return _frames(
+        [0.0] * count,
+        frame_samples=frame_samples,
+        sample_rate=sample_rate,
+        start_offset_ms=start_offset_ms,
+    )
+
+
+def noise_frames(
+    *,
+    duration_ms: int,
+    frame_samples: int = 512,
+    sample_rate: int = 16_000,
+    start_offset_ms: int = 0,
+    amplitude: float = 0.004,
+    seed: int = 20_260_921,
+) -> list[AudioFrame]:
+    """A quiet, seeded noise floor — below the energy threshold, above digital silence.
+
+    It is what proves the hysteresis band does something: breath noise must neither open a turn
+    nor re-open a closing one (§4.4's closing paragraph).
+    """
+    count = (duration_ms * sample_rate) // _MS_PER_S
+    random = Random(seed)
+    values = [random.uniform(-amplitude, amplitude) for _ in range(count)]
+    return _frames(
+        values,
+        frame_samples=frame_samples,
+        sample_rate=sample_rate,
+        start_offset_ms=start_offset_ms,
+    )
+
+
+class FakeCallTransport:
+    """A `CallTransport` with scripted inbound audio and a simulated playout clock (D13).
+
+    Three things make it a usable stand-in for LiveKit rather than a mock:
+
+    * **the inbound script drives time.** Yielding a frame advances the injected `FakeClock` by
+      the frame's duration, so the whole call — capture offsets, VAD frames, playout drain —
+      runs on one deterministic timeline and a test never sleeps;
+    * **`clear_outbound()` is truthful.** SPEC §42 test 12 asserts that queued caller audio is
+      really cancelled, so this fake implements the queue with the same drain-deadline model the
+      real `AudioSource` has, and `played_frames` / `discarded_frames` are what actually
+      happened;
+    * **playback is chunked.** `play()` returns a real `ChunkedPlayback`, so the §6.3 arithmetic
+      under test here is the same code the LiveKit transport runs.
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: FakeClock,
+        inbound: Iterable[AudioFrame] = (),
+        outbound_queue_ms: int = 200,
+        call_id: UUID | None = None,
+    ) -> None:
+        self._clock = clock
+        self._inbound = list(inbound)
+        self._call_id = call_id
+        self._connected = False
+        self._inbound_active = False
+        self._disconnected = asyncio.Event()
+        self._events: asyncio.Queue[TransportEvent | None] = asyncio.Queue()
+        self.queue = OutboundQueue(
+            capacity_ms=outbound_queue_ms,
+            now_ms=clock.monotonic_ms,
+            sleep_ms=self._advance,
+        )
+        #: Every playback started, in start order.
+        self.playbacks: list[ChunkedPlayback] = []
+        #: How many times `clear_outbound()` was called, and at which simulated instant.
+        self.clear_outbound_calls: list[int] = []
+        #: Frames the inbound iterator has yielded so far.
+        self.yielded: list[AudioFrame] = []
+
+    # -- test scripting -----------------------------------------------------------------------
+
+    @property
+    def call_id(self) -> UUID | None:
+        """The call `connect()` was given."""
+        return self._call_id
+
+    @property
+    def connected(self) -> bool:
+        """True between `connect()` and `disconnect()`."""
+        return self._connected
+
+    @property
+    def played_frames(self) -> list[AudioFrame]:
+        """Every frame handed to the outbound queue, in capture order."""
+        return list(self.queue.captured)
+
+    @property
+    def discarded_frames(self) -> list[AudioFrame]:
+        """Every frame `clear_outbound()` threw away."""
+        return list(self.queue.discarded)
+
+    def script(self, frames: Iterable[AudioFrame]) -> None:
+        """Append frames to the inbound script before `inbound_audio()` is iterated."""
+        self._inbound.extend(frames)
+
+    def emit(self, event: TransportEvent) -> None:
+        """Push one media-plane event for `_control` to consume."""
+        self._events.put_nowait(event)
+
+    async def _advance(self, milliseconds: int) -> None:
+        """The simulated playout clock: waiting moves time instead of blocking.
+
+        While the inbound script is still running it owns the clock — one advance per captured
+        frame — so that a barge-in latency measured across this transport is the ingest
+        timeline and not the sum of two independent ones. Once the script is exhausted there is
+        nothing else to move time, so waiting on the outbound queue does it and a natural drain
+        terminates.
+        """
+        if self._inbound_active:
+            await asyncio.sleep(0)
+            return
+        self._clock.advance_ms(milliseconds)
+        await asyncio.sleep(0)
+
+    # -- the CallTransport port ---------------------------------------------------------------
+
+    async def connect(self, call_id: UUID) -> None:
+        """Join the (imaginary) room. Idempotent."""
+        self._call_id = call_id
+        self._connected = True
+        self.emit(
+            TransportEvent(
+                type=TransportEventType.CONNECTED,
+                call_id=call_id,
+                at_offset_ms=self._clock.monotonic_ms(),
+            )
+        )
+
+    async def inbound_audio(self) -> AsyncIterator[AudioFrame]:
+        """Yield the scripted frames, advancing the clock by each frame's duration."""
+        self._inbound_active = True
+        try:
+            for frame in self._inbound:
+                if self._disconnected.is_set():
+                    break
+                self.yielded.append(frame)
+                yield frame
+                self._clock.advance_ms(frame.duration_ms)
+                await asyncio.sleep(0)
+        finally:
+            self._inbound_active = False
+            self._disconnected.set()
+
+    async def play(self, frames: AsyncIterator[AudioFrame]) -> PlaybackHandle:
+        """Start a chunked playback over the simulated queue."""
+        playback = ChunkedPlayback(frames, self.queue, now_ms=self._clock.monotonic_ms)
+        playback.start()
+        self.playbacks.append(playback)
+        await asyncio.sleep(0)
+        return playback
+
+    async def clear_outbound(self) -> None:
+        """Discard every queued frame (SPEC §18 step 3, §42 test 12)."""
+        self.clear_outbound_calls.append(self._clock.monotonic_ms())
+        self.queue.clear_queue()
+
+    async def events(self) -> AsyncIterator[TransportEvent]:
+        """Media-plane events, ending when `disconnect()` pushes the sentinel."""
+        while True:
+            event = await self._events.get()
+            if event is None:
+                return
+            yield event
+
+    async def disconnect(self) -> None:
+        """Stop the inbound iterator and end the event stream. Idempotent."""
+        self._connected = False
+        self._disconnected.set()
+        self._events.put_nowait(None)
+
+
+# ---------------------------------------------------------------------------------------------
+# E11-B: the backend half of the call (D9, §40.6)
+# ---------------------------------------------------------------------------------------------
+
+
+class StubVoiceTokenService:
+    """A `VoiceTokenService` that records what it was asked to mint and signs nothing.
+
+    The real adapter (`app.infrastructure.transport.livekit_token_service.LiveKitTokenService`)
+    has its own test that decodes the JWT it produces; a use-case test only needs to know which
+    room and identity reached the minter, which is what `calls` holds.
+    """
+
+    def __init__(self, livekit_url: str = "ws://livekit.test:7880", ttl_minutes: int = 10) -> None:
+        self.livekit_url = livekit_url
+        self._ttl = timedelta(minutes=ttl_minutes)
+        #: `(room_name, participant_identity)` per call, in order.
+        self.calls: list[tuple[str, str]] = []
+
+    def mint(self, *, room_name: str, participant_identity: str) -> MintedVoiceToken:
+        """A deterministic, unsigned stand-in for a LiveKit access token."""
+        self.calls.append((room_name, participant_identity))
+        return MintedVoiceToken(
+            token=f"stub-token:{room_name}:{participant_identity}",
+            livekit_url=self.livekit_url,
+            room_name=room_name,
+            participant_identity=participant_identity,
+            expires_at=datetime.now(UTC) + self._ttl,
+        )
+
+
+class InMemoryVoiceSignals:
+    """A recording `VoiceSignalPublisher` — §40.6's `voice:join` and `voice:cancel:{session_id}`.
+
+    Like the real adapter it never raises; unlike it, nothing is lost, so a test can assert both
+    *that* a signal was published and *when* relative to the commit (a use case that published
+    inside its transaction would show up here before the rollback a failing test forces).
+    """
+
+    def __init__(self) -> None:
+        #: `(session_id, room, call_id)` per `voice:join`, in order.
+        self.joins: list[tuple[SessionId, str, UUID]] = []
+        #: `(session_id, call_id, reason, at_offset_ms)` per `voice:cancel`, in order.
+        self.cancels: list[tuple[SessionId, UUID, str, int]] = []
+
+    async def publish_join(self, session_id: SessionId, *, room: str, call_id: UUID) -> None:
+        """Record one `voice:join`."""
+        self.joins.append((session_id, room, call_id))
+
+    async def publish_cancel(
+        self, session_id: SessionId, *, call_id: UUID, reason: str, at_offset_ms: int
+    ) -> None:
+        """Record one `voice:cancel:{session_id}`."""
+        self.cancels.append((session_id, call_id, reason, at_offset_ms))
+
+
+class InMemoryCallStateCache:
+    """§40.6's `session:{id}:call_state`, in a dict — including its documented ways of losing it.
+
+    `forget` is a lapsed TTL or a `FLUSHALL`; `fail_reads` is an unreachable Redis, which the real
+    adapter turns into a miss. Both must leave every reader answering from the fold.
+    """
+
+    def __init__(self) -> None:
+        #: `session_id -> the stored JSON document`.
+        self.values: dict[SessionId, str] = {}
+        #: Every session read, in order.
+        self.reads: list[SessionId] = []
+        #: When true, every `get` answers `None`, as the adapter does for a Redis error.
+        self.fail_reads = False
+
+    async def get(self, session_id: SessionId) -> str | None:
+        """The stored document, or `None`."""
+        self.reads.append(session_id)
+        if self.fail_reads:
+            return None
+        return self.values.get(session_id)
+
+    async def put(self, session_id: SessionId, document: str) -> None:
+        """Store the document; a second `put` overwrites, as `SET` would."""
+        self.values[session_id] = document
+
+    def forget(self, session_id: SessionId) -> None:
+        """Drop the key, as a lapsed TTL or a `FLUSHALL` would (§40.6's documented loss)."""
+        self.values.pop(session_id, None)

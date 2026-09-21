@@ -38,11 +38,15 @@ async def test_live_needs_no_token_and_touches_nothing(client: httpx.AsyncClient
 async def test_ready_with_everything_reachable_is_still_not_ready(
     client: httpx.AsyncClient,
 ) -> None:
-    """PostgreSQL and Redis are up, the five placeholders are not — so `overall` is `NOT_READY`.
+    """PostgreSQL and Redis are up, the other five are not — so `overall` is `NOT_READY`.
 
-    That is the documented state of a box with no voice-agent: SPEC §37 wants the start button
-    disabled, and `503` is what disables it. `postgres` and `redis` still report `READY`, which is
-    how an operator sees that the gap is the inference stack and not the database.
+    That is the documented state of a box with no SFU and no voice-agent: SPEC §37 wants the start
+    button disabled, and `503` is what disables it. `postgres` and `redis` still report `READY`,
+    which is how an operator sees that the gap is the media/inference side and not the database.
+
+    Since E11 the `livekit` reading is a real probe rather than a placeholder, so its `detail` is
+    the connection failure rather than an owing epic; `llm`/`asr`/`tts`/`vad` are still
+    placeholders that name theirs (TODO(E18)).
     """
     response = await client.get("/api/v1/health/ready")
 
@@ -54,9 +58,17 @@ async def test_ready_with_everything_reachable_is_still_not_ready(
     by_component = {item["component"]: item for item in body["components"]}
     assert by_component["postgres"]["status"] == "READY"
     assert by_component["redis"]["status"] == "READY"
-    for component in ("livekit", "llm", "asr", "tts", "vad"):
+    for component in ("llm", "asr", "tts", "vad"):
         assert by_component[component]["status"] == "NOT_READY"
-        assert "TODO(" in (by_component[component]["detail"] or "")
+        assert "TODO(E18)" in (by_component[component]["detail"] or "")
+    # `livekit` is a real probe since E11, so its reading depends on whether a developer happens
+    # to have `make dev-infra-up` running. Either reading is correct; what must be true is that it
+    # is no longer a placeholder naming an owing epic, and that it never says READY without one.
+    livekit = by_component["livekit"]
+    assert livekit["status"] in {"READY", "NOT_READY"}
+    assert "TODO(" not in (livekit["detail"] or "")
+    if livekit["status"] == "NOT_READY":
+        assert livekit["detail"]
 
 
 async def test_ready_reports_a_failing_redis_probe_instead_of_failing(

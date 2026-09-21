@@ -96,8 +96,9 @@ def test_transition_started_ms_is_the_offset_of_the_open_role_transition() -> No
 
 
 def test_transport_ready_is_never_derived_from_the_log() -> None:
-    """TODO(E11): no catalogued event states that the `CallTransport` is up, so the flag stays
-    at its conservative default even after the transport events the catalog does have."""
+    """No catalogued event states that the `CallTransport` is up, so the flag stays at its
+    conservative default even after the transport events the catalog does have. E11's reading
+    comes from the `CallTransportStatus` port, never from here."""
     result = runtime(
         event(EventType.TRANSPORT_RECONNECTED, 1),
         event(EventType.CALL_RINGING, 2),
