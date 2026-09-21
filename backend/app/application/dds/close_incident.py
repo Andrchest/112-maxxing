@@ -68,7 +68,7 @@ class CloseDdsIncident:
 
         `comment_ru` is accepted because `CloseIncidentRequest` declares it and is deliberately not
         recorded: `DDS_INCIDENT_CLOSED` has no key for it in §10.13, and adding one here would put
-        an untyped value in the audit log. TODO(E16): the instructor timeline is where a closure
+        an untyped value in the audit log. TODO(E17): the instructor timeline is where a closure
         comment would belong if the owner wants one.
         """
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:

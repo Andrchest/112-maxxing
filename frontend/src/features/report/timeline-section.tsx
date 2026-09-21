@@ -1,0 +1,114 @@
+// §29 item 4: complete event timeline. Renders `timeline` verbatim (already role-filtered and
+// redacted server-side, R3) with a client-side actor filter and an event-type filter (the closest
+// reading of "filter by stage/actor" the schema supports — `TimelineEntryView` carries no
+// `stage`/`role_stage_id` field to filter by directly; see the report's "HLD gaps"). No
+// virtualisation (brief: not required for this data size).
+//
+// `highlightedSeqNo` supports the rule-evidence section's "scroll to / highlight this event"
+// (§29 item 14): when it changes, the matching row scrolls into view and gets a highlight ring.
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Card, CardContent, CardHeader } from '@/shared/ui/card';
+import { t } from '@/shared/i18n';
+import type { ActorType, EventType, TimelineEntryView } from '@/shared/api';
+import { actorTypeLabelRu } from './timeline-labels';
+import { timelineEntryRowId } from './timeline-row-id';
+
+interface TimelineSectionProps {
+  timeline: readonly TimelineEntryView[];
+  highlightedSeqNo?: number | null;
+}
+
+const ALL = 'ALL' as const;
+
+export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineSectionProps) {
+  const [actorFilter, setActorFilter] = useState<ActorType | typeof ALL>(ALL);
+  const [eventTypeFilter, setEventTypeFilter] = useState<EventType | typeof ALL>(ALL);
+  const rowRefs = useRef(new Map<number, HTMLLIElement>());
+
+  const actorOptions = useMemo(
+    () => Array.from(new Set(timeline.map((entry) => entry.actor_type))).sort(),
+    [timeline],
+  );
+  const eventTypeOptions = useMemo(
+    () => Array.from(new Set(timeline.map((entry) => entry.event_type))).sort(),
+    [timeline],
+  );
+
+  const filtered = timeline.filter(
+    (entry) => (actorFilter === ALL || entry.actor_type === actorFilter) && (eventTypeFilter === ALL || entry.event_type === eventTypeFilter),
+  );
+
+  useEffect(() => {
+    if (highlightedSeqNo === null) return;
+    // jsdom (the test environment) has no `scrollIntoView` implementation; the optional call
+    // makes this a no-op there instead of throwing, while real browsers still scroll.
+    rowRefs.current.get(highlightedSeqNo)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [highlightedSeqNo]);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+        <h2 className="font-heading text-base leading-snug font-medium">{t('reportTimelineTitle')}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {t('reportTimelineActorFilterLabel')}
+            <select
+              className="h-7 rounded-lg border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+              value={actorFilter}
+              onChange={(event) => setActorFilter(event.target.value as ActorType | typeof ALL)}
+            >
+              <option value={ALL}>{t('reportTimelineFilterAll')}</option>
+              {actorOptions.map((actor) => (
+                <option key={actor} value={actor}>
+                  {actorTypeLabelRu(actor)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {t('reportTimelineEventTypeFilterLabel')}
+            <select
+              className="h-7 rounded-lg border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+              value={eventTypeFilter}
+              onChange={(event) => setEventTypeFilter(event.target.value as EventType | typeof ALL)}
+            >
+              <option value={ALL}>{t('reportTimelineFilterAll')}</option>
+              {eventTypeOptions.map((eventType) => (
+                <option key={eventType} value={eventType}>
+                  {eventType}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {filtered.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t('reportTimelineEmpty')}</p>
+        ) : (
+          <ul className="flex max-h-96 flex-col gap-1 overflow-auto">
+            {filtered.map((entry) => (
+              <li
+                key={entry.seq_no}
+                id={timelineEntryRowId(entry.seq_no)}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(entry.seq_no, el);
+                  else rowRefs.current.delete(entry.seq_no);
+                }}
+                className={`flex items-baseline gap-2 rounded-md px-1.5 py-1 text-sm ${
+                  entry.seq_no === highlightedSeqNo ? 'bg-primary/10 ring-1 ring-primary' : ''
+                }`}
+              >
+                <span className="font-mono text-xs text-muted-foreground">
+                  {entry.monotonic_offset_ms} {t('reportOffsetMsUnit')}
+                </span>
+                <span className="text-xs text-muted-foreground">{actorTypeLabelRu(entry.actor_type)}</span>
+                <span>{entry.summary_ru}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

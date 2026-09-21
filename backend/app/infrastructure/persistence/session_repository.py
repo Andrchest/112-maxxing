@@ -17,13 +17,18 @@ Two invariants this class exists to keep:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.ports.session_repository import StoredParticipant, StoredSessionListing
+from app.application.ports.session_repository import (
+    ReportRelease,
+    StoredParticipant,
+    StoredSessionListing,
+)
 from app.db.models.reference import Scenario as ScenarioRow
 from app.db.models.reference import ScenarioVersion as ScenarioVersionRow
 from app.db.models.session import Incident as IncidentRow
@@ -95,6 +100,45 @@ class SqlAlchemySessionRepository:
                     for participant in session.participants
                 ],
             )
+
+    async def get_report_release(self, session_id: SessionId) -> ReportRelease | None:
+        """The release record of `session_id`, or `None` (E16, D6, D11)."""
+        result = await self._session.execute(
+            sa.select(_SESSIONS.c.report_released_at, _SESSIONS.c.report_released_by_user_id).where(
+                _SESSIONS.c.id == UUID(str(session_id))
+            )
+        )
+        row = result.one_or_none()
+        if row is None or row.report_released_at is None:
+            return None
+        return _report_release(session_id, row.report_released_at, row.report_released_by_user_id)
+
+    async def release_report(
+        self, session_id: SessionId, *, released_by_user_id: UserId, released_at: datetime
+    ) -> ReportRelease:
+        """One conditional UPDATE, then a read of whatever is now stored (idempotent, E16 R2).
+
+        `WHERE report_released_at IS NULL` is the whole idempotence: the second caller's UPDATE
+        matches no row, and the follow-up read returns the first release unchanged rather than
+        overwriting its timestamp and its author.
+        """
+        await self._session.execute(
+            sa.update(_SESSIONS)
+            .where(
+                sa.and_(
+                    _SESSIONS.c.id == UUID(str(session_id)),
+                    _SESSIONS.c.report_released_at.is_(None),
+                )
+            )
+            .values(
+                report_released_at=released_at,
+                report_released_by_user_id=UUID(str(released_by_user_id)),
+            )
+        )
+        stored = await self.get_report_release(session_id)
+        if stored is None:  # pragma: no cover - the caller proved the session row exists
+            raise RuntimeError(f"session {session_id} vanished while releasing its report")
+        return stored
 
     async def save(self, session: SimulationSession) -> None:
         """Update the four tables from `session`; never `next_seq_no` (§20.8)."""
@@ -322,4 +366,15 @@ def _session_listing(row: sa.Row[tuple[Any, ...]]) -> StoredSessionListing:
         created_at=row.created_at,
         created_by_user_id=UserId(UUID(str(row.created_by_user_id))),
         my_role_type=None if row.my_role_type is None else RoleType(str(row.my_role_type)),
+    )
+
+
+def _report_release(
+    session_id: SessionId, released_at: datetime, released_by_user_id: Any
+) -> ReportRelease:
+    """The two columns as the application type; the CHECK guarantees they are both set."""
+    return ReportRelease(
+        session_id=session_id,
+        released_at=released_at,
+        released_by_user_id=UserId(UUID(str(released_by_user_id))),
     )

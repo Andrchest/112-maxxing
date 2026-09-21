@@ -25,6 +25,7 @@ use case as constructor arguments that this module reads and passes in.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from types import TracebackType
 
 from redis.asyncio import Redis
@@ -71,6 +72,7 @@ from app.application.ports.id_generator import IdGenerator
 from app.application.ports.idempotency_store import IdempotencyStore
 from app.application.ports.inference_readiness import InferenceReadiness
 from app.application.ports.last_seq_no_cache import LastSeqNoCache
+from app.application.ports.llm import LLMClient
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.runner_lock import RunnerLock
 from app.application.ports.token_service import TokenService
@@ -79,6 +81,13 @@ from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
 from app.application.ports.voice_token_service import VoiceTokenService
 from app.application.realtime.event_stream import SessionEventStream
 from app.application.realtime.list_events import ListSessionEvents
+from app.application.reports.assemble_report import GetSessionReport
+from app.application.reports.explanation.generate_explanation import GenerateExplanation
+from app.application.reports.explanation.get_explanation import GetExplanation
+from app.application.reports.explanation.ports import ScoreReportReader
+from app.application.reports.list_inference_metrics import ListInferenceMetrics
+from app.application.reports.release_report import ReleaseReportToTrainee
+from app.application.reports.serve_audio_segment import ServeAudioSegment
 from app.application.scenarios.import_scenario_version import ImportScenarioVersion
 from app.application.scenarios.queries import (
     GetScenarioValidationReport,
@@ -99,6 +108,8 @@ from app.application.voice_token.create_voice_token import CreateVoiceToken
 from app.config.settings import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
+from app.domain.scoring.results import ScoreResult
+from app.inference.llm.explanation_client import build_explanation_llm_client
 from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
 from app.infrastructure.auth.jwt_token_service import JwtTokenService
 from app.infrastructure.clock import SystemClock
@@ -335,6 +346,29 @@ class Container:
         """`rescoreSession` (epic E15-B)."""
         return RescoreSession(self.unit_of_work)
 
+    # -- E16: the post-session report and replay (SPEC §29, §27; D11) ---------------------------
+
+    def get_session_report(self) -> GetSessionReport:
+        """`getSessionReport` — reads the stored score, never recomputes it (E16 R1)."""
+        return GetSessionReport(self.unit_of_work, self.clock)
+
+    def release_report_to_trainee(self) -> ReleaseReportToTrainee:
+        """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""
+        return ReleaseReportToTrainee(self.unit_of_work, self.clock)
+
+    def serve_audio_segment(self) -> ServeAudioSegment:
+        """`getAudioSegment` — Range-served WAV bytes under `DATA_DIR/recordings` (D9, E16 R7)."""
+        return ServeAudioSegment(self.unit_of_work, recordings_dir=self.recordings_dir)
+
+    def list_inference_metrics(self) -> ListInferenceMetrics:
+        """`listInferenceMetrics` (SPEC §27)."""
+        return ListInferenceMetrics(self.unit_of_work)
+
+    @property
+    def recordings_dir(self) -> Path:
+        """`DATA_DIR/recordings` (D9) — the one directory `getAudioSegment` may read from."""
+        return Path(self.settings.data_dir) / "recordings"
+
     # -- E7-C: the realtime read path (§40.1-§40.6) ---------------------------------------------
     #
     # Everything below this line belongs to task E7-C and nothing above it does. The two adapters
@@ -568,6 +602,51 @@ class Container:
         """The `SimulationRunner`'s second `after_tick` hook, beside `_advance_call_flow`."""
         return await self.dds_stage_automation()(session_id)
 
+    # -- E16-B: the optional score-explanation LLM call (SPEC §2, §29, D11) -------------------
+    #
+    # Built lazily and cached on first use, exactly like `event_subscriber()`/
+    # `last_seq_no_cache()` above, so a process that never generates an explanation never opens
+    # the client (and, for `llama_cpp`, never dials the loopback server). `score_report_reader()`
+    # is the read-only `ScoreReportReader` R8 requires the explanation use cases be constructed
+    # with: it is built here, in the composition root, from `self.unit_of_work` — the only place
+    # in this codebase allowed to name the real `ScoreRepository` (D2) — so
+    # `application/reports/explanation/` itself never imports it (see
+    # `backend/tests/invariants/test_explanation_cannot_write_scores.py`).
+
+    def explanation_llm_client(self) -> LLMClient:
+        """The `LLMClient` named by `SIM_EXPLANATION_LLM_PROVIDER`, one per container."""
+        cached: LLMClient | None = getattr(self, "_explanation_llm_client", None)
+        if cached is None:
+            cached = build_explanation_llm_client(self.settings)
+            self._explanation_llm_client: LLMClient = cached
+        return cached
+
+    def score_report_reader(self) -> ScoreReportReader:
+        """The read-only score reader every explanation use case is constructed with (R8)."""
+        cached: ScoreReportReader | None = getattr(self, "_score_report_reader", None)
+        if cached is None:
+            cached = _UowScoreReportReader(self.unit_of_work)
+            self._score_report_reader: ScoreReportReader = cached
+        return cached
+
+    def generate_explanation(self) -> GenerateExplanation:
+        """`generateReportExplanation`."""
+        return GenerateExplanation(
+            self.unit_of_work,
+            self.score_report_reader(),
+            self.explanation_llm_client(),
+            self.clock,
+            self.ids,
+            llm_provider=self.settings.explanation_llm_provider,
+            max_tokens=self.settings.explanation_max_tokens,
+            temperature=self.settings.explanation_temperature,
+            timeout_ms=self.settings.explanation_timeout_ms,
+        )
+
+    def get_explanation(self) -> GetExplanation:
+        """`getReportExplanation`."""
+        return GetExplanation(self.unit_of_work)
+
     # -- lifecycle -----------------------------------------------------------------------------
 
     async def aclose(self) -> None:
@@ -610,6 +689,27 @@ class Container:
             PlaceholderHealthProbe("tts", "E18"),
             PlaceholderHealthProbe("vad", "E18"),
         ]
+
+
+class _UowScoreReportReader:
+    """`ScoreReportReader` (R8, epic E16-B) — opens a fresh, read-only Unit of Work per call and
+    reads only `uow.scores.load_report`.
+
+    Lives here, in the composition root, and nowhere under `app.application.reports.explanation`:
+    that package's own modules must never mention `ScoreRepository` or its write method
+    (`replace_for_session`) at all, which is exactly what `backend/tests/invariants/
+    test_explanation_cannot_write_scores.py`'s structural half checks. This adapter is the one
+    place that bridges the narrow `ScoreReportReader` Protocol to the real, wider port.
+    """
+
+    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+        self._unit_of_work = unit_of_work
+
+    async def load_report(self, session_id: SessionId) -> tuple[ScoreResult, ...] | None:
+        async with self._unit_of_work() as uow:
+            report = await uow.scores.load_report(session_id)
+            await uow.commit()
+            return report
 
 
 class _PlaceholderInferenceReadiness:

@@ -1012,3 +1012,46 @@ URLs, sha256, `make` target) lives in `models/README.md`; this table is the cros
 `AutoModel.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)` and
 `HF_HUB_OFFLINE=1`, and never calls the checkpoint's own `transcribe()` — see that module's
 docstring for the ffmpeg/pyannote reasons and for the long-audio window-splitting it does instead.
+
+---
+
+## 12. Score explanation (E16-B, SPEC §2, §29, D11)
+
+A second, independent `LLMClient` — not the interpreter/generator's `SIM_LLM_*` one above. It is
+built and called by the **backend** process itself
+(`app.inference.llm.explanation_client.build_explanation_llm_client`), never by the voice-agent
+worker: `generateReportExplanation`/`getReportExplanation` are backend HTTP routes, not turn-loop
+calls (D9). `SIM_EXPLANATION_LLM_PROVIDER` (`fake` | `llama_cpp`) selects the same two adapter
+classes §8's client uses (`FakeLLM`, `LlamaCppClient`) — a second instance, its own
+`SIM_EXPLANATION_LLM_BASE_URL` (loopback/compose-internal only, SPEC §41, validated at
+construction exactly as §8's client is), model alias, `max_tokens`, `temperature` and
+`timeout_ms`; `fake` is what `make gate` runs (D13), matching every other model call in this
+project.
+
+**Prompt inputs (the whole of it — R8's whitelist).** `app.application.reports.explanation.prompt.
+build_messages` takes exactly a `ScoreReport`, the scenario's `rule_id -> name_ru` mapping and an
+`audience` (`TRAINEE` | `INSTRUCTOR`). No transcript, no `WorldTruth`, no `OperatorCard` — the
+function has no parameter that could carry one, which is checked at the type level, not by
+convention (`backend/tests/unit/application/reports/explanation/test_prompt.py`). The system
+prompt instructs the model to cite rule titles and the awarded/max points **exactly as given**,
+never a different number, and never invent a fact about the call; `TRAINEE` reads supportive and
+didactic, `INSTRUCTOR` concise and analytic.
+
+**Limits.** `SIM_EXPLANATION_MAX_TOKENS` defaults to 400 (a few short paragraphs of prose, not a
+JSON turn); `SIM_EXPLANATION_TEMPERATURE` defaults to `0.2` (lower than the caller generator's
+`0.7` — an explanation cites given numbers rather than improvising a persona); `SIM_EXPLANATION_
+TIMEOUT_MS` defaults to 8000.
+
+**Failure behaviour (SPEC §26, §41 — "the core works without it").** The explanation is generated
+only from an already-persisted `ScoreReport`; a session that is not `COMPLETED` or has no stored
+score is refused with the same `409 REPORT_NOT_READY` the report itself uses (R1). A second
+`POST` without `regenerate: true` is `409 EXPLANATION_ALREADY_EXISTS`. An LLM timeout, an
+unreachable server, or a completion with no usable text is `503 LLM_UNAVAILABLE`; nothing is
+stored, and the report — scores, evidence, timeline, everything SPEC §29 asks for — is entirely
+unaffected, because the explanation use case never holds a write path to the score tables at all
+(structural guarantee, `backend/tests/invariants/test_explanation_cannot_write_scores.py`).
+
+`TODO(E19)`: a `requires_models` latency benchmark for the explanation call (comparable to the
+interpreter/generator eval harnesses of §7) is not part of this task — no real-model timing number
+for `SIM_EXPLANATION_*` appears anywhere in this document, by the same "never fake a benchmark
+value" rule §7 states for everything else (SPEC §27).

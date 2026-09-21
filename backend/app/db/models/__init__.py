@@ -1,9 +1,9 @@
-"""ORM models — all 25 tables of HLD `20-db-schema.md` §20.1.
+"""ORM models — every table of HLD `20-db-schema.md` §20.1.
 
 One module per HLD group: `reference` (§20.2), `session` (§20.3), `layers` (§20.4), `dds` (§20.5),
-`events` (§20.6), `scoring` (§20.7). Importing this package imports every module, so
-`app.db.base.Base.metadata` is complete — which is what Alembic's `env.py` and `alembic check`
-rely on.
+`events` (§20.6), `scoring` (§20.7), `reports` (§20.10, additive in E16). Importing this package
+imports every module, so `app.db.base.Base.metadata` is complete — which is what Alembic's
+`env.py` and `alembic check` rely on.
 
 These classes are persistence structures only. They never inherit from, embed or wrap a domain
 type; mapping to and from `app.domain` lives in `app/infrastructure/persistence/` (D2, D3, D5).
@@ -34,6 +34,7 @@ from app.db.models.layers import (
     IncidentWorldState,
 )
 from app.db.models.reference import Scenario, ScenarioVersion, ScoringRule, User
+from app.db.models.reports import ReportExplanation
 from app.db.models.scoring import ScoreEvidence, ScoreResult
 from app.db.models.session import (
     Incident,
@@ -58,6 +59,7 @@ __all__ = [
     "InferenceMetric",
     "Notification",
     "RecordingPurgeAudit",
+    "ReportExplanation",
     "ResourceStateChange",
     "RoleStage",
     "Scenario",

@@ -8,6 +8,7 @@ import { DdsPage } from '@/features/dds/dds-page';
 import { DdsConsolePage } from '@/features/dds/console-page';
 import { InstructorPage } from '@/features/instructor/instructor-page';
 import { ReportPage } from '@/features/report/report-page';
+import { ReportIndexPage } from '@/features/report/report-index-page';
 import { SessionsLandingPage } from '@/features/sessions/sessions-landing-page';
 import { SessionOpenRedirect } from '@/features/sessions/session-open-redirect';
 import { NotFoundPage } from '@/app/not-found-page';
@@ -30,9 +31,10 @@ function RootRedirect() {
  * not wrapped in a <BrowserRouter> here so tests can mount it inside a
  * <MemoryRouter> with arbitrary initial entries.
  *
- * Guards (D12 design decision #4): /operator and /dds are TRAINEE only; /instructor and /report
- * are INSTRUCTOR|ADMIN only. `RequireAuth` sends anyone signed out to /login; `RequireRole` sends
- * a signed-in but wrongly-roled user to their own home route instead. `*` is deliberately
+ * Guards (D12 design decision #4): /operator and /dds are TRAINEE only; /instructor is
+ * INSTRUCTOR|ADMIN only; /report admits all three account roles (the per-session release gate is
+ * enforced by the backend, E16). `RequireAuth` sends anyone signed out to /login; `RequireRole`
+ * sends a signed-in but wrongly-roled user to their own home route instead. `*` is deliberately
  * outside every guard — an unknown path is shown as 404 regardless of auth state.
  */
 export function AppRoutes() {
@@ -56,9 +58,14 @@ export function AppRoutes() {
         </Route>
         <Route element={<RequireRole roles={['INSTRUCTOR', 'ADMIN']} />}>
           <Route path="/instructor/*" element={<InstructorPage />} />
-          {/* TODO(E16): the report becomes trainee-visible once the instructor releases it
-              (SPEC §29, D12 design decision #4). Restricted to INSTRUCTOR|ADMIN until then. */}
-          <Route path="/report/*" element={<ReportPage />} />
+        </Route>
+        {/* E16: the report is trainee-visible too (SPEC §29, D12 design decision #4) — the
+            release gate itself is enforced by the backend (403 REPORT_NOT_RELEASED, rendered
+            in-page by ReportPage), not by this route guard, since a trainee is otherwise allowed
+            to open /report/:sessionId for a session they participated in. */}
+        <Route element={<RequireRole roles={['TRAINEE', 'INSTRUCTOR', 'ADMIN']} />}>
+          <Route path="/report/:sessionId" element={<ReportPage />} />
+          <Route path="/report" element={<ReportIndexPage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />

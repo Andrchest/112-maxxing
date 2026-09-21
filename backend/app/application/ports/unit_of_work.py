@@ -28,6 +28,7 @@ from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.report_explanation_repository import ReportExplanationRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
@@ -150,6 +151,15 @@ class UnitOfWork(Protocol):
     @property
     def world_engine_states(self) -> WorldEngineStateRepository:
         """The `world_engine_states` repository bound to this transaction (E6, D7)."""
+        ...
+
+    @property
+    def report_explanations(self) -> ReportExplanationRepository:
+        """The `report_explanations` repository bound to this transaction (§20.10, E16, D11).
+
+        The optional LLM prose about an already-persisted `ScoreReport`, stored separately from
+        the numbers it explains and holding no path back to them (SPEC §2, §29).
+        """
         ...
 
     @property

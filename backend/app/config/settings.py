@@ -235,6 +235,26 @@ class Settings(BaseSettings):
     #: plain local run wants — see `livekit_browser_url`.
     livekit_public_url: str = ""
 
+    # -- E16-B: the optional score-explanation LLM call (`60-inference-ops.md` §1, D11, SPEC §2,
+    # §29, §41) -------------------------------------------------------------------------------
+    # A second, independent `LLMClient` from the interpreter/generator's `SIM_LLM_*` family above:
+    # this one is built and called by the BACKEND process itself (`app.inference.llm.
+    # explanation_client.build_explanation_llm_client`), not the voice-agent worker, because
+    # `generateReportExplanation` is a backend HTTP route, not a voice-agent turn-loop call (D9).
+    #: `fake` | `llama_cpp`. `fake` is what `make gate` runs (D13); a model profile may select
+    #: `llama_cpp` and point it at the same or a different local llama.cpp server than §5.1's.
+    explanation_llm_provider: str = "fake"
+    #: Loopback/compose-internal only (SPEC §41), validated at construction like `llm_base_url`.
+    explanation_llm_base_url: str = "http://127.0.0.1:8080/v1"
+    explanation_llm_model_name: str = "Qwen3-4B"
+    #: One explanation is a few short paragraphs of prose, not a JSON turn — a smaller cap than
+    #: the interpreter's/generator's is deliberate.
+    explanation_max_tokens: int = 400
+    #: Lower than the caller generator's 0.7 (§5.2): an explanation cites given numbers rather
+    #: than improvising a persona, so R8 asks for a more deterministic register (DO item 1).
+    explanation_temperature: float = 0.2
+    explanation_timeout_ms: int = 8000
+
     @property
     def livekit_browser_url(self) -> str:
         """`SIM_LIVEKIT_PUBLIC_URL` when it is set, else `SIM_LIVEKIT_URL` (see that field)."""

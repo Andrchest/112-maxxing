@@ -3264,7 +3264,12 @@ components:
       properties:
         resource_id: { type: string, format: uuid }
         callsign: { type: string }
-        previous_status: { $ref: '#/components/schemas/ResourceStatus' }
+        previous_status:
+          description: >-
+            null for a unit's first recorded transition — never a fabricated status (SPEC §27).
+          oneOf:
+            - $ref: '#/components/schemas/ResourceStatus'
+            - type: 'null'
         new_status: { $ref: '#/components/schemas/ResourceStatus' }
         trigger: { type: string }
         at_offset_ms: { type: integer }
@@ -3323,7 +3328,12 @@ components:
           type: array
           description: 'Fetch each with `getAudioSegment`; `start_ms` is the seek target.'
           items: { $ref: '#/components/schemas/AudioSegmentRef' }
-        final_card: { $ref: '#/components/schemas/OperatorCardView' }
+        final_card:
+          description: >-
+            For a viewer who may not see the card, the view with an empty `values` map (its public
+            field catalog still included) rather than the key being omitted (E16 ruling).
+          allOf:
+            - $ref: '#/components/schemas/OperatorCardView'
         truth_vs_card_diff:
           type: array
           x-visibility: INSTRUCTOR

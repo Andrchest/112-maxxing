@@ -13,7 +13,7 @@
 // participant, so an early click is harmless. After it succeeds this page re-fetches the snapshot
 // and routes a `FULL_CYCLE_SINGLE_TRAINEE` trainee whose next stage is `DDS` to `/dds/:sessionId`.
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
@@ -255,6 +255,21 @@ export function OperatorConsolePage() {
     return (
       <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleWrongRole')}</p>
+      </AppShell>
+    );
+  }
+
+  // E16: the link from the "session completed" state to the report (recon §6/§7) — a
+  // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
+  if (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED') {
+    return (
+      <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+        <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
+          <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
+          <Button asChild size="sm">
+            <Link to={`/report/${sessionId}`}>{t('reportViewReportButton')}</Link>
+          </Button>
+        </div>
       </AppShell>
     );
   }

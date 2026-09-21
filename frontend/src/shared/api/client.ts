@@ -2,7 +2,7 @@
 // is derived from `operations[...]`/`components[...]` in `./schema.d.ts` — this file is the only
 // place allowed to describe a REST call by its operationId; nothing hand-duplicates a generated
 // DTO (see `src/app/no-duplicate-dto-guard.test.ts`).
-import { apiFetch } from '@/shared/lib/api';
+import { apiFetch, getAuthToken, ProblemError, type ProblemDetails } from '@/shared/lib/api';
 import { API_BASE_PATH } from '@/shared/config';
 import { ru } from '@/shared/i18n/ru';
 import type { components, operations } from './schema';
@@ -253,6 +253,108 @@ export function closeDdsIncident(sessionId: string, body: CloseIncidentRequest):
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+// -- E16: post-session report and replay (SPEC §29, §2; D11, D12; openapi `reports`/`instructor`) --
+// `getSessionReport` reads stored scores only (R1) — never triggers a recompute. Every section the
+// caller may not see comes back empty/null per the schema's own nullability (R3); this file just
+// forwards the envelope, it never filters or re-aggregates anything client-side.
+export type SessionReport = components['schemas']['SessionReport'];
+export type ScoreReportView = components['schemas']['ScoreReportView'];
+export type ScoreResultView = components['schemas']['ScoreResultView'];
+export type ScoreEvidenceView = components['schemas']['ScoreEvidenceView'];
+export type ScoreCategoryTotalView = components['schemas']['ScoreCategoryTotalView'];
+export type ScoringCategory = components['schemas']['ScoringCategory'];
+export type TranscriptSegmentView = components['schemas']['TranscriptSegmentView'];
+export type AudioSegmentRef = components['schemas']['AudioSegmentRef'];
+export type TimelineEntryView = components['schemas']['TimelineEntryView'];
+export type EventType = components['schemas']['EventType'];
+export type ActorType = components['schemas']['ActorType'];
+export type DdsDecisionView = components['schemas']['DdsDecisionView'];
+export type ResourceTimelineEntryView = components['schemas']['ResourceTimelineEntryView'];
+export type TimingMetricsView = components['schemas']['TimingMetricsView'];
+export type TruthVsCardDiffEntry = components['schemas']['TruthVsCardDiffEntry'];
+export type TruthVsCardDiffVerdict = TruthVsCardDiffEntry['verdict'];
+export type ReportReleaseView = components['schemas']['ReportReleaseView'];
+export type GenerateExplanationRequest = NonNullable<operations['generateReportExplanation']['requestBody']>['content']['application/json'];
+export type ExplanationAudience = GenerateExplanationRequest['audience'];
+export type ReportExplanation = components['schemas']['ReportExplanation'];
+export type InferenceMetricView = components['schemas']['InferenceMetricView'];
+export type InferenceMetricComponent = InferenceMetricView['component'];
+export type InferenceMetricsPage = components['schemas']['InferenceMetricsPage'];
+
+/** `getSessionReport` (R1: stored `score_results`/`score_evidence` echoed as-is, never
+ * recomputed). `409` = the existing `ReportNotReadyError`/`REPORT_NOT_READY` (session not
+ * COMPLETED or ABORTED-and-unscored); `403 REPORT_NOT_RELEASED` gates a trainee before release
+ * (R3). */
+export function getSessionReport(sessionId: string): Promise<SessionReport> {
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}`);
+}
+
+/** Fetches one `audio_segments` row's WAV bytes as a `Blob` (D9, D12 design decision #2). An
+ * `<audio>` element cannot carry a Bearer header, so the report fetches the segment itself
+ * (bypassing {@link apiFetch}'s JSON-only assumption) and hands the caller a `Blob` to turn into
+ * an object URL — `shared/media/report-audio.ts` computes the seek offset,
+ * `features/report/transcript-audio-panel.tsx` owns `URL.revokeObjectURL` on unmount/segment
+ * change. Throws {@link ProblemError} for `404`/`410 AUDIO_PURGED`. */
+export async function getAudioSegment(sessionId: string, audioSegmentId: string): Promise<Blob> {
+  const headers: Record<string, string> = { Accept: 'audio/wav, application/problem+json' };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(
+    `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/audio/${encodeURIComponent(audioSegmentId)}`,
+    { headers },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+
+  return await response.blob();
+}
+
+/** `404` when none has been generated yet (openapi) — the caller checks
+ * `SessionReport.explanation_available` first and skips this call otherwise. */
+export function getReportExplanation(sessionId: string): Promise<ReportExplanation> {
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}/explanation`);
+}
+
+/** `409 REPORT_NOT_READY` before deterministic scores exist, `409 EXPLANATION_ALREADY_EXISTS`
+ * without `regenerate: true`, `503 LLM_UNAVAILABLE` on a model timeout — the report itself is
+ * unaffected either way (SPEC §2, §26, §41). */
+export function generateReportExplanation(
+  sessionId: string,
+  body: GenerateExplanationRequest = { regenerate: false, audience: 'TRAINEE' },
+): Promise<ReportExplanation> {
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}/explanation`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** SPEC §27 telemetry (`InferenceMetricsPage.timing_metrics` is the same aggregate
+ * `SessionReport.timing_metrics` carries — one function serves both, per the recon). */
+export function listInferenceMetrics(
+  sessionId: string,
+  params: { component?: InferenceMetricComponent; limit?: number } = {},
+): Promise<InferenceMetricsPage> {
+  const query = new URLSearchParams();
+  if (params.component) query.set('component', params.component);
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}/inference-metrics${qs ? `?${qs}` : ''}`);
+}
+
+/** `instructor` tag (R2: release belongs to E16). INSTRUCTOR/ADMIN only; idempotent — a second
+ * call returns the first release unchanged. Emits no event (openapi `x-emits: []`). */
+export function releaseReportToTrainee(sessionId: string): Promise<ReportReleaseView> {
+  return apiFetch(`/instructor/sessions/${encodeURIComponent(sessionId)}/report/release`, { method: 'POST' });
 }
 
 export function login(body: LoginRequest): Promise<TokenResponse> {

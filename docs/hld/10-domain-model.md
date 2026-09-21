@@ -1269,6 +1269,14 @@ class ScoreReport(BaseModel):
     computed_from_event_count: int
 ```
 
+D11 cross-reference: the optional LLM explanation of a `ScoreReport` (SPEC §2, §29, epic E16-B) is
+not a field here and never will be — it is generated only from an already-persisted report, stored
+in its own `report_explanations` table keyed by `(session_id, audience)` and carrying the
+`report_checksum` value below so a client can verify the numbers it explains did not move. The
+explanation use case holds no path to `score_results`/`score_evidence` at all (structural, not a
+convention): see `backend/app/application/reports/explanation/` and `backend/tests/invariants/
+test_explanation_cannot_write_scores.py`.
+
 ### `score` — `backend/app/domain/scoring/engine.py`
 
 ```python

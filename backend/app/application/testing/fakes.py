@@ -30,6 +30,10 @@ from app.application.ports.dialogue_turn_repository import (
     StoredDialogueTurn,
 )
 from app.application.ports.event_publisher import EventEnvelope
+from app.application.ports.report_explanation_repository import (
+    ExplanationAudience,
+    StoredReportExplanation,
+)
 from app.application.ports.voice_token_service import MintedVoiceToken
 from app.application.voice.playback import ChunkedPlayback, OutboundQueue
 from app.domain.common.ids import ScenarioVersionId, SessionId
@@ -48,6 +52,7 @@ __all__ = [
     "InMemoryEventSubscription",
     "InMemoryIdempotencyStore",
     "InMemoryLastSeqNoCache",
+    "InMemoryReportExplanationRepository",
     "InMemoryRunnerLock",
     "InMemoryScoreRepository",
     "InMemoryVoiceSignals",
@@ -850,3 +855,30 @@ class InMemoryScoreRepository:
     async def load_report(self, session_id: SessionId) -> tuple[ScoreResult, ...] | None:
         stored = self.rows.get(session_id)
         return None if stored is None else stored[1]
+
+
+class InMemoryReportExplanationRepository:
+    """A `ReportExplanationRepository` in a dict (§20.9, D11, E16).
+
+    Keyed exactly as the table's `UNIQUE (session_id, audience)` is, so "a second generation
+    replaces rather than duplicates" behaves here the way `ON CONFLICT DO UPDATE` behaves in
+    PostgreSQL. Refusing a second generation without `regenerate: true` is a product rule the use
+    case applies before calling `upsert`; this fake, like the real adapter, does not police it.
+    """
+
+    def __init__(self) -> None:
+        #: `(session_id, audience) -> the stored row`.
+        self.rows: dict[tuple[SessionId, str], StoredReportExplanation] = {}
+
+    async def get(
+        self, session_id: SessionId, audience: ExplanationAudience
+    ) -> StoredReportExplanation | None:
+        return self.rows.get((session_id, audience))
+
+    async def list_for_session(self, session_id: SessionId) -> list[StoredReportExplanation]:
+        stored = [row for (stored_id, _), row in self.rows.items() if stored_id == session_id]
+        return sorted(stored, key=lambda row: row.audience)
+
+    async def upsert(self, explanation: StoredReportExplanation) -> uuid.UUID:
+        self.rows[(explanation.session_id, explanation.audience)] = explanation
+        return explanation.id

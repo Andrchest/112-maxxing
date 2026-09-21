@@ -1,13 +1,17 @@
 """The API's routers (D8).
 
-Ten modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
+Eleven modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
 `health`, `scenarios`, `sessions`, `operator` (the Operator 112 commands), `dds` (the DDS stage
 commands and reads), `snapshot` (`getSessionSnapshot`), `realtime` (`listSessionEvents` and the
-WebSocket) and `reports` (`rescoreSession`, epic E15-B; the rest of the `reports` tag is
-TODO(E16)). Every one of them
+WebSocket), `reports` (the whole `reports` tag — `getSessionReport`, `rescoreSession`,
+`getAudioSegment`, `listInferenceMetrics` and the explanation pair) and `instructor`
+(`releaseReportToTrainee`; `getInstructorSessionOverview` is TODO(E17) there). Every one of them
 is included by `create_app`, and the contract test walks the registered routes, so an operation
 added to an existing module needs no change to `create_app` and is checked against the contract
 automatically.
+
+`reports` exports two routers — `router` under `/api/v1/reports` and `audio_router` under
+`/api/v1/sessions`, because `getAudioSegment` is tagged `reports` but pathed under its session.
 
 Every module here may import `app.application` and `app.api` only. Never `app.infrastructure`,
 never `app.db`, and never a domain *layer* type from `app.domain.layers` — a response is an
@@ -21,6 +25,7 @@ from app.api.routers import (
     auth,
     dds,
     health,
+    instructor,
     operator,
     realtime,
     reports,
@@ -34,6 +39,7 @@ __all__ = [
     "auth",
     "dds",
     "health",
+    "instructor",
     "operator",
     "realtime",
     "reports",

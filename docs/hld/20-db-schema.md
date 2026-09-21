@@ -46,6 +46,7 @@ Conventions used throughout:
 | 24 | `dialogue_turns` | additive (ratified; `50-voice-pipeline.md` §9, `60-inference-ops.md`) | materialized turn record |
 | 25 | `recording_purge_audit` | additive (ratified; `50-voice-pipeline.md` §9.2) | retention audit |
 | 26 | `world_engine_states` | additive (E6; D7) | 1 row / incident, engine-written bookkeeping |
+| 27 | `report_explanations` | additive (E16; D11, SPEC §2, §29) | the optional LLM prose about a stored `ScoreReport` |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -175,13 +176,28 @@ R7).
 | `completed_at` | `timestamptz` | yes | |
 | `abort_reason` | `text` | yes | |
 | `created_at` | `timestamptz` | no | `now()` |
+| `report_released_at` *(additive, E16)* | `timestamptz` | yes | |
+| `report_released_by_user_id` *(additive, E16)* | `uuid` | yes | |
 
 PK `(id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`;
-FK `created_by_user_id → users(id) ON DELETE RESTRICT`.
+FK `created_by_user_id → users(id) ON DELETE RESTRICT`;
+FK `report_released_by_user_id → users(id) ON DELETE RESTRICT` *(additive, E16)*.
 Index `ix_sessions_state (state)`, `ix_sessions_scenario_version (scenario_version_id)`.
 `CHECK (session_mode IN ('SINGLE_ROLE','FULL_CYCLE_SINGLE_TRAINEE','MULTI_TRAINEE','ASSESSMENT'))`,
 `CHECK (state IN ('CREATED','READY','ACTIVE','ROLE_TRANSITION','COMPLETED','ABORTED'))`,
-`CHECK (time_scale >= 0.1 AND time_scale <= 10)` *(additive, E5)*.
+`CHECK (time_scale >= 0.1 AND time_scale <= 10)` *(additive, E5)*,
+`CHECK ((report_released_at IS NULL) = (report_released_by_user_id IS NULL))` *(additive, E16)*.
+
+The two release columns (migration `0006_report_release_explain`, epic E16) hold **whether an
+instructor has released this session's report to its trainees**. They are deliberately not the
+same thing as `SessionPolicy.report_visible_to_trainee_before_release`
+(`10-domain-model.md` §10.10, D6), which is a static per-*mode* constant saying whether a release
+is needed at all: `MULTI_TRAINEE` and `ASSESSMENT` gate the report on one,
+`SINGLE_ROLE` and `FULL_CYCLE_SINGLE_TRAINEE` do not. `releaseReportToTrainee` is idempotent —
+the conditional `UPDATE … WHERE report_released_at IS NULL` is what makes a second call return the
+first release unchanged — and emits **no event** (`openapi.yaml` `x-emits: []`): who looked at a
+report afterwards is not part of what happened in the simulation, and appending to a `COMPLETED`
+session's log would change the very input `rescoreSession` replays (SPEC §28, D5).
 
 `time_scale` is additive in E5: `openapi.yaml`'s `SessionCreateRequest` and `SessionDetail` both
 make it part of a session and `SimulationSession` carries it, so `simulation_sessions` is its home.
@@ -792,3 +808,41 @@ Cascade note: `ON DELETE CASCADE` from `simulation_sessions` reaches these table
 `BEFORE DELETE` row trigger would block it. Deleting a session is therefore an administrative
 operation that runs `SET session_replication_role = replica` (or `ALTER TABLE … DISABLE TRIGGER`) in a
 dedicated maintenance command; ordinary application code has no delete path to any of the three.
+
+
+## 20.10 Post-session report (additive, E16)
+
+### `report_explanations`
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `session_id` | `uuid` | no | |
+| `audience` | `text` | no | |
+| `text_ru` | `text` | no | |
+| `generated_at` | `timestamptz` | no | `now()` |
+| `llm_provider` | `text` | no | |
+| `llm_model` | `text` | no | |
+| `score_report_checksum` | `text` | no | |
+
+PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`.
+`UNIQUE uq_report_explanations_session_id_audience (session_id, audience)`.
+`CHECK (audience IN ('TRAINEE','INSTRUCTOR'))`.
+
+The optional LLM explanation of an **already computed** `ScoreReport` (SPEC §2, §29; D11: "stored
+separately, and cannot write to score tables"). The columns are exactly `openapi.yaml`'s
+`ReportExplanation` plus the row id.
+
+Three properties this schema is shaped to give:
+
+- **No path to the numbers.** There is deliberately no foreign key to `score_results`: the
+  explanation references the report it explains by *value* — `score_report_checksum`, the output
+  of `app.domain.scoring.engine.report_checksum` for that report — so a client can verify that the
+  numbers did not move while the prose was written. The "explanation cannot write score tables"
+  invariant itself is structural, not a database grant: the use case is constructed with a
+  read-only score reader and has no write method to reach (`backend/tests/invariants/`).
+- **One explanation per audience.** `UNIQUE (session_id, audience)` is what makes a second
+  `generateReportExplanation` without `regenerate: true` a `409 EXPLANATION_ALREADY_EXISTS`
+  rather than a duplicate row, and what makes `regenerate: true` an
+  `INSERT … ON CONFLICT DO UPDATE`.
+- **Disposable.** The row is derived, cheap to regenerate, and carries nothing the simulation
+  depends on; deleting a session takes it along (`CASCADE`).

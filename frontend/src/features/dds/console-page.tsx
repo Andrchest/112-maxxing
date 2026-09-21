@@ -5,9 +5,10 @@
 // never fetches or stores any of that, and `no-world-truth-guard.test.ts` asserts the generated
 // types it consumes carry none of it either.
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { useParams, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
 import { useAuthStore, useSessionEventsStore } from '@/entities/session';
@@ -125,6 +126,22 @@ export function DdsConsolePage() {
   }
 
   const snapshot = snapshotQuery.data;
+
+  // E16: the link from the "session completed" state to the report (recon §6/§7) — a
+  // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
+  if (snapshot && (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED')) {
+    return (
+      <AppShell title={t('ddsTitle')} role={t('roleTypeDds')} userLabel={userLabel} connectionStatus={connectionStatus}>
+        <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
+          <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
+          <Button asChild size="sm">
+            <Link to={`/report/${sessionId}`}>{t('reportViewReportButton')}</Link>
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
   if (!snapshot || snapshot.work_item === null) {
     return (
       <AppShell title={t('ddsTitle')} role={t('roleTypeDds')} userLabel={userLabel} connectionStatus={connectionStatus}>

@@ -2111,7 +2111,8 @@ export interface components {
             /** Format: uuid */
             resource_id: string;
             callsign: string;
-            previous_status: components["schemas"]["ResourceStatus"];
+            /** @description null for a unit's first recorded transition — never a fabricated status (SPEC §27). */
+            previous_status: components["schemas"]["ResourceStatus"] | null;
             new_status: components["schemas"]["ResourceStatus"];
             trigger: string;
             at_offset_ms: number;
@@ -2145,6 +2146,7 @@ export interface components {
             transcript: components["schemas"]["TranscriptSegmentView"][];
             /** @description Fetch each with `getAudioSegment`; `start_ms` is the seek target. */
             audio_segments: components["schemas"]["AudioSegmentRef"][];
+            /** @description For a viewer who may not see the card, the view with an empty `values` map (its public field catalog still included) rather than the key being omitted (E16 ruling). */
             final_card: components["schemas"]["OperatorCardView"];
             /**
              * @description Included for `INSTRUCTOR`/`ADMIN` always, and for the trainee once the report is

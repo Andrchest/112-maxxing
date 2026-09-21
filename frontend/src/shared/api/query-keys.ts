@@ -26,4 +26,10 @@ export const queryKeys = {
     notifications: (sessionId: string) => ['dds', sessionId, 'notifications'] as const,
     radioMessages: (sessionId: string) => ['dds', sessionId, 'radio-messages'] as const,
   },
+  // -- E16: post-session report and replay (SPEC §29; openapi `reports` tag) ------------------
+  reports: {
+    detail: (sessionId: string) => ['reports', sessionId] as const,
+    explanation: (sessionId: string) => ['reports', sessionId, 'explanation'] as const,
+    inferenceMetrics: (sessionId: string) => ['reports', sessionId, 'inference-metrics'] as const,
+  },
 } as const;

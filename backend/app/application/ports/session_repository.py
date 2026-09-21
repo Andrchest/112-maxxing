@@ -21,7 +21,12 @@ from app.domain.common.ids import SessionId, UserId
 from app.domain.enums import RoleType, SessionMode, SessionState
 from app.domain.session.session import SimulationSession
 
-__all__ = ["SessionRepository", "StoredParticipant", "StoredSessionListing"]
+__all__ = [
+    "ReportRelease",
+    "SessionRepository",
+    "StoredParticipant",
+    "StoredSessionListing",
+]
 
 
 class StoredSessionListing(BaseModel):
@@ -59,6 +64,22 @@ class StoredParticipant(BaseModel):
     user_id: UserId
     assigned_role_type: RoleType | None
     joined_at: datetime
+
+
+class ReportRelease(BaseModel):
+    """`simulation_sessions.report_released_at` / `.report_released_by_user_id` (E16, D6, D11).
+
+    Its existence *is* the release: `openapi.yaml`'s `ReportReleaseView.released` is
+    "a `ReportRelease` was found". Releasing changes no score — it is a visibility flag, not a
+    scoring operation (D11) — which is why it lives on the session row rather than anywhere near
+    `score_results`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    session_id: SessionId
+    released_at: datetime
+    released_by_user_id: UserId
 
 
 @runtime_checkable
@@ -126,6 +147,26 @@ class SessionRepository(Protocol):
 
     async def list_participants(self, session_id: SessionId) -> list[StoredParticipant]:
         """This session's participants with their `joined_at`, in join order (§20.3)."""
+        ...
+
+    async def get_report_release(self, session_id: SessionId) -> ReportRelease | None:
+        """This session's release record, or `None` when the report has not been released.
+
+        A plain read: `getSessionReport` needs it for `released`, and `getAudioSegment` needs it
+        for the same visibility decision.
+        """
+        ...
+
+    async def release_report(
+        self, session_id: SessionId, *, released_by_user_id: UserId, released_at: datetime
+    ) -> ReportRelease:
+        """Release the report to this session's trainees, **idempotently**.
+
+        A second call returns the first release unchanged — the conditional
+        `UPDATE … WHERE report_released_at IS NULL` is what makes that a property of the
+        statement rather than of a read-then-write two callers could interleave inside. The
+        caller has already checked that the session is `COMPLETED`.
+        """
         ...
 
     async def save(self, session: SimulationSession) -> None:

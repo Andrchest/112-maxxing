@@ -80,7 +80,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "RESOURCE_UNAVAILABLE": 409,
     "REPORT_NOT_READY": 409,
     "EXPLANATION_ALREADY_EXISTS": 409,
-    # 410 / 416 — stated inline on `getAudioSegment` (TODO(E17): that endpoint itself)
+    # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
+    # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,
     "RANGE_NOT_SATISFIABLE": 416,
     # 422 — components/responses/UnprocessableEntity
@@ -139,12 +140,17 @@ def problem_response(
     instance: str | None,
     status: int | None = None,
     extra: Mapping[str, Any] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     """Render one `Problem` (`openapi.yaml`), with `additionalProperties` from `extra`.
 
     `type` stays `about:blank`: RFC 7807 makes that the correct value when the status code is the
     whole semantics of the problem type, and `code` — not a URI nobody will dereference — is the
     machine-readable contract here (D8).
+
+    `headers`, when given, are passed straight to the `JSONResponse` on top of the usual
+    `Content-Type`; today's one user is the `416`'s `Content-Range: bytes */<total>` (RFC 9110
+    §14.4, E16 ruling R7). Every existing caller omits it, so behaviour is unchanged for them.
     """
     resolved = status if status is not None else status_for(code)
     body: dict[str, Any] = {
@@ -157,7 +163,12 @@ def problem_response(
     }
     if extra:
         body.update(extra)
-    return JSONResponse(status_code=resolved, content=body, media_type=PROBLEM_CONTENT_TYPE)
+    return JSONResponse(
+        status_code=resolved,
+        content=body,
+        media_type=PROBLEM_CONTENT_TYPE,
+        headers=dict(headers) if headers else None,
+    )
 
 
 def install_exception_handlers(app: FastAPI) -> None:
@@ -168,8 +179,9 @@ def install_exception_handlers(app: FastAPI) -> None:
         error = exc if isinstance(exc, DomainError) else DomainError(str(exc))
         code = code_of(error)
         extra = _extra_of(error)
+        headers = _headers_of(error)
         return problem_response(
-            code=code, detail=str(error), instance=request.url.path, extra=extra
+            code=code, detail=str(error), instance=request.url.path, extra=extra, headers=headers
         )
 
     @app.exception_handler(RequestValidationError)
@@ -194,6 +206,19 @@ def install_exception_handlers(app: FastAPI) -> None:
             detail="The request could not be completed. See the backend log.",
             instance=request.url.path,
         )
+
+
+def _headers_of(error: DomainError) -> Mapping[str, str] | None:
+    """The response headers a particular problem carries.
+
+    `RangeNotSatisfiableError` (`app.application.reports.serve_audio_segment`) parks the
+    `Content-Range: bytes */<total>` value RFC 9110 §14.4 requires on a `416` on its own
+    `content_range` attribute; this is the one place that value reaches the response (E16 R7).
+    """
+    content_range = getattr(error, "content_range", None)
+    if isinstance(content_range, str):
+        return {"Content-Range": content_range}
+    return None
 
 
 def _extra_of(error: DomainError) -> Mapping[str, Any] | None:

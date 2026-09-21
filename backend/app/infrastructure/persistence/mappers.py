@@ -10,10 +10,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from app.application.ports.notification_repository import StoredNotification
+from app.application.ports.report_explanation_repository import (
+    EXPLANATION_AUDIENCES,
+    ExplanationAudience,
+    StoredReportExplanation,
+)
 from app.application.ports.resource_repository import ResourceStateChange, StoredResource
 from app.application.ports.world_engine_state_repository import WorldEngineState
 from app.domain.caller.emotion import EmotionState
@@ -92,6 +97,8 @@ __all__ = [
     "operator_card_row_values",
     "participant_from_row",
     "participant_row_values",
+    "report_explanation_from_row",
+    "report_explanation_row_values",
     "resource_state_change_row_values",
     "role_stage_from_row",
     "role_stage_row_values",
@@ -591,8 +598,10 @@ def card_revision_row_values(revision: CardRevision, value_type: ValueType) -> d
     `session_event_id` is left `NULL`: the `CARD_FIELD_CHANGED` row's id is allocated by the event
     store in the *same* transaction, and threading it back here would make the revision write
     depend on the append order. The link exists the other way round — the event payload carries
-    `revision_id` — TODO(E16): back-fill the column for the report's evidence join if the scoring
-    slice needs it from this side.
+    `revision_id` — and E16 confirmed that is enough: the post-session report joins evidence the
+    other way round (`score_evidence.card_revision_id` names the revision directly, and the
+    `CARD_FIELD_CHANGED` that produced it is found through that event's own `revision_id` key), so
+    nothing reads the forward column and it stays `NULL`.
     """
     return {
         "id": UUID(str(revision.revision_id)),
@@ -888,4 +897,35 @@ def world_engine_state_from_row(row: Mapping[str, Any]) -> WorldEngineState:
             RoleType(role): frozenset(states)
             for role, states in (bookkeeping.get("reached_states") or {}).items()
         },
+    )
+
+
+def report_explanation_row_values(explanation: StoredReportExplanation) -> dict[str, Any]:
+    """Column values for one `report_explanations` row (§20.10, additive per E16)."""
+    return {
+        "id": explanation.id,
+        "session_id": UUID(str(explanation.session_id)),
+        "audience": explanation.audience,
+        "text_ru": explanation.text_ru,
+        "generated_at": explanation.generated_at,
+        "llm_provider": explanation.llm_provider,
+        "llm_model": explanation.llm_model,
+        "score_report_checksum": explanation.score_report_checksum,
+    }
+
+
+def report_explanation_from_row(row: Mapping[str, Any]) -> StoredReportExplanation:
+    """Read one `report_explanations` row back into its application type (§20.10)."""
+    audience = str(row["audience"])
+    if audience not in EXPLANATION_AUDIENCES:  # pragma: no cover - the CHECK constraint holds
+        raise ValueError(f"unknown explanation audience {audience!r}")
+    return StoredReportExplanation(
+        id=UUID(str(row["id"])),
+        session_id=SessionId(UUID(str(row["session_id"]))),
+        audience=cast("ExplanationAudience", audience),
+        text_ru=row["text_ru"],
+        generated_at=row["generated_at"],
+        llm_provider=row["llm_provider"],
+        llm_model=row["llm_model"],
+        score_report_checksum=row["score_report_checksum"],
     )

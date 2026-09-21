@@ -59,6 +59,15 @@ class SimulationSession(Base):
     completed_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
     abort_reason = sa.Column(sa.Text(), nullable=True)
     created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    #: Additive in E16 (HLD §20.3, D6, D11): *whether an instructor has actually released this
+    #: session's report to its trainees*. Distinct from
+    #: `SessionPolicy.report_visible_to_trainee_before_release`, which is a static per-mode
+    #: constant saying whether a release is needed at all (`10-domain-model.md` §10.10). Both
+    #: columns are NULL until the release happens and move together (the CHECK below).
+    report_released_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
+    report_released_by_user_id = sa.Column(
+        UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
 
     __table_args__ = (
         sa.Index("ix_sessions_state", "state"),
@@ -66,6 +75,10 @@ class SimulationSession(Base):
         sa.CheckConstraint(enum_check("session_mode", SessionMode), name="session_mode"),
         sa.CheckConstraint(enum_check("state", SessionState), name="state"),
         sa.CheckConstraint("time_scale >= 0.1 AND time_scale <= 10", name="time_scale"),
+        sa.CheckConstraint(
+            "(report_released_at IS NULL) = (report_released_by_user_id IS NULL)",
+            name="report_released_together",
+        ),
     )
 
 

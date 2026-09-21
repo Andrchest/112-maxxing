@@ -29,6 +29,7 @@ from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.report_explanation_repository import ReportExplanationRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
@@ -61,6 +62,9 @@ from app.infrastructure.persistence.notification_repository import (
 )
 from app.infrastructure.persistence.operator_card_repository import (
     SqlAlchemyOperatorCardRepository,
+)
+from app.infrastructure.persistence.report_explanation_repository import (
+    SqlAlchemyReportExplanationRepository,
 )
 from app.infrastructure.persistence.resource_repository import SqlAlchemyResourceRepository
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
@@ -113,6 +117,7 @@ class SqlAlchemyUnitOfWork:
         self._notifications: SqlAlchemyNotificationRepository | None = None
         self._world_engine_states: SqlAlchemyWorldEngineStateRepository | None = None
         self._scores: SqlAlchemyScoreRepository | None = None
+        self._report_explanations: SqlAlchemyReportExplanationRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -138,6 +143,7 @@ class SqlAlchemyUnitOfWork:
         self._notifications = SqlAlchemyNotificationRepository(session)
         self._world_engine_states = SqlAlchemyWorldEngineStateRepository(session)
         self._scores = SqlAlchemyScoreRepository(session)
+        self._report_explanations = SqlAlchemyReportExplanationRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -171,6 +177,7 @@ class SqlAlchemyUnitOfWork:
             self._notifications = None
             self._world_engine_states = None
             self._scores = None
+            self._report_explanations = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -284,6 +291,12 @@ class SqlAlchemyUnitOfWork:
         if self._scores is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._scores
+
+    @property
+    def report_explanations(self) -> ReportExplanationRepository:
+        if self._report_explanations is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._report_explanations
 
     # -- transaction --------------------------------------------------------------------------
 

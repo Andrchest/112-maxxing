@@ -86,7 +86,7 @@ class DispatchDdsResources:
 
         `note_ru` is accepted because `DispatchRequest` declares it, and it is deliberately not
         recorded: neither `RESOURCE_DISPATCHED` nor any table has a field for it, and inventing
-        one would put a value in the audit log that §10.13 does not type. TODO(E16): the
+        one would put a value in the audit log that §10.13 does not type. TODO(E17): the
         instructor timeline is where a dispatch note would belong if the owner wants one.
         """
         async with self._gate.open(session_id, user, (ACTION_ID, ADDITIONAL_ACTION_ID)) as ctx:

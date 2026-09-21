@@ -143,22 +143,37 @@ describe('AppRoutes', () => {
       expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
     });
 
-    it('renders the report placeholder for a signed-in INSTRUCTOR', () => {
-      signIn('INSTRUCTOR');
-      renderAt('/report');
-      expect(screen.getByRole('heading', { name: ru.reportTitle })).toBeInTheDocument();
-    });
-
     it('redirects a TRAINEE away from /instructor to their own home route', () => {
       signIn('TRAINEE');
       renderAt('/instructor');
       expect(screen.getByRole('heading', { name: ru.sessionsTitle })).toBeInTheDocument();
     });
+  });
 
-    it('redirects a TRAINEE away from /report to their own home route', () => {
+  // -- E16: /report admits all three account roles; the release gate is a backend concern -----
+  describe('RequireRole — /report routes (TRAINEE|INSTRUCTOR|ADMIN, E16)', () => {
+    it('renders the report index for a signed-in INSTRUCTOR at /report', () => {
+      signIn('INSTRUCTOR');
+      renderAt('/report');
+      expect(screen.getByRole('heading', { name: ru.reportIndexTitle })).toBeInTheDocument();
+    });
+
+    it('renders the report index for a signed-in TRAINEE at /report (no longer redirected away)', () => {
       signIn('TRAINEE');
       renderAt('/report');
-      expect(screen.getByRole('heading', { name: ru.sessionsTitle })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: ru.reportIndexTitle })).toBeInTheDocument();
+    });
+
+    it('renders the report page for a signed-in TRAINEE at /report/:sessionId', () => {
+      signIn('TRAINEE');
+      renderAt('/report/session-1');
+      expect(screen.getByRole('heading', { name: ru.reportTitle })).toBeInTheDocument();
+    });
+
+    it('renders the report page for a signed-in INSTRUCTOR at /report/:sessionId', () => {
+      signIn('INSTRUCTOR');
+      renderAt('/report/session-1');
+      expect(screen.getByRole('heading', { name: ru.reportTitle })).toBeInTheDocument();
     });
   });
 });
