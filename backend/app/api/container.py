@@ -87,6 +87,7 @@ from app.application.scenarios.queries import (
     ListScenarioVersions,
     ValidateScenarioDocument,
 )
+from app.application.scoring.rescore_session import RescoreSession
 from app.application.sessions.abort_session import AbortSession
 from app.application.sessions.create_session import CreateSession
 from app.application.sessions.get_snapshot import GetSnapshot
@@ -329,6 +330,10 @@ class Container:
     def get_session(self) -> GetSession:
         """`getSession`."""
         return GetSession(self.unit_of_work, self.clock)
+
+    def rescore_session(self) -> RescoreSession:
+        """`rescoreSession` (epic E15-B)."""
+        return RescoreSession(self.unit_of_work)
 
     # -- E7-C: the realtime read path (§40.1-§40.6) ---------------------------------------------
     #

@@ -30,6 +30,7 @@ from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
+from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import SessionRepository
 from app.application.ports.transcript_segment_repository import TranscriptSegmentRepository
 from app.application.ports.user_repository import UserRepository
@@ -149,6 +150,15 @@ class UnitOfWork(Protocol):
     @property
     def world_engine_states(self) -> WorldEngineStateRepository:
         """The `world_engine_states` repository bound to this transaction (E6, D7)."""
+        ...
+
+    @property
+    def scores(self) -> ScoreRepository:
+        """The `score_results` / `score_evidence` repository bound to this transaction (§20.7, D11).
+
+        Never read by `score()` itself (D5, R1): only the persistence and re-score use cases
+        (`app.application.scoring`) touch this property.
+        """
         ...
 
     async def __aenter__(self) -> UnitOfWork:

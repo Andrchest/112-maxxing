@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.enums import EvaluatorType, ScoringCategory
+from app.domain.enums import EvaluatorType, RoleType, ScoringCategory
 
 
 class ScoringRule(BaseModel):
@@ -29,3 +29,12 @@ class ScoringRule(BaseModel):
     evaluator_type: EvaluatorType
     config: Mapping[str, Any]
     min_evidence: int = Field(default=1, ge=1)
+    applies_to_roles: tuple[RoleType, ...] = ()
+    """Roles this rule scores; empty (the default) means the rule always applies.
+
+    A rule with a non-empty list applies only when at least one listed role is in the session's
+    role chain as recorded in the event log (`SESSION_CREATED.role_chain`). A non-applicable rule
+    yields a zero/zero `ScoreResult` that changes neither totals nor critical errors — it never
+    silently drags a DDS-only session's total down with 112-stage rules it never had a chance to
+    satisfy (§10.14 "Applicability", §30.7).
+    """

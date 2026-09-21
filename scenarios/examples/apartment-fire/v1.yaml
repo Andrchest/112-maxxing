@@ -224,6 +224,7 @@ scoring_rules:
     max_points: 10
     critical: true
     evaluator_type: FACT_OBTAINED
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { fact_id: people.victim_01.inside, within_ms: 180000,
               points: 10, penalty_if_missing: 0 }
@@ -236,6 +237,7 @@ scoring_rules:
     max_points: 8
     critical: true
     evaluator_type: CARD_FIELD_CORRECT
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { field_path: address.house, expected_from_fact_id: address.house,
               expected_literal: null, comparison: NORMALIZED_DIGITS, tolerance: 0,
@@ -249,6 +251,7 @@ scoring_rules:
     max_points: 3
     critical: false
     evaluator_type: CARD_FIELD_PRESENT
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { field_path: caller.phone, evaluated_at: HANDOFF, points: 3,
               penalty_if_missing: 0, treat_false_as_present: true }
@@ -261,6 +264,7 @@ scoring_rules:
     max_points: 4
     critical: false
     evaluator_type: CARD_CONTRADICTION
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { field_path: address.floor, contradicts_fact_id: address.floor,
               comparison: EXACT, require_fact_delivered: true,
@@ -274,6 +278,7 @@ scoring_rules:
     max_points: 12
     critical: true
     evaluator_type: SERVICE_SELECTION
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { required_services: [FIRE_RESCUE, AMBULANCE],
               forbidden_services: [UTILITY_EMERGENCY],
@@ -288,6 +293,7 @@ scoring_rules:
     max_points: 10
     critical: false
     evaluator_type: DEADLINE
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { from_event_type: CALL_ANSWERED, to_event_type: HANDOFF_CREATED,
               to_payload_match: null, max_offset_ms: 240000, points: 10,
@@ -301,6 +307,7 @@ scoring_rules:
     max_points: 2
     critical: true
     evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { event_type: CALL_ANSWERED, payload_match: null, min_count: 1,
               max_count: 1, required_stage_state: null, must_occur_after: null,
@@ -314,6 +321,7 @@ scoring_rules:
     max_points: 12
     critical: true
     evaluator_type: RESOURCE_SELECTION
+    applies_to_roles: [DDS]
     min_evidence: 1
     config: { required_capabilities: [FIRE_SUPPRESSION, HIGH_RISE_ACCESS],
               min_units_by_service: { FIRE_RESCUE: 2, AMBULANCE: 1 },
@@ -328,6 +336,7 @@ scoring_rules:
     max_points: 5
     critical: false
     evaluator_type: REQUIRED_STATUS_UPDATE
+    applies_to_roles: [DDS]
     min_evidence: 1
     config: { update_kind: ON_SCENE_REPORT, min_count: 1,
               within_ms_of_event: RESOURCE_STATUS_CHANGED, within_ms: 60000,
@@ -341,6 +350,7 @@ scoring_rules:
     max_points: 12
     critical: false
     evaluator_type: HANDOFF_COMPLETENESS
+    applies_to_roles: [OPERATOR_112]
     min_evidence: 1
     config: { required_field_paths: [incident.type, address.locality, address.street,
                                      address.house, address.apartment, description.text],

@@ -36,6 +36,7 @@ from app.application.ports.scenario_repository import (
     StoredScenarioVersion,
     StoredScenarioVersionDetail,
 )
+from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import (
     SessionRepository,
     StoredParticipant,
@@ -89,6 +90,7 @@ __all__ = [
     "OperatorCardRepository",
     "PasswordHasher",
     "ScenarioRepository",
+    "ScoreRepository",
     "SessionRepository",
     "StoredParticipant",
     "StoredScenario",

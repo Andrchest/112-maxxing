@@ -1700,6 +1700,14 @@
       "additionalProperties": false,
       "description": "One scenario-defined scoring rule (§10.14, §30.7).",
       "properties": {
+        "applies_to_roles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RoleType"
+          },
+          "title": "Applies To Roles",
+          "type": "array"
+        },
         "category": {
           "$ref": "#/$defs/ScoringCategory"
         },

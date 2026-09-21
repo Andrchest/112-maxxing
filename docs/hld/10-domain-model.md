@@ -1210,6 +1210,27 @@ there is no domain type for it, and `score(...)` must never read it (D5, §42 te
 | `evaluator_type` | `EvaluatorType` | evaluator type |
 | `config` | `Mapping[str, Any]` validated by the evaluator's own Pydantic config model | evaluator configuration |
 | `min_evidence` | `int` (default 1, ≥ 1) | evidence requirements |
+| `applies_to_roles` | `tuple[RoleType, ...]` (default `()` — always applies) | — (additive, E15) |
+
+#### Applicability
+
+`applies_to_roles` closes the gap `application/handoff/prefab_handoff.py` names: a `SINGLE_ROLE`
+DDS run has no 112 stage, so the ten operator-card, service-selection and handoff rules of a
+full-cycle scenario have nothing to score, and scoring them anyway would hand the trainee a
+critical failure for a stage they never sat in (D6).
+
+A rule with a non-empty `applies_to_roles` applies **iff at least one listed role is in the
+session's role chain as recorded in the event log** — `SESSION_CREATED.role_chain` (§10.13), with
+the `ROLE_STAGE_STARTED.role_type` sequence as the fallback for a log that does not start at the
+beginning. The log, not `ScenarioVersion.role_chain`, is the source: a session is scored on what
+actually ran. A log that records no chain at all leaves every rule applicable.
+
+A non-applicable rule still produces a `ScoreResult`, so the report shows *why* a rule is absent
+rather than silently dropping it: `points_awarded: 0.0`, `max_points: 0.0`, `passed: true`,
+`critical_failure: false`, and one `ScoreEvidence` pointing at the chain-recording event with
+`note_ru: "Правило не применяется: роль не участвует в сессии"`. It therefore changes neither the
+totals, nor a category percentage, nor `critical_errors`, and it satisfies the ≥ 1 evidence rule
+like every other result.
 
 ### Results — `backend/app/domain/scoring/results.py`
 
@@ -1371,6 +1392,48 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
   if `all_or_nothing`), plus `penalty_per_missing` per empty one.
 - Evidence: `HANDOFF_CREATED` (the snapshot id), with one `ScoreEvidence` per missing field naming
   the path in `note_ru`.
+
+#### Readings this section did not fix (settled by E15)
+
+Each line is a point where the prose above was silent or admitted two readings; the reading chosen
+is the one closest to SPEC, and it is now the contract.
+
+1. **Bounding event.** "The bounding `ROLE_STAGE_COMPLETED`" is the *first* `ROLE_STAGE_COMPLETED`
+   of the role the rule concerns (`OPERATOR_112` for the fact and card rules, `DDS` for the
+   resource and status rules), falling back to the last `ROLE_STAGE_COMPLETED` of the log and then
+   to `SESSION_COMPLETED`. A log with none of the three cannot be scored: ruling R2 appends
+   `SESSION_COMPLETED` *before* scoring runs, so its absence means the caller scored an unfinished
+   session, and `ScoringEvidenceError` says so.
+2. **`FACT_OBTAINED` delivered but late.** The evidence is that late `FACTS_DELIVERED`, not the
+   stage bound: the trainee did obtain the fact, and the report should show when.
+3. **`CARD_CONTRADICTION` compares against `caller_knowledge.facts[...].caller_value`** — what the
+   caller believes, not `world_truth` (SPEC §3: the caller may be wrong, and an operator who
+   writes down what the caller said has done nothing wrong).
+4. **`DEADLINE` from `SESSION_START`** is offset `0` by definition (`monotonic_offset_ms` is
+   measured from session start, §10.13); the `SESSION_STARTED` event — or `SESSION_CREATED` — is
+   used as evidence only. A `LINEAR` rule without `linear_zero_ms`, or with one at or below
+   `max_offset_ms`, has no ramp and behaves as `STEP`.
+5. **`WORKFLOW_ACTION` above `max_count`** scores `penalty_per_excess × (count − max_count)`, and
+   nothing else — the excess replaces `points`, it is not added to them.
+6. **`REQUIRED_STATUS_UPDATE` timing** compares the *first* qualifying update to the *first*
+   occurrence of `within_ms_of_event` and requires `0 ≤ Δ ≤ within_ms`: a report sent before the
+   thing it reports on is not a report on it (SPEC §13). A reference event that never occurred
+   leaves the timing half satisfied and the count half deciding.
+7. **`RESOURCE_SELECTION` unmet count** is `len(missing capabilities) + Σ(minimum − dispatched)`
+   per short service; capabilities are the union of `RESOURCE_DISPATCHED.capabilities_union` and
+   the per-unit `RESOURCE_SELECTED.capabilities` (the latter alone when
+   `must_be_dispatched: false`).
+8. **`all_or_nothing`** (`SERVICE_SELECTION`, `HANDOFF_COMPLETENESS`) awards `rule.max_points`,
+   not `points_per_required × n` / `points_per_field × n`, when everything is present.
+9. **A session with no `HANDOFF_CREATED`** (a DDS-only run) scores every `HANDOFF_COMPLETENESS`
+   path as missing and every `evaluated_at: HANDOFF` cutoff as the end of the log; the evidence is
+   the bounding event. Combined with `applies_to_roles`, such a scenario marks those rules
+   non-applicable instead.
+10. **`report_checksum`** covers `(rule_id, points_awarded, max_points, passed, critical_failure)`
+    per result in rule order plus `total_points` / `total_max_points` — canonical JSON, sorted
+    keys, no whitespace, floats as fixed two-decimal strings, SHA-256. Evidence, notes and
+    `computed_from_event_count` are deliberately out of scope: this is the checksum
+    `rescoreSession` compares to answer "are the numbers the same".
 
 ## 10.15 Scenario domain types (SPEC §4, D4)
 

@@ -32,7 +32,8 @@ from app.application.ports.dialogue_turn_repository import (
 from app.application.ports.event_publisher import EventEnvelope
 from app.application.ports.voice_token_service import MintedVoiceToken
 from app.application.voice.playback import ChunkedPlayback, OutboundQueue
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import ScenarioVersionId, SessionId
+from app.domain.scoring.results import ScoreReport, ScoreResult
 
 __all__ = [
     "FakeCallTransport",
@@ -48,6 +49,7 @@ __all__ = [
     "InMemoryIdempotencyStore",
     "InMemoryLastSeqNoCache",
     "InMemoryRunnerLock",
+    "InMemoryScoreRepository",
     "InMemoryVoiceSignals",
     "SequentialIdGenerator",
     "StubVoiceTokenService",
@@ -814,3 +816,37 @@ class InMemoryDialogueTurnRepository:
             (row for key, row in self.rows.items() if key[0] == session_id),
             key=lambda row: row.turn_index,
         )
+
+
+class InMemoryScoreRepository:
+    """A `ScoreRepository` in a dict (§20.7, D11).
+
+    `replace_for_session` and `load_report` are all this port has, and a dict reproduces the real
+    "delete then insert" / "read what was last replaced" behaviour exactly — there is no partial
+    write to get wrong. Used by `backend/tests/unit/application/scoring/` to drive `score_session`
+    and `rescore_session` without PostgreSQL; `backend/tests/integration/scoring/` exercises
+    `SqlAlchemyScoreRepository`.
+    """
+
+    def __init__(self) -> None:
+        #: `session_id -> (scenario_version_id, results in rule order)`.
+        self.rows: dict[SessionId, tuple[ScenarioVersionId, tuple[ScoreResult, ...]]] = {}
+
+    async def replace_for_session(
+        self,
+        session_id: SessionId,
+        scenario_version_id: ScenarioVersionId,
+        report: ScoreReport,
+    ) -> None:
+        # A real `DELETE ... WHERE session_id = ...` followed by an empty `INSERT` leaves zero
+        # rows behind, indistinguishable from "never scored" to a later `SELECT` — so an empty
+        # `report.results` drops the entry rather than storing an empty tuple, matching
+        # `SqlAlchemyScoreRepository.load_report`'s own `None` on an empty result set.
+        if report.results:
+            self.rows[session_id] = (scenario_version_id, report.results)
+        else:
+            self.rows.pop(session_id, None)
+
+    async def load_report(self, session_id: SessionId) -> tuple[ScoreResult, ...] | None:
+        stored = self.rows.get(session_id)
+        return None if stored is None else stored[1]

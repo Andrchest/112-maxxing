@@ -1,9 +1,10 @@
 """The API's routers (D8).
 
-Nine modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
+Ten modules, one per group of `openapi.yaml` operations: `auth` and `users` (D8's accounts),
 `health`, `scenarios`, `sessions`, `operator` (the Operator 112 commands), `dds` (the DDS stage
-commands and reads), `snapshot` (`getSessionSnapshot`) and `realtime` (`listSessionEvents` and the
-WebSocket). Every one of them
+commands and reads), `snapshot` (`getSessionSnapshot`), `realtime` (`listSessionEvents` and the
+WebSocket) and `reports` (`rescoreSession`, epic E15-B; the rest of the `reports` tag is
+TODO(E16)). Every one of them
 is included by `create_app`, and the contract test walks the registered routes, so an operation
 added to an existing module needs no change to `create_app` and is checked against the contract
 automatically.
@@ -22,6 +23,7 @@ from app.api.routers import (
     health,
     operator,
     realtime,
+    reports,
     scenarios,
     sessions,
     snapshot,
@@ -34,6 +36,7 @@ __all__ = [
     "health",
     "operator",
     "realtime",
+    "reports",
     "scenarios",
     "sessions",
     "snapshot",

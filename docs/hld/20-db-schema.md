@@ -143,6 +143,7 @@ Reference data projected from `scenario_versions.content.scoring_rules` at impor
 | `config` | `jsonb` | no | `'{}'::jsonb` |
 | `min_evidence` | `smallint` | no | `1` |
 | `order_index` | `integer` | no | |
+| `applies_to_roles` | `jsonb` | no | `'[]'::jsonb` |
 
 PK `(scenario_version_id, rule_id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE CASCADE`.
 `CHECK (max_points > 0)`, `CHECK (min_evidence >= 1)`,
@@ -150,7 +151,11 @@ PK `(scenario_version_id, rule_id)`. FK `scenario_version_id → scenario_versio
 `CHECK (evaluator_type IN ('FACT_OBTAINED','CARD_FIELD_CORRECT','CARD_FIELD_PRESENT','CARD_CONTRADICTION','SERVICE_SELECTION','DEADLINE','WORKFLOW_ACTION','RESOURCE_SELECTION','REQUIRED_STATUS_UPDATE','HANDOFF_COMPLETENESS'))`.
 
 **JSONB:** `config` is per-evaluator and has ten different shapes; it is validated by the evaluator's
-Pydantic model, never queried relationally.
+Pydantic model, never queried relationally. `applies_to_roles` is a `RoleType[]` array (migration
+`0005_scoring_rule_applies_to_roles`, epic E15-B): `[]` (the default) means the rule always
+applies; a non-empty list scores only sessions whose role chain — as recorded in the event log,
+not this column — includes at least one listed role (`10-domain-model.md` §10.14 "Applicability",
+R7).
 
 ## 20.3 Session aggregate
 
@@ -688,6 +693,9 @@ FK `(scenario_version_id, rule_id) → scoring_rules(scenario_version_id, rule_i
 Unique `uq_score_results_session_rule (session_id, rule_id)` — re-scoring replaces the row and must
 reproduce identical numbers (SPEC §28, §42 test 9).
 Index `ix_score_results_session_category (session_id, category)`.
+No `CHECK` constrains `max_points` here (checked at E15-B): a rule whose `applies_to_roles` (§20.2)
+excludes this session's role chain scores `points_awarded = 0, max_points = 0` (R7), which a
+`> 0` check would reject.
 
 ### `score_evidence`
 | Column | PG type | Null | Default |

@@ -9,16 +9,16 @@ One command, two machines, one transaction — the DDS mirror image of `complete
    `SESSION_COMPLETED.total_events` — or `begin_role_transition` when a further stage follows.
 
 `x-emits` is `[DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED,
-SCORING_RULE_EVALUATED, SESSION_COMPLETED]`, and the events are appended in that order, which is
-why the two stage events are re-ordered out of the aggregate's own order here: the contract lists
-the completion before the state change, and a consumer reading `x-emits` as the promise should get
-exactly that.
-
-**`SCORING_RULE_EVALUATED` is not emitted — TODO(E15).** §10.14 owns the ten evaluators and none of
-them exists yet. Emitting a scoring event with no rule behind it would put a score in the audit
-log that nothing produced, so this command emits the other four and the report stays unavailable
-until E15 lands. `backend/tests/api/dds/test_full_cycle.py` asserts the emitted list equals
-`x-emits` **minus** `SCORING_RULE_EVALUATED`, with that one exception written down once.
+SCORING_RULE_EVALUATED, SESSION_COMPLETED]`. This command still appends only the first four, in
+that order (the two stage events are re-ordered out of the aggregate's own order here: the
+contract lists the completion before the state change, and a consumer reading `x-emits` as the
+promise should get exactly that) — `SESSION_COMPLETED` is `complete_session`'s own append, inside
+this same call when this is the last stage, and `SCORING_RULE_EVALUATED` is appended **after**
+this whole command's transaction has committed, by `score_completed_session`
+(`app.application.handoff.complete_session`), which `app.api.routers.dds.close_dds_incident` calls
+once its commit is already durable (epic E15-B; see that module's docstring for why scoring cannot
+share this command's own transaction). `backend/tests/api/dds/test_full_cycle.py` now asserts the
+emitted list **plus** the router-appended `SCORING_RULE_EVALUATED` rows equals `x-emits` in full.
 
 **Release (HLD gap, analyst §7 #13).** §10.13 gives `DDS_INCIDENT_CLOSED` a
 `released_resource_ids` key without saying what "released" does. The reading closest to SPEC §11

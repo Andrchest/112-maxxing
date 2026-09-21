@@ -9,8 +9,10 @@ Two things are pinned:
 
 * `total_events` is the **real** row count of the session's log, including the
   `SESSION_COMPLETED` row itself — not the `0` the aggregate used to emit;
-* no `SCORING_*` event is written. §10.14's evaluators are TODO(E15); a score in the audit log
-  that no rule produced would be worse than no score at all.
+* one `SCORING_RULE_EVALUATED` per demo-scenario rule follows `SESSION_COMPLETED` (epic E15-B):
+  `operator_only_version_id` is the demo document's own ten `scoring_rules`, only `role_chain` is
+  overridden, and every rule produces exactly one `ScoreResult` — applicable or not (R7) — so the
+  count is the same ten regardless of the shorter chain.
 
 The same chain also exercises the HLD gap of `create_handoff._next_dds_stage_id`: with no DDS
 stage there is nobody to receive the handoff, so `assignment_ids` is empty and no
@@ -125,29 +127,45 @@ async def test_completing_the_last_stage_completes_the_session(
     assert response.json()["state"] == "COMPLETED"
 
     types = await operator_only.event_types()
-    assert types[-3:] == ["STAGE_STATE_CHANGED", "ROLE_STAGE_COMPLETED", "SESSION_COMPLETED"]
+    completed_index = types.index("SESSION_COMPLETED")
+    assert types[completed_index - 2 : completed_index + 1] == [
+        "STAGE_STATE_CHANGED",
+        "ROLE_STAGE_COMPLETED",
+        "SESSION_COMPLETED",
+    ]
     assert "ROLE_TRANSITION_STARTED" not in types
+    # Epic E15-B: only SCORING_* may follow SESSION_COMPLETED (R2).
+    assert all(name.startswith("SCORING_") for name in types[completed_index + 1 :])
 
     async with uow_factory() as uow:
         events = await uow.events.read(SessionId(operator_only.session_id))
         await uow.commit()
-    completed = events[-1]
-    assert completed.payload["total_events"] == len(events), (
-        "total_events counts every row of the session's log, including its own"
+    completed = next(event for event in events if event.event_type.value == "SESSION_COMPLETED")
+    assert completed.payload["total_events"] == completed.seq_no, (
+        "total_events counts every row of the session's log up to and including itself, not the "
+        "SCORING_RULE_EVALUATED rows a later, separate transaction appends after it (R2)"
     )
-    assert completed.payload["total_events"] == completed.seq_no
     assert completed.payload["final_session_state"] == "COMPLETED"
 
 
-async def test_completing_writes_no_scoring_event(operator_only: OperatorFlow) -> None:
-    """Scoring is TODO(E15): no evaluator ran, so no `SCORING_*` event is written."""
+async def test_completing_writes_one_scoring_event_per_demo_rule(
+    operator_only: OperatorFlow,
+) -> None:
+    """Epic E15-B: `SCORING_RULE_EVALUATED` follows `SESSION_COMPLETED`, one per scenario rule."""
+    before = await operator_only.event_types()
     assert (await operator_only.post("/operator/handoff", json={})).status_code == 201
     assert (
         await operator_only.post("/operator/call/end", json={"reason": "OPERATOR_HANGUP"})
     ).status_code == 200
     assert (await operator_only.post("/operator/stage/complete")).status_code == 200
 
-    assert not [event for event in await operator_only.event_types() if event.startswith("SCORING")]
+    after = await operator_only.event_types()
+    appended = after[len(before) :]
+    completed_index = appended.index("SESSION_COMPLETED")
+    scoring = appended[completed_index + 1 :]
+
+    assert scoring == ["SCORING_RULE_EVALUATED"] * 10
+    assert all(name != "SCORING_RULE_EVALUATED" for name in appended[:completed_index])
 
 
 async def test_a_completed_session_accepts_no_further_command(

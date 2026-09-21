@@ -53,16 +53,19 @@ pytestmark = pytest.mark.integration
 FIRST_WAVE = ("АЛ-1", "АСА-1", "СМП-11", "ППС-204")
 REINFORCEMENT = "АЦ-1"
 
-#: `closeDdsIncident`'s `x-emits`, minus the one event this epic must not fake.
-#:
-#: `SCORING_RULE_EVALUATED` is TODO(E15): §10.14's ten evaluators do not exist, and emitting a
-#: scoring event with no rule behind it would put a score in the audit log that nothing produced.
-#: This is the single place that exception is written down.
-CLOSE_X_EMITS_MINUS_SCORING = [
+#: `closeDdsIncident`'s `x-emits`, in full (epic E15-B): the four trainee/session events the
+#: command's own transaction appends, plus one `SCORING_RULE_EVALUATED` per demo-scenario rule —
+#: appended by `score_completed_session` after that transaction has committed (see
+#: `app.application.handoff.complete_session`'s docstring for why scoring is a second, later Unit
+#: of Work rather than part of the close command's own).
+DEMO_SCENARIO_RULE_COUNT = 10
+
+CLOSE_X_EMITS = [
     "DDS_INCIDENT_CLOSED",
     "ROLE_STAGE_COMPLETED",
     "STAGE_STATE_CHANGED",
     "SESSION_COMPLETED",
+    *(["SCORING_RULE_EVALUATED"] * DEMO_SCENARIO_RULE_COUNT),
 ]
 
 
@@ -160,7 +163,7 @@ async def test_the_whole_incident_from_handoff_to_a_completed_session(
     assert response.status_code == 200, response.text
     detail = response.json()
     assert detail["state"] == "COMPLETED"
-    assert (await event_types(dds_active))[len(before) :] == CLOSE_X_EMITS_MINUS_SCORING
+    assert (await event_types(dds_active))[len(before) :] == CLOSE_X_EMITS
 
     legs = await assignment_rows(uow_factory, dds_active.session_id)
     assert {leg["state"] for leg in legs} == {"CLOSED"}
@@ -251,24 +254,35 @@ async def test_close_is_refused_before_the_incident_is_resolved(
 async def test_the_completed_session_reports_a_real_total_events(
     resolved: OperatorFlow,
 ) -> None:
-    """`SESSION_COMPLETED.total_events` counts the log's rows, the last one included."""
+    """`SESSION_COMPLETED.total_events` counts the log's rows up to and including itself.
+
+    Not the full final stream: epic E15-B appends `SCORING_RULE_EVALUATED` *after*
+    `SESSION_COMPLETED`, in a transaction of its own (R2) — `total_events` is computed inside the
+    close command's own transaction and cannot see those later rows, by design.
+    """
     response = await dds_post(resolved, "/dds/close", {"closure_reason": "RESOLVED"})
     assert response.status_code == 200, response.text
 
     completed = await events_of(resolved, "SESSION_COMPLETED")
-    stream = await event_types(resolved)
 
     assert len(completed) == 1
-    assert completed[0]["payload"]["total_events"] == len(stream)
+    assert completed[0]["payload"]["total_events"] == completed[0]["seq_no"]
 
 
-async def test_no_scoring_event_is_faked(resolved: OperatorFlow) -> None:
-    """TODO(E15) owns `SCORING_RULE_EVALUATED`; this epic emits none of the `SCORING_*` family."""
+async def test_closing_emits_one_scoring_event_per_demo_rule(resolved: OperatorFlow) -> None:
+    """Epic E15-B: `SCORING_RULE_EVALUATED` follows `SESSION_COMPLETED`, one per scenario rule."""
+    before = await event_types(resolved)
     assert (
         await dds_post(resolved, "/dds/close", {"closure_reason": "RESOLVED"})
     ).status_code == 200
 
-    assert not [name for name in await event_types(resolved) if name.startswith("SCORING_")]
+    after = await event_types(resolved)
+    appended = after[len(before) :]
+    completed_index = appended.index("SESSION_COMPLETED")
+    scoring = appended[completed_index + 1 :]
+
+    assert scoring == ["SCORING_RULE_EVALUATED"] * DEMO_SCENARIO_RULE_COUNT
+    assert all(name != "SCORING_RULE_EVALUATED" for name in appended[:completed_index])
 
 
 # ---------------------------------------------------------------------------------------------

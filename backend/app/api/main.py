@@ -37,6 +37,7 @@ from app.api.routers import (
     health,
     operator,
     realtime,
+    reports,
     scenarios,
     sessions,
     snapshot,
@@ -94,6 +95,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(dds.router)
     app.include_router(snapshot.router)
     app.include_router(realtime.router)
+    app.include_router(reports.router)
 
     return app
 

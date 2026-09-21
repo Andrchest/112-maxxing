@@ -103,6 +103,9 @@ class ScoringRule(Base):
     config = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
     min_evidence = sa.Column(sa.SmallInteger(), nullable=False, server_default=sa.text("1"))
     order_index = sa.Column(sa.Integer(), nullable=False)
+    applies_to_roles = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'[]'::jsonb"))
+    """The `RoleType` values this rule scores; `[]` (the default) means it always applies (R7,
+    `10-domain-model.md` §10.14 "Applicability", migration `0005_scoring_applies_to_roles`)."""
 
     __table_args__ = (
         sa.CheckConstraint("max_points > 0", name="max_points"),

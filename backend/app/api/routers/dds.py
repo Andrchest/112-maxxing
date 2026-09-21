@@ -18,11 +18,12 @@ The four reads do not tick.
 
 `closeDdsIncident` may end the *session* (the usual `[OPERATOR_112, DDS]` chain ends here), so it
 releases the runner after its commit, exactly as `abortSession` and `completeOperatorStage` do
-(D7). Its `openapi.yaml` `x-emits` lists `SCORING_RULE_EVALUATED`, which this epic does **not**
-emit: §10.14's ten evaluators are TODO(E15), and a scoring event with no rule behind it would put
-a score in the audit log that nothing produced. The other four events of that list are emitted,
-and `backend/tests/api/dds/test_full_cycle.py` pins the emitted list to `x-emits` minus that
-one type.
+(D7), and — new in epic E15-B — scores the session in a transaction of its own once that commit is
+durable: `score_completed_session` (`app.application.handoff.complete_session`) appends the
+`SCORING_RULE_EVALUATED` row per rule that its own `x-emits` promises. A `ScoringEvidenceError`
+there is logged and swallowed at that call, not raised through this endpoint (see that function's
+docstring): the incident still closes and the session still completes even when a rule's evidence
+could not be produced.
 
 D3, structurally: no use case reached from here holds a world-truth, caller-belief or
 operator-card repository, and this module names none of them —
@@ -60,6 +61,7 @@ from app.api.schemas.dds import (
 from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
 from app.api.security import CurrentUserDep
+from app.application.handoff.complete_session import score_completed_session
 from app.domain.common.ids import ResourceId, SessionId
 from app.domain.enums import ResourceStatus, ServiceType, SessionState
 
@@ -339,10 +341,15 @@ async def close_dds_incident(
         closure_reason=body.closure_reason,
         comment_ru=body.comment_ru,
     )
-    if view.session.state is SessionState.COMPLETED and container.settings.runner_enabled:
-        # After the commit, exactly as `abortSession` does: a completed session must stop being
-        # ticked and must give up `lock:session:{id}:runner` (D7).
-        await container.runner.release(view.session.id)
+    if view.session.state is SessionState.COMPLETED:
+        if container.settings.runner_enabled:
+            # After the commit, exactly as `abortSession` does: a completed session must stop
+            # being ticked and must give up `lock:session:{id}:runner` (D7).
+            await container.runner.release(view.session.id)
+        # Also after the commit, and for the same reason (D7's "after the commit", extended to
+        # scoring by epic E15-B): SESSION_COMPLETED is already durable, so scoring runs in its own
+        # transaction rather than risking the one that just closed the incident.
+        await score_completed_session(container.unit_of_work, view.session.id)
     else:
         await tick(SessionId(session_id))
     return session_detail_schema(view)

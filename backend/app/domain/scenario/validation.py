@@ -700,6 +700,12 @@ def _rule_for_parse_error(loc: tuple[int | str, ...], message: str) -> str:
             return "R24"
     if "condition" in names or "resolution_condition" in names:
         return "R26"
+    if "scoring_rules" in names and "applies_to_roles" in names:
+        # §30.8 item 20: a listed role must be a `RoleType` member. The model already rejects
+        # anything else, so the only thing left to decide is which rule number to report it as
+        # — and "this rule names a role that does not exist" is a scoring-rule violation, not a
+        # generic unknown-key one.
+        return "R20"
     return "R01"
 
 

@@ -261,8 +261,18 @@ scoring_rules:
     critical: <bool>
     evaluator_type: <one of the ten>
     min_evidence: 1
+    applies_to_roles: []   # optional: OPERATOR_112 | DDS; empty (the default) = always applies
     config: { ... }     # shape depends on evaluator_type
 ```
+
+`applies_to_roles` names the roles a rule scores. A rule with a non-empty list applies only when at
+least one listed role is in the session's role chain **as the event log records it**
+(`SESSION_CREATED.role_chain`, falling back to the `ROLE_STAGE_STARTED` types). A rule that does not
+apply yields `points_awarded: 0`, `max_points: 0`, `passed: true`, `critical_failure: false` and one
+piece of evidence pointing at that chain-recording event, so it changes neither the total, nor a
+category percentage, nor the critical-error list. This is what keeps a `SINGLE_ROLE` DDS run from
+being scored against the ten 112-stage rules it never had a chance to satisfy (§10.14
+"Applicability", D6).
 
 One example per evaluator type (config keys are the exhaustive list from
 `10-domain-model.md` §10.14):
@@ -276,6 +286,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 10
     critical: true
     evaluator_type: FACT_OBTAINED
+    applies_to_roles: [OPERATOR_112]
     config: { fact_id: people.victim_01.inside, within_ms: 180000,
               points: 10, penalty_if_missing: 0 }
 
@@ -287,6 +298,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 8
     critical: true
     evaluator_type: CARD_FIELD_CORRECT
+    applies_to_roles: [OPERATOR_112]
     config: { field_path: address.house, expected_from_fact_id: address.house,
               expected_literal: null, comparison: NORMALIZED_DIGITS, tolerance: 0,
               evaluated_at: HANDOFF, points: 8, penalty_if_wrong: -4 }
@@ -299,6 +311,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 3
     critical: false
     evaluator_type: CARD_FIELD_PRESENT
+    applies_to_roles: [OPERATOR_112]
     config: { field_path: caller.phone, evaluated_at: HANDOFF, points: 3,
               penalty_if_missing: 0, treat_false_as_present: true }
 
@@ -310,6 +323,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 4
     critical: false
     evaluator_type: CARD_CONTRADICTION
+    applies_to_roles: [OPERATOR_112]
     config: { field_path: address.floor, contradicts_fact_id: address.floor,
               comparison: EXACT, require_fact_delivered: true,
               penalty_points: -4, evaluated_at: HANDOFF }
@@ -322,6 +336,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 12
     critical: true
     evaluator_type: SERVICE_SELECTION
+    applies_to_roles: [OPERATOR_112]
     config: { required_services: [FIRE_RESCUE, AMBULANCE],
               forbidden_services: [UTILITY_EMERGENCY],
               points_per_required: 6, penalty_per_forbidden: -3,
@@ -335,6 +350,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 10
     critical: false
     evaluator_type: DEADLINE
+    applies_to_roles: [OPERATOR_112]
     config: { from_event_type: CALL_ANSWERED, to_event_type: HANDOFF_CREATED,
               to_payload_match: null, max_offset_ms: 240000, points: 10,
               penalty_if_late: -5, scale: LINEAR, linear_zero_ms: 360000 }
@@ -347,6 +363,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 2
     critical: true
     evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [OPERATOR_112]
     config: { event_type: CALL_ANSWERED, payload_match: null, min_count: 1,
               max_count: 1, required_stage_state: null, must_occur_after: null,
               points: 2, penalty_if_missing: -2, penalty_per_excess: 0 }
@@ -359,6 +376,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 12
     critical: true
     evaluator_type: RESOURCE_SELECTION
+    applies_to_roles: [DDS]
     config: { required_capabilities: [FIRE_SUPPRESSION, HIGH_RISE_ACCESS],
               min_units_by_service: { FIRE_RESCUE: 2, AMBULANCE: 1 },
               forbidden_resource_ids: [], must_be_dispatched: true,
@@ -372,6 +390,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 5
     critical: false
     evaluator_type: REQUIRED_STATUS_UPDATE
+    applies_to_roles: [DDS]
     config: { update_kind: ON_SCENE_REPORT, min_count: 1,
               within_ms_of_event: RESOURCE_STATUS_CHANGED, within_ms: 60000,
               points: 5, penalty_if_missing: -2 }
@@ -384,6 +403,7 @@ One example per evaluator type (config keys are the exhaustive list from
     max_points: 12
     critical: false
     evaluator_type: HANDOFF_COMPLETENESS
+    applies_to_roles: [OPERATOR_112]
     config: { required_field_paths: [incident.type, address.locality, address.street,
                                      address.house, address.apartment, description.text],
               points_per_field: 2, all_or_nothing: false,
@@ -419,7 +439,8 @@ A scenario that fails any of these cannot start a session; `validate_scenario_ve
 18. `role_chain` is non-empty, has no duplicates, and every entry is a registered `RoleModule` with
     `implemented is True` (so `EDDS` is rejected, D6).
 19. Every `scoring_rules[*].rule_id` is unique and `max_points > 0`; `min_evidence >= 1`.
-20. Every `scoring_rules[*].config` validates against its `evaluator_type`'s config model.
+20. Every `scoring_rules[*].config` validates against its `evaluator_type`'s config model, and every
+    role in `scoring_rules[*].applies_to_roles` is a `RoleType` member.
 21. `world_events[*].world_event_id` values are unique.
 22. The world-event graph has no unconditional cycle: following `TRIGGER_EVENT` effects and
     `ActionTriggeredEvent` links must not form a cycle in which every edge has `delay_ms == 0` and no

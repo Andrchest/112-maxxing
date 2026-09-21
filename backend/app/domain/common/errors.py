@@ -60,7 +60,9 @@ class GateError(DomainError):
 
 
 class ScoringEvidenceError(DomainError):
-    """Raised when a `ScoreResult` with a nonzero `points_awarded` has zero evidence (§10.14)."""
+    """Raised when a `ScoreResult` cannot produce the evidence its rule requires — fewer than
+    `max(1, rule.min_evidence)` references, or an "absence" with no bounding event (§10.14, D11,
+    SPEC §42 test 11). Raised from `app.domain.scoring`, which re-exports it."""
 
 
 class PrefabHandoffRequiredError(DomainError):

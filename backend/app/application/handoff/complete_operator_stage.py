@@ -65,8 +65,12 @@ class CompleteOperatorStage:
                 await ctx.save_session(moved)
                 await ctx.append(transition_events)
             else:
-                # The last stage of the chain: the session itself is over (TODO(E15) owns the
-                # scoring that `closeDdsIncident` will run on the usual 112 -> DDS chain).
+                # The last stage of the chain: the session itself is over. A `[OPERATOR_112]`-only
+                # chain is scored the same way `closeDdsIncident` scores the usual 112 -> DDS chain:
+                # `app.api.routers.operator.complete_operator_stage` calls
+                # `score_completed_session` once this gate's commit is durable (epic E15-B; see
+                # `app.application.handoff.complete_session`'s docstring for why scoring runs in a
+                # second, later Unit of Work rather than here).
                 ctx.session, _ = await complete_session(
                     ctx.uow,
                     ctx.session,

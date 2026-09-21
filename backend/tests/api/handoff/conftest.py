@@ -231,6 +231,11 @@ async def raw_role_chain_version(
             ScenarioId(UUID(document["scenario_id"])), slug, version.title
         )
         await uow.scenarios.add_version(version, content, content_digest(content))
+        # `ImportScenarios` always pairs `add_version` with this (§20.2): without it,
+        # `score_results` (epic E15-B) has no `scoring_rules` row to satisfy its
+        # `(scenario_version_id, rule_id)` FK, even though the version's own `content` still
+        # carries the ten demo rules `score()` reads from.
+        await uow.scenarios.add_scoring_rules(version.id, version.scoring_rules)
         await uow.commit()
     return version.id
 

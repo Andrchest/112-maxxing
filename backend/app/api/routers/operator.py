@@ -53,6 +53,7 @@ from app.api.schemas.operator import (
 )
 from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
 from app.api.security import CurrentUserDep
+from app.application.handoff.complete_session import score_completed_session
 from app.domain.common.ids import SessionId
 from app.domain.enums import SessionState
 
@@ -280,12 +281,19 @@ async def complete_operator_stage(
     user: CurrentUserDep,
     tick: TickAfterCommandDep,
 ) -> SessionDetailSchema:
-    """`HANDED_OFF --complete_stage--> STAGE_COMPLETED`, then the session machine (see above)."""
+    """`HANDED_OFF --complete_stage--> STAGE_COMPLETED`, then the session machine (see above).
+
+    A `[OPERATOR_112]`-only chain ends here, so it is scored here too — the same
+    `score_completed_session` call `closeDdsIncident` makes on the usual 112 -> DDS chain, after
+    the same commit (epic E15-B; see `app.application.handoff.complete_session`'s docstring).
+    """
     view = await container.complete_operator_stage()(SessionId(session_id), user)
-    if view.session.state is SessionState.COMPLETED and container.settings.runner_enabled:
-        # After the commit, exactly as `abortSession` does: a completed session must stop being
-        # ticked and must give up `lock:session:{id}:runner` (D7).
-        await container.runner.release(view.session.id)
+    if view.session.state is SessionState.COMPLETED:
+        if container.settings.runner_enabled:
+            # After the commit, exactly as `abortSession` does: a completed session must stop
+            # being ticked and must give up `lock:session:{id}:runner` (D7).
+            await container.runner.release(view.session.id)
+        await score_completed_session(container.unit_of_work, view.session.id)
     else:
         await tick(SessionId(session_id))
     return session_detail_schema(view)
