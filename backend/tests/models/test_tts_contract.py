@@ -30,6 +30,22 @@ instead of the pinned 1.7B directory when set. Its numbers, if measured, are rep
 task's own measurement, not the owner's** (the owner evaluated only the 1.7B checkpoint — recon
 §1.1) — see this task's report for whether the download/run actually completed in the time
 available.
+
+**E14-D addendum.** `MODEL_VARIANTS`/`SIM_TTS_QWEN3_MODEL` (`workers/tts_qwen3/tts_qwen3/server.py`)
+now makes the 0.6B checkpoint a config choice with its own pinned subdirectory, and this task's real
+run (`SIM_RUN_MODEL_TESTS=1`, free VRAM 3196 MB, well under the 4600 MB this file's own
+`test_qwen3_tts_contract_real_synthesis_and_asr_round_trip` requires just to *attempt* the 1.7B —
+so that test still always SKIPs on this machine, exactly as E14-B/E14-C measured, and never reaches
+its own nested 0.6B branch) used `benchmarks/tts_qwen3_0_6b_real_run.py` instead: a worker started
+by hand (`SIM_TTS_QWEN3_MODEL=0.6B`), 20 real syntheses (2 speakers x 2 emotions x 5 sentences),
+then the worker stopped and the saved WAVs run through real GigaAM sequentially (this task's brief,
+item 3 — TTS and ASR together may not fit the free VRAM). `test_qwen3_tts_0_6b_contract_against_a_
+live_worker` below is this task's brief item 5's own requirement — "make the Qwen3-TTS real test
+pass against the running 0.6B worker" — a **separate**, narrower test that does not start a worker
+itself (unlike the test above): it skips cleanly unless something is already listening on
+`127.0.0.1:8112`, and was run for real, once, while this task's own hand-started 0.6B worker was up
+(see this task's report for the pasted result); it never loads GigaAM (same VRAM-concurrency
+reasoning as `benchmarks/tts_qwen3_0_6b_real_run.py`'s two-phase split).
 """
 
 from __future__ import annotations
@@ -318,3 +334,48 @@ async def test_qwen3_tts_contract_real_synthesis_and_asr_round_trip(tmp_path: Pa
                 print(f"\nNOT_RUN: 0.6B experiment skipped, free VRAM {free_mb_now} MB too low")
     finally:
         await asr.close()
+
+
+# -- Qwen3-TTS against an already-running worker (E14-D, this task's brief, item 5) --------------
+
+_QWEN3_LIVE_BASE_URL = "http://127.0.0.1:8112"
+
+
+async def test_qwen3_tts_0_6b_contract_against_a_live_worker() -> None:
+    """Does **not** start a `tts_qwen3` worker itself (unlike the test above) — it drives the real
+    `Qwen3TTS` adapter against whatever is already listening on `127.0.0.1:8112`, the real port
+    (never the throwaway `_QWEN3_PORT` the self-starting test above uses). This task's brief, item
+    5, in its own words: "make the Qwen3-TTS real test ... pass against the running 0.6B worker;
+    run it once for real while your worker is up and paste the result" — this is that test.
+
+    Skips cleanly (`pytest.skip`, never a failure) if nothing answers `/health` on 8112 — the
+    common case for `make test-models`, since no fixture here starts a worker. No GigaAM round
+    trip: loading GigaAM and the `tts_qwen3` worker on GPU at the same time is exactly what this
+    task's brief, item 3, says "may not fit the free VRAM" for the manual real run, and the same
+    physical constraint applies here; the real GigaAM/WER measurement lives in
+    `benchmarks/tts_qwen3_0_6b_real_run.py`'s sequential two-phase run instead (this task's report
+    has its pasted results).
+    """
+    require_model_env()
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as probe:
+            response = await probe.get(f"{_QWEN3_LIVE_BASE_URL}/health")
+    except httpx.HTTPError:
+        pytest.skip(f"NOT_RUN: no tts_qwen3 worker reachable on {_QWEN3_LIVE_BASE_URL}")
+        return
+    if response.status_code != 200:
+        pytest.skip(
+            f"NOT_RUN: tts_qwen3 worker at {_QWEN3_LIVE_BASE_URL} answered "
+            f"HTTP {response.status_code}, not healthy"
+        )
+        return
+    health = response.json()
+
+    tts = Qwen3TTS(base_url=_QWEN3_LIVE_BASE_URL, speaker="Serena", timeout_ms=30_000)
+    try:
+        results = await _measure_provider(tts, label="qwen3-tts-live-worker", asr=None)
+        print(f"\n=== Qwen3-TTS live-worker contract measurements (worker /health: {health}) ===")
+        for row in results:
+            print(row)
+    finally:
+        await tts.close()

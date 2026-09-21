@@ -13,10 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import struct
+from pathlib import Path
 
 import httpx
 import pytest
-from tts_qwen3.server import SAMPLE_RATE, VENDOR_SPEAKERS, WorkerState, create_app
+from tts_qwen3.server import (
+    DEFAULT_MODEL_VARIANT,
+    MODEL_VARIANTS,
+    SAMPLE_RATE,
+    VENDOR_SPEAKERS,
+    UnknownModelVariantError,
+    WorkerState,
+    create_app,
+)
 
 
 class _FakeModel:
@@ -200,3 +209,64 @@ async def test_disconnected_client_is_dropped_without_generating(monkeypatch) ->
     assert response.status_code == 499
     assert model.calls == []
     assert state.loaded is True  # the model still loads; only generation is skipped
+
+
+# -- E14-D: configurable model variant (`SIM_TTS_QWEN3_MODEL`) -----------------------------------
+
+
+async def test_default_variant_is_the_owners_evaluated_1_7b_and_resolves_the_subdirectory() -> None:
+    """No `variant=` kwarg, no `SIM_TTS_QWEN3_MODEL` set -> `DEFAULT_MODEL_VARIANT` ("1.7B"), and
+    the effective checkpoint dir is `SIM_TTS_QWEN3_MODEL_DIR/<the 1.7B subdirectory>`, not the bare
+    base dir (this task's brief, item 1: the subdirectory join `create_app` was missing before)."""
+    assert DEFAULT_MODEL_VARIANT == "1.7B"
+    app = create_app(model_factory=lambda _model_dir: _FakeModel())
+    state: WorkerState = app.state.worker
+    assert app.state.variant == "1.7B"
+    assert state.variant_repo == MODEL_VARIANTS["1.7B"].repo
+    assert state.variant_revision == MODEL_VARIANTS["1.7B"].revision
+    assert state.model_dir == Path("models/qwen3-tts") / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+
+async def test_0_6b_variant_resolves_its_own_repo_revision_and_subdirectory() -> None:
+    app = create_app(model_factory=lambda _model_dir: _FakeModel(), variant="0.6B")
+    state: WorkerState = app.state.worker
+    assert app.state.variant == "0.6B"
+    assert state.variant_repo == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert state.variant_revision == "85e237c12c027371202489a0ec509ded67b5e4b5"
+    assert state.model_dir == Path("models/qwen3-tts") / "Qwen3-TTS-12Hz-0.6B-CustomVoice"
+
+
+async def test_0_6b_variant_via_env_var_matches_the_explicit_kwarg(monkeypatch) -> None:
+    monkeypatch.setenv("SIM_TTS_QWEN3_MODEL", "0.6B")
+    app = create_app(model_factory=lambda _model_dir: _FakeModel())
+    state: WorkerState = app.state.worker
+    assert state.variant_repo == MODEL_VARIANTS["0.6B"].repo
+    assert state.variant_revision == MODEL_VARIANTS["0.6B"].revision
+
+
+async def test_unknown_variant_refuses_to_build_the_app_with_a_clear_message() -> None:
+    with pytest.raises(UnknownModelVariantError, match="NotAVariant"):
+        create_app(model_factory=lambda _model_dir: _FakeModel(), variant="NotAVariant")
+
+
+async def test_unknown_variant_via_env_var_also_refuses(monkeypatch) -> None:
+    monkeypatch.setenv("SIM_TTS_QWEN3_MODEL", "3B")
+    with pytest.raises(UnknownModelVariantError, match="3B"):
+        create_app(model_factory=lambda _model_dir: _FakeModel())
+
+
+async def test_health_reports_the_variant_actually_configured() -> None:
+    """`/health`'s `model`/`revision` must reflect the *resolved* variant, not a hard-coded 1.7B
+    constant — a worker actually serving 0.6B must not claim to be the 1.7B (this task's brief,
+    item 1)."""
+    async with await _client_for_variant("0.6B") as client:
+        health = (await client.get("/health")).json()
+    assert set(health) == {"status", "model", "revision", "device", "loaded"}
+    assert health["model"] == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert health["revision"] == "85e237c12c027371202489a0ec509ded67b5e4b5"
+
+
+async def _client_for_variant(variant: str) -> httpx.AsyncClient:
+    app = create_app(model_factory=lambda _model_dir: _FakeModel(), variant=variant)
+    transport = httpx.ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://testserver")

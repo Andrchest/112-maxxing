@@ -26,6 +26,14 @@ function**, never at module import time, so this module — and therefore `creat
 factory — is importable without either package installed (this is what lets
 `backend/tests/unit/inference/tts/test_qwen3_worker_shape.py` run under the plain backend gate
 venv, which has neither).
+
+**E14-D: the model variant is a config choice.** `SIM_TTS_QWEN3_MODEL` (`MODEL_VARIANTS`, default
+`DEFAULT_MODEL_VARIANT = "1.7B"`, the owner's evaluated model — unchanged) picks a `ModelVariant`
+(repo, pinned revision, checkpoint subdirectory under `SIM_TTS_QWEN3_MODEL_DIR`). An unrecognised
+value raises `UnknownModelVariantError` at `create_app()` time, so `python -m tts_qwen3` refuses to
+start rather than silently loading the default or crashing deep inside a request. `/health`'s
+`model`/`revision` come from the *resolved* variant (`WorkerState.variant_repo`/`variant_revision`),
+not the 1.7B module constants — a worker actually serving 0.6B reports 0.6B.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -43,16 +52,20 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 __all__ = [
+    "DEFAULT_MODEL_VARIANT",
     "DEFAULT_PORT",
     "MODEL_REPO",
     "MODEL_REVISION",
+    "MODEL_VARIANTS",
     "SAMPLE_RATE",
     "TOKENIZER_REPO",
     "TOKENIZER_REVISION",
     "VENDOR_SPEAKERS",
     "ModelFactory",
     "ModelHandle",
+    "ModelVariant",
     "SynthesizeRequest",
+    "UnknownModelVariantError",
     "WorkerState",
     "create_app",
 ]
@@ -70,11 +83,64 @@ BYTES_PER_SAMPLE = 2
 
 #: Pinned exactly (recon §1.1 / `docs/QWEN3_TTS_EXPERIMENT.md:25-30`) — immutable SHA revisions,
 #: not "latest", so a re-run of `make models-tts-qwen3` a year from now still fetches the same
-#: weights the owner evaluated.
+#: weights the owner evaluated. This is the 1.7B checkpoint's identity — kept as the module-level
+#: name every existing importer (`backend/app/inference/tts/qwen3_tts.py`'s duplicated constants,
+#: `Makefile`) already reads; `MODEL_VARIANTS["1.7B"]` below carries the same two values.
 MODEL_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 MODEL_REVISION = "0c0e3051f131929182e2c023b9537f8b1c68adfe"
 TOKENIZER_REPO = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 TOKENIZER_REVISION = "7dd38ad4e9bad454aae9cd937d0cd577604fe229"
+
+
+@dataclass(frozen=True)
+class ModelVariant:
+    """One `SIM_TTS_QWEN3_MODEL` choice: a repo id, its pinned revision, and the subdirectory
+    under `SIM_TTS_QWEN3_MODEL_DIR` the checkpoint's own files (`config.json`,
+    `model.safetensors`, …) live in directly — `Qwen3TTSModel.from_pretrained(pretrained_model_
+    name_or_path, ...)` needs that exact directory, not its parent (this task's brief, item 1:
+    "check how the factory resolves the checkpoint subdirectory today" — today it does not; it
+    passes `SIM_TTS_QWEN3_MODEL_DIR` straight through, which is the *parent* of both checkpoints
+    on disk (`make models-tts-qwen3` writes each variant into its own named subdirectory) and was
+    therefore never actually loadable. This dataclass is what fixes that, for every variant."""
+
+    repo: str
+    revision: str
+    subdirectory: str
+
+
+#: Every configurable model variant (this task's brief, item 1). `"1.7B"` is the owner-evaluated
+#: default (docs/hld/00-decisions.md D9, OWNER DECISION E14) — unchanged from `MODEL_REPO`/
+#: `MODEL_REVISION` above. `"0.6B"`'s revision `85e237c12c027371202489a0ec509ded67b5e4b5` was
+#: verified against every `.cache/huggingface/download/*.metadata` first line under
+#: `models/qwen3-tts/Qwen3-TTS-12Hz-0.6B-CustomVoice/` during this task (all agree) — not a guess,
+#: and not this task's own pin invention: it is the actually-resolved commit of an UNPINNED
+#: download (this task's brief, FACTS).
+MODEL_VARIANTS: dict[str, ModelVariant] = {
+    "1.7B": ModelVariant(
+        repo=MODEL_REPO,
+        revision=MODEL_REVISION,
+        subdirectory="Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    ),
+    "0.6B": ModelVariant(
+        repo="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+        revision="85e237c12c027371202489a0ec509ded67b5e4b5",
+        subdirectory="Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    ),
+}
+#: The owner's evaluated model (D9) — never changed by this task; a profile that wants 0.6B sets
+#: `SIM_TTS_QWEN3_MODEL=0.6B` explicitly (Makefile / `docs/hld/60-inference-ops.md`'s profile
+#: YAMLs), never by flipping this default (this task's brief, DO item 6: "Do NOT change any
+#: profile's default variant — that is a manager decision").
+DEFAULT_MODEL_VARIANT = "1.7B"
+
+
+class UnknownModelVariantError(ValueError):
+    """`SIM_TTS_QWEN3_MODEL` (or `create_app(variant=...)`) named a variant not in
+    `MODEL_VARIANTS`. Raised at `create_app()` time, i.e. at module import in `__main__.py`
+    (`app = create_app()`), so the process refuses to start rather than serving requests against
+    an unresolved/wrong checkpoint (this task's brief, item 1: "the process refuses to start with
+    a clear message")."""
+
 
 #: CustomVoice's closed speaker set (recon §1.1: "13 profile ids ... map to only 4 vendor speaker
 #: names"). `Qwen3TTS` (the backend adapter) validates `TtsVoiceSpec.voice_id` against this same
@@ -129,7 +195,13 @@ class SynthesizeRequest(BaseModel):
 
 
 class WorkerState:
-    """One model instance, a load lock and an inference lock (this task's brief, item 1)."""
+    """One model instance, a load lock and an inference lock (this task's brief, item 1).
+
+    `variant_repo`/`variant_revision` are what `/health` reports as `model`/`revision` — the
+    *actually configured* variant's identity (this task's brief, item 1: "`/health` reports the
+    variant actually configured"), not a module-level constant that would silently keep claiming
+    the 1.7B while a different checkpoint is loaded from `model_dir`.
+    """
 
     def __init__(
         self,
@@ -137,10 +209,14 @@ class WorkerState:
         model_dir: Path,
         model_factory: ModelFactory,
         device: str = "cuda:0",
+        variant_repo: str = MODEL_REPO,
+        variant_revision: str = MODEL_REVISION,
     ) -> None:
         self.model_dir = model_dir
         self.model_factory = model_factory
         self.device = device
+        self.variant_repo = variant_repo
+        self.variant_revision = variant_revision
         self.model: ModelHandle | None = None
         self.load_lock = asyncio.Lock()
         self.inference_lock = asyncio.Lock()
@@ -205,26 +281,64 @@ def create_app(
     model_dir: Path | None = None,
     model_factory: ModelFactory | None = None,
     device: str = "cuda:0",
+    variant: str | None = None,
 ) -> FastAPI:
     """Build the app. `model_dir`/`model_factory` are overridable so tests can inject a fake
     factory and a throwaway directory — production callers (`scripts/run.py`-equivalent /
     `make run-tts-qwen3`) pass neither and get `SIM_TTS_QWEN3_MODEL_DIR` (default
-    `models/qwen3-tts/`, gitignored) and the real loader."""
-    resolved_model_dir = model_dir or Path(
-        os.environ.get("SIM_TTS_QWEN3_MODEL_DIR", "models/qwen3-tts")
+    `models/qwen3-tts/`, gitignored) and the real loader.
+
+    `variant` selects the model config (`MODEL_VARIANTS`); when omitted it is read from
+    `SIM_TTS_QWEN3_MODEL` (default `DEFAULT_MODEL_VARIANT`, `"1.7B"` — the owner's evaluated
+    model, unchanged). An unknown variant raises `UnknownModelVariantError` **here**, i.e. at
+    `python -m tts_qwen3` import time (`app = create_app()`), so the process refuses to start
+    rather than serving anything against an unresolved checkpoint (this task's brief, item 1).
+
+    When `model_dir` is not given, the effective checkpoint directory is
+    `SIM_TTS_QWEN3_MODEL_DIR / MODEL_VARIANTS[variant].subdirectory` — `Qwen3TTSModel.
+    from_pretrained()` needs the directory that directly contains `config.json`/
+    `model.safetensors`, not `SIM_TTS_QWEN3_MODEL_DIR` itself (which is the parent both variants'
+    subdirectories share, `make models-tts-qwen3`'s own download layout). An explicit `model_dir`
+    (tests; a caller that already knows the exact checkpoint path) bypasses this join entirely and
+    is used as-is."""
+    resolved_variant = (
+        variant
+        if variant is not None
+        else os.environ.get("SIM_TTS_QWEN3_MODEL", DEFAULT_MODEL_VARIANT)
     )
+    try:
+        variant_config = MODEL_VARIANTS[resolved_variant]
+    except KeyError as exc:
+        raise UnknownModelVariantError(
+            f"SIM_TTS_QWEN3_MODEL={resolved_variant!r} is not a known Qwen3-TTS variant; "
+            f"choose one of {tuple(MODEL_VARIANTS)}"
+        ) from exc
+
+    if model_dir is not None:
+        resolved_model_dir = model_dir
+    else:
+        base_model_dir = Path(os.environ.get("SIM_TTS_QWEN3_MODEL_DIR", "models/qwen3-tts"))
+        resolved_model_dir = base_model_dir / variant_config.subdirectory
+
     factory = model_factory or _default_model_factory
-    state = WorkerState(model_dir=resolved_model_dir, model_factory=factory, device=device)
+    state = WorkerState(
+        model_dir=resolved_model_dir,
+        model_factory=factory,
+        device=device,
+        variant_repo=variant_config.repo,
+        variant_revision=variant_config.revision,
+    )
 
     app = FastAPI(title="tts_qwen3")
     app.state.worker = state  # exposed for tests/introspection only
+    app.state.variant = resolved_variant  # exposed for tests/introspection only
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "model": MODEL_REPO,
-            "revision": MODEL_REVISION,
+            "model": state.variant_repo,
+            "revision": state.variant_revision,
             "device": state.device,
             "loaded": state.loaded,
         }

@@ -74,30 +74,58 @@ deps-tts-qwen3:
 # "latest". ~4.3 GB total; only fetched when at least 12 GB is free (this task's brief, item 1) —
 # otherwise this prints NOT_RUN and its reason and exits 0, the same "measured, never invented"
 # posture SPEC §27 asks for everywhere else (a partial/failed download would be worse than none).
-QWEN3_TTS_MODEL_REPO := Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
-QWEN3_TTS_MODEL_REVISION := 0c0e3051f131929182e2c023b9537f8b1c68adfe
+# E14-D: `QWEN3_TTS_VARIANT` (`1.7B` default, matching `tts_qwen3.server.DEFAULT_MODEL_VARIANT` —
+# the owner's evaluated model, unchanged) picks which checkpoint this target fetches; `0.6B`'s
+# revision was verified from the already-downloaded checkpoint's own
+# `.cache/huggingface/download/*.metadata` (every file agrees on `85e237c12c027371202489a0ec5
+# 09ded67b5e4b5`), not invented. The tokenizer is shared by both variants and always fetched.
+# Disk floor is per variant: the 1.7B checkpoint + tokenizer measures ~5 GB on disk (12 GB floor,
+# ~2.4x margin); the 0.6B checkpoint + tokenizer measures ~3.05 GB on disk (`du -sh`, this task,
+# 2026-09-22: 2.4G + 651M) — same ~2.4x margin gives an 8 GB floor, lower than the 1.7B's, per
+# this task's brief, item 2.
+QWEN3_TTS_VARIANT ?= 1.7B
+QWEN3_TTS_MODEL_REPO_1_7B := Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+QWEN3_TTS_MODEL_REVISION_1_7B := 0c0e3051f131929182e2c023b9537f8b1c68adfe
+QWEN3_TTS_MODEL_SUBDIR_1_7B := Qwen3-TTS-12Hz-1.7B-CustomVoice
+QWEN3_TTS_MIN_FREE_DISK_GB_1_7B := 12
+QWEN3_TTS_MODEL_REPO_0_6B := Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+QWEN3_TTS_MODEL_REVISION_0_6B := 85e237c12c027371202489a0ec509ded67b5e4b5
+QWEN3_TTS_MODEL_SUBDIR_0_6B := Qwen3-TTS-12Hz-0.6B-CustomVoice
+QWEN3_TTS_MIN_FREE_DISK_GB_0_6B := 8
 QWEN3_TTS_TOKENIZER_REPO := Qwen/Qwen3-TTS-Tokenizer-12Hz
 QWEN3_TTS_TOKENIZER_REVISION := 7dd38ad4e9bad454aae9cd937d0cd577604fe229
 QWEN3_TTS_MODEL_DIR := models/qwen3-tts
-QWEN3_TTS_MIN_FREE_DISK_GB := 12
 models-tts-qwen3:
-	@free_kb=$$(df --output=avail -k . | tail -1); \
+	@if [ "$(QWEN3_TTS_VARIANT)" = "1.7B" ]; then \
+		repo="$(QWEN3_TTS_MODEL_REPO_1_7B)"; rev="$(QWEN3_TTS_MODEL_REVISION_1_7B)"; \
+		subdir="$(QWEN3_TTS_MODEL_SUBDIR_1_7B)"; min_gb=$(QWEN3_TTS_MIN_FREE_DISK_GB_1_7B); \
+	elif [ "$(QWEN3_TTS_VARIANT)" = "0.6B" ]; then \
+		repo="$(QWEN3_TTS_MODEL_REPO_0_6B)"; rev="$(QWEN3_TTS_MODEL_REVISION_0_6B)"; \
+		subdir="$(QWEN3_TTS_MODEL_SUBDIR_0_6B)"; min_gb=$(QWEN3_TTS_MIN_FREE_DISK_GB_0_6B); \
+	else \
+		echo "NOT_RUN: unknown QWEN3_TTS_VARIANT=$(QWEN3_TTS_VARIANT) (must be 1.7B or 0.6B)"; \
+		exit 1; \
+	fi; \
+	free_kb=$$(df --output=avail -k . | tail -1); \
 	free_gb=$$((free_kb / 1024 / 1024)); \
-	if [ "$$free_gb" -lt $(QWEN3_TTS_MIN_FREE_DISK_GB) ]; then \
-		echo "NOT_RUN: models-tts-qwen3 needs >= $(QWEN3_TTS_MIN_FREE_DISK_GB) GB free disk, only $${free_gb} GB free"; \
+	if [ "$$free_gb" -lt "$$min_gb" ]; then \
+		echo "NOT_RUN: models-tts-qwen3 ($(QWEN3_TTS_VARIANT)) needs >= $${min_gb} GB free disk, only $${free_gb} GB free"; \
 	else \
 		mkdir -p $(QWEN3_TTS_MODEL_DIR); \
-		uvx --from huggingface_hub hf download $(QWEN3_TTS_MODEL_REPO) \
-			--revision $(QWEN3_TTS_MODEL_REVISION) \
-			--local-dir $(QWEN3_TTS_MODEL_DIR)/Qwen3-TTS-12Hz-1.7B-CustomVoice; \
+		uvx --from huggingface_hub hf download "$$repo" \
+			--revision "$$rev" \
+			--local-dir $(QWEN3_TTS_MODEL_DIR)/"$$subdir"; \
 		uvx --from huggingface_hub hf download $(QWEN3_TTS_TOKENIZER_REPO) \
 			--revision $(QWEN3_TTS_TOKENIZER_REVISION) \
 			--local-dir $(QWEN3_TTS_MODEL_DIR)/Qwen3-TTS-Tokenizer-12Hz; \
 	fi
 # Loopback only (`tts_qwen3/__main__.py` hard-codes `--host 127.0.0.1`); port from
 # SIM_TTS_QWEN3_PORT, default 8112 (never 8012/8016 — those belong to the owner's other work).
+# E14-D: `QWEN3_TTS_VARIANT` (default `1.7B`, same as `models-tts-qwen3`) is passed through as
+# `SIM_TTS_QWEN3_MODEL` — `tts_qwen3.server.create_app()` resolves it against `MODEL_VARIANTS` and
+# refuses to start the process on an unknown value.
 run-tts-qwen3:
-	workers/tts_qwen3/.venv/bin/python -m tts_qwen3
+	SIM_TTS_QWEN3_MODEL=$(QWEN3_TTS_VARIANT) workers/tts_qwen3/.venv/bin/python -m tts_qwen3
 # The fake-model-factory suite (`workers/tts_qwen3/tests/test_server.py`), in the worker's own
 # venv — this task's brief, item 1: "run in ITS OWN venv only if you created it".
 test-tts-qwen3:

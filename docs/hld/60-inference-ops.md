@@ -167,6 +167,13 @@ asr:
 
 tts:
   provider: qwen3_tts             # OWNER DECISION (E14): GPU default for every profile, DEV incl.
+  # model_path (below) is the BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the worker itself appends
+  # MODEL_VARIANTS[SIM_TTS_QWEN3_MODEL].subdirectory (E14-D — `Qwen3-TTS-12Hz-1.7B-CustomVoice` for
+  # the default variant, `-0.6B-` for the measured alternative below; no profile loader reads a
+  # variant key yet, E18). Default variant stays 1.7B, the owner's evaluated model, unchanged by
+  # this task. 0.6B is a real, measured alternative (§10 open item 6, this task): loads in ~10.7 s
+  # and synthesizes correctly, worker peak VRAM ~2.7 GB sampled (vs. the 1.7B's ~4.3 GB, E14-B) —
+  # switching this profile's default from those numbers is a manager decision, not made here.
   model_path: /models/tts/qwen3-tts          # SIM_TTS_QWEN3_MODEL_DIR; a separate worker process
                                               # (own venv, workers/tts_qwen3/) loads this, not the
                                               # backend/voice-agent process itself — see §2.6 below
@@ -259,6 +266,8 @@ tts:
   provider: qwen3_tts
   # FIXED (E14-B): was "/models/tts/qwen3-tts-0.6b" — a size mismatch against the owner's actually
   # evaluated/verified checkpoint (recon §1.1, this task's report): 1.7B CustomVoice, not 0.6B.
+  # E14-D: this path is now the BASE dir (SIM_TTS_QWEN3_MODEL_DIR) either way — the worker appends
+  # the configured variant's own subdirectory (SIM_TTS_QWEN3_MODEL, default 1.7B, unchanged here).
   model_path: /models/tts/qwen3-tts
   voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
   device: cuda
@@ -911,6 +920,73 @@ stack (`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains onl
    unchanged — GigaAM ran on GPU (~1.3 GB, fits the ~3.2 GB free) without touching that PID.
 5. `--ctx-size` vs `--parallel` (§8, first note) is the one place this document had to choose a
    mechanism the frame did not name; it is listed for ratification in the task report.
+6. **E14-D: the model variant is now a config choice** (`SIM_TTS_QWEN3_MODEL` = `1.7B` default |
+   `0.6B`, `workers/tts_qwen3/tts_qwen3/server.py`'s `MODEL_VARIANTS`; `Makefile`'s
+   `QWEN3_TTS_VARIANT` for `models-tts-qwen3`/`run-tts-qwen3`) — this also fixed a latent bug the
+   worker never actually had exercised for real before: `create_app()` used to pass
+   `SIM_TTS_QWEN3_MODEL_DIR` straight to `Qwen3TTSModel.from_pretrained()`, but that directory is
+   the *parent* both checkpoints' own subdirectories share (`make models-tts-qwen3`'s own download
+   layout) — `from_pretrained()` needs the directory that directly holds `config.json`/
+   `model.safetensors`. Neither variant had ever actually been loaded by this worker before this
+   task (E14-B/E14-C both measured free VRAM too low to try the 1.7B); this task's own real run of
+   0.6B is what surfaced it, fixed by resolving `SIM_TTS_QWEN3_MODEL_DIR / MODEL_VARIANTS[variant]
+   .subdirectory` inside `create_app()` — covered by new unit tests (default-variant-resolves-the-
+   1.7B-subdirectory, 0.6B-resolves-its-own-subdirectory), so the 1.7B path is provably correct too,
+   even though this machine still cannot load it to prove that end-to-end.
+
+   **1.7B: still NOT_RUN.** Free VRAM measured live at the start of this task (2026-09-22,
+   `andreipc-B660M-DS3H-DDR4`, RTX 3060 Ti 8 GB): **3196 MB**, below the ~4.6 GB the 1.7B checkpoint
+   needs (bf16 residency, E14-B recon §1.1) — the owner's other resident process (PID 1082982,
+   Higgs-TTS, 4638 MiB) holds the rest of the 8 GB card. Unchanged since E14-B/E14-C; this task did
+   not attempt the 1.7B.
+
+   **0.6B: real run, measured** (`SIM_TTS_QWEN3_MODEL=0.6B`, worker started by hand on port 8112,
+   loopback only; `uv run python benchmarks/tts_qwen3_0_6b_real_run.py synth`/`asr`, same machine,
+   2026-09-22). Checkpoint `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded6
+   7b5e4b5` (revision verified against every `.cache/huggingface/download/*.metadata` first line
+   under the already-downloaded checkpoint — all agree; not this task's own guess). Load time
+   **10.66 s**; worker peak VRAM **~2746 MiB** (sampled after each of the 20 calls below via
+   `nvidia-smi --query-compute-apps`, not a continuous sampler — a *lower bound* on the true peak,
+   noted as such, not invented as exact). `nvidia-smi --query-compute-apps` before/during/after:
+   only the owner's PID 1082982 at 4638 MiB throughout, plus the worker's own PID while it ran —
+   never touched, confirmed clean after every step.
+
+   20/20 syntheses through the real `Qwen3TTS` adapter succeeded (2 vendor speakers — `Serena`,
+   `Ryan` — x 2 emotions — `CALM`, `PANICKED`, via `TtsVoiceSpec.emotion` — x the same 5 Russian
+   sentences item 4's Piper table uses), saved as WAVs, then (worker stopped first, to free VRAM
+   before loading GigaAM — this task's brief, "TTS + ASR together may not fit the free VRAM")
+   transcribed by real GigaAM `v3_e2e_ctc` (load 7.38 s) for WER. Full 20-row table:
+   `benchmarks/results/tts_eval/20260921T222848Z/results.{json,md}` (gitignored, this checkout).
+   Aggregates: RTF mean **0.831** (min 0.802, max 0.881) excluding one 4.316 first-call outlier
+   (the very first `/synthesize` after `/warm_up`, consistent with a one-time CUDA
+   kernel-autotune/cache-fill cost, not a per-call cost — every subsequent call, across both
+   speakers and both emotions, landed in the same 0.80-0.88 band); mean WER **0.115** (`CALM` 0.077,
+   `PANICKED` 0.152, max 0.571) — all comfortably under the `wer <= 0.6` bar item 4's Piper table
+   uses. Time-to-first-audio-frame (which, for this whole-utterance-per-call provider, equals total
+   synth time — the same documented `Qwen3TTS`/HLD gap the module's docstring already states) mean
+   **~3.66 s** excluding the outlier: far past any per-turn first-chunk budget, expected given the
+   architecture (this is why the sentence chunker splits a turn into short units before calling this
+   provider at all, D9 §2.4), not a 0.6B-specific regression versus the (never-run) 1.7B.
+
+   **`instruct`/emotion:** the 0.6B checkpoint accepts the same `instruct` field the 1.7B API takes
+   and visibly responds to it — every `PANICKED`-emotion row's GigaAM transcript contains an
+   emotional interjection the *reference* sentence does not ("Ха-ха.", "А-э-а.", "А!" — e.g. Ryan/
+   panicked/sentence 1: reference «Служба сто двенадцать, что у вас случилось?», GigaAM heard
+   «Ха-ха. Служба 112, что у вас случилось?», `wer=0.571`), while every `CALM`-row transcript has no
+   such interjection. This is the checkpoint following the emotional instruct, not an intelligibility
+   defect — it is exactly why `PANICKED`'s mean WER (0.152) is higher than `CALM`'s (0.077): the
+   *reference* text is what the operator would need transcribed, and the model is (correctly, per
+   its instruction) adding non-lexical vocalisations a strict word-level WER penalises. No adapter
+   or worker code change was needed for this to work; nothing paved over.
+
+   **Does 0.6B fit `DEV_3060TI` beside GigaAM + the LLM, by simple measured arithmetic?** 0.6B TTS
+   (~2746 MiB, this task) + GigaAM (~1336 MiB, per this document's own item-4 close-out measurement
+   rounded) + a `llama-server` Qwen3.5-2B (~1558 MiB, as given) = **~5640 MiB**, comfortably under
+   an *unshared* RTX 3060 Ti's 8192 MiB (~2552 MiB margin). It does **not** fit *this specific dev
+   machine as currently configured*: the owner's own unrelated 4638 MiB resident process leaves only
+   ~3554 MiB nominal / ~3196 MiB measured free, well under the ~5640 MiB the three simulator
+   components alone would need running together. Whether to change any profile's default variant
+   from these numbers is a manager decision (this task changed no profile default).
 
 ---
 
