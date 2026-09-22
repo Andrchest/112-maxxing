@@ -21,6 +21,17 @@ Two transports (`--transport`, additive to HLD §7.4):
   `backend/tools/check_imports.py` forbids `livekit` under `benchmarks/`); the client's own
   first-audio wall time is recorded as a **cross-check**, and the reported number stays the log's.
 
+  **The LiveKit percentile is publishable again as of E20 R13.** E19-E3's real run discarded all
+  34 of its samples (`discarded_nonpositive_count: 34`, `overall.n = 0`) because the two events
+  the metric subtracts were stamped from two different origins: `LiveKitCallTransport` measured
+  capture offsets from its own first frame while `VoiceEventAppender` measured from the session's
+  `started_at`, so every difference came out negative and drifted further apart each turn. Nothing
+  in this script needed fixing then and nothing changed in it now — discarding an impossible
+  number instead of averaging it is exactly what SPEC §27 requires, and `_aggregates` still does
+  it. What changed is the product: a transport is now built with the session's `Clock` and
+  `started_at` and stamps through the same `session_offset_ms` helper, so the samples come out
+  positive and `overall` fills in by itself.
+
 Barge-in sub-suite: a `turns.jsonl` row carrying `interrupt_after_ms` is interrupted that many ms
 after the caller's first audio; `cutoff_latency_ms` p50/p95 and `over_250ms_count` are reported
 (the §6.2 budget of `50-voice-pipeline.md`).

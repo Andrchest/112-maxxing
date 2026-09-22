@@ -103,9 +103,8 @@ export function CreateSessionForm() {
     [versionsQuery.data, versionId],
   );
 
-  // E8-B: trainee picker (resolves the create-session-form TODO(E8-B) — `listUsers` now exists
-  // in openapi.yaml/schema.d.ts). Only `TRAINEE` accounts are offered: an INSTRUCTOR/ADMIN is
-  // never a valid session participant.
+  // E8-B: trainee picker, backed by `listUsers` (openapi.yaml/schema.d.ts). Only `TRAINEE`
+  // accounts are offered: an INSTRUCTOR/ADMIN is never a valid session participant.
   const traineesQuery = useQuery({
     queryKey: queryKeys.users.list('TRAINEE'),
     queryFn: () => listUsers({ role: 'TRAINEE' }),

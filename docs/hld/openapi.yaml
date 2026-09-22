@@ -2891,8 +2891,12 @@ components:
 
     NotificationView:
       type: object
+      description: |
+        Trainee-facing (DDS/operator console). INV 3: the notification's
+        `source_world_event_id` — the hidden world event that produced it — is NOT part of this
+        schema, exactly as the WS path redacts it (`docs/hld/40-realtime-protocol.md` §215-239).
       additionalProperties: false
-      required: [notification_id, incident_id, audience_role, severity, title_ru, body_ru, created_at_offset_ms, source_world_event_id, acknowledged_at_offset_ms]
+      required: [notification_id, incident_id, audience_role, severity, title_ru, body_ru, created_at_offset_ms, acknowledged_at_offset_ms]
       properties:
         notification_id: { type: string, format: uuid }
         incident_id: { type: string, format: uuid }
@@ -2901,7 +2905,6 @@ components:
         title_ru: { type: string }
         body_ru: { type: string }
         created_at_offset_ms: { type: integer }
-        source_world_event_id: { type: [string, 'null'] }
         acknowledged_at_offset_ms: { type: [integer, 'null'] }
 
     RadioMessageView:
@@ -2909,8 +2912,9 @@ components:
       description: |
         Projected from `RADIO_MESSAGE_CREATED` events; there is no radio table
         (`docs/hld/20-db-schema.md` §20.1). `seq_no` is the log position it was read from.
+        Trainee-facing. INV 3: no `source_world_event_id`, as on `NotificationView`.
       additionalProperties: false
-      required: [radio_message_id, seq_no, incident_id, from_callsign, to_role, text_ru, resource_id, created_at_offset_ms, source_world_event_id]
+      required: [radio_message_id, seq_no, incident_id, from_callsign, to_role, text_ru, resource_id, created_at_offset_ms]
       properties:
         radio_message_id: { type: string, format: uuid }
         seq_no: { type: integer, minimum: 1 }
@@ -2920,7 +2924,6 @@ components:
         text_ru: { type: string }
         resource_id: { type: [string, 'null'], format: uuid }
         created_at_offset_ms: { type: integer }
-        source_world_event_id: { type: [string, 'null'] }
 
     CloseIncidentRequest:
       type: object
@@ -2965,6 +2968,13 @@ components:
         value_types:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ValueType' }
+        label_ru:
+          type: object
+          description: >-
+            ADDITIVE (E20-E R11): `fact_id -> FactDefinition.label_ru` for every key of `facts`,
+            joined from the active `ScenarioVersion` (§10.4). Absent for a `fact_id` the join
+            cannot resolve; never a fabricated label.
+          additionalProperties: { type: string }
 
     CallerBeliefView:
       type: object
@@ -2990,6 +3000,12 @@ components:
           type: array
           description: Written only by `FACTS_DELIVERED`, never by the gate (D10).
           items: { type: string }
+        label_ru:
+          type: object
+          description: >-
+            ADDITIVE (E20-E R11): the same `fact_id -> FactDefinition.label_ru` join
+            `WorldTruthView.label_ru` carries, over this view's own `facts` keys.
+          additionalProperties: { type: string }
 
     GateDecisionView:
       type: object
@@ -3247,6 +3263,11 @@ components:
                 type: array
                 items: { type: string }
               is_additional: { type: boolean }
+              note_ru:
+                type: [string, 'null']
+                description: >-
+                  ADDITIVE (E20-E R11): the trainee's free-text dispatch note
+                  (`RESOURCE_DISPATCHED.note_ru`, E17 R2). `null`/absent when none was given.
         status_updates:
           type: array
           items: { $ref: '#/components/schemas/StatusUpdateView' }
@@ -3255,6 +3276,12 @@ components:
             - $ref: '#/components/schemas/ClosureReason'
             - type: 'null'
         closed_at_offset_ms: { type: [integer, 'null'] }
+        comment_ru:
+          type: [string, 'null']
+          description: >-
+            ADDITIVE (E20-E R11): the trainee's free-text closure comment
+            (`DDS_INCIDENT_CLOSED.comment_ru`, E17 R2). `null`/absent when none was given or the
+            leg is not yet closed.
 
     ResourceTimelineEntryView:
       type: object
@@ -3286,7 +3313,17 @@ components:
         speech_end_to_first_audio_ms_p50: { type: [number, 'null'] }
         speech_end_to_first_audio_ms_p95: { type: [number, 'null'] }
         asr_latency_ms_p50: { type: [number, 'null'] }
-        llm_ttft_ms_p50: { type: [number, 'null'] }
+        llm_ttft_ms_p50:
+          type: [number, 'null']
+          description: >-
+            null by construction on the shipped configuration (E20-H, H3), not a bug: the
+            interpreter and generator LLM calls are non-streaming
+            (`app/application/dialogue/interpreter.py`, `generator.py`), so their
+            `inference_metrics.ttft_ms` is written as `None` — there is no distinct "first token"
+            instant to measure when the whole completion arrives at once — and `percentile()` over
+            an empty sample is `null` (SPEC §27: never fake a value). A streaming LLM provider
+            would make this non-null without any change to this aggregation
+            (`app.application.reports.timing_metrics`).
         tts_first_audio_ms_p50: { type: [number, 'null'] }
         barge_in_cutoff_ms_p95: { type: [number, 'null'] }
         fallback_count: { type: integer, minimum: 0 }

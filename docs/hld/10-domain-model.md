@@ -1175,7 +1175,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `ASR_FINAL` | `MODEL` | `call_id: uuid`, `turn_index: int`, `transcript_segment_id: uuid`, `audio_segment_id: uuid \| null`, `text: str`, `start_ms: int`, `end_ms: int`, `confidence: float \| null`, `asr_provider: str`, `asr_model: str` | OPERATOR_112, INSTRUCTOR |
 | `CALLER_RESPONSE_PLANNED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `allowed_fact_ids: list[str]`, `spontaneous_fact_ids: list[str]`, `unavailable_fact_ids: list[str]`, `withheld_count: int`, `emotion: EmotionLabel`, `stress_level: float` | INSTRUCTOR |
 | `CALLER_RESPONSE_GENERATED` | `MODEL` | `call_id: uuid`, `turn_index: int`, `utterance_ru: str`, `output_token_count: int`, `llm_provider: str`, `llm_model: str`, `validator_verdict: "PASS"\|"REGENERATED"\|"FALLBACK"`, `regeneration_count: int` | INSTRUCTOR |
-| `CALLER_TTS_STARTED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `text_sent_to_tts: str`, `tts_provider: str`, `tts_model: str`, `voice_id: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `CALLER_TTS_STARTED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `text_sent_to_tts: str`, `tts_provider: str`, `tts_model: str`, `voice_id: str`, `voice_id_native: str` (additive, E20-G — the provider-native voice the profile's `tts.voice_map` resolved `voice_id` to; absent for a provider that resolves nothing), `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CALLER_TTS_ENDED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `at_offset_ms: int`, `total_audio_ms: int`, `completed: bool`, `audio_segment_id: uuid \| null` | OPERATOR_112, INSTRUCTOR |
 | `CALLER_UTTERANCE_INTERRUPTED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `planned_text: str`, `delivered_text: str`, `delivered_audio_ms: int`, `total_audio_ms_generated: int`, `cutoff_latency_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CARD_FIELD_CHANGED` | `TRAINEE`, `INSTRUCTOR` | `card_id: uuid`, `revision_id: uuid`, `revision_no: int`, `field_path: str`, `previous_value: FactValue`, `new_value: FactValue`, `value_type: ValueType`, `actor_user_id: uuid`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
@@ -1431,9 +1431,12 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
   `within_ms_of_event: EventType | null`, `within_ms: int | null`, `points: float`,
   `penalty_if_missing: float = 0.0`.
 - Reads: `DDS_STATUS_UPDATE_SENT`, plus the reference event type.
-- Points: `points` when at least `min_count` updates of that kind exist and, if configured, the first
-  one falls within `within_ms` of the reference event; else `penalty_if_missing`.
-- Evidence: the qualifying `DDS_STATUS_UPDATE_SENT` events, else `ROLE_STAGE_COMPLETED`.
+- Points: `points` when at least `min_count` updates of that kind exist and, if configured, **every**
+  occurrence of `within_ms_of_event` has a matching update within `within_ms` after it (H4, E20-H —
+  not just the first occurrence of each; see reading 6 below); else `penalty_if_missing`.
+- Evidence: one entry per `(reference event, matching update or none)` pair when timing is
+  configured and at least one reference event occurred; else the qualifying `DDS_STATUS_UPDATE_SENT`
+  events; else `ROLE_STAGE_COMPLETED`.
 
 #### 10. `HANDOFF_COMPLETENESS` — `handoff_completeness.py`
 - Config keys: `required_field_paths: list[str]`, `points_per_field: float`,
@@ -1467,10 +1470,19 @@ is the one closest to SPEC, and it is now the contract.
    `max_offset_ms`, has no ramp and behaves as `STEP`.
 5. **`WORKFLOW_ACTION` above `max_count`** scores `penalty_per_excess × (count − max_count)`, and
    nothing else — the excess replaces `points`, it is not added to them.
-6. **`REQUIRED_STATUS_UPDATE` timing** compares the *first* qualifying update to the *first*
-   occurrence of `within_ms_of_event` and requires `0 ≤ Δ ≤ within_ms`: a report sent before the
-   thing it reports on is not a report on it (SPEC §13). A reference event that never occurred
-   leaves the timing half satisfied and the count half deciding.
+6. **`REQUIRED_STATUS_UPDATE` timing opens one window per qualifying reference event** (H4,
+   E20-H — supersedes the earlier "first update against the first reference" reading, which made
+   the rule unsatisfiable in a real session the instant any *earlier* occurrence of
+   `within_ms_of_event` existed, e.g. the DDS's first `RESOURCE_STATUS_CHANGED` being `DISPATCHED`
+   long before the arrival the rule actually means, reproduced live by E20-C's §46 walk:
+   `"Задержка от RESOURCE_STATUS_CHANGED: 279160 мс при норме 60000 мс"`). Now: **every** occurrence
+   of `within_ms_of_event` in the log opens its own `[t, t + within_ms]` window, and the timing half
+   is satisfied only when **each** window has at least one matching update with `0 ≤ Δ ≤ within_ms`
+   (`Δ` = update offset − reference offset; a report sent before the thing it reports on still does
+   not count, SPEC §13). One update may satisfy more than one window if its offset falls in several
+   at once — pairing is "does a match exist", not an exclusive one-to-one assignment. A reference
+   event type that never occurred at all leaves the timing half vacuously satisfied (there is no
+   window to miss) and the count half (`min_count`) deciding, unchanged from before.
 7. **`RESOURCE_SELECTION` unmet count** is `len(missing capabilities) + Σ(minimum − dispatched)`
    per short service; capabilities are the union of `RESOURCE_DISPATCHED.capabilities_union` and
    the per-unit `RESOURCE_SELECTED.capabilities` (the latter alone when

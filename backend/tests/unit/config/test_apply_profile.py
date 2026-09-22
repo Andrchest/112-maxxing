@@ -31,7 +31,17 @@ def _clean_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     environment `make test` happens to export."""
     for key, value in _REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
-    for key in ("SIM_TTS_PROVIDER", "SIM_ASR_DEVICE", "SIM_MODEL_PROFILE", "SIM_LLM_MODEL_NAME"):
+    for key in (
+        "SIM_TTS_PROVIDER",
+        "SIM_ASR_DEVICE",
+        "SIM_MODEL_PROFILE",
+        "SIM_LLM_MODEL_NAME",
+        # E20-E R11: Settings.tts_model_variant is aliased onto this name.
+        "SIM_TTS_QWEN3_MODEL",
+        # E20-G/G6.
+        "SIM_TTS_VOICE_MAP",
+        "SIM_TTS_DEFAULT_VOICE",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -106,6 +116,81 @@ def test_llm_and_asr_selection_blocks_are_overlaid(monkeypatch: pytest.MonkeyPat
     # never be "left at a default" in this test file — its overlay-when-unset path is exercised by
     # the container/voice-agent integration instead; asserting it here would just restate the
     # required env value.
+
+
+# -- E20-E R11: tts.device/output_sample_rate/model_variant and vad.device now have a Settings
+# counterpart and are overlaid like every other field (previously read straight off ModelProfile
+# only) -------------------------------------------------------------------------------------------
+
+
+def test_tts_device_output_sample_rate_and_vad_device_are_overlaid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_settings_env(monkeypatch)
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.tts_device == "cuda"  # class default, pre-overlay
+    assert settings.vad_device == "cpu"  # class default, pre-overlay
+
+    profile = load_profile("DEV_3060TI")
+    assert profile.tts.device == "cuda"
+    assert profile.tts.output_sample_rate == 24000
+    assert profile.vad.device == "cpu"
+
+    overlaid = apply_profile(settings, profile)
+
+    assert overlaid.tts_device == "cuda"
+    assert overlaid.tts_output_sample_rate == 24000
+    assert overlaid.vad_device == "cpu"
+
+
+def test_dev_3060ti_shared_overlays_a_cpu_tts_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`DEV_3060TI_SHARED` runs Piper on CPU (measured RTF 0.036) — its `tts.device` differs from
+    `DEV_3060TI`'s, proving the overlay reads the field, not a hard-coded default."""
+    _clean_settings_env(monkeypatch)
+    settings = Settings()  # type: ignore[call-arg]
+
+    overlaid = apply_profile(settings, load_profile("DEV_3060TI_SHARED"))
+
+    assert overlaid.tts_device == "cpu"
+    assert overlaid.tts_output_sample_rate == 22050
+
+
+def test_an_explicitly_set_tts_device_survives_the_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_settings_env(monkeypatch)
+    monkeypatch.setenv("SIM_TTS_DEVICE", "cpu")
+    settings = Settings()  # type: ignore[call-arg]
+
+    overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
+
+    assert overlaid.tts_device == "cpu"
+    # the profile's own value, proving the field really was eligible for overlay otherwise:
+    assert load_profile("DEV_3060TI").tts.device != "cpu"
+
+
+def test_tts_model_variant_is_aliased_onto_sim_tts_qwen3_model_and_overlaid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Settings.tts_model_variant` reads `SIM_TTS_QWEN3_MODEL` — the SAME env var the standalone
+    `workers/tts_qwen3` worker process reads directly — not the prefix-derived
+    `SIM_TTS_MODEL_VARIANT`."""
+    _clean_settings_env(monkeypatch)
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.tts_model_variant is None
+    assert "tts_model_variant" not in settings.model_fields_set
+
+    # DEV_3060TI ships the MEASURED 0.6B (E20-I: 1.7B peaks at 7448 MB > the 7168 MB budget).
+    overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
+    assert overlaid.tts_model_variant == "0.6B"
+
+    # An explicit SIM_TTS_QWEN3_MODEL (as the standalone worker itself would read) wins over the
+    # profile, same precedence as every other field.
+    monkeypatch.setenv("SIM_TTS_QWEN3_MODEL", "1.7B")
+    explicit_settings = Settings()  # type: ignore[call-arg]
+    assert explicit_settings.tts_model_variant == "1.7B"
+    assert "tts_model_variant" in explicit_settings.model_fields_set
+
+    explicit_overlaid = apply_profile(explicit_settings, load_profile("DEV_3060TI"))
+    assert explicit_overlaid.tts_model_variant == "1.7B"
 
 
 def test_dev_3060ti_shared_yields_cpu_asr_and_cpu_piper_through_the_overlay_alone(
@@ -237,6 +322,10 @@ def test_apply_profile_is_a_no_op_when_every_field_is_already_explicit(
         "SIM_TTS_FALLBACK_PROVIDER",
         "SIM_VAD_PROVIDER",
         "SIM_VAD_MODEL_PATH",
+        "SIM_VAD_DEVICE",
+        "SIM_TTS_DEVICE",
+        "SIM_TTS_OUTPUT_SAMPLE_RATE",
+        "SIM_TTS_QWEN3_MODEL",
         "SIM_VOICE_SPEECH_START_THRESHOLD",
         "SIM_VOICE_SPEECH_END_THRESHOLD",
         "SIM_VOICE_SPEECH_START_MIN_MS",
@@ -251,12 +340,20 @@ def test_apply_profile_is_a_no_op_when_every_field_is_already_explicit(
         "SIM_VOICE_PARTIAL_ASR_ENABLED",
         "SIM_VOICE_PARTIAL_INTERVAL_MS",
         "SIM_VOICE_RECONNECT_GRACE_S",
+        # E20-I: the Piper fallback's voice file and the three TTS guards.
+        "SIM_TTS_PIPER_VOICE_PATH",
+        "SIM_TTS_FIRST_CHUNK_TIMEOUT_MS",
+        "SIM_TTS_TIMEOUT_MS",
+        "SIM_TTS_WARMUP_TIMEOUT_MS",
     ):
         monkeypatch.setenv(
             key,
             "fake" if key.endswith(("PROVIDER", "VERSION")) else "0",
         )
     monkeypatch.setenv("SIM_TTS_PROVIDER", "fake")
+    # E20-G/G6: typed, so they cannot take the "0" the loop above sets.
+    monkeypatch.setenv("SIM_TTS_VOICE_MAP", "{}")
+    monkeypatch.setenv("SIM_TTS_DEFAULT_VOICE", "fake")
     settings = Settings()  # type: ignore[call-arg]
 
     overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
@@ -301,3 +398,90 @@ def test_voice_agent_deps_build_for_startup_propagates_profile_refused(
 
     with pytest.raises(ProfileRefused):
         VoiceAgentDeps.build_for_startup(settings, clock=None, uow_factory=None)  # type: ignore[arg-type]
+
+
+# --- E20-G/G6: tts.voice_map / tts.default_voice --------------------------------------------------
+
+
+def test_tts_voice_map_and_default_voice_are_overlaid_from_the_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scenario's logical `ru_female_adult_01` must reach the provider as a NATIVE voice."""
+    _clean_settings_env(monkeypatch)
+    settings = Settings()  # type: ignore[call-arg]
+
+    overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
+
+    assert overlaid.tts_voice_map == {"ru_female_adult_01": "Serena"}
+    assert overlaid.tts_default_voice == "Serena"
+
+    # The Piper-primary profile maps the same logical id onto ITS native voice.
+    piper = apply_profile(Settings(), load_profile("DEV_3060TI_SHARED"))  # type: ignore[call-arg]
+    assert piper.tts_voice_map == {"ru_female_adult_01": "ru_RU-irina-medium"}
+    assert piper.tts_default_voice == "ru_RU-irina-medium"
+
+
+def test_default_voice_falls_back_to_the_profiles_own_voice_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile that declares no `tts.default_voice` behaves exactly as it did before E20-G."""
+    _clean_settings_env(monkeypatch)
+    profile = load_profile("DEV_3060TI")
+    stripped = profile.model_copy(
+        update={"tts": profile.tts.model_copy(update={"default_voice": None})}
+    )
+
+    overlaid = apply_profile(Settings(), stripped)  # type: ignore[call-arg]
+
+    assert overlaid.tts_default_voice == profile.tts.voice_id
+
+
+def test_an_explicitly_set_voice_map_survives_the_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_settings_env(monkeypatch)
+    monkeypatch.setenv("SIM_TTS_VOICE_MAP", '{"ru_female_adult_01": "Vivian"}')
+    settings = Settings()  # type: ignore[call-arg]
+
+    overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
+
+    assert overlaid.tts_voice_map == {"ru_female_adult_01": "Vivian"}
+    assert load_profile("DEV_3060TI").tts.voice_map != {"ru_female_adult_01": "Vivian"}
+
+
+def test_every_shipped_profile_maps_every_logical_voice_id_the_example_scenarios_use() -> None:
+    """A scenario voice id with no mapping is a silent caller waiting to happen (E20-C item 3)."""
+    import re
+    from pathlib import Path
+
+    logical_ids = {
+        match.group(1)
+        for path in Path("scenarios/examples").rglob("*.yaml")
+        for match in re.finditer(r'^\s*voice_id:\s*"?([^"\s]+)"?\s*$', path.read_text(), re.M)
+    }
+    assert logical_ids, "no caller_profile.voice_id found in scenarios/examples"
+    for name in ("DEV_3060TI", "DEV_3060TI_SHARED", "FINAL_3080TI_12GB", "FINAL_3080TI_16GB"):
+        voice_map = load_profile(name).tts.voice_map
+        assert logical_ids <= set(voice_map), f"{name}: unmapped {logical_ids - set(voice_map)}"
+
+
+# -- E20-I: what a whole-utterance TTS primary needs from its profile ----------------------------
+
+
+def test_dev_profile_sizes_the_tts_guards_from_measurement_and_wires_the_piper_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEV_3060TI: Qwen3-TTS first audio p95 11078 ms / max 14771 ms (E19) -> 12000 / 15000; the
+    warm-up gets `warmup.timeout_ms`; the Piper FALLBACK gets the profile's container path."""
+    _clean_settings_env(monkeypatch)
+    overlaid = apply_profile(Settings(), load_profile("DEV_3060TI"))  # type: ignore[call-arg]
+    assert overlaid.tts_first_chunk_timeout_ms == 12000
+    assert overlaid.tts_timeout_ms == 15000
+    assert overlaid.tts_warmup_timeout_ms == 60000
+    assert overlaid.tts_piper_voice_path == "/models/tts/piper/ru_RU-irina-medium.onnx"
+
+
+def test_a_streaming_primary_keeps_the_default_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DEV_3060TI_SHARED's primary is Piper (streams per unit, p95 405 ms): defaults stand."""
+    _clean_settings_env(monkeypatch)
+    overlaid = apply_profile(Settings(), load_profile("DEV_3060TI_SHARED"))  # type: ignore[call-arg]
+    assert overlaid.tts_first_chunk_timeout_ms == 1500
+    assert overlaid.tts_timeout_ms == 8000

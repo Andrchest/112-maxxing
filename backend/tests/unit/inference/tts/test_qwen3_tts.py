@@ -9,6 +9,7 @@ worker is only in `backend/tests/models/test_tts_contract.py` (marker `requires_
 from __future__ import annotations
 
 import json
+import logging
 import struct
 
 import httpx
@@ -185,19 +186,88 @@ async def test_a_none_emotion_on_the_voice_spec_synthesises_neutral() -> None:
     assert captured[0]["instruct"] == "Speak in a calm and composed manner."
 
 
-async def test_stream_rejects_a_non_vendor_voice_id() -> None:
-    tts = _client(lambda request: httpx.Response(200, content=b""))
-    with pytest.raises(ValueError):
-        tts.stream("тест", TtsVoiceSpec(voice_id="Bob", speaking_rate=1.0), request_id="r3")
+# --- E20-G/G6: `voice_id` is a SCENARIO-LOGICAL id, resolved through the profile's voice_map ----
+# These four replace the two tests that asserted the OLD contract (an unmapped `voice_id` raised
+# `ValueError`). That contract is what left the shipped DEV_3060TI caller silent on E20-C's §46
+# walk: the demo scenario casts `ru_female_adult_01`, which is not a vendor speaker name.
 
 
-async def test_stream_rejects_the_generic_provider_agnostic_default_voice_id() -> None:
-    """`SIM_TTS_VOICE_ID`'s default (`"ru_female_1"`) is not a vendor speaker — see this task's
-    report, "HLD gaps"."""
-    tts = _client(lambda request: httpx.Response(200, content=b""))
-    with pytest.raises(ValueError):
+def _mapped_client(handler, *, voice_map=None, default_voice=None) -> Qwen3TTS:
+    transport = httpx.MockTransport(handler)
+    return Qwen3TTS(
+        base_url="http://127.0.0.1:8112",
+        speaker="Serena",
+        client=httpx.AsyncClient(transport=transport),
+        voice_map=voice_map,
+        default_voice=default_voice,
+    )
+
+
+def _capturing():
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200, content=_tone_pcm(1000), headers={"X-Sample-Rate": str(OUTPUT_SAMPLE_RATE)}
+        )
+
+    return captured, handler
+
+
+async def test_a_mapped_logical_voice_id_is_sent_as_its_native_speaker() -> None:
+    captured, handler = _capturing()
+    tts = _mapped_client(handler, voice_map={"ru_female_adult_01": "Vivian"})
+    stream = tts.stream(
+        "тест", TtsVoiceSpec(voice_id="ru_female_adult_01", speaking_rate=1.0), request_id="r3"
+    )
+    _ = [chunk async for chunk in stream]
+
+    assert captured[0]["speaker"] == "Vivian"
+    assert tts.native_voice_id("ru_female_adult_01") == "Vivian"
+
+
+async def test_an_unmapped_logical_voice_id_falls_back_to_default_voice_and_never_raises() -> None:
+    captured, handler = _capturing()
+    tts = _mapped_client(handler, voice_map={"ru_male_adult_01": "Ryan"}, default_voice="Aiden")
+    # The exact id E20-C's walk hit, and the generic provider-agnostic `SIM_TTS_VOICE_ID` default.
+    for logical in ("ru_female_adult_01", "ru_female_1", "Bob"):
+        stream = tts.stream(
+            "тест", TtsVoiceSpec(voice_id=logical, speaking_rate=1.0), request_id=f"r-{logical}"
+        )
+        _ = [chunk async for chunk in stream]
+
+    assert [body["speaker"] for body in captured] == ["Aiden", "Aiden", "Aiden"]
+
+
+async def test_an_unmapped_logical_voice_id_warns_exactly_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _captured, handler = _capturing()
+    tts = _mapped_client(handler, default_voice="Serena")
+    with caplog.at_level(logging.WARNING, logger="app.inference.tts.qwen3_tts"):
+        for _ in range(3):
+            tts.stream(
+                "тест",
+                TtsVoiceSpec(voice_id="ru_female_adult_01", speaking_rate=1.0),
+                request_id="warn",
+            )
+        tts.native_voice_id("ru_female_adult_01")
         tts.stream(
-            "тест", TtsVoiceSpec(voice_id="ru_female_1", speaking_rate=1.0), request_id="r3b"
+            "тест", TtsVoiceSpec(voice_id="ru_male_adult_01", speaking_rate=1.0), request_id="warn2"
+        )
+
+    warnings = [r for r in caplog.records if "voice_map" in r.getMessage()]
+    assert len(warnings) == 2  # once per (provider, logical id), not once per call
+    assert "ru_female_adult_01" in warnings[0].getMessage()
+    assert "ru_male_adult_01" in warnings[1].getMessage()
+
+
+def test_a_default_voice_that_is_not_a_vendor_speaker_is_refused_at_construction() -> None:
+    """A configuration error is caught once, at build time — never per utterance."""
+    with pytest.raises(ValueError, match="default_voice"):
+        Qwen3TTS(
+            base_url="http://127.0.0.1:8112", speaker="Serena", default_voice="ru_female_adult_01"
         )
 
 
@@ -291,3 +361,44 @@ async def test_cancel_is_idempotent() -> None:
     stream = tts.stream("тест", _VOICE, request_id="r9")
     await stream.cancel()
     await stream.cancel()  # must not raise
+
+
+# -- E20-I: a cold worker's first /warm_up gets the WARM-UP budget, not the per-utterance one ----
+
+
+class _TimeoutRecorder(httpx.AsyncBaseTransport):
+    """Records the read timeout httpx was given for each path, answers 200."""
+
+    def __init__(self) -> None:
+        self.read_timeouts: dict[str, float | None] = {}
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.read_timeouts[request.url.path] = request.extensions["timeout"]["read"]
+        return httpx.Response(200, json={"status": "ok", "loaded": True})
+
+
+async def test_warm_up_uses_the_warmup_timeout_not_the_request_timeout() -> None:
+    """Under `make up` a cold 1.7B warm-up took ~26 s; an 8 s per-request budget made the
+    agent's first warm-up time out every time (TTS NOT_READY, E20-I)."""
+    recorder = _TimeoutRecorder()
+    tts = Qwen3TTS(
+        base_url="http://127.0.0.1:8112",
+        speaker="Serena",
+        timeout_ms=8000,
+        warmup_timeout_ms=60000,
+        client=httpx.AsyncClient(transport=recorder),
+    )
+    await tts.warm_up()
+    assert recorder.read_timeouts["/warm_up"] == 60.0
+
+
+async def test_without_a_warmup_timeout_warm_up_keeps_the_request_timeout() -> None:
+    recorder = _TimeoutRecorder()
+    tts = Qwen3TTS(
+        base_url="http://127.0.0.1:8112",
+        speaker="Serena",
+        timeout_ms=8000,
+        client=httpx.AsyncClient(transport=recorder),
+    )
+    await tts.warm_up()
+    assert recorder.read_timeouts["/warm_up"] == 8.0

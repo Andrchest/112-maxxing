@@ -340,3 +340,97 @@ def test_the_settings_for_this_suite_are_the_gate_s_fakes() -> None:
         "fake",
         "fake",
     )
+
+
+# -- E20-G/G5: the CONFIGURED TTS FALLBACK is warmed beside the primary -------------------------
+#
+# E20-C's §46 walk: the fallback provider was never warmed, so INV 14's "retry the whole utterance
+# once on the fallback" could only ever fail — `RuntimeError: PiperTTS.warm_up() must be called
+# before stream()`, surfacing to the trainee's timeline as a misleading
+# `MODEL_ERROR{"error_code": "TIMEOUT"}` and to the trainee as a silent caller.
+
+
+class _RecordingFallback:
+    """A `TTSProvider` that only records whether it was warmed (D13 — no model anywhere)."""
+
+    provider_name = "recording-fallback"
+    model_version = "v0"
+    output_sample_rate = 24000
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.warm_ups = 0
+        self._fail = fail
+
+    async def warm_up(self) -> None:
+        self.warm_ups += 1
+        if self._fail:
+            raise RuntimeError("piper voice file missing")
+
+    def stream(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - never reached here
+        raise AssertionError("the fallback is not asked to speak in this test")
+
+    async def close(self) -> None:
+        return None
+
+
+def _patch_fallback(monkeypatch: pytest.MonkeyPatch, fallback: _RecordingFallback | None) -> None:
+    import voice_agent.main as main_module
+
+    monkeypatch.setattr(main_module, "build_tts_fallback", lambda _settings: fallback)
+
+
+async def test_warm_up_also_warms_the_configured_tts_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = _RecordingFallback()
+    _patch_fallback(monkeypatch, fallback)
+    redis = FakeRedis()
+    agent = make_agent(FakeClock(), redis)
+
+    await agent.warm_up()
+
+    assert fallback.warm_ups == 1
+    assert agent.health_state(TTS_SERVICE) == STATE_READY
+    assert agent._tts_fallback is fallback
+
+
+async def test_a_fallback_warm_up_failure_is_one_warning_and_never_fatal(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A primary that works is still a working caller: the process must stay READY."""
+    fallback = _RecordingFallback(fail=True)
+    _patch_fallback(monkeypatch, fallback)
+    redis = FakeRedis()
+    agent = make_agent(FakeClock(), redis, rewarm_interval_s=1)
+
+    with caplog.at_level("WARNING", logger="voice_agent.main"):
+        await agent.warm_up()
+        # A re-warm must not repeat the warning: once per process, not once per cycle.
+        await agent._warm_component(TTS_SERVICE, agent._warm_tts)
+
+    assert agent.health_state(TTS_SERVICE) == STATE_READY
+    assert agent._tts_fallback is None
+    warnings = [r for r in caplog.records if "fallback" in r.getMessage()]
+    assert len(warnings) == 1
+    assert fallback.warm_ups == 2  # it was retried, it just stayed unavailable
+
+    frame = json.loads(redis.values[f"voice:health:{TTS_SERVICE}"])
+    assert frame["state"] == STATE_READY
+    assert "fallback unavailable" in frame["detail"]
+
+
+async def test_no_configured_fallback_is_not_a_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`SIM_TTS_FALLBACK_PROVIDER=none` is the gate's own selection, not a degraded state."""
+    _patch_fallback(monkeypatch, None)
+    redis = FakeRedis()
+    agent = make_agent(FakeClock(), redis)
+
+    with caplog.at_level("WARNING", logger="voice_agent.main"):
+        await agent.warm_up()
+
+    assert agent.health_state(TTS_SERVICE) == STATE_READY
+    assert agent._tts_fallback is None
+    assert [r for r in caplog.records if "fallback" in r.getMessage()] == []
+    assert json.loads(redis.values[f"voice:health:{TTS_SERVICE}"])["detail"] is None

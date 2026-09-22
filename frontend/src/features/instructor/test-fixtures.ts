@@ -64,6 +64,7 @@ export function makeWorldTruthView(overrides: Partial<WorldTruthView> = {}): Wor
     revision: 1,
     facts: { 'address.house': '27' },
     value_types: { 'address.house': 'STRING' },
+    label_ru: { 'address.house': 'Дом' },
     ...overrides,
   };
 }
@@ -78,6 +79,7 @@ export function makeCallerBeliefView(overrides: Partial<CallerBeliefView> = {}):
     emotion: 'WORRIED',
     stress_level: 0.6,
     revealed_fact_ids: ['address.house'],
+    label_ru: { 'address.house': 'Дом' },
     ...overrides,
   };
 }

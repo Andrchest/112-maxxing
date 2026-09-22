@@ -14,9 +14,11 @@ Sequence (HLD §7.5, fixed): nothing loaded → load VAD → load ASR → load T
 → sample idle → run `--turns 20` realistic turns → sample peak → idle again, NVML sampled every
 100 ms throughout. **Note (addendum (b)):** `--turns` runs turns sequentially, not concurrently —
 accepted for one session (a single session's turn is sequential by construction); multi-session
-concurrency is `TODO(E20)`: a `benchmark_vram.py` sequence that drives several sessions' turns
-concurrently (matching `parallel_slots` genuinely being shared across sessions, not just declared)
-has never been built or run.
+concurrency is `TODO(POST-I1)` (reworded from the epic's own open-item marker, E20-D2, 2026-09-22 — genuinely open past
+this epic's close, not claimed by any E20 phase-1 FILES list; `docs/AUDIT.md` §3 deviation 8): a
+`benchmark_vram.py` sequence that drives several sessions' turns concurrently (matching
+`parallel_slots` genuinely being shared across sessions, not just declared) has never been built or
+run.
 
 ## 1. `DEV_3060TI_SHARED` — OK, real combined peak
 
@@ -144,6 +146,30 @@ PARTIAL/FAILED pair is not itself a citable number).
 
 `uv run pytest -q benchmarks/tests` — 48 passed, both before and after these fixes.
 
+### 2.3 The same stack with the Qwen3-TTS **1.7B** variant (E20-I, 2026-09-22) — does NOT fit
+
+§2's peak was measured with `SIM_TTS_QWEN3_MODEL=0.6B`, but the profile left `model_variant` null,
+so the worker would have loaded its own default, the 1.7B. Re-run identically with 1.7B (free VRAM
+before 7842 MiB; `/tmp/teamwork-112-maxxing/logs/e20-i-vram-dev-run.sh`, 20 turns) —
+`docs/benchmarks/results/vram-DEV_3060TI-20260922T192503527Z.json`, status OK:
+
+| Step | delta_mb |
+|:--|--:|
+| VAD (Silero, cpu) | 0 |
+| ASR (GigaAM v3_e2e_ctc, cuda) | 1530 |
+| TTS (Qwen3-TTS **1.7B**) | **4299** |
+| LLM (Qwen3.5-2B) | 1515 — **GPU_PARTIAL, 23 layers** (only 2013 MB free when it started) |
+| **project_peak_mb** | **7448** (> `vram_budget_mb` 7168; card minimum free 393 MB) |
+
+The 1.7B costs +1.9 GB over the 0.6B, pushes the LLM partly onto the CPU (slower caller replies)
+and exceeds the budget. **Ruling (by measurement): `DEV_3060TI` ships `tts.model_variant: "0.6B"`**
+— the variant its `measured_peak_vram_mb: 5560` describes and the one `make models` downloads.
+The variant now reaches the worker through `make profile-env` (`SIM_TTS_QWEN3_MODEL` in
+`infra/.env.profile`, read by compose's `tts-qwen3` and `make run-tts-qwen3`); before E20-I it
+was hard-coded to 1.7B in compose, the Makefile and `.env.example`, whatever the profile said.
+1.7B stays selectable for a card with ~2 GB more headroom (owner item: it is the voice the owner
+evaluated as "very good"; RTF 0.823 vs 0.848, so it is a quality choice, not a speed one).
+
 ## 3. Reading for the owner
 
 **With the owner's GPU process stopped, `DEV_3060TI`'s three simulator components load together and
@@ -154,13 +180,16 @@ budget (3000 MB) is sized for exactly that case and its margin (1441 MB) is tigh
 Both profiles now carry a completed, dated, real measurement; nothing here is invented, and the two
 PARTIAL attempts that came before this one are kept as history (§2.1), not silently overwritten.
 
-## 4. `TODO(E20)`
+## 4. `TODO(POST-I1)`
 
 Multi-session concurrency: `benchmark_vram.py --turns N` runs N turns of **one** session
 sequentially (addendum (b), accepted for this epic). A benchmark that drives several concurrent
 sessions' turns against the same loaded models — closer to what `parallel_slots` in the LLM config
-is actually for — has never been built. This is out of E19's scope; whoever picks up E20 should
-decide whether it is a `benchmark_vram.py --sessions N` flag or a separate script.
+is actually for — has never been built. This was out of E19's scope and stayed out of E20's too (no
+FILES list in this epic's phase-1 concurrency note claims it, and E20-C's §46 walk exercises one
+session at a time); whoever picks it up post-I1 should decide whether it is a
+`benchmark_vram.py --sessions N` flag or a separate script. Reworded from the epic's own
+open-item marker (E20-D2, 2026-09-22) — the epic is closing without this being picked up.
 
 ## 5. How to reproduce
 

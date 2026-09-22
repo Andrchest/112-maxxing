@@ -14,6 +14,9 @@ export const ru = {
   connectionPlaceholder: 'Нет соединения',
   placeholderNotice: 'Экран ещё не реализован.',
 
+  // -- shared/ui: dialog's own default close control (E20-E R11) -----------
+  dialogCloseButton: 'Закрыть',
+
   // -- header: connection + readiness badges (D12) -------------------------
   connectionConnected: 'Подключено',
   connectionConnecting: 'Подключение…',
@@ -72,12 +75,12 @@ export const ru = {
   // -- instructor: Start-button readiness gate (E18-D, SPEC §37/R9) ---------
   instructorStartNotReadyReason: 'Начало занятия недоступно: не готовы модельные сервисы',
 
-  // -- instructor: trainee picker (E8-B, resolves TODO(E8-B)) ---------------
+  // -- instructor: trainee picker (E8-B) -----------------------------------
   instructorSelectTraineePlaceholder: 'Выберите стажёра',
   instructorLoadingUsers: 'Загрузка пользователей…',
   instructorNoUsers: 'Нет доступных пользователей.',
 
-  // -- sessions: trainee "my sessions" landing (E8-B, resolves TODO(E8)) ----
+  // -- sessions: trainee "my sessions" landing (E8-B) -----------------------
   sessionsTitle: 'Мои занятия',
   sessionsLoading: 'Загрузка занятий…',
   sessionsEmpty: 'У вас пока нет занятий.',
@@ -550,4 +553,12 @@ export const ru = {
   instructorInferenceHealthTitle: 'Готовность моделей',
   instructorInferenceHealthRequiredLabel: 'Обязательные компоненты',
   instructorInferenceHealthModelProfileLabel: 'Профиль модели',
+
+  // -- instructor: abort session (E20-E R11) --------------------------------
+  instructorAbortButton: 'Прервать сессию',
+  instructorAbortDialogTitle: 'Прервать занятие',
+  instructorAbortReasonLabel: 'Причина',
+  instructorAbortReasonRequired: 'Укажите причину прерывания.',
+  instructorAbortConfirmButton: 'Прервать',
+  instructorAbortCancelButton: 'Отмена',
 } as const;

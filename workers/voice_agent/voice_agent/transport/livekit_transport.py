@@ -27,6 +27,18 @@ has never seen the SDK.
 The token is minted by the backend (`createVoiceToken`, E11-B): a LiveKit access token is a plain
 HS256 JWT, the backend already has `pyjwt`, and that is why `backend/**` never needs `livekit-api`
 at all.
+
+**Offsets come from the session, never from this transport (R13, E19-E3 bug #5).** `_now_ms()`
+used to be `time.monotonic_ns()` minus this transport's own first reading — "ms since my first
+frame". A session starts well before the agent's transport does (create → ring → join → answer),
+so `USER_SPEECH_ENDED.at_offset_ms`, which derives from `AudioFrame.capture_offset_ms`, was
+stamped against a different zero than `CALLER_TTS_STARTED.first_audio_offset_ms`, which
+`VoiceEventAppender` takes from the session. SPEC §27's `speech_end_to_first_audio_ms` is their
+difference, so on the real media plane every one of E19-E3's 34 samples came out negative and drew
+further apart each turn, and the benchmark had to discard the lot. The transport is now given the
+session's `started_at` and the same injected `Clock` the appender holds, and stamps through the
+same `session_offset_ms` helper — one origin for the whole call, which is what
+`app.application.ports.call_transport` has always specified.
 """
 
 from __future__ import annotations
@@ -35,6 +47,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.application.ports.call_transport import (
@@ -44,6 +57,8 @@ from app.application.ports.call_transport import (
     TransportEvent,
     TransportEventType,
 )
+from app.application.ports.clock import Clock
+from app.application.timebase import session_offset_ms
 from app.application.voice.playback import ChunkedPlayback
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; the SDK is an optional extra
@@ -107,10 +122,16 @@ class LiveKitCallTransport:
         token: str,
         outbound_queue_ms: int,
         outbound_sample_rate: int,
+        clock: Clock,
+        started_at: datetime | None,
         identity: str = "caller",
     ) -> None:
         self._url = url
         self._token = token
+        #: The session's own time base (R13): both are required, so a transport can never be
+        #: built without the origin its offsets are defined against.
+        self._clock = clock
+        self._started_at = started_at
         self._outbound_queue_ms = outbound_queue_ms
         self._outbound_sample_rate = outbound_sample_rate
         self._identity = identity
@@ -121,7 +142,6 @@ class LiveKitCallTransport:
         self._audio_queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue()
         self._events: asyncio.Queue[TransportEvent | None] = asyncio.Queue()
         self._pumps: list[asyncio.Task[None]] = []
-        self._origin_ms: int | None = None
 
     # -- the CallTransport port ---------------------------------------------------------------
 
@@ -208,12 +228,12 @@ class LiveKitCallTransport:
     # -- internals ----------------------------------------------------------------------------
 
     def _now_ms(self) -> int:
-        import time
+        """The session offset of *now* — the one origin of R13, shared with every appended event.
 
-        now = time.monotonic_ns() // 1_000_000
-        if self._origin_ms is None:
-            self._origin_ms = now
-        return now - self._origin_ms
+        `ChunkedPlayback` reads this too, and is unaffected: it only ever takes differences, and
+        this counter advances in real milliseconds exactly as the old one did.
+        """
+        return session_offset_ms(self._clock.now(), self._started_at)
 
     def _emit(
         self,

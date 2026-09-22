@@ -262,6 +262,81 @@ def inspect_empty() -> Any:
 
 
 # ---------------------------------------------------------------------------------------------
+# (a2) Structural — the REST projections carry no hidden-world provenance (E20-A, R1)
+# ---------------------------------------------------------------------------------------------
+#
+# `source_world_event_id` is not a world *value*, so the JSON searches below (which hunt for the
+# world's house number) never caught it. It is the id of the hidden world event that produced a
+# notification or a radio message, and naming it to a trainee tells them which scripted world
+# event just fired — hidden-layer provenance. The WS path already drops it for trainees
+# (`application/realtime/redaction.py`, HLD 40 §215-239); the REST list paths used to hand it
+# straight through. These assertions are structural — on the model fields and on the published
+# contract — so they hold with no database and bite the moment a field is re-added anywhere.
+
+#: Field names no trainee-facing REST projection of a notification or a radio message may declare.
+FORBIDDEN_REST_FIELDS: frozenset[str] = frozenset({"source_world_event_id", "world_event"})
+
+OPENAPI = BACKEND.parent / "docs" / "hld" / "openapi.yaml"
+
+#: The trainee-facing view pairs: (application projection, wire schema), by openapi schema name.
+TRAINEE_REST_VIEWS: tuple[str, ...] = ("NotificationView", "RadioMessageView")
+
+
+def _trainee_rest_models() -> list[tuple[str, type]]:
+    """Both layers of each trainee-facing view: the application projection and the wire model."""
+    from app.api.schemas import dds as wire
+    from app.application.dds import views as projections
+
+    pairs: list[tuple[str, type]] = []
+    for name in TRAINEE_REST_VIEWS:
+        pairs.append((f"application/dds/views.{name}", getattr(projections, name)))
+        pairs.append((f"api/schemas/dds.{name}Schema", getattr(wire, f"{name}Schema")))
+    return pairs
+
+
+@pytest.mark.parametrize(
+    ("label", "model"),
+    _trainee_rest_models(),
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_no_trainee_rest_view_declares_hidden_world_provenance(label: str, model: type) -> None:
+    """INV 3 on the REST path: neither projection nor wire model declares the provenance id."""
+    declared = set(model.model_fields)
+    offenders = sorted(declared & FORBIDDEN_REST_FIELDS)
+    assert not offenders, (
+        f"{label} declares {offenders}: a trainee-facing REST view must not name the hidden "
+        "world event that produced the row (SPEC §42 test 3, HLD 40 §215-239)"
+    )
+
+
+def test_the_published_contract_does_not_promise_hidden_world_provenance() -> None:
+    """The same claim on `openapi.yaml`, which is what the frontend types are generated from."""
+    import yaml
+
+    document = yaml.safe_load(OPENAPI.read_text(encoding="utf-8"))
+    schemas = document["components"]["schemas"]
+    for name in TRAINEE_REST_VIEWS:
+        schema = schemas[name]
+        offenders = sorted(set(schema["properties"]) & FORBIDDEN_REST_FIELDS)
+        assert not offenders, f"openapi.yaml {name} declares {offenders}"
+        assert not sorted(set(schema.get("required", ())) & FORBIDDEN_REST_FIELDS)
+
+
+def test_the_projection_helpers_never_read_the_provenance_key_from_a_payload() -> None:
+    """And the projection code itself does not read the key out of the event payload."""
+    source = (DDS_PACKAGE / "views.py").read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(DDS_PACKAGE / "views.py"))
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    # Docstrings mention the name (deliberately, to explain the rule); a *key lookup* would show
+    # up as a bare string constant equal to it, so only exact matches count.
+    assert "source_world_event_id" not in literals
+
+
+# ---------------------------------------------------------------------------------------------
 # (b) Behavioural — the full 112 → DDS run
 # ---------------------------------------------------------------------------------------------
 #

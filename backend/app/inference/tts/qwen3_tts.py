@@ -34,7 +34,8 @@ is `None` (e.g. a warm-up call with no live `CallerBelief` to read).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+import logging
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import httpx
@@ -63,6 +64,8 @@ __all__ = [
     "TtsQwen3EndpointError",
     "validate_tts_qwen3_base_url",
 ]
+
+logger = logging.getLogger(__name__)
 
 _BYTES_PER_SAMPLE = 2
 _MS_PER_S = 1000
@@ -113,6 +116,55 @@ def validate_tts_qwen3_base_url(
         allowed_internal_hosts=allowed_internal_hosts,
         error=TtsQwen3EndpointError,
     )
+
+
+class _VoiceResolver:
+    """`TtsVoiceSpec.voice_id` (a SCENARIO-LOGICAL id) -> this provider's NATIVE voice id (E20-G).
+
+    `TtsVoiceSpec.voice_id` carries whatever the scenario's `caller_profile.voice_id` says — it is
+    a *logical* casting decision (`ru_female_adult_01`), authored once and played by whichever
+    provider the active model profile happens to select (HLD 30 owns the scenario side). Only the
+    model profile knows a provider's native ids, so the logical -> native table lives there
+    (`tts.voice_map`) with `tts.default_voice` as the answer for anything it does not name.
+
+    A miss is **never** an error: the demo would otherwise be one scenario edit away from a silent
+    caller, which is exactly what E20-C's §46 walk hit (`Qwen3TTS.stream()` raised
+    `ValueError: TtsVoiceSpec.voice_id='ru_female_adult_01' is not one of the vendor speakers`).
+    It is one WARN per `(provider, logical id)` pair — repeated once per turn would be noise — and
+    the native id that was actually used is recorded on `CALLER_TTS_STARTED.voice_id_native`.
+
+    Duplicated (not shared) in `app.inference.tts.piper_tts` for the same reason `_chunk_pcm` is:
+    two small pure helpers in sibling adapter files, no shared module worth the indirection.
+    """
+
+    __slots__ = ("_default", "_map", "_provider_name", "_warned")
+
+    def __init__(
+        self, *, provider_name: str, voice_map: Mapping[str, str] | None, default: str
+    ) -> None:
+        self._provider_name = provider_name
+        self._map = dict(voice_map or {})
+        self._default = default
+        self._warned: set[str] = set()
+
+    def resolve(self, voice_id: str) -> str:
+        """The native id for `voice_id`; `self._default` (with one WARN) for anything unmapped."""
+        if not voice_id:
+            return self._default
+        native = self._map.get(voice_id)
+        if native is not None:
+            return native
+        if voice_id not in self._warned:
+            self._warned.add(voice_id)
+            logger.warning(
+                "TTS voice_id %r is not in %s's tts.voice_map; falling back to the profile's "
+                "tts.default_voice %r (add the mapping to the active model profile to silence "
+                "this)",
+                voice_id,
+                self._provider_name,
+                self._default,
+            )
+        return self._default
 
 
 def _looks_like_oom(body_text: str) -> bool:
@@ -234,17 +286,40 @@ class Qwen3TTS:
         base_url: str,
         speaker: str,
         timeout_ms: int = 20_000,
+        warmup_timeout_ms: int | None = None,
         allowed_internal_hosts: Sequence[str] = DEFAULT_ALLOWED_INTERNAL_HOSTS,
         client: httpx.AsyncClient | None = None,
+        voice_map: Mapping[str, str] | None = None,
+        default_voice: str | None = None,
     ) -> None:
         validate_tts_qwen3_base_url(base_url, allowed_internal_hosts=allowed_internal_hosts)
         if speaker not in VENDOR_SPEAKERS:
             raise ValueError(
                 f"tts_qwen3_speaker={speaker!r} is not one of the vendor speakers {VENDOR_SPEAKERS}"
             )
+        # E20-G: `voice_map`/`default_voice` come from the active model profile's `tts.voice_map` /
+        # `tts.default_voice` (`Settings.tts_voice_map`/`tts_default_voice`). `default_voice` falls
+        # back to `speaker` (`SIM_TTS_QWEN3_SPEAKER`), which is what this adapter already used for
+        # an empty `voice_id`. A `default_voice` that is not a vendor speaker is a CONFIGURATION
+        # error and is refused here, at construction — not per utterance.
+        resolved_default = default_voice or speaker
+        if resolved_default not in VENDOR_SPEAKERS:
+            raise ValueError(
+                f"tts.default_voice={resolved_default!r} is not one of the vendor speakers "
+                f"{VENDOR_SPEAKERS} (Qwen3-TTS CustomVoice, recon §1.1)"
+            )
+        self._voices = _VoiceResolver(
+            provider_name=self.provider_name, voice_map=voice_map, default=resolved_default
+        )
         self._base_url = base_url.rstrip("/")
         self._default_speaker = speaker
         self._timeout_ms = timeout_ms
+        #: E20-I: a COLD worker's first `/warm_up` loads the checkpoint onto the GPU and runs one
+        #: real generation (~26 s measured for 1.7B on the RTX 3060 Ti), far past a per-request
+        #: `timeout_ms` sized for one warm utterance. Under `make up` that made the agent's first
+        #: warm-up time out every time and TTS start NOT_READY. The profile's
+        #: `warmup.timeout_ms` bounds it instead (`Settings.tts_warmup_timeout_ms`).
+        self._warmup_timeout_ms = warmup_timeout_ms if warmup_timeout_ms is not None else timeout_ms
         self._client = client if client is not None else httpx.AsyncClient()
         self._owns_client = client is None
         #: What the worker's `/health` said it actually serves (`{"model", "revision"}`), once it
@@ -302,11 +377,11 @@ class Qwen3TTS:
     async def warm_up(self) -> None:
         try:
             response = await self._client.post(
-                f"{self._base_url}/warm_up", timeout=self._timeout_ms / 1000
+                f"{self._base_url}/warm_up", timeout=self._warmup_timeout_ms / 1000
             )
         except httpx.TimeoutException as exc:
             raise TtsTimeoutError(
-                f"tts_qwen3 warm_up timed out after {self._timeout_ms}ms"
+                f"tts_qwen3 warm_up timed out after {self._warmup_timeout_ms}ms"
             ) from exc
         except httpx.HTTPError as exc:
             raise ModelNotAvailableError(f"tts_qwen3 worker unreachable: {exc}") from exc
@@ -324,21 +399,23 @@ class Qwen3TTS:
         request_id: str,
         max_chunk_ms: int = 20,
     ) -> _Qwen3TtsStream:
-        # `voice.voice_id` is the source of truth when it is one of the four vendor speakers
-        # (e.g. a `CallerProfile` authored specifically for Qwen3-TTS). An *empty* voice_id falls
-        # back to the constructor's `speaker` (`SIM_TTS_QWEN3_SPEAKER`) rather than being treated
-        # as an error — that is the "no CallerProfile-supplied voice_id" case §10's profile
-        # binding needs a sane default for. Anything else non-empty and non-vendor (e.g. the
-        # generic `SIM_TTS_VOICE_ID` default `"ru_female_1"`, which is provider-agnostic and was
-        # never meant for Qwen3-TTS specifically) is a real configuration error and rejected, not
-        # silently substituted — see this task's report, "HLD gaps".
-        speaker = voice.voice_id or self._default_speaker
-        if speaker not in VENDOR_SPEAKERS:
-            raise ValueError(
-                f"TtsVoiceSpec.voice_id={voice.voice_id!r} is not one of the vendor speakers "
-                f"{VENDOR_SPEAKERS} (Qwen3-TTS CustomVoice, recon §1.1)"
-            )
+        # E20-G: `voice.voice_id` is a SCENARIO-LOGICAL id, not a vendor speaker name. It used to
+        # be passed through and rejected unless it happened to spell one of the four vendor
+        # speakers, which made the shipped demo scenario's `ru_female_adult_01` a hard
+        # `ValueError` — a silent caller on the shipped profile (E20-C's §46 walk, item 3). The
+        # profile's `tts.voice_map` now maps logical -> native and `tts.default_voice` answers
+        # every miss, with one WARN per unmapped id. An unknown logical id never raises.
+        speaker = self.native_voice_id(voice.voice_id)
         return _Qwen3TtsStream(self, text, voice, request_id, max_chunk_ms, speaker)
+
+    def native_voice_id(self, voice_id: str) -> str:
+        """The vendor CustomVoice speaker this adapter will actually use for `voice_id` (E20-G).
+
+        Public because `CALLER_TTS_STARTED` records BOTH ids: the logical `voice_id` the scenario
+        cast, and the `voice_id_native` that was really synthesised (HLD 10 §10.13). Idempotent —
+        the WARN of an unmapped id fires once per id, not once per reader.
+        """
+        return self._voices.resolve(voice_id)
 
     async def close(self) -> None:
         for response in list(self._pending.values()):

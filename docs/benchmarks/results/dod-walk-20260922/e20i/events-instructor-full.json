@@ -1,0 +1,1300 @@
+[
+ {
+  "seq_no": 1,
+  "event_type": "SESSION_CREATED",
+  "timestamp_utc": "2026-09-22T21:06:58.647601Z",
+  "monotonic_offset_ms": 0,
+  "payload": {
+   "role_chain": [
+    "OPERATOR_112",
+    "DDS"
+   ],
+   "session_id": "ce835582-a6f8-47f1-9199-5beec49e8652",
+   "time_scale": 1.0,
+   "scenario_id": "9c2a77bc-4e3d-4a1a-9a71-2cf0a1e4b501",
+   "session_mode": "FULL_CYCLE_SINGLE_TRAINEE",
+   "session_seed": "apartment-fire-v1",
+   "scenario_slug": "apartment-fire",
+   "scenario_version": 1,
+   "created_by_user_id": "22cf56c7-6a14-43dc-94ff-db2db64cf47e",
+   "scenario_version_id": "3f6c1a20-0e1a-4b1e-9d2a-0a7c5b2f1d11"
+  },
+  "actor_type": "INSTRUCTOR",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 2,
+  "event_type": "SESSION_STARTED",
+  "timestamp_utc": "2026-09-22T21:06:58.715839Z",
+  "monotonic_offset_ms": 0,
+  "payload": {
+   "started_at_utc": "2026-09-22T21:06:58.710382+00:00",
+   "first_role_type": "OPERATOR_112",
+   "first_role_stage_id": "9d1db6ba-3ac3-4493-bb11-8958f4e8d10b"
+  },
+  "actor_type": "INSTRUCTOR",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 3,
+  "event_type": "ROLE_STAGE_STARTED",
+  "timestamp_utc": "2026-09-22T21:06:58.715839Z",
+  "monotonic_offset_ms": 0,
+  "payload": {
+   "role_type": "OPERATOR_112",
+   "order_index": 0,
+   "initial_state": "WAITING_FOR_CALL",
+   "role_stage_id": "9d1db6ba-3ac3-4493-bb11-8958f4e8d10b",
+   "participant_user_id": "0ef0c702-2ad5-4698-9bd5-cfc7aea4cff6"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 4,
+  "event_type": "CALL_RINGING",
+  "timestamp_utc": "2026-09-22T21:06:58.791713Z",
+  "monotonic_offset_ms": 71,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "room_name": "session-ce835582-a6f8-47f1-9199-5beec49e8652",
+   "at_offset_ms": 71,
+   "caller_display_ru": "Входящий вызов 112"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 5,
+  "event_type": "STAGE_STATE_CHANGED",
+  "timestamp_utc": "2026-09-22T21:06:58.791713Z",
+  "monotonic_offset_ms": 71,
+  "payload": {
+   "trigger": "ring",
+   "new_state": "RINGING",
+   "role_type": "OPERATOR_112",
+   "at_offset_ms": 71,
+   "role_stage_id": "9d1db6ba-3ac3-4493-bb11-8958f4e8d10b",
+   "previous_state": "WAITING_FOR_CALL",
+   "fired_by_user_id": null,
+   "fired_by_actor_type": "SIMULATION"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 6,
+  "event_type": "CALL_ANSWERED",
+  "timestamp_utc": "2026-09-22T21:07:00.837178Z",
+  "monotonic_offset_ms": 2113,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "at_offset_ms": 2113,
+   "ring_duration_ms": 2042,
+   "answered_by_user_id": "0ef0c702-2ad5-4698-9bd5-cfc7aea4cff6"
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 7,
+  "event_type": "STAGE_STATE_CHANGED",
+  "timestamp_utc": "2026-09-22T21:07:00.837178Z",
+  "monotonic_offset_ms": 2113,
+  "payload": {
+   "trigger": "answer",
+   "new_state": "CONNECTED",
+   "role_type": "OPERATOR_112",
+   "at_offset_ms": 2113,
+   "role_stage_id": "9d1db6ba-3ac3-4493-bb11-8958f4e8d10b",
+   "previous_state": "RINGING",
+   "fired_by_user_id": "0ef0c702-2ad5-4698-9bd5-cfc7aea4cff6",
+   "fired_by_actor_type": "TRAINEE"
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 8,
+  "event_type": "USER_SPEECH_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:01.918253Z",
+  "monotonic_offset_ms": 3202,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "turn_index": 0,
+   "at_offset_ms": 2863,
+   "vad_provider": "silero",
+   "was_during_playback": false
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 9,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:02.391805Z",
+  "monotonic_offset_ms": 3681,
+  "payload": {
+   "text": "Служба",
+   "end_ms": 3375,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 0,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 10,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:03.269737Z",
+  "monotonic_offset_ms": 4203,
+  "payload": {
+   "text": "Служба 112",
+   "end_ms": 3887,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 0,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 11,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:03.746309Z",
+  "monotonic_offset_ms": 5035,
+  "payload": {
+   "text": "Служба 112. Что?",
+   "end_ms": 4719,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 0,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 12,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:04.379888Z",
+  "monotonic_offset_ms": 5517,
+  "payload": {
+   "text": "Служба 112. Что у вас?",
+   "end_ms": 5231,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 0,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 13,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:04.907911Z",
+  "monotonic_offset_ms": 6197,
+  "payload": {
+   "text": "Служба 112. Что у вас случилось?",
+   "end_ms": 5839,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 0,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 14,
+  "event_type": "USER_SPEECH_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:05.758075Z",
+  "monotonic_offset_ms": 6638,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "end_reason": "ENDPOINT_SILENCE",
+   "turn_index": 0,
+   "is_barge_in": false,
+   "at_offset_ms": 6131,
+   "discarded_short": false,
+   "audio_segment_id": "2b643fdd-54ee-4e62-b269-c017c6de5ccc",
+   "speech_duration_ms": 3268,
+   "endpoint_silence_ms": 320
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 15,
+  "event_type": "ASR_FINAL",
+  "timestamp_utc": "2026-09-22T21:07:06.126467Z",
+  "monotonic_offset_ms": 7278,
+  "payload": {
+   "text": "Служба 112. Что у вас случилось?",
+   "end_ms": 6131,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9978236556053162,
+   "turn_index": 0,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "2b643fdd-54ee-4e62-b269-c017c6de5ccc",
+   "transcript_segment_id": "44e97b42-9d46-4a4a-8f42-1e1be9b49dac"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 16,
+  "event_type": "STAGE_STATE_CHANGED",
+  "timestamp_utc": "2026-09-22T21:07:06.380944Z",
+  "monotonic_offset_ms": 7659,
+  "payload": {
+   "trigger": "begin_interview",
+   "new_state": "INTERVIEW",
+   "role_type": "OPERATOR_112",
+   "at_offset_ms": 7659,
+   "role_stage_id": "9d1db6ba-3ac3-4493-bb11-8958f4e8d10b",
+   "previous_state": "CONNECTED",
+   "fired_by_user_id": null,
+   "fired_by_actor_type": "SIMULATION"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": null,
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 17,
+  "event_type": "DIALOGUE_INTERPRETED",
+  "timestamp_utc": "2026-09-22T21:07:06.963841Z",
+  "monotonic_offset_ms": 8241,
+  "payload": {
+   "speech_act": "QUESTION",
+   "turn_index": 0,
+   "requested_facts": [
+    {
+     "fact_id": "incident.type",
+     "explicit": true
+    }
+   ],
+   "repair_retry_used": false,
+   "operator_assertions": [],
+   "semantic_confidence": 0.95,
+   "confirmation_targets": []
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 18,
+  "event_type": "FACT_GATE_EVALUATED",
+  "timestamp_utc": "2026-09-22T21:07:06.991390Z",
+  "monotonic_offset_ms": 8280,
+  "payload": {
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "metadata": {
+    "turn_index": 0,
+    "spontaneous_attached": [
+     "incident.smoke_visible"
+    ],
+    "evaluated_at_offset_ms": 7657,
+    "max_spontaneous_per_turn": 2
+   },
+   "decisions": [
+    {
+     "reason": "OK",
+     "fact_id": "incident.type",
+     "outcome": "ALLOWED"
+    },
+    {
+     "reason": "OK",
+     "fact_id": "incident.smoke_visible",
+     "outcome": "ALLOWED_SPONTANEOUS"
+    }
+   ],
+   "turn_index": 0,
+   "unavailable": [],
+   "at_offset_ms": 8277,
+   "withheld_count": 0,
+   "allowed_fact_ids": [
+    "incident.type",
+    "incident.smoke_visible"
+   ],
+   "spontaneous_attached": [
+    "incident.smoke_visible"
+   ]
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 19,
+  "event_type": "CALLER_RESPONSE_PLANNED",
+  "timestamp_utc": "2026-09-22T21:07:07.020473Z",
+  "monotonic_offset_ms": 8300,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "emotion": "FRIGHTENED",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "turn_index": 0,
+   "stress_level": 0.6,
+   "withheld_count": 0,
+   "allowed_fact_ids": [
+    "incident.type",
+    "incident.smoke_visible"
+   ],
+   "spontaneous_fact_ids": [
+    "incident.smoke_visible"
+   ],
+   "unavailable_fact_ids": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 20,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "timestamp_utc": "2026-09-22T21:07:07.346877Z",
+  "monotonic_offset_ms": 8636,
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 0,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "prompt_tokens": 533,
+   "completion_tokens": 24,
+   "validator_verdict": "PASS",
+   "output_token_count": 24,
+   "regeneration_count": 0
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 21,
+  "event_type": "CALLER_TTS_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:09.016453Z",
+  "monotonic_offset_ms": 10305,
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 0,
+   "at_offset_ms": 10303,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 10303
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 22,
+  "event_type": "CALLER_TTS_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:17.509952Z",
+  "monotonic_offset_ms": 18797,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "completed": true,
+   "turn_index": 0,
+   "at_offset_ms": 15903,
+   "delivered_text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "total_audio_ms": 5600,
+   "audio_segment_id": "4df59d32-7118-42b6-a9a1-70112b3033ac"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 23,
+  "event_type": "FACTS_DELIVERED",
+  "timestamp_utc": "2026-09-22T21:07:17.553573Z",
+  "monotonic_offset_ms": 18842,
+  "payload": {
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "fact_ids": [
+    "incident.type",
+    "incident.smoke_visible"
+   ],
+   "turn_index": 0,
+   "at_offset_ms": 18841,
+   "delivered_via": "TTS_COMPLETED"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 24,
+  "event_type": "USER_SPEECH_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:17.783914Z",
+  "monotonic_offset_ms": 19071,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "turn_index": 1,
+   "at_offset_ms": 18735,
+   "vad_provider": "silero",
+   "was_during_playback": false
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 25,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:17.962584Z",
+  "monotonic_offset_ms": 19251,
+  "payload": {
+   "text": "Назаре.",
+   "end_ms": 19247,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "start_ms": 18735,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 1,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 26,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:18.465582Z",
+  "monotonic_offset_ms": 19754,
+  "payload": {
+   "text": "Назовите.",
+   "end_ms": 19759,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "start_ms": 18735,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 1,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 27,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:19.154978Z",
+  "monotonic_offset_ms": 20444,
+  "payload": {
+   "text": "Назовите улицу.",
+   "end_ms": 20271,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "start_ms": 18735,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 1,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 28,
+  "event_type": "USER_SPEECH_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:19.445836Z",
+  "monotonic_offset_ms": 20731,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "end_reason": "ENDPOINT_SILENCE",
+   "turn_index": 1,
+   "is_barge_in": false,
+   "at_offset_ms": 20531,
+   "discarded_short": false,
+   "audio_segment_id": "1de7cb10-5709-42c4-930e-e2c81b103f62",
+   "speech_duration_ms": 1796,
+   "endpoint_silence_ms": 320
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 29,
+  "event_type": "ASR_FINAL",
+  "timestamp_utc": "2026-09-22T21:07:19.632745Z",
+  "monotonic_offset_ms": 20920,
+  "payload": {
+   "text": "Назовите улицу.",
+   "end_ms": 20531,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "start_ms": 18735,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9999865293502808,
+   "turn_index": 1,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "1de7cb10-5709-42c4-930e-e2c81b103f62",
+   "transcript_segment_id": "5c9032a4-45c1-4db3-8396-2f9bfcfbb6f8"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 30,
+  "event_type": "USER_SPEECH_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:19.785788Z",
+  "monotonic_offset_ms": 21075,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "turn_index": 2,
+   "at_offset_ms": 20751,
+   "vad_provider": "silero",
+   "was_during_playback": false
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 31,
+  "event_type": "DIALOGUE_INTERPRETED",
+  "timestamp_utc": "2026-09-22T21:07:19.934401Z",
+  "monotonic_offset_ms": 21223,
+  "payload": {
+   "speech_act": "INSTRUCTION",
+   "turn_index": 1,
+   "requested_facts": [],
+   "repair_retry_used": false,
+   "operator_assertions": [],
+   "semantic_confidence": 0.95,
+   "confirmation_targets": []
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 32,
+  "event_type": "FACT_GATE_EVALUATED",
+  "timestamp_utc": "2026-09-22T21:07:19.950119Z",
+  "monotonic_offset_ms": 21238,
+  "payload": {
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "metadata": {
+    "turn_index": 1,
+    "spontaneous_attached": [],
+    "evaluated_at_offset_ms": 20954,
+    "max_spontaneous_per_turn": 2
+   },
+   "decisions": [],
+   "turn_index": 1,
+   "unavailable": [],
+   "at_offset_ms": 21235,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_attached": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 33,
+  "event_type": "CALLER_RESPONSE_PLANNED",
+  "timestamp_utc": "2026-09-22T21:07:19.967212Z",
+  "monotonic_offset_ms": 21256,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "emotion": "FRIGHTENED",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "turn_index": 1,
+   "stress_level": 0.6,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_fact_ids": [],
+   "unavailable_fact_ids": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 34,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:19.996680Z",
+  "monotonic_offset_ms": 21285,
+  "payload": {
+   "text": "Ино",
+   "end_ms": 21263,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "start_ms": 20751,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 2,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 35,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "timestamp_utc": "2026-09-22T21:07:20.244608Z",
+  "monotonic_offset_ms": 21533,
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 1,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "prompt_tokens": 575,
+   "completion_tokens": 24,
+   "validator_verdict": "PASS",
+   "output_token_count": 24,
+   "regeneration_count": 0
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 36,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:20.479367Z",
+  "monotonic_offset_ms": 21768,
+  "payload": {
+   "text": "И номер",
+   "end_ms": 21775,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "start_ms": 20751,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 2,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 37,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:20.990408Z",
+  "monotonic_offset_ms": 22279,
+  "payload": {
+   "text": "И номер дома.",
+   "end_ms": 22287,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "start_ms": 20751,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 2,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 38,
+  "event_type": "USER_SPEECH_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:21.137268Z",
+  "monotonic_offset_ms": 22425,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "end_reason": "ENDPOINT_SILENCE",
+   "turn_index": 2,
+   "is_barge_in": false,
+   "at_offset_ms": 22227,
+   "discarded_short": false,
+   "audio_segment_id": "3c211f02-5672-4a8e-a488-503e1543a6c1",
+   "speech_duration_ms": 1476,
+   "endpoint_silence_ms": 320
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 39,
+  "event_type": "ASR_FINAL",
+  "timestamp_utc": "2026-09-22T21:07:21.343879Z",
+  "monotonic_offset_ms": 22630,
+  "payload": {
+   "text": "И номер дома.",
+   "end_ms": 22227,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "start_ms": 20751,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9648404717445374,
+   "turn_index": 2,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "3c211f02-5672-4a8e-a488-503e1543a6c1",
+   "transcript_segment_id": "ad4d7d30-4fa9-46d6-97cd-5df9309c217c"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 40,
+  "event_type": "DIALOGUE_INTERPRETED",
+  "timestamp_utc": "2026-09-22T21:07:21.865921Z",
+  "monotonic_offset_ms": 23154,
+  "payload": {
+   "speech_act": "INSTRUCTION",
+   "turn_index": 2,
+   "requested_facts": [],
+   "repair_retry_used": false,
+   "operator_assertions": [],
+   "semantic_confidence": 0.95,
+   "confirmation_targets": []
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 41,
+  "event_type": "FACT_GATE_EVALUATED",
+  "timestamp_utc": "2026-09-22T21:07:21.934263Z",
+  "monotonic_offset_ms": 23179,
+  "payload": {
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "metadata": {
+    "turn_index": 2,
+    "spontaneous_attached": [],
+    "evaluated_at_offset_ms": 22667,
+    "max_spontaneous_per_turn": 2
+   },
+   "decisions": [],
+   "turn_index": 2,
+   "unavailable": [],
+   "at_offset_ms": 23177,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_attached": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 42,
+  "event_type": "CALLER_RESPONSE_PLANNED",
+  "timestamp_utc": "2026-09-22T21:07:21.969696Z",
+  "monotonic_offset_ms": 23236,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "emotion": "FRIGHTENED",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "turn_index": 2,
+   "stress_level": 0.6,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_fact_ids": [],
+   "unavailable_fact_ids": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 43,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "timestamp_utc": "2026-09-22T21:07:22.396652Z",
+  "monotonic_offset_ms": 23685,
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 2,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "prompt_tokens": 611,
+   "completion_tokens": 31,
+   "validator_verdict": "PASS",
+   "output_token_count": 31,
+   "regeneration_count": 0
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 44,
+  "event_type": "CALLER_TTS_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:22.541829Z",
+  "monotonic_offset_ms": 23820,
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 1,
+   "at_offset_ms": 23818,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 23818
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 45,
+  "event_type": "CALLER_TTS_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:24.082987Z",
+  "monotonic_offset_ms": 25372,
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 2,
+   "at_offset_ms": 25370,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "first_audio_offset_ms": 25370
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 46,
+  "event_type": "MODEL_ERROR",
+  "timestamp_utc": "2026-09-22T21:07:37.429690Z",
+  "monotonic_offset_ms": 38717,
+  "payload": {
+   "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "stage": "TTS",
+   "message": "TTS exceeded 15000 ms",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "qwen3_tts",
+   "component": "TTS",
+   "error_code": "TIMEOUT",
+   "error_kind": "TIMEOUT",
+   "turn_index": 2,
+   "recoverable": true
+  },
+  "actor_type": "SYSTEM",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 47,
+  "event_type": "MODEL_FALLBACK_USED",
+  "timestamp_utc": "2026-09-22T21:07:37.684587Z",
+  "monotonic_offset_ms": 38972,
+  "payload": {
+   "stage": "TTS",
+   "reason": "TTS_PROVIDER_FAILED",
+   "attempt": 1,
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "component": "TTS",
+   "turn_index": 2,
+   "fallback_kind": "TTS_FALLBACK_PROVIDER"
+  },
+  "actor_type": "SYSTEM",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 48,
+  "event_type": "CALLER_TTS_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:37.786064Z",
+  "monotonic_offset_ms": 39075,
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "piper",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "ru_RU-irina-medium",
+   "turn_index": 2,
+   "at_offset_ms": 39072,
+   "tts_provider": "piper",
+   "model_version": "ru_RU-irina-medium",
+   "voice_id_native": "ru_RU-irina-medium",
+   "text_sent_to_tts": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "first_audio_offset_ms": 39072
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 49,
+  "event_type": "USER_SPEECH_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:41.467220Z",
+  "monotonic_offset_ms": 42745,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "turn_index": 3,
+   "at_offset_ms": 42415,
+   "vad_provider": "silero",
+   "was_during_playback": true
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 50,
+  "event_type": "CALLER_UTTERANCE_INTERRUPTED",
+  "timestamp_utc": "2026-09-22T21:07:41.495878Z",
+  "monotonic_offset_ms": 42783,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "turn_index": 2,
+   "planned_text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "delivered_text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "cutoff_latency_ms": 66,
+   "alignment_is_exact": false,
+   "delivered_audio_ms": 3872,
+   "interrupting_turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "fact_ids_not_revealed": [],
+   "total_audio_ms_generated": 3904
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 51,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:41.644816Z",
+  "monotonic_offset_ms": 42934,
+  "payload": {
+   "text": "КЧто именно?",
+   "end_ms": 42927,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "start_ms": 42415,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 3,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 52,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:42.138047Z",
+  "monotonic_offset_ms": 43427,
+  "payload": {
+   "text": "Что именно горит в вад..?",
+   "end_ms": 43439,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "start_ms": 42415,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 3,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 53,
+  "event_type": "ASR_PARTIAL",
+  "timestamp_utc": "2026-09-22T21:07:42.655580Z",
+  "monotonic_offset_ms": 43944,
+  "payload": {
+   "text": "Что именно горит в квартире?",
+   "end_ms": 43951,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "start_ms": 42415,
+   "asr_model": "v3_e2e_ctc",
+   "stability": null,
+   "turn_index": 3,
+   "asr_provider": "gigaam"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 54,
+  "event_type": "USER_SPEECH_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:42.876571Z",
+  "monotonic_offset_ms": 44162,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "end_reason": "ENDPOINT_SILENCE",
+   "turn_index": 3,
+   "is_barge_in": true,
+   "at_offset_ms": 43955,
+   "discarded_short": false,
+   "audio_segment_id": "b74d2b67-c127-46a0-83e5-360552e3de29",
+   "speech_duration_ms": 1540,
+   "endpoint_silence_ms": 320
+  },
+  "actor_type": "TRAINEE",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 55,
+  "event_type": "ASR_FINAL",
+  "timestamp_utc": "2026-09-22T21:07:43.050409Z",
+  "monotonic_offset_ms": 44337,
+  "payload": {
+   "text": "Что именно горит в квартире?",
+   "end_ms": 43955,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "start_ms": 42415,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9630603790283203,
+   "turn_index": 3,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "b74d2b67-c127-46a0-83e5-360552e3de29",
+   "transcript_segment_id": "9e6ff36d-13d1-400d-b18c-7b6ea8782dd9"
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 56,
+  "event_type": "DIALOGUE_INTERPRETED",
+  "timestamp_utc": "2026-09-22T21:07:43.421624Z",
+  "monotonic_offset_ms": 44710,
+  "payload": {
+   "speech_act": "QUESTION",
+   "turn_index": 3,
+   "requested_facts": [
+    {
+     "fact_id": "incident.fire_source",
+     "explicit": true
+    }
+   ],
+   "repair_retry_used": false,
+   "operator_assertions": [],
+   "semantic_confidence": 0.95,
+   "confirmation_targets": []
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 57,
+  "event_type": "FACT_GATE_EVALUATED",
+  "timestamp_utc": "2026-09-22T21:07:43.439062Z",
+  "monotonic_offset_ms": 44727,
+  "payload": {
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "metadata": {
+    "turn_index": 3,
+    "spontaneous_attached": [],
+    "evaluated_at_offset_ms": 44377,
+    "max_spontaneous_per_turn": 2
+   },
+   "decisions": [
+    {
+     "reason": "NEVER_DISCLOSE",
+     "fact_id": "incident.fire_source",
+     "outcome": "UNAVAILABLE"
+    }
+   ],
+   "turn_index": 3,
+   "unavailable": [
+    {
+     "reason": "NEVER_DISCLOSE",
+     "fact_id": "incident.fire_source",
+     "label_ru": "Очаг возгорания"
+    }
+   ],
+   "at_offset_ms": 44721,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_attached": []
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 58,
+  "event_type": "CALLER_RESPONSE_PLANNED",
+  "timestamp_utc": "2026-09-22T21:07:43.459956Z",
+  "monotonic_offset_ms": 44748,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "emotion": "FRIGHTENED",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "turn_index": 3,
+   "stress_level": 0.6,
+   "withheld_count": 0,
+   "allowed_fact_ids": [],
+   "spontaneous_fact_ids": [],
+   "unavailable_fact_ids": [
+    "incident.fire_source"
+   ]
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 59,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "timestamp_utc": "2026-09-22T21:07:44.309518Z",
+  "monotonic_offset_ms": 45598,
+  "payload": {
+   "text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "attempt": 2,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 3,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "prompt_tokens": 687,
+   "completion_tokens": 27,
+   "validator_verdict": "REGENERATED",
+   "output_token_count": 27,
+   "regeneration_count": 1
+  },
+  "actor_type": "MODEL",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 60,
+  "event_type": "CALLER_TTS_STARTED",
+  "timestamp_utc": "2026-09-22T21:07:45.940736Z",
+  "monotonic_offset_ms": 47229,
+  "payload": {
+   "text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 3,
+   "at_offset_ms": 47228,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 47228
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ },
+ {
+  "seq_no": 61,
+  "event_type": "CALLER_TTS_ENDED",
+  "timestamp_utc": "2026-09-22T21:07:55.496561Z",
+  "monotonic_offset_ms": 56779,
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "completed": true,
+   "turn_index": 3,
+   "at_offset_ms": 53372,
+   "delivered_text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "total_audio_ms": 6144,
+   "audio_segment_id": "b53c04f4-0fa8-4a31-b289-7315684140be"
+  },
+  "actor_type": "SIMULATION",
+  "correlation_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+  "redacted_keys": []
+ }
+]

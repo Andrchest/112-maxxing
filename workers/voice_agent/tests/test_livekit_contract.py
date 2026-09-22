@@ -28,12 +28,14 @@ import socket
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import jwt
 import pytest
 from app.application.ports.call_transport import AudioFrame
 from app.application.voice.config import VoiceTurnConfig
+from app.infrastructure.clock import SystemClock
 from voice_agent.transport.livekit_transport import LiveKitCallTransport
 
 pytestmark = pytest.mark.requires_livekit
@@ -144,6 +146,9 @@ async def test_connect_publish_receive_and_cancel(live_server: str) -> None:
         token=_access_token(room_name, "caller"),
         outbound_queue_ms=config.outbound_queue_ms,
         outbound_sample_rate=config.sample_rate,
+        # R13 (E20-F): the transport stamps frames against the session's own origin.
+        clock=SystemClock(),
+        started_at=datetime.now(UTC),
     )
     listener = rtc.Room()
     received: list[int] = []

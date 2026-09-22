@@ -38,6 +38,7 @@ import uuid
 import wave
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from app.application.ports.asr import ASRProvider
@@ -75,6 +76,7 @@ from voice_agent.wiring import (
     build_pipeline,
     build_transport,
     build_tts,
+    build_tts_fallback,
 )
 
 __all__ = [
@@ -193,6 +195,19 @@ class VoiceAgent:
         self._asr: ASRProvider | None = None
         self._llm: LLMClient | None = None
         self._tts: TTSProvider | None = None
+        #: The CONFIGURED TTS **fallback** (`SIM_TTS_FALLBACK_PROVIDER`), warmed beside the primary
+        #: at start-up (E20-G/G5). `None` means either "no fallback configured" or "its warm-up
+        #: failed" — the two are told apart by `_tts_fallback_detail`.
+        self._tts_fallback: TTSProvider | None = None
+        #: `"fallback unavailable: …"` once the fallback's warm-up has failed; surfaced as the
+        #: `detail` of `voice:health:tts` (§4.3) so a degraded-but-serving process says so.
+        self._tts_fallback_detail: str | None = None
+        #: The WARN of a failed fallback warm-up is logged ONCE per process, not on every re-warm
+        #: cycle (§4.1's `rewarm_interval_s` would otherwise fill the log).
+        self._tts_fallback_warned = False
+        #: `service -> detail` a warm step wants carried into the SUCCESS frame (a component that
+        #: came up READY but degraded). Consumed by `_warm_component`.
+        self._warm_details: dict[str, str] = {}
         #: §4.1's four state machines. `health.failure_threshold` / `health.rewarm_interval_s`
         #: come from the active profile's `health` block (`app.config.profile.HealthProfile`).
         self._states = InferenceHealth(
@@ -228,7 +243,13 @@ class VoiceAgent:
         """Sessions with a live pipeline."""
         return tuple(self._calls)
 
-    def _default_transport(self, session_id: SessionId, call_id: uuid.UUID, room: str) -> Any:
+    def _default_transport(
+        self,
+        session_id: SessionId,
+        call_id: uuid.UUID,
+        room: str,
+        started_at: datetime | None = None,
+    ) -> Any:
         """The call's `CallTransport`, with the agent's OWN access token when it needs one.
 
         `SIM_CALL_TRANSPORT=livekit` needs a token, and until E19-E3 nothing supplied one: this
@@ -237,6 +258,10 @@ class VoiceAgent:
         silently never joined any room. The token is minted here, locally, per call, from the
         `{session_id, room, call_id}` the `voice:join` payload already carries (no token has ever
         travelled over Redis and none does now — HLD 40 §40.6).
+
+        `started_at` is the session's own, read from the aggregate by `_run_call`: it is the origin
+        the transport's capture offsets are defined against (R13), the same one this call's
+        `VoiceEventAppender` stamps its events with.
         """
         if self._deps.settings.call_transport != TRANSPORT_LIVEKIT:
             return build_transport(self._deps.settings, self._deps.config)
@@ -244,6 +269,8 @@ class VoiceAgent:
             self._deps.settings,
             self._deps.config,
             token=build_agent_token(self._deps.settings, room=room, call_id=call_id),
+            clock=self._deps.clock,
+            started_at=started_at,
         )
 
     # -- health -------------------------------------------------------------------------------
@@ -411,6 +438,7 @@ class VoiceAgent:
             logger.warning("%s is FATAL; §4.1 forbids re-warming it in this process", service)
             return
         self._health[service] = _ComponentHealth()
+        self._warm_details.pop(service, None)
         if started is not None:
             await self._apply_transition(started)
         started_ms = self._deps.clock.monotonic_ms()
@@ -436,6 +464,9 @@ class VoiceAgent:
             self._health[service] = _ComponentHealth(
                 provider=provider,
                 model_version=model_version,
+                # A step that came up READY but DEGRADED says so in the frame (E20-G/G5: a TTS
+                # whose configured fallback could not be warmed is still a serving TTS).
+                detail=self._warm_details.pop(service, None),
                 warmup_ms=max(0, self._deps.clock.monotonic_ms() - started_ms),
             )
             transition = self._states[service].warm_succeeded()
@@ -500,6 +531,15 @@ class VoiceAgent:
         rest of the graph cold — which is exactly the 87-second cold call the measurements warn
         about. A failure leaves `voice:health:tts` NOT_READY and the process running, like every
         other component.
+
+        The **configured fallback** (`SIM_TTS_FALLBACK_PROVIDER`) is warmed here too (E20-G/G5).
+        It used to be left cold, so INV 14's "retry the whole utterance once on the fallback"
+        could only ever fail — E20-C's §46 walk reproduced it verbatim:
+        `RuntimeError: PiperTTS.warm_up() must be called before stream()`, surfacing to the
+        trainee's timeline as a misleading `MODEL_ERROR{"error_code": "TIMEOUT"}` and to the
+        trainee as a silent caller. A fallback that cannot be warmed is NEVER fatal: it is one
+        WARN per process and a `fallback unavailable: …` detail on `voice:health:tts`, because a
+        primary that works is still a working caller.
         """
         settings = self._deps.settings
         tts = build_tts(settings)
@@ -516,7 +556,48 @@ class VoiceAgent:
         )
         async for _chunk in stream:
             pass
+        # After the primary is proven, so a slow fallback never delays the primary's own warm-up.
+        await self._warm_tts_fallback()
         return tts.provider_name, tts.model_version
+
+    async def _warm_tts_fallback(self) -> None:
+        """Warm `SIM_TTS_FALLBACK_PROVIDER` beside the primary (E20-G/G5). Never raises.
+
+        `"none"` (`build_tts_fallback` answers `None`) is a legitimate configuration — the gate's
+        own — and is not a warning. Any other failure downgrades the frame's `detail` and is
+        logged once; the caller's primary TTS is untouched, so `voice:health:tts` still reaches
+        READY.
+        """
+        settings = self._deps.settings
+        self._tts_fallback = None
+        self._tts_fallback_detail = None
+        try:
+            fallback = build_tts_fallback(settings)
+        except Exception as exc:  # an unrecognised provider name, configuration only
+            self._note_fallback_unavailable(exc)
+            return
+        if fallback is None:
+            return
+        try:
+            await fallback.warm_up()
+        except Exception as exc:
+            self._note_fallback_unavailable(exc)
+            return
+        self._tts_fallback = fallback
+
+    def _note_fallback_unavailable(self, exc: BaseException) -> None:
+        """One WARN per process, plus the `voice:health:tts` detail (§4.3)."""
+        detail = f"fallback unavailable: {type(exc).__name__}: {exc}"
+        self._tts_fallback_detail = detail
+        self._warm_details[TTS_SERVICE] = detail
+        if not self._tts_fallback_warned:
+            self._tts_fallback_warned = True
+            logger.warning(
+                "the configured TTS fallback %r could not be warmed up (%s); INV 14's retry has "
+                "no warmed provider to fall back on — the primary is unaffected",
+                self._deps.settings.tts_fallback_provider,
+                detail,
+            )
 
     def _warmup_audio(self, sample_rate: int) -> bytes:
         """`SIM_ASR_WARMUP_SAMPLE_PATH`'s PCM, or a synthesised tone (§4.2).
@@ -649,12 +730,18 @@ class VoiceAgent:
         """
         transport: CallTransport | None = None
         try:
-            transport = self._transport_factory(session_id, call_id, room)
+            started_at = await self._session_started_at(session_id)
+            transport = self._transport_factory(session_id, call_id, room, started_at)
             pipeline = build_pipeline(
                 self._deps,
                 session_id=session_id,
                 call_id=call_id,
                 transport=transport,
+                # R13: the transport's capture offsets and this pipeline's event offsets are
+                # stamped against the SAME session origin, through the same helper. Passing it
+                # here is also what stops `VoiceEventAppender` defaulting `started_at` to `None`
+                # and stamping every event of a real call with offset 0.
+                started_at=started_at,
                 # Every one of these four is the instance `warm_up()` warmed at start-up (§4.2).
                 # The VAD was missing here until E19-E2, so `build_pipeline` built an unwarmed one
                 # per call and `SileroVAD.process()` refused the first frame of the first real call.
@@ -662,6 +749,9 @@ class VoiceAgent:
                 asr=self._asr,
                 llm=self._llm,
                 tts=self._tts,
+                # E20-G/G5: the fallback instance THIS process warmed at start-up, so INV 14's
+                # retry has a warmed provider to fall back on.
+                tts_fallback=self._tts_fallback,
                 guard=self._guard,
             )
             await transport.connect(call_id)
@@ -680,6 +770,23 @@ class VoiceAgent:
                 with contextlib.suppress(Exception):
                     await transport.disconnect()
             self._calls.pop(session_id, None)
+
+    async def _session_started_at(self, session_id: SessionId) -> datetime | None:
+        """The session's `started_at` — the origin every offset of this call is measured from.
+
+        Read once per call from the aggregate, never cached across calls: it is persisted state
+        (SPEC §39, D7), which is exactly why an offset derived from it survives a restart of
+        either process. `None` (an unreadable or not-yet-started session) degrades to the
+        behaviour that was there before R13 rather than refusing the call: `session_offset_ms`
+        answers `0` for it, and the call still runs.
+        """
+        try:
+            async with self._deps.uow_factory() as uow:
+                session = await uow.sessions.get(session_id)
+        except Exception:
+            logger.exception("could not read started_at for session %s", session_id)
+            return None
+        return None if session is None else session.started_at
 
     async def _end_call_unavailable(self, session_id: SessionId, call_id: uuid.UUID) -> None:
         """`CALL_ENDED{reason: TRANSPORT_UNAVAILABLE}` for a call whose transport never existed.

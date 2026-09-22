@@ -31,11 +31,14 @@ import { HandoffSnapshotSection } from './handoff-snapshot-section';
 import { DdsWorkItemsSection } from './dds-work-items-section';
 import { CallStateSection } from './call-state-section';
 import { InferenceHealthSection } from './inference-health-section';
+import { AbortSessionButton } from './abort-session-button';
 
 export function InstructorLiveOverviewPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
+  const userRole = useAuthStore((state) => state.user?.user_role);
+  const canAbort = userRole === 'INSTRUCTOR' || userRole === 'ADMIN';
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const wsClientRef = useRef<WsClient | null>(null);
 
@@ -112,11 +115,16 @@ export function InstructorLiveOverviewPage() {
     >
       <div className="flex items-center justify-between gap-2">
         <h1 className="font-heading text-lg font-medium">{t('instructorLiveOverviewTitle')}</h1>
-        {isTerminal ? (
-          <Button asChild size="sm">
-            <Link to={`/report/${sessionId}`}>{t('reportViewReportButton')}</Link>
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {!isTerminal && canAbort ? (
+            <AbortSessionButton sessionId={sessionId} onAborted={() => void overviewQuery.refetch()} />
+          ) : null}
+          {isTerminal ? (
+            <Button asChild size="sm">
+              <Link to={`/report/${sessionId}`}>{t('reportViewReportButton')}</Link>
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">

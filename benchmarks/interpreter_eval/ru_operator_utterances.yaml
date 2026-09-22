@@ -66,6 +66,46 @@ items:
       operator_assertions: []
       confirmation_targets: []
 
+  - id: imperative_request_street
+    utterance: "Назовите улицу."
+    expected:
+      speech_act: QUESTION
+      requested_facts:
+        - { fact_id: address.street, explicit: true }
+      operator_assertions: []
+      confirmation_targets: []
+    notes: >
+      H5 (E20-H): a bare imperative fact request — no question mark, no interrogative word — must
+      still label as a request for `address.street`, not `INSTRUCTION` with an empty
+      `requested_facts` (E20-C's §46 walk item 5 reproduced exactly this utterance interpreted as
+      `INSTRUCTION`, so a known `ON_ASK` fact was never released). Sibling of `question_street_only`
+      ("На какой улице это произошло?"), phrased as a command instead of a question.
+
+  - id: imperative_request_house_number
+    utterance: "Скажите номер дома."
+    expected:
+      speech_act: QUESTION
+      requested_facts:
+        - { fact_id: address.house, explicit: true }
+      operator_assertions: []
+      confirmation_targets: []
+    notes: >
+      H5 (E20-H): the imperative sibling of `question_house_number` ("Назовите номер дома."),
+      with the synonymous imperative verb "скажите" instead of "назовите" — both must resolve to
+      `requested_facts: [address.house]`.
+
+  - id: imperative_request_phone
+    utterance: "Назовите ваш телефон."
+    expected:
+      speech_act: QUESTION
+      requested_facts:
+        - { fact_id: caller.phone, explicit: true }
+      operator_assertions: []
+      confirmation_targets: []
+    notes: >
+      H5 (E20-H): the imperative sibling of the existing phone-number question case — an
+      imperative fact request for `caller.phone` must not be read as `INSTRUCTION`.
+
   - id: question_address_direct
     utterance: "Какой у вас адрес?"
     expected:

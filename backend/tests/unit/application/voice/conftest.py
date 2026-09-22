@@ -22,6 +22,7 @@ from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.turn_detector import DetectorStep, TurnDetector
 from app.domain.common.ids import EventId, SessionId
 from app.domain.events.session_event import DomainEvent, SessionEvent
+from app.domain.session.session import SimulationSession
 from app.inference.vad import EnergyVAD
 
 
@@ -126,6 +127,12 @@ class VoiceStore:
     fail_on_transcript_add: Exception | None = None
     #: Every `DialogueTurnRepository.set_caller_outcome` call E14's sink made, in call order.
     caller_outcomes: list[CallerOutcome] = field(default_factory=list)
+    #: `VoiceEventAppender.append`'s own read of `uow.sessions.get(...)` (E20-E2, R11 follow-up):
+    #: empty by default, so every existing test — none of which seeds a row here — sees `None`
+    #: and keeps the exact behaviour it always had (the appended events' `monotonic_offset_ms`
+    #: passes through unchanged). A test that DOES want the frozen-`running_ms` stamping seeds
+    #: one row here first.
+    sessions: dict[SessionId, SimulationSession] = field(default_factory=dict)
 
 
 class _FakeEventStore:
@@ -221,8 +228,19 @@ class _FakeDialogueTurns:
         )
 
 
+class _FakeSessions:
+    """`uow.sessions.get(...)` only — `VoiceEventAppender.append` never calls `get_for_update`
+    (R14: an unlocked read, on purpose)."""
+
+    def __init__(self, store: VoiceStore) -> None:
+        self._store = store
+
+    async def get(self, session_id: SessionId) -> SimulationSession | None:
+        return self._store.sessions.get(session_id)
+
+
 class InMemoryVoiceUnitOfWork:
-    """The two repositories `VoiceEventAppender` uses, plus commit/rollback semantics."""
+    """The three repositories `VoiceEventAppender` uses, plus commit/rollback semantics."""
 
     def __init__(self, store: VoiceStore, clock: FakeClock) -> None:
         self._store = store
@@ -247,6 +265,10 @@ class InMemoryVoiceUnitOfWork:
     @property
     def dialogue_turns(self) -> _FakeDialogueTurns:
         return _FakeDialogueTurns(self._store, self._turns)
+
+    @property
+    def sessions(self) -> _FakeSessions:
+        return _FakeSessions(self._store)
 
     async def __aenter__(self) -> InMemoryVoiceUnitOfWork:
         self._events = []

@@ -31,6 +31,14 @@ COPY tts_qwen3/ tts_qwen3/
 RUN uv venv --python 3.12 /app/.venv \
     && uv pip install --python /app/.venv/bin/python -e .
 
+# E20: `qwen_tts`'s generate path JIT-compiles Triton kernels (needs a C compiler + libc headers;
+# the python:3.12 image already ships Python.h) and shells out to `sox` — without them the worker
+# loads its weights and then answers 503 on /warm_up and /synthesize ("Failed to find C compiler",
+# "sox: not found", docs/DOD_WALK.md §6). Installed in its own LATE layer so a rebuild reuses the
+# multi-GB torch layer above.
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential sox \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -5,6 +5,8 @@
 // `seq_no` — `RadioMessageView.seq_no` is documented as "the log position it was read from"
 // (openapi.yaml), which for a live event is exactly this envelope's position.
 //
+// INV 3: `source_world_event_id` is neither read nor stored — see `apply-notification-event.ts`.
+//
 // Idempotent by `radio_message_id` (a duplicate delivery is a no-op) and kept sorted by `seq_no`
 // (log order), matching `listRadioMessages`' own contract.
 import type { RadioMessageView } from './radio-store';
@@ -19,7 +21,6 @@ interface RadioMessageCreatedPayload {
   to_role: RoleType;
   text_ru: string;
   resource_id: string | null;
-  source_world_event_id: string | null;
   at_offset_ms: number;
 }
 
@@ -48,7 +49,6 @@ export function applyRadioMessageEvent(
     text_ru: payload.text_ru,
     resource_id: payload.resource_id,
     created_at_offset_ms: payload.at_offset_ms,
-    source_world_event_id: payload.source_world_event_id,
   };
   return [...previous, created].sort((a, b) => a.seq_no - b.seq_no);
 }

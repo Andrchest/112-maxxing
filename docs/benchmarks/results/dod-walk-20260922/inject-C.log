@@ -1,0 +1,35 @@
+Nvidia Decoder is supported.
+joined as '0ef0c702-2ad5-4698-9bd5-cfc7aea4cff6' in room 'session-49accdb9-e2c2-4d43-9247-ddb168e16ae8' (ws://127.0.0.1:7880)
+-> sending floor.wav (turn 1/3, id=turn-1)
+   heard (trainee speech): "Служба 112. Что у вас случилось?"
+   caller replying (turn_index=0, at_offset_ms=15189) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 1582
+   caller done (completed=True)
+   heard (trainee speech): "Назовите улицу."
+   caller replying (turn_index=1, at_offset_ms=21548) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 1221
+   heard (trainee speech): "И номер дома."
+   caller replying (turn_index=2, at_offset_ms=23472) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 1513
+   caller done (completed=True)
+   heard (trainee speech): "В квартире остались люди."
+   caller replying (turn_index=3, at_offset_ms=34139) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 4532
+   caller done (completed=True)
+   heard (trainee speech): "Что именно горит в квартире?"
+   caller replying (turn_index=4, at_offset_ms=44679) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 1600
+   caller done (completed=True)
+   heard (trainee speech): "Назовите номер квартиры."
+   caller replying (turn_index=5, at_offset_ms=52023) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 1200
+   caller done (completed=True)
+   heard (trainee speech): "Подтвердите ваш номер телефона."
+   caller replying (turn_index=6, at_offset_ms=65442) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 5691
+-> sending reassurance.wav (turn 2/3, id=turn-2)
+   heard (trainee speech): "На каком этаже квартира?"
+   caller replying (turn_index=7, at_offset_ms=91179) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 7588
+-> sending closing.wav (turn 3/3, id=turn-3)
+   barge-in: cutoff_latency_ms=2990

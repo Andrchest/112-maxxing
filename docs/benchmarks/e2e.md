@@ -4,17 +4,21 @@
 finishing a sentence to the first millisecond of the caller's voice — is **measured for real**, with
 real models on this machine, at **p50 1192 ms / p95 1864 ms against the DEV targets of 1500 /
 2500 ms**, on **35 of 36** turns, and the barge-in budget is met on every interruption.
-That measurement is the **in-process** one; a full **LiveKit** call now runs end to end too — real
-room, real WebRTC, the agent joining and answering 34 of 36 turns with **24 barge-ins all cut off
-within the budget** — but its *latency* figure is not derivable yet, because the two events the
-metric subtracts sit on two different clocks over that transport (§3, bug #5).
+That measurement is the **in-process** one. A full **LiveKit** call runs end to end too, and since
+E20 (R13/R14, `reports/e20-f.md`) its latency figure is **derivable at last**: the post-fix re-run
+of 2026-09-22, at the **shipped `SIM_SIM_TICK_MS=500`**, reports
+**p50 1566 ms / p95 4622 ms over 29 turns with `discarded_nonpositive_count: 0`** and barge-in
+p50 62 ms (§3.1). Over a real media plane the DEV p95 target of 2500 ms is therefore **not** met
+today, while the in-process p95 of 1864 ms is — the gap is the number to work on, and it is now a
+measured number rather than a missing one.
 
 Every number below is read out of a committed result JSON. Nothing here is typed by hand.
 
 | What | File under `docs/benchmarks/results/` |
 |:--|:--|
 | **The latency measurement** (in process, real providers, 4 runs) | `e2e-DEV_3060TI_SHARED-20260922T091948626Z.json` + `.csv` |
-| **The LiveKit run** (real room, 4 runs; barge-in measured, latency not derivable) | `e2e-DEV_3060TI_SHARED-20260922T101931685Z.json` + `.csv` |
+| **The post-fix LiveKit run** (real room, 4 runs, shipped 500 ms tick; §27 latency published) | `e2e-DEV_3060TI-20260922T144530930Z.json` + `.csv` |
+| The pre-fix LiveKit run (barge-in measured, latency not derivable) — kept as history | `e2e-DEV_3060TI_SHARED-20260922T101931685Z.json` + `.csv` |
 | The LiveKit run that deadlocked after 2 turns — kept as history | `e2e-DEV_3060TI_SHARED-20260922T101445123Z.json` |
 | The LiveKit attempt before the agent could join, NOT_RUN | `e2e-DEV_3060TI_SHARED-20260922T091548598Z.json` |
 | The earlier LiveKit refusal (SDK absent), NOT_RUN | `e2e-DEV_3060TI_SHARED-20260922T045857Z.json` |
@@ -112,6 +116,44 @@ two clocks differ by that gap and drift further apart with every turn. In proces
 construction — `FakeCallTransport` stamps capture offsets from the same `Clock` the appender reads
 — which is why §2's figures are sound and these are not.
 
+### 3.1 The post-fix LiveKit re-run (E20-C, the SPEC §46 walk, 2026-09-22)
+
+`e2e-DEV_3060TI-20260922T144530930Z.json` + `.csv`, `--provider real --profile DEV_3060TI
+--transport livekit --runs 4 --settle-ms 2500`, at the **shipped `SIM_SIM_TICK_MS=500`** — the
+first LiveKit run made after E20-F landed R13 (one clock origin) and R14 (the row-lock deadlock).
+Host-run stack: dev compose `postgres`/`redis`/`livekit` v1.13.7, host `llama-server` (Qwen3.5-2B
+Q4_K_M, `--parallel 2`) on 8101, host voice agent, host API on 8100. **TTS was PiperTTS (CPU)**,
+not Qwen3-TTS — see `docs/DOD_WALK.md` open item 4 for why the profile's GPU default could not
+synthesise this scenario's caller.
+
+| | |
+|:--|--:|
+| `status` | `OK` |
+| turns published / detected | 36 / 39 |
+| **`speech_end_to_first_audio_ms` n** | **29** |
+| **`discarded_nonpositive_count`** | **0** — R13 proven on the real transport |
+| p50 / p95 / p99 / max | **1566 / 4622 / 5205 / 5205 ms** |
+| mean | 2003 ms |
+| DEV target p50 / p95 | 1500 / 2500 |
+| **`meets_target`** | **false** (p95) |
+| `ASR` p50 over the media plane | 205 ms |
+| barge-in n, p50 / p95 / max | **19**, 62 / 732 / 732 ms |
+| `over_250ms_count` | **3** of 19 |
+| `unscripted_cutoff_count` | 2 |
+| Deadlocks at the 500 ms tick | **none** — R14 proven |
+
+Two things this run settles and one it does not:
+
+* **Settled:** the §27 metric is derivable over LiveKit (every sample positive), and the shipped
+  tick no longer deadlocks a real call. Both were open in the run above.
+* **Settled:** the media plane costs real time — p50 1192 → 1566 ms, p95 1864 → 4622 ms against
+  the in-process figures. Part of that is Piper on CPU rather than Qwen3-TTS on the GPU, so the
+  gap is an upper bound on the transport's own share, not the transport's share alone.
+* **Not settled:** barge-in over-budget cuts appeared for the first time (3 of 19 over 250 ms,
+  worst 732 ms) where the pre-fix LiveKit run measured 0 of 24. That run's zeros were measured
+  against the broken clock origin, so the two are not comparable; 732 ms against §6.2's 250 ms
+  budget is an open item, recorded in `docs/DOD_WALK.md`.
+
 ### Side by side
 
 | | `inprocess` | `livekit` |
@@ -123,15 +165,16 @@ construction — `FakeCallTransport` stamps capture offsets from the same `Clock
 | Agent in the room | n/a | **yes**, `voice-agent:<call_id>` |
 | turns published / detected / answered | 36 / 48 / 35 | 36 / 39 / 34 |
 | `ASR` p50 | 128 ms | 162 ms |
-| **`speech_end_to_first_audio_ms`** p50 / p95 | **1192 / 1864 ms** (n = 35) | **not derivable** (n = 0, 34 discarded) |
+| **`speech_end_to_first_audio_ms`** p50 / p95 | **1192 / 1864 ms** (n = 35) | pre-fix: **not derivable** (n = 0, 34 discarded); post-fix (§3.1): **1566 / 4622 ms** (n = 29) |
 | barge-in n, `over_250ms_count` | 8, **0** | **24**, **0** |
-| Open defect | — | the two offset origins, bug #5 |
+| Defect at run time | — | the two offset origins, bug #5 — **fixed in E20, R13** (§6) |
 
 The honest reading of the pair: the pipeline behaves the same over both transports (ASR 128 → 162
 ms is the only visible difference, and it is one Opus decode plus jitter), the barge-in budget is
-met on both, and the **latency figure to quote is the in-process one**, which remains a lower bound
-on delivered latency by one media-plane round trip until bug #5 is fixed and the LiveKit run can
-report its own.
+met on both, and the in-process figure is a **lower bound** on delivered latency by one media-plane
+round trip. §3.1's post-fix re-run now supplies the delivered figure itself (p50 1566 / p95
+4622 ms), so the in-process number is no longer the only one available — quote both, and quote
+§3.1's when the question is what a trainee actually hears.
 
 What in-process does and does not include:
 
@@ -146,16 +189,18 @@ What in-process does and does not include:
   ignores the time a model spends thinking (understating the turn) or double-counts the trailing
   silence consumed while it thinks (overstating it) — see `benchmark_e2e.py::_paced_transport_class`.
 
-### One environment knob the LiveKit run needed
+### One environment knob the LiveKit run needed (history — fixed in E20, R14)
 
 The first LiveKit run died after **2 turns** with a PostgreSQL
 `DeadlockDetectedError` on `SELECT next_seq_no FROM simulation_sessions WHERE id = $1 FOR UPDATE`
 (`…101445123Z.json`, kept as history): the API's `SimulationRunner` ticks the same session every
-`SIM_SIM_TICK_MS` (**500 ms** by default) and takes that D5 row lock, while the voice agent takes it
-for every event of every turn — two processes, two transactions, opposite orders. The run above
-used `SIM_SIM_TICK_MS=10000`, which is a **benchmark-environment setting, not a product change**,
-and it is why the run completed. At the shipped 500 ms tick a real LiveKit call deadlocks within a
-couple of turns on this machine; that is bug #6 below.
+`SIM_SIM_TICK_MS` (**500 ms** by default) and takes that D5 row lock, while the voice agent's own
+FK-carrying side-table inserts take an implicit conflicting lock on the same row for every event of
+every turn — two processes, two transactions, two lock modes that upgrade into each other. The run
+above used `SIM_SIM_TICK_MS=10000`, which was a **benchmark-environment setting, not a product
+change**, and it is why the run completed. **Bug #6 is now fixed** (§6): both lock sites take
+`FOR NO KEY UPDATE` instead of `FOR UPDATE`, so the shipped 500 ms tick no longer deadlocks a real
+LiveKit call — the workaround above is no longer needed for a future run.
 
 ## 4. The stage split
 
@@ -190,13 +235,13 @@ injection is accurate to 120 ms (the inbound script's lead), recorded in the res
 `cutoff_latency_ms` is **read from `CALLER_UTTERANCE_INTERRUPTED`**, which carries the product's own
 measurement of it — never recomputed here from two offsets.
 
-| | `inprocess` | `livekit` |
-|:--|--:|--:|
-| n | **8** (4 runs × 2 marked rows) | **24** |
-| p50 / p95 / p99 | 0 / 0 / 0 ms | 0 / 0 / 0 ms |
-| max | 0 ms | 0 ms |
-| `over_250ms_count` | **0** | **0** |
-| `unscripted_cutoff_count` | 0 | 2 |
+| | `inprocess` | `livekit` (pre-fix) | `livekit` (post-fix, E20-C §46 walk, 2026-09-22) |
+|:--|--:|--:|--:|
+| n | **8** (4 runs × 2 marked rows) | **24** | **19** |
+| p50 / p95 / p99 | 0 / 0 / 0 ms | 0 / 0 / 0 ms | **62 / 732 / — ms** |
+| max | 0 ms | 0 ms | 732 ms |
+| `over_250ms_count` | **0** | **0** | **3** of 19 |
+| `unscripted_cutoff_count` | 0 | 2 | 2 |
 
 Budget: `50-voice-pipeline.md` §6.2, 250 ms. Every interruption cut the caller off within the same
 millisecond the product recorded it — the outbound queue is cleared synchronously with the barge-in
@@ -209,6 +254,15 @@ two offsets, so bug #5's two-clock problem cannot touch it.
 The LiveKit run's higher count is the transport being live rather than scripted: the client keeps
 publishing while the caller talks, so more turns overlap an in-flight caller utterance than the two
 rows the corpus marks (the 2 `unscripted_cutoff_count` are exactly those).
+
+**The post-fix `livekit` column (§3.1) is not directly comparable to the pre-fix one.** The
+pre-fix `livekit` run's all-zero p50/p95/max was measured against the broken transport clock
+origin R13 fixed (E20-F) — a barge-in cut recorded at an unreliable offset can read as
+instantaneous by accident, not because it actually was. The post-fix run, made after R13 landed,
+is the first LiveKit barge-in measurement on a trustworthy clock, and it shows the budget is **not**
+always met over a real media plane: 3 of 19 cuts exceed 250 ms, the worst at 732 ms (one sample in
+the same walk's own transcript reached 2990 ms, recorded in `docs/DOD_WALK.md`). This is an open
+item, not a regression this task introduced — `docs/DOD_WALK.md` §4 item 7.
 
 ## 6. History: six product bugs this benchmark found
 
@@ -250,17 +304,37 @@ Kept here because the earlier tables in this repository were measured before the
    the transport inside its `try`, logs with `logger.exception`, and appends
    `CALL_ENDED{reason: "TRANSPORT_UNAVAILABLE"}` so a call that never got a media plane still ends
    explicitly in the trainee-facing timeline instead of simply stopping (SPEC §39).
-5. **`speech_end_to_first_audio_ms` is not derivable over LiveKit** (open). The metric subtracts an
-   event stamped on the transport's own media clock from one stamped on the session clock; in
-   process they are the same clock, over LiveKit they are not. Detail and evidence in §3. Until it
-   is fixed the LiveKit run reports `overall.n = 0` and `discarded_nonpositive_count: 34` rather
-   than a negative percentile — the benchmark refusing to invent a number, which is SPEC §27's rule
-   working as intended.
-6. **The runner and the agent deadlock on `simulation_sessions.next_seq_no`** (open). At the shipped
-   `SIM_SIM_TICK_MS=500` the API's `SimulationRunner` and the voice agent take the same D5 row lock
-   from two processes in opposite orders; the first LiveKit run died after 2 turns with
-   `DeadlockDetectedError` (§3, "One environment knob"). Worked around for the measurement with a
-   10 s tick; not a product change, and not a fix.
+5. **`speech_end_to_first_audio_ms` is not derivable over LiveKit** (**fixed in E20, R13 —
+   E20-F**). The metric subtracted an event stamped on the transport's own media clock from one
+   stamped on the session clock; in process they were the same clock, over LiveKit they were not.
+   Detail and evidence in §3 (kept as the historical record of the run that found this bug — the
+   numbers above predate the fix and are unchanged by it). Root cause was two bugs, not one:
+   `LiveKitCallTransport._now_ms()`'s own first-frame-relative origin, and
+   `VoiceEventAppender(started_at=None)`'s silent zero-offset default that the real agent process
+   never overrode. Both fixed: `capture_offset_ms`/`TransportEvent.at_offset_ms` are now defined on
+   `app.application.ports.call_transport` as `session_offset_ms(clock.now(), session.started_at)`,
+   and `voice_agent.main._session_started_at(session_id)` threads the real value through both the
+   transport and the pipeline (`docs/hld/50-voice-pipeline.md` §3.0,
+   `workers/voice_agent/tests/test_transport_clock_origin.py`, 7 tests). Until the LiveKit run is
+   repeated post-fix (E20-C), the historical `overall.n = 0` /
+   `discarded_nonpositive_count: 34` result above stands as the last real sample — the benchmark
+   correctly refused to invent a percentile over negative numbers, which is SPEC §27's rule working
+   as intended.
+6. **The runner and the agent deadlock on `simulation_sessions.next_seq_no`** (**fixed in E20,
+   R14 — E20-F**). At the shipped `SIM_SIM_TICK_MS=500` the API's `SimulationRunner` and the voice
+   agent were taking two different lock modes on the session row (`FOR UPDATE` vs. an implicit
+   `FOR KEY SHARE` from every voice-agent side-table FK insert) that conflict with each other; the
+   first LiveKit run died after 2 turns with `DeadlockDetectedError` (§3, "One environment knob").
+   The 10 s tick used for the measurement above was a benchmark-environment workaround, not a
+   product fix, and is no longer necessary: both lock sites
+   (`backend/app/infrastructure/persistence/event_store.py`'s `_LOCK_SESSION_ROW` and
+   `SessionRepository._load(for_update=True)`) now take `FOR NO KEY UPDATE`, which is compatible
+   with the FK's `FOR KEY SHARE` and still self-serialises allocation — no upgrade cycle is
+   possible. Regression test:
+   `backend/tests/integration/persistence/test_seq_lock_order.py` (50-round drive, reproduces the
+   exact `DeadlockDetectedError` above on the unfixed lock mode). `docs/hld/20-db-schema.md` §20.8
+   and `docs/hld/00-decisions.md` D5 rewritten to state the real mechanism. A future LiveKit run
+   (E20-C) can use the shipped `SIM_SIM_TICK_MS=500`.
 
 ## 7. Caveats a reader must carry
 
@@ -268,8 +342,9 @@ Kept here because the earlier tables in this repository were measured before the
   "Honesty". Real trainees hesitate, breathe and sit in noisy rooms; all three change how long the
   VAD waits for an endpoint and how hard GigaAM works.
 * **No LiveKit hop in the quoted latency** — §3. It is a lower bound on delivered
-  latency by one media-plane round trip; the LiveKit run exists but cannot report its
-  own latency until bug #5 is fixed.
+  latency by one media-plane round trip; the LiveKit run above predates bug #5's fix (§6) and
+  still cannot report its own latency — a post-fix re-run is E20-C's, not yet done as of this
+  edit.
 * The envelope's `hardware` block is `null`: `benchmark_e2e.py` samples no NVML (it is not a VRAM
   benchmark). The free-VRAM readings in §1 come from the run script's own `nvidia-smi` calls,
   logged beside the result.
@@ -308,17 +383,25 @@ chain); its number is **not** SPEC §40's metric and must never be compared to t
 The LiveKit run is the same command with `--transport livekit --livekit-url ws://127.0.0.1:7880
 --livekit-token <backend-minted trainee token> --room <session room> --session-id <session id>`,
 against the dev compose `postgres`/`redis`/`livekit`, the API on 8100 and a voice agent started
-with the `DEV_3060TI_SHARED` environment and `SIM_CALL_TRANSPORT=livekit`. Four things the
-operator must get right, each of which cost a run to discover:
+with the `DEV_3060TI_SHARED` environment and `SIM_CALL_TRANSPORT=livekit`. Four things cost this
+run's operator a repeat to discover; **items 2–4 are E20 fixes and no longer apply to a future
+run** (kept here as the historical record of what this run had to work around):
 
 1. the agent must be fully warmed (all four `voice:health:*` keys `READY`) **before** the session is
-   created — it subscribes to `voice:join` only after `warm_up()` returns;
-2. the call must be left RINGING for a few seconds before it is answered, because `call_flow`
-   re-publishes `voice:join` only while it rings;
-3. the agent resolves the profile's **compose** model paths on a host run, so
-   `SIM_ASR_MODEL_DIR`, `SIM_VAD_MODEL_PATH` and `SIM_TTS_PIPER_VOICE_PATH` must be exported;
-4. `SIM_SIM_TICK_MS` must be raised (10 s was used) until bug #6 is fixed, or the call deadlocks
-   against the runner within a couple of turns.
+   created — it subscribes to `voice:join` only after `warm_up()` returns; still true.
+2. ~~the call must be left RINGING for a few seconds before it is answered, because `call_flow`
+   re-publishes `voice:join` only while it rings~~ — **fixed, R2 (E20-F)**: `_retry_join` now fires
+   on `RINGING` **or** `CONNECTED` and stops on the agent's own first appended event for that
+   `call_id`, not on the trainee answering (`backend/app/application/operator/call_flow.py`, HLD 40
+   §40.6, `backend/tests/api/voice/test_call_signals.py`).
+3. ~~the agent resolves the profile's **compose** model paths on a host run, so
+   `SIM_ASR_MODEL_DIR`, `SIM_VAD_MODEL_PATH` and `SIM_TTS_PIPER_VOICE_PATH` must be exported~~ —
+   **fixed, R15 (E20-F)**: set `SIM_MODELS_ROOT=./models` once instead — `backend/app/config/model_paths.py`
+   rebases every profile path through it (also used by `preflight` check 3 and the `tts_qwen3`
+   worker).
+4. ~~`SIM_SIM_TICK_MS` must be raised (10 s was used) until bug #6 is fixed, or the call deadlocks
+   against the runner within a couple of turns~~ — **fixed, R14 (E20-F)**: the shipped
+   `SIM_SIM_TICK_MS=500` no longer deadlocks (§6).
 
 ## 9. Preflight, as run
 

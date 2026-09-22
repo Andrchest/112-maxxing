@@ -1,0 +1,25 @@
+Nvidia Decoder is supported.
+joined as '0ef0c702-2ad5-4698-9bd5-cfc7aea4cff6' in room 'session-ce835582-a6f8-47f1-9199-5beec49e8652' (ws://localhost:7880)
+-> sending greeting.wav (turn 1/3, id=greeting)
+   heard (trainee speech): "Служба 112. Что у вас случилось?"
+   caller replying (turn_index=0, at_offset_ms=10303) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 4172
+   caller done (completed=True)
+-> sending address.wav (turn 2/3, id=address)
+   heard (trainee speech): "Назовите улицу."
+   heard (trainee speech): "И номер дома."
+   caller replying (turn_index=1, at_offset_ms=23818) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 3287
+   caller replying (turn_index=2, at_offset_ms=25370) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 3143
+   caller replying (turn_index=2, at_offset_ms=39072) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   (timed out waiting for the caller's reply to turn 2)
+-> sending what_is_burning.wav (turn 3/3, id=what_is_burning)
+   barge-in: cutoff_latency_ms=66
+   heard (trainee speech): "Что именно горит в квартире?"
+   caller replying (turn_index=3, at_offset_ms=47228) - text withheld from OPERATOR_112 by design (HLD 40 §40.4 row 12)
+   speech_end_to_first_audio_ms: 3273
+   caller done (completed=True)
+   (timed out waiting for the caller's reply to turn 3)
+
+--- stderr ---

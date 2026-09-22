@@ -14,7 +14,6 @@ function makeNotification(overrides: Partial<NotificationView> = {}): Notificati
     title_ru: 'Пожар распространяется',
     body_ru: 'Огонь перешёл на соседнее помещение.',
     created_at_offset_ms: 1000,
-    source_world_event_id: 'fire_spreads',
     acknowledged_at_offset_ms: null,
     ...overrides,
   };

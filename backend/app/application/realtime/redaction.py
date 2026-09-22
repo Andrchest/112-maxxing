@@ -151,7 +151,11 @@ def _without(event_type: EventType, *dropped: str) -> frozenset[str]:
 PAYLOAD_KEY_WHITELIST: Mapping[EventType, frozenset[str]] = {
     # Row 9: "drop `asr_provider`, `asr_model`, `confidence`".
     EventType.ASR_FINAL: _without(EventType.ASR_FINAL, "asr_provider", "asr_model", "confidence"),
-    # Row 12: "trainee receives only `{call_id, turn_index, at_offset_ms}`".
+    # Row 12: "trainee receives only `{call_id, turn_index, at_offset_ms}`". E20-G/G6: the
+    # additive `voice_id_native` (which vendor voice the caller was really synthesised with) is a
+    # CALLER detail, dropped for trainees by the same rule as `planned_text` — this row is an
+    # explicit allow-list, so the new key is excluded by construction, and
+    # `tests/unit/application/realtime/` asserts it by name rather than by inference.
     EventType.CALLER_TTS_STARTED: frozenset({"call_id", "turn_index", "at_offset_ms"}),
     # Row 13: "trainee receives only `{call_id, turn_index, at_offset_ms, completed}`".
     EventType.CALLER_TTS_ENDED: frozenset({"call_id", "turn_index", "at_offset_ms", "completed"}),

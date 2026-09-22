@@ -13,4 +13,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${REPO_ROOT}"
+
+# Under `make up` (E20): the voice agent's preflight endpoint binds loopback INSIDE its container
+# (SPEC §41, never published) and llama-server publishes no port (HLD 60 §9), so the host cannot
+# see the stack. The voice-agent container can — its own 127.0.0.1:8113, `llama-server:8080`,
+# postgres/redis/livekit by service name, `/models`, the GPU, and `scenarios/` (mounted read-only
+# for exactly this) — so the checks run there. Without a running compose voice-agent this is a
+# host run (`make run-*`), where `SIM_MODELS_ROOT` defaults to the repo's `models/`.
+COMPOSE=(docker compose -f infra/docker-compose.yml)
+if [[ -f .env ]]; then
+    COMPOSE+=(--env-file .env)
+fi
+if command -v docker >/dev/null 2>&1 \
+    && "${COMPOSE[@]}" ps --status running --services 2>/dev/null | grep -qx voice-agent; then
+    exec "${COMPOSE[@]}" exec -T voice-agent python -m app.cli preflight "$@"
+fi
+export SIM_MODELS_ROOT="${SIM_MODELS_ROOT:-./models}"
 exec uv run python -m app.cli preflight "$@"

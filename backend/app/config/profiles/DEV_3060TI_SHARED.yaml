@@ -61,6 +61,13 @@ tts:
   max_chunk_ms: 20
   fallback_provider: none         # OWNER DECISION 2026-09-21: no TTS fallback on this profile
   model_variant: null             # not applicable — this profile's TTS is not Qwen3-TTS
+  # ADDITIVE (E20-G/G6): logical -> native, see DEV_3060TI.yaml's `voice_map` comment. Piper's
+  # native voice is the `.onnx` this process loads, so every logical id maps onto the one
+  # downloaded Russian female voice; the mapping is what `CALLER_TTS_STARTED.voice_id_native`
+  # records, and it keeps one resolution rule across providers.
+  voice_map:
+    ru_female_adult_01: ru_RU-irina-medium   # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: ru_RU-irina-medium          # `make models-piper`'s downloaded voice
 
 vad:
   provider: silero

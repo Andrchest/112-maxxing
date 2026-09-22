@@ -33,31 +33,41 @@ def evaluate(
     config: RequiredStatusUpdateConfig,
     ctx: ScoringContext,
 ) -> ScoreResult:
-    """Did the DDS report back, and soon enough? (§10.14 #9)
+    """Did the DDS report back, and soon enough? (§10.14 #9, H4/E20-H)
 
-    The timing half reads the **first** qualifying update against the **first** occurrence of the
-    reference event, and requires the update to follow it: a report sent before the thing it
-    reports on is not a report on it. §10.14 says only "within `within_ms` of the reference
-    event"; the direction is the reading closest to SPEC §13's "report on arrival" wording and is
-    recorded in this task's HLD-gaps list.
+    **Every** occurrence of the reference event type opens its own `within_ms` window (H4,
+    E20-H, replacing the earlier "first occurrence in the whole log" reading, which made the
+    rule unsatisfiable in a real session the moment any *earlier* qualifying change existed —
+    E19/E20-C's `"Задержка … 279160 мс при норме 60000 мс"` finding): the rule passes only when a
+    matching status update follows within the window **for every** such reference event
+    (`docs/hld/10-domain-model.md` §10.14 #9 updated to match). A report sent before the thing it
+    reports on still does not count towards its window.
     """
     updates = _updates(ctx, config.update_kind)
-    reference = (
-        None if config.within_ms_of_event is None else ctx.first_of_type(config.within_ms_of_event)
-    )
-
     enough = len(updates) >= config.min_count
-    in_time, note = _timing(updates, reference, config)
+
+    if config.within_ms is None or config.within_ms_of_event is None:
+        in_time = True
+        pairs: list[tuple[SessionEvent, SessionEvent | None]] = []
+    else:
+        references = ctx.of_type(config.within_ms_of_event)
+        in_time, pairs = _windows(references, updates, config.within_ms)
     passed = enough and in_time
 
-    if updates:
+    if pairs:
         items = [
             evidence.from_event(
-                event,
-                f"{config.update_kind.value} на {event.monotonic_offset_ms} мс."
-                + ("" if index or not note else f" {note}"),
+                match if match is not None else reference,
+                _pair_note(reference, match, config),
             )
-            for index, event in enumerate(updates[:EVIDENCE_CAP])
+            for reference, match in pairs[:EVIDENCE_CAP]
+        ]
+    elif updates:
+        items = [
+            evidence.from_event(
+                event, f"{config.update_kind.value} на {event.monotonic_offset_ms} мс."
+            )
+            for event in updates[:EVIDENCE_CAP]
         ]
     else:
         items = [
@@ -83,23 +93,49 @@ def _updates(ctx: ScoringContext, kind: StatusUpdateKind) -> tuple[SessionEvent,
     )
 
 
-def _timing(
+def _windows(
+    references: tuple[SessionEvent, ...],
     updates: tuple[SessionEvent, ...],
-    reference: SessionEvent | None,
-    config: RequiredStatusUpdateConfig,
-) -> tuple[bool, str]:
-    if config.within_ms is None or config.within_ms_of_event is None:
-        return True, ""
-    if reference is None:
-        return True, f"Событие {config.within_ms_of_event.value} не наступало — срок не отсчитан."
-    if not updates:
-        return False, ""
-    delay = updates[0].monotonic_offset_ms - reference.monotonic_offset_ms
-    note = (
-        f"Задержка от {config.within_ms_of_event.value}: {delay} мс "
-        f"при норме {config.within_ms} мс."
+    within_ms: int,
+) -> tuple[bool, list[tuple[SessionEvent, SessionEvent | None]]]:
+    """`(all_satisfied, [(reference, matching_update_or_none), ...])`, one pair per reference.
+
+    No qualifying reference event at all is vacuously in time (§10.14: nothing to report on, so
+    no window is missed) — the pre-existing "event never happened" reading for a rule this early
+    in the session, kept unchanged by H4.
+    """
+    pairs: list[tuple[SessionEvent, SessionEvent | None]] = []
+    all_satisfied = True
+    for reference in references:
+        match = next(
+            (
+                update
+                for update in updates
+                if 0 <= update.monotonic_offset_ms - reference.monotonic_offset_ms <= within_ms
+            ),
+            None,
+        )
+        if match is None:
+            all_satisfied = False
+        pairs.append((reference, match))
+    return all_satisfied, pairs
+
+
+def _pair_note(
+    reference: SessionEvent, match: SessionEvent | None, config: RequiredStatusUpdateConfig
+) -> str:
+    assert config.within_ms_of_event is not None  # narrowed by the caller
+    if match is None:
+        return (
+            f"{config.within_ms_of_event.value} на {reference.monotonic_offset_ms} мс: "
+            f"доклад {config.update_kind.value} не поступил в течение "
+            f"{config.within_ms} мс."
+        )
+    delay = match.monotonic_offset_ms - reference.monotonic_offset_ms
+    return (
+        f"{config.within_ms_of_event.value} на {reference.monotonic_offset_ms} мс -> "
+        f"{config.update_kind.value} на {match.monotonic_offset_ms} мс (через {delay} мс)."
     )
-    return 0 <= delay <= config.within_ms, note
 
 
 def _kind(raw: object) -> StatusUpdateKind | None:

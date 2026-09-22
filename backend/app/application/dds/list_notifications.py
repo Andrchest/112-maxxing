@@ -39,8 +39,14 @@ _TRAINEE_AUDIENCES: tuple[RoleType, ...] = (RoleType.OPERATOR_112, RoleType.DDS,
 def audience_roles_for(session: SimulationSession, user: AuthenticatedUser) -> tuple[RoleType, ...]:
     """Which audiences this caller may read; empty means `403`.
 
-    A trainee reads the audience of the role they play, and only if that role's
-    `DataVisibilityPolicy` lists `NOTIFICATIONS`. An instructor or admin reads every audience.
+    A trainee reads the audience of every role a `RoleStage` binds them to (§10.10), and only where
+    that role's `DataVisibilityPolicy` lists `NOTIFICATIONS`. An instructor or admin reads every
+    audience.
+
+    Also `AcknowledgeNotification`'s role check (H2, E20-H): the two commands used to resolve the
+    caller's role differently (this one from `session.stages`, the other from the optional
+    `SessionParticipant.assigned_role_type`), so a `FULL_CYCLE_SINGLE_TRAINEE` trainee could list a
+    notification this function would not have let them read. One function now settles both.
     """
     if user.is_instructor_or_admin:
         return _TRAINEE_AUDIENCES

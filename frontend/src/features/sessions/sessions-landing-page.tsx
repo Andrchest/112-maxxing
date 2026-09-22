@@ -1,5 +1,5 @@
-// Route: /sessions (D12 design decision #4; resolves the TODO(E8) `homeRouteForRole` left in
-// `entities/session/auth-store.ts`). "My sessions" — every session `listSessions({scope:'MINE'})`
+// Route: /sessions (D12 design decision #4) — the destination `homeRouteForRole` in
+// `entities/session/auth-store.ts` sends a signed-in trainee to. "My sessions" — every session `listSessions({scope:'MINE'})`
 // returns for the signed-in trainee, with a link into that session's console. Lists exactly what
 // the backend returned: no client-side filtering, sorting or derived status.
 import { useQuery } from '@tanstack/react-query';

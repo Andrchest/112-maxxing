@@ -15,7 +15,6 @@ function makeMessage(overrides: Partial<RadioMessageView> = {}): RadioMessageVie
     text_ru: 'Выехали.',
     resource_id: 'res-ac2',
     created_at_offset_ms: 1000,
-    source_world_event_id: null,
     ...overrides,
   };
 }

@@ -14,6 +14,17 @@ acknowledgement to that audience alone rather than to both trainee roles
 
 A second acknowledgement is `409`: the `UPDATE` carries `WHERE acknowledged_at_offset_ms IS NULL`
 and reports whether it hit a row, so two concurrent calls produce exactly one event.
+
+The role check reuses `app.application.dds.list_notifications.audience_roles_for` — the exact
+function `listNotifications` filters by (H2, E20-H). Before this fix the two commands disagreed:
+`listNotifications` walks every `RoleStage` this participant is bound to, while this module
+preferred the (optional, possibly stale) `SessionParticipant.assigned_role_type` first. A
+`FULL_CYCLE_SINGLE_TRAINEE` trainee whose `assigned_role_type` names their *first* role
+(`OPERATOR_112`) could then list a `DDS`-audience notification once they reached the `DDS` stage
+but never acknowledge it (`403 FORBIDDEN_FOR_ROLE`), because the stale role never matched the
+notification's `audience_role`. Now both commands agree: the caller may act as any role a
+`RoleStage` binds them to, and acknowledging still requires that specific notification's
+`audience_role` to be one of them.
 """
 
 from __future__ import annotations
@@ -21,6 +32,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.dds.list_notifications import audience_roles_for
 from app.application.dds.views import NotificationView, notification_view
 from app.application.operator.command_context import SessionNotActiveError
 from app.application.ports.clock import Clock
@@ -38,7 +50,6 @@ from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 from app.domain.roles.module import Permission
 from app.domain.roles.registry import ROLE_MODULES
-from app.domain.session.session import SimulationSession
 
 __all__ = [
     "ACTION_ID",
@@ -89,13 +100,13 @@ class AcknowledgeNotification:
             if session.state is not SessionState.ACTIVE:
                 raise SessionNotActiveError(session_id, session.state)
 
-            participant = resolve_participant(session, user)
+            resolve_participant(session, user)
             if user.user_role is not UserRole.TRAINEE:
                 raise ForbiddenForRoleError(
                     "a trainee stage command may only be issued by a TRAINEE account"
                 )
-            role = _acting_role(session, UserId(participant.user_id))
-            if role is None or not _may_acknowledge(role):
+            roles = audience_roles_for(session, user)
+            if not roles or not any(_may_acknowledge(role) for role in roles):
                 raise ForbiddenForRoleError(
                     f"the caller may not acknowledge notifications of session {session_id}"
                 )
@@ -103,7 +114,7 @@ class AcknowledgeNotification:
             stored = await uow.notifications.get(notification_id)
             if stored is None or stored.incident_id != session.incident.incident_id:
                 raise NotificationNotFoundError(notification_id)
-            if stored.audience_role is not role:
+            if stored.audience_role not in roles or not _may_acknowledge(stored.audience_role):
                 raise ForbiddenForRoleError(
                     f"notification {notification_id} is addressed to "
                     f"{stored.audience_role.value}, not to the caller's role"
@@ -143,17 +154,6 @@ class AcknowledgeNotification:
                 }
             )
         )
-
-
-def _acting_role(session: SimulationSession, user_id: UserId) -> RoleType | None:
-    """The simulation role this participant plays (§10.10), or `None` for an unbound one."""
-    for participant in session.participants:
-        if participant.user_id == user_id and participant.assigned_role_type is not None:
-            return participant.assigned_role_type
-    stage = session.current_stage or session.active_stage
-    if stage is not None and stage.participant_user_id == user_id:
-        return stage.role_type
-    return None
 
 
 def _may_acknowledge(role: RoleType) -> bool:

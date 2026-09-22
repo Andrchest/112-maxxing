@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from app.domain.caller.emotion import EmotionRule, EmotionState, WorldEventTrigger
 from app.domain.common.ids import IncidentId
 from app.domain.enums import (
@@ -163,6 +165,33 @@ def test_created_ids_are_derived_not_drawn() -> None:
     first = apply_effects(_state(effects), [_fired(effects)], 1_000)
     second = apply_effects(_state(effects), [_fired(effects)], 1_000)
     assert first.events[1].payload["notification_id"] == second.events[1].payload["notification_id"]
+
+
+def test_notification_and_radio_ids_are_distinct_across_sessions() -> None:
+    """H1 (E20-H): two sessions of the *same* scenario + seed fire the same `world_event_id` /
+    `occurrence` / effect index, so without `incident_id` in the derivation their notification and
+    radio-message ids collide and `notification_repository.add_all`'s `ON CONFLICT (id) DO NOTHING`
+    silently swallows the second session's row. Bite proof: dropping `str(state.incident_id)` from
+    either `_derived_id(...)` call in `app/domain/world/apply.py` makes this fail (both equal).
+    """
+    effects: tuple[Effect, ...] = (
+        CreateNotification(
+            audience_role=RoleType.DDS,
+            severity=NotificationSeverity.INFO,
+            title_ru="т",
+            body_ru="б",
+        ),
+        CreateRadioMessage(
+            from_callsign="АЦ-1", to_role=RoleType.DDS, text_ru="Приём", resource_id=None
+        ),
+    )
+    other_incident_id = IncidentId(uuid.uuid5(uuid.NAMESPACE_URL, "second-session"))
+    first = apply_effects(_state(effects), [_fired(effects)], 1_000)
+    second = apply_effects(_state(effects, incident_id=other_incident_id), [_fired(effects)], 1_000)
+    assert first.events[1].payload["notification_id"] != second.events[1].payload["notification_id"]
+    assert (
+        first.events[2].payload["radio_message_id"] != second.events[2].payload["radio_message_id"]
+    )
 
 
 # ------------------------------------------------------------------------------------- emotion

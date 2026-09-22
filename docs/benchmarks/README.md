@@ -53,23 +53,29 @@ benchmark reveals a fix at the adapter level. See `tts.md`.
 `dialogue_consistency_rate` (0.538) fails. SPEC §22's own "Qwen3-4B" reaches consistency 0.929 but
 at combined p50 ≈ 3.5 s, well past the development target. See `llm.md`.
 
-**Six product bugs this epic's benchmarks found** (history kept in `e2e.md` §6; four fixed, two
-open). (1) The caller went silent on ~40% of turns: a bare `}` utterance passed `Response
+**Six product bugs this epic's benchmarks found** (history kept in `e2e.md` §6; all six now
+fixed). (1) The caller went silent on ~40% of turns: a bare `}` utterance passed `Response
 Validator`'s `EMPTY` check — fixed (E19-C2, grammar + validator). (2) The voice agent's per-call
 VAD was never warmed, crashing the first real frame of every call — fixed (E19-E2). (3)/(4) The
 voice agent could not join a LiveKit room at all: no per-call access token was ever minted, and the
 failure was silently swallowed by an unawaited task — fixed (E19-E3: the agent now mints its own
-token via the backend's `LiveKitTokenService`). (5) `speech_end_to_first_audio_ms` is not derivable
+token via the backend's `LiveKitTokenService`). (5) `speech_end_to_first_audio_ms` was not derivable
 over LiveKit — the transport's capture-offset clock and the session-offset clock the TTS event uses
-diverge — **open, `E20 R13`**. (6) The API's `SimulationRunner` tick and the voice agent deadlock on
-the same `simulation_sessions` row lock at the shipped `SIM_SIM_TICK_MS` — **open, `E20 R14`**.
+diverged — **fixed, `E20 R13`** (E20-F; `app.application.ports.call_transport` now defines
+`capture_offset_ms` as `session_offset_ms`, and the real agent process now threads a real
+`started_at` through instead of silently defaulting to one shared origin — a second bug the fix
+needed). (6) The API's `SimulationRunner` tick and the voice agent used to deadlock on the same
+`simulation_sessions` row lock at the shipped `SIM_SIM_TICK_MS` — **fixed, `E20 R14`** (E20-F; both
+lock sites now take `FOR NO KEY UPDATE` instead of `FOR UPDATE`, compatible with the implicit
+`FOR KEY SHARE` every voice-agent FK insert takes on that row). A LiveKit re-run to publish the
+post-fix latency percentile is E20-C's §46 walk, not yet performed as of this edit.
 
 **What is NOT measured here, and why.**
 
 - The `FINAL_3080TI_12GB`/`FINAL_3080TI_16GB` profiles: no RTX 3080 Ti and no Qwen3-8B GGUF file
   exist on this dev machine (see the section below).
 - The LiveKit media-plane hop in the E2E latency number (above) — the transport is real and
-  exercised, but its own latency figure is withheld pending `E20 R13`.
+  exercised, but its own latency figure is withheld pending a post-`E20 R13`-fix re-run (E20-C).
 - faster-whisper (SPEC §19's optional ASR fallback): never installed by this project (E12 ruling).
 - Chatterbox Multilingual TTS: provider not implemented in this repo.
 

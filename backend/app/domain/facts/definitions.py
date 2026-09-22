@@ -144,4 +144,6 @@ class RevealedFacts(BaseModel):
         )
 
 
-# TODO(E3-B): build_fact_definitions lives in app/domain/scenario/validation.py
+# `build_fact_definitions` — the `ScenarioVersion` -> `{fact_id: FactDefinition}` builder these
+# views are fed from — lives in `app/domain/scenario/validation.py` (E3-B), not here: it belongs
+# to scenario validation, which is where a malformed fact block must be rejected.

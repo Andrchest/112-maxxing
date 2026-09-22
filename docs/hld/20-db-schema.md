@@ -765,7 +765,7 @@ BEGIN;
 SELECT next_seq_no
   FROM simulation_sessions
  WHERE id = :session_id
-   FOR UPDATE;
+   FOR NO KEY UPDATE;
 
 UPDATE simulation_sessions
    SET next_seq_no = next_seq_no + :event_count
@@ -787,9 +787,26 @@ COMMIT;
 -- after commit only: PUBLISH to Redis channel session:{id}:events
 ```
 
-The `FOR UPDATE` row lock serialises concurrent appenders (backend and voice-agent process), so
+The row lock serialises concurrent appenders (backend and voice-agent process), so
 `UNIQUE(session_id, seq_no)` can never be violated and the sequence has no gaps. Publishing happens
 strictly after commit, so a subscriber can always re-read the event from PostgreSQL.
+
+**Lock mode and lock order (E20, R14).** Step 1's mode is `FOR NO KEY UPDATE`, not `FOR UPDATE`.
+Every table the voice agent writes beside its events — `audio_segments`, `transcript_segments`,
+`dialogue_turns`, `inference_metrics` — has a foreign key to `simulation_sessions.id`, and
+PostgreSQL takes a `FOR KEY SHARE` lock on the **referenced** row for each such insert. Step 2 of
+this very transaction therefore runs before step 1 for an appender that writes those rows first, so
+with `FOR UPDATE` — which conflicts with `FOR KEY SHARE` — step 1 became a lock *upgrade*, and two
+concurrent appends of one call deadlocked on it (`DeadlockDetectedError` on exactly this statement;
+it ended E19-E3's first real LiveKit run after two turns). `FOR NO KEY UPDATE` is the mode the
+`UPDATE` on the next line takes anyway, still conflicts with itself — so allocation stays strictly
+serialised — and is compatible with `FOR KEY SHARE`, so no cycle can form.
+
+`SessionRepository.get_for_update` (§20.3) uses the same mode, so `simulation_sessions` has **one**
+lock mode for every writer in both processes. The order, where a writer takes both, is: the
+session-row lock first, then this allocation — which is what every command, the `SimulationRunner`
+tick and its `after_tick` hooks already do. Regression test:
+`backend/tests/integration/persistence/test_seq_lock_order.py`.
 
 ## 20.9 Immutability triggers
 

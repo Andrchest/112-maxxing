@@ -42,6 +42,7 @@ from typing import Literal
 
 import httpx
 
+from app.config.model_paths import CONTAINER_MODELS_PREFIX, host_model_path
 from app.config.profile import ModelProfile, load_profile
 from app.config.settings import Settings
 from app.domain.common.errors import ScenarioValidationError
@@ -66,6 +67,7 @@ __all__ = [
     "check_redis_responds",
     "check_scenario_validation",
     "check_tts_responds",
+    "has_cyrillic_word",
     "main",
     "render_json",
     "render_table",
@@ -77,6 +79,10 @@ Status = Literal["PASS", "FAIL", "SKIP"]
 #: `SIM_VOICE_AGENT_HTTP_PORT` default (this task's ruling; loopback only, E18-C's endpoints).
 DEFAULT_VOICE_AGENT_HTTP_PORT = 8113
 _DEFAULT_SCENARIOS_DIR = Path("scenarios/examples")
+
+#: The default `SIM_MODELS_ROOT`: `/models`, i.e. the container layout the profiles name, so the
+#: resolution below is the identity under compose (E20 R15).
+CONTAINER_MODELS_ROOT = CONTAINER_MODELS_PREFIX.rstrip("/")
 _PROBE_TIMEOUT_S = 10.0
 
 
@@ -120,6 +126,8 @@ StatFile = Callable[[Path], int | None]
 BoolProbe = Callable[[], Awaitable[tuple[bool, str]]]
 #: (ok, output_audio_ms, detail) — TTS is the one probe with a numeric PASS condition of its own.
 TtsProbe = Callable[[], Awaitable[tuple[bool, int, str]]]
+#: "are this profile's models already resident on the card?" — E20-G/G7's stack-aware check #2.
+ModelsLoadedProbe = Callable[[], Awaitable[tuple[bool, str]]]
 QueryAudioDevices = Callable[[], Sequence[str]]
 IsFile = Callable[[str], bool]
 IsExecutable = Callable[[str], bool]
@@ -143,8 +151,27 @@ async def check_cuda_gpu_available(query_gpus: QueryGpus) -> CheckResult:
     return CheckResult(1, "cuda_gpu_available", "PASS", f"{len(gpus)} GPU(s): {names}")
 
 
-async def check_expected_gpu_detected(query_gpus: QueryGpus, profile: ModelProfile) -> CheckResult:
-    """#2: a GPU whose name matches the profile, with enough free VRAM for its budget+margin."""
+async def check_expected_gpu_detected(
+    query_gpus: QueryGpus,
+    profile: ModelProfile,
+    models_loaded: ModelsLoadedProbe | None = None,
+) -> CheckResult:
+    """#2: a GPU whose name matches the profile, with enough free VRAM — STACK-AWARE (E20-G/G7).
+
+    The pre-start rule is "the whole `vram_budget_mb + min_vram_margin_mb` must be FREE". That is
+    the right rule before anything is loaded, and precisely the wrong one afterwards: E20-C's §46
+    walk ran `make preflight` against a fully healthy, fully warmed stack and check #2 FAILed
+    (`2341 MB free < 7680 MB required`) *because* the models it is checking for were resident.
+    SPEC §38's preflight is the thing an operator runs before a session, warm stack included, so a
+    check that can only pass on a cold card is a check that is red on a healthy machine.
+
+    So: when `models_loaded` reports the voice agent's models are up, the profile's own remaining
+    allowance is what must still be free — `vram_budget_mb - measured_peak_vram_mb`, the headroom
+    the profile itself says the loaded stack leaves over. The detail then says "models loaded" so
+    nobody mistakes the looser bound for the pre-start one. A profile with no
+    `measured_peak_vram_mb` (nothing measured yet) keeps the pre-start rule: an unmeasured profile
+    has no remaining allowance to claim.
+    """
     try:
         gpus = query_gpus()
     except Exception as exc:
@@ -159,39 +186,70 @@ async def check_expected_gpu_detected(query_gpus: QueryGpus, profile: ModelProfi
             "FAIL",
             f"no GPU name contains {profile.hardware.gpu_name_contains!r} (found: {found})",
         )
-    required_mb = profile.vram_budget_mb + profile.min_vram_margin_mb
+    measured_peak_mb = profile.measured_peak_vram_mb
+    loaded = False
+    loaded_detail = ""
+    if models_loaded is not None and measured_peak_mb is not None:
+        try:
+            loaded, loaded_detail = await models_loaded()
+        except Exception:  # a probe that cannot answer means "assume cold", never a crash
+            loaded, loaded_detail = False, ""
+    if loaded and measured_peak_mb is not None:
+        required_mb = max(0, profile.vram_budget_mb - measured_peak_mb)
+        rule = (
+            f"models loaded ({loaded_detail}): vram_budget_mb {profile.vram_budget_mb} - "
+            f"measured_peak_vram_mb {measured_peak_mb}"
+        )
+    else:
+        required_mb = profile.vram_budget_mb + profile.min_vram_margin_mb
+        rule = (
+            f"vram_budget_mb {profile.vram_budget_mb} + "
+            f"min_vram_margin_mb {profile.min_vram_margin_mb}"
+        )
     best = max(matched, key=lambda gpu: gpu.free_mb)
     if best.free_mb < required_mb:
         return CheckResult(
             2,
             "expected_gpu_detected",
             "FAIL",
-            f"{best.name}: {best.free_mb} MB free < {required_mb} MB required "
-            f"(vram_budget_mb {profile.vram_budget_mb} + "
-            f"min_vram_margin_mb {profile.min_vram_margin_mb})",
+            f"{best.name}: {best.free_mb} MB free < {required_mb} MB required ({rule})",
         )
     return CheckResult(
         2,
         "expected_gpu_detected",
         "PASS",
-        f"{best.name}: {best.free_mb} MB free >= {required_mb} MB required",
+        f"{best.name}: {best.free_mb} MB free >= {required_mb} MB required ({rule})",
     )
 
 
-def profile_model_file_paths(profile: ModelProfile) -> dict[str, str]:
-    """The five paths check #3 verifies — the model weights plus the warm-up sample (§4.2)."""
+def profile_model_file_paths(
+    profile: ModelProfile, models_root: str = CONTAINER_MODELS_ROOT
+) -> dict[str, str]:
+    """The five paths check #3 verifies — the model weights plus the warm-up sample (§4.2).
+
+    Resolved onto **this host** through `app.config.model_paths` (E20 R15). A profile names
+    container paths (`/models/...`), which is where compose mounts them; on a host run the same
+    files live under `SIM_MODELS_ROOT` (`./models`) and nothing is at `/models`, so before E20 this
+    check FAILed on every host run no matter what was installed. `models_root` defaults to
+    `/models`, which leaves the mapping a no-op under compose.
+    """
     return {
-        "llm.model_path": profile.llm.model_path,
-        "asr.model_path": profile.asr.model_path,
-        "tts.model_path": profile.tts.model_path,
-        "vad.model_path": profile.vad.model_path,
-        "warmup.asr_sample_path": profile.warmup.asr_sample_path,
+        label: host_model_path(raw, models_root)
+        for label, raw in (
+            ("llm.model_path", profile.llm.model_path),
+            ("asr.model_path", profile.asr.model_path),
+            ("tts.model_path", profile.tts.model_path),
+            ("vad.model_path", profile.vad.model_path),
+            ("warmup.asr_sample_path", profile.warmup.asr_sample_path),
+        )
     }
 
 
-async def check_model_files_exist(profile: ModelProfile, stat_file: StatFile) -> CheckResult:
-    """#3: every model/warm-up-sample path exists and is non-empty."""
-    paths = profile_model_file_paths(profile)
+async def check_model_files_exist(
+    profile: ModelProfile, stat_file: StatFile, models_root: str = CONTAINER_MODELS_ROOT
+) -> CheckResult:
+    """#3: every model/warm-up-sample path exists and is non-empty, as resolved on this host."""
+    paths = profile_model_file_paths(profile, models_root)
     missing = []
     for label, raw_path in paths.items():
         try:
@@ -224,14 +282,54 @@ async def check_llm_responds(probe: BoolProbe, model_name: str) -> CheckResult:
     return CheckResult(4, "llm_responds", "PASS", detail)
 
 
+def has_cyrillic_word(text: str) -> bool:
+    """At least one run of Cyrillic letters (E20-G/G7's bar for check #5).
+
+    Cyrillic by code point, not a word list: the warm-up sample says one short Russian phrase and
+    the ASR is free to mis-hear it — "the ASR produced Russian words" is the claim, not "it
+    produced these words".
+    """
+    run = 0
+    for char in text:
+        if "\u0400" <= char <= "\u04ff":
+            run += 1
+            if run >= 2:
+                return True
+        else:
+            run = 0
+    return False
+
+
 async def check_asr_responds(probe: BoolProbe) -> CheckResult:
-    """#5: the voice-agent's `GET /preflight/asr` returns non-empty text (E18-C owns the route)."""
+    """#5: the voice-agent's `GET /preflight/asr` transcribes REAL RUSSIAN SPEECH (E20-G/G7).
+
+    "Non-empty text" was the old bar, and it made the check a liar in both directions. E20-C's
+    §46 walk ran it against a demonstrably working GigaAM (every trainee turn of the walk was
+    transcribed correctly) and got `[FAIL] 5. asr_responds: empty transcription` — because
+    `.env.example` left `SIM_ASR_WARMUP_SAMPLE_PATH` empty, so the agent warms on a SYNTHESISED
+    440 Hz TONE, and a tone correctly transcribes to nothing. The check was measuring the
+    fixture, not the model.
+
+    The bar is now "at least one Cyrillic word came back", and `.env.example` points
+    `SIM_ASR_WARMUP_SAMPLE_PATH` at `models/warmup/warmup_ru.wav` (real Russian speech, E19-F) —
+    the same file every model profile's `warmup.asr_sample_path` already names. A tone now fails
+    with a detail that says WHY, instead of an unexplained "empty transcription".
+    """
     try:
         ok, detail = await probe()
     except Exception as exc:
         return CheckResult(5, "asr_responds", "FAIL", f"ASR probe raised: {exc}")
     if not ok:
         return CheckResult(5, "asr_responds", "FAIL", detail)
+    if not has_cyrillic_word(detail):
+        return CheckResult(
+            5,
+            "asr_responds",
+            "FAIL",
+            f"transcription has no Cyrillic word ({detail!r}) — is "
+            "SIM_ASR_WARMUP_SAMPLE_PATH pointing at real Russian speech "
+            "(models/warmup/warmup_ru.wav)?",
+        )
     return CheckResult(5, "asr_responds", "PASS", detail)
 
 
@@ -508,6 +606,27 @@ async def _probe_voice_agent_asr_real(port: int) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+async def _probe_models_loaded_real(port: int) -> tuple[bool, str]:
+    """ "Are the voice agent's models resident?" for the stack-aware check #2 (E20-G/G7).
+
+    Derived from the two endpoints the agent already serves rather than from a new one: both
+    `GET /preflight/asr` and `GET /preflight/tts` run the **already loaded** provider and answer
+    500 when it was never warmed (`voice_agent.main.VoiceAgent._probe_asr`/`_probe_tts` raise
+    `RuntimeError` on a `None` provider), so two 200s is exactly "this process has its models up".
+    Any other outcome — nothing listening, a timeout, a 500 — means "assume cold", which keeps the
+    stricter pre-start rule.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S) as client:
+            for path in ("/preflight/asr", "/preflight/tts"):
+                response = await client.get(f"http://127.0.0.1:{port}{path}")
+                if response.status_code != 200:
+                    return False, f"GET {path} -> {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, f"voice-agent :{port} ASR+TTS ready"
+
+
 async def _probe_voice_agent_tts_real(port: int) -> tuple[bool, int, str]:
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S) as client:
@@ -592,10 +711,21 @@ def build_real_checks(
 
     return [
         lambda: check_cuda_gpu_available(_query_gpus_real),
-        lambda: check_expected_gpu_detected(_query_gpus_real, profile),
-        lambda: check_model_files_exist(profile, _stat_file_real),
+        lambda: check_expected_gpu_detected(
+            _query_gpus_real,
+            profile,
+            lambda: _probe_models_loaded_real(voice_agent_port),
+        ),
+        lambda: check_model_files_exist(profile, _stat_file_real, settings.models_root),
+        # E20-G/G7: the EFFECTIVE base url (`Settings`, i.e. the env overlay), never the profile
+        # literal. A profile names the COMPOSE url (`http://llama-server:8080/v1`); on a host run
+        # `SIM_LLM_BASE_URL` points at `http://127.0.0.1:8101/v1` and the profile literal cannot
+        # even be resolved — E20-C's walk got `[FAIL] 4. llm_responds: ConnectError: [Errno -3]
+        # Temporary failure in name resolution` against a llama-server that was answering fine.
+        # `apply_profile` has already overlaid the profile onto `Settings` where the operator did
+        # not set the variable, so this is the profile value whenever there is no override.
         lambda: check_llm_responds(
-            lambda: _probe_llm_real(profile.llm.base_url), profile.llm.model_name
+            lambda: _probe_llm_real(settings.llm_base_url), profile.llm.model_name
         ),
         lambda: check_asr_responds(lambda: _probe_voice_agent_asr_real(voice_agent_port)),
         lambda: check_tts_responds(lambda: _probe_voice_agent_tts_real(voice_agent_port)),

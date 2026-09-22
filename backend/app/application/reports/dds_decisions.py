@@ -48,6 +48,9 @@ class DispatchEvent:
     resource_ids: tuple[UUID, ...]
     callsigns: tuple[str, ...]
     is_additional: bool
+    note_ru: str | None = None
+    """ADDITIVE (E20-E R11): `RESOURCE_DISPATCHED.note_ru` (E17 R2) — the trainee's free-text
+    dispatch note, `None` when none was given."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +64,9 @@ class DdsDecision:
     status_updates: tuple[StatusUpdateView, ...]
     closure_reason: ClosureReason | None
     closed_at_offset_ms: int | None
+    comment_ru: str | None = None
+    """ADDITIVE (E20-E R11): `DDS_INCIDENT_CLOSED.comment_ru` (E17 R2) — the trainee's free-text
+    closure comment, `None` when none was given or the leg is not yet closed."""
 
 
 def dds_decisions(
@@ -74,6 +80,7 @@ def dds_decisions(
     """
     dispatches = _dispatch_events_by_assignment(events)
     updates = _status_updates_by_assignment(events)
+    comments = _closure_comments_by_assignment(events)
     ordered = sorted(legs, key=lambda leg: (leg.received_at_offset_ms, str(leg.assignment_id)))
     return tuple(
         DdsDecision(
@@ -84,6 +91,7 @@ def dds_decisions(
             status_updates=updates.get(UUID(str(leg.assignment_id)), ()),
             closure_reason=leg.closure_reason,
             closed_at_offset_ms=leg.closed_at_offset_ms,
+            comment_ru=comments.get(UUID(str(leg.assignment_id))),
         )
         for leg in ordered
     )
@@ -111,9 +119,25 @@ def _dispatch_events_by_assignment(
                 ),
                 callsigns=tuple(str(value) for value in event.payload.get("callsigns") or ()),
                 is_additional=bool(event.payload.get("is_additional")),
+                note_ru=_optional_str(event.payload.get("note_ru")),
             )
         )
     return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _closure_comments_by_assignment(events: Sequence[SessionEvent]) -> Mapping[UUID, str]:
+    """ADDITIVE (E20-E R11): `assignment_id -> DDS_INCIDENT_CLOSED.comment_ru`, one entry per leg
+    that was closed with a non-empty comment — the same fold shape `_dispatch_events_by_assignment`
+    / `_status_updates_by_assignment` use over the same event log."""
+    comments: dict[UUID, str] = {}
+    for event in events:
+        if event.event_type is not EventType.DDS_INCIDENT_CLOSED:
+            continue
+        assignment_id = _uuid(event.payload.get("assignment_id"))
+        comment = _optional_str(event.payload.get("comment_ru"))
+        if assignment_id is not None and comment is not None:
+            comments[assignment_id] = comment
+    return comments
 
 
 def _status_updates_by_assignment(
@@ -137,6 +161,14 @@ def _status_updates_by_assignment(
             )
         )
     return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _optional_str(value: object) -> str | None:
+    """A non-empty `str` payload value, or `None` — `"" | null | absent` all read as "not given"
+    (matches `openapi.yaml`'s `note_ru`/`comment_ru`: `[string, 'null']`, never an empty string)."""
+    if isinstance(value, str) and value != "":
+        return value
+    return None
 
 
 def _uuid(value: object) -> UUID | None:

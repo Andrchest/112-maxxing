@@ -35,6 +35,7 @@ from app.application.ports.report_explanation_repository import (
     StoredReportExplanation,
 )
 from app.application.ports.voice_token_service import MintedVoiceToken
+from app.application.timebase import session_offset_ms
 from app.application.voice.playback import ChunkedPlayback, OutboundQueue
 from app.domain.common.ids import ScenarioVersionId, SessionId
 from app.domain.scoring.results import ScoreReport, ScoreResult
@@ -502,8 +503,15 @@ class FakeCallTransport:
         inbound: Iterable[AudioFrame] = (),
         outbound_queue_ms: int = 200,
         call_id: UUID | None = None,
+        started_at: datetime | None = None,
     ) -> None:
         self._clock = clock
+        #: The session's origin, when the caller has one (R13): `at_offset_ms` is then the same
+        #: `session_offset_ms(clock.now(), started_at)` the LiveKit transport and every appended
+        #: event use, so a test can assert the two agree. Left `None` — the default, and what
+        #: every pre-R13 test passes — the fake keeps stamping from `FakeClock.monotonic_ms()`,
+        #: which for a `FakeClock` advances in step with `now()` and is the same timeline.
+        self._started_at = started_at
         self._inbound = list(inbound)
         self._call_id = call_id
         self._connected = False
@@ -552,6 +560,18 @@ class FakeCallTransport:
         """Push one media-plane event for `_control` to consume."""
         self._events.put_nowait(event)
 
+    def now_ms(self) -> int:
+        """The session offset of *now*, the same definition the real transports use (R13).
+
+        With a `started_at` this is `session_offset_ms(clock.now(), started_at)` — literally the
+        expression `LiveKitCallTransport._now_ms` and `VoiceEventAppender.offset_ms` evaluate — so
+        a test can prove the two transports agree. Without one it is the `FakeClock`'s monotonic
+        counter, which is what every pre-R13 caller already relied on.
+        """
+        if self._started_at is None:
+            return self._clock.monotonic_ms()
+        return session_offset_ms(self._clock.now(), self._started_at)
+
     async def _advance(self, milliseconds: int) -> None:
         """The simulated playout clock: waiting moves time instead of blocking.
 
@@ -577,7 +597,7 @@ class FakeCallTransport:
             TransportEvent(
                 type=TransportEventType.CONNECTED,
                 call_id=call_id,
-                at_offset_ms=self._clock.monotonic_ms(),
+                at_offset_ms=self.now_ms(),
             )
         )
 

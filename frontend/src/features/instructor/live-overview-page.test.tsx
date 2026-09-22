@@ -100,6 +100,54 @@ describe('InstructorLiveOverviewPage — one getInstructorSessionOverview fetch,
     expect(link).toHaveAttribute('href', '/report/sess-1');
   });
 
+  // -- E20-E R11: abortSession client wrapper + the confirm-dialog button ----------------------
+
+  it('shows the abort button for an INSTRUCTOR on a non-terminal session', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'ACTIVE' }) });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    expect(await screen.findByRole('button', { name: ru.instructorAbortButton })).toBeInTheDocument();
+  });
+
+  it('hides the abort button once the session is terminal', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'COMPLETED' }) });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    await screen.findByRole('link', { name: ru.reportViewReportButton });
+    expect(screen.queryByRole('button', { name: ru.instructorAbortButton })).not.toBeInTheDocument();
+  });
+
+  it('shows the abort button for an ADMIN too', async () => {
+    useAuthStore.setState({
+      token: 'jwt-token',
+      isAuthenticated: true,
+      user: { id: 'admin-1', username: 'someone', display_name_ru: 'Someone', user_role: 'ADMIN', created_at: '2026-09-21T00:00:00Z' },
+    });
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'ACTIVE' }) });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    expect(await screen.findByRole('button', { name: ru.instructorAbortButton })).toBeInTheDocument();
+  });
+
+  it('hides the abort button for a role other than INSTRUCTOR/ADMIN', async () => {
+    useAuthStore.setState({
+      token: 'jwt-token',
+      isAuthenticated: true,
+      user: { id: 'trainee-1', username: 'someone', display_name_ru: 'Someone', user_role: 'TRAINEE', created_at: '2026-09-21T00:00:00Z' },
+    });
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'ACTIVE' }) });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    await screen.findByText(ru.instructorWorldTruthTitle);
+    expect(screen.queryByRole('button', { name: ru.instructorAbortButton })).not.toBeInTheDocument();
+  });
+
   it('refetches the overview on any realtime event', async () => {
     signIn();
     const sockets: InertSocket[] = [];

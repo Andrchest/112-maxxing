@@ -2,8 +2,12 @@
 
 What is asserted here is the *order of a call*, which is the thing the HLD contradicted itself
 about and E11 resolved: `ring` (guarded) → `CALL_RINGING` → `voice:join` **after the commit** →
-the agent joins → the trainee answers → the retry stops. Plus the two cancels: `endCall` and
+the trainee answers → the agent joins → the retry stops. Plus the two cancels: `endCall` and
 `abortSession`.
+
+The order of those middle two is the point of R2: the answer does **not** stop the retry, because
+the trainee can (and a script always does) answer before the agent has arrived. Only the agent's
+own first event for the call, or the call ending, stops it.
 
 The signals are recorded rather than published (`InMemoryVoiceSignals`, see this package's
 conftest) because "was it published, and was the log already committed when it was" is a question
@@ -13,12 +17,15 @@ about ordering, and a pub/sub subscriber would answer it with a race.
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.api.container import Container
 from app.application.testing.fakes import InMemoryCallStateCache, InMemoryVoiceSignals
+from app.domain.common.actors import ActorRef
 from app.domain.common.ids import SessionId
+from app.domain.enums import ActorType
+from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 
 from tests.api.conftest import auth
@@ -106,9 +113,15 @@ async def test_the_retry_respects_voice_join_retry_ms(
     assert len(voice_signals.joins) == 1
 
 
-async def test_the_retry_stops_once_the_call_is_answered(
+async def test_the_retry_survives_an_answer_the_agent_was_too_slow_for(
     flow: OperatorFlow, voice_signals: InMemoryVoiceSignals
 ) -> None:
+    """R2: answering must not silence `voice:join` — only the agent's own arrival may (E19-E3).
+
+    Until E20 the retry was gated on the *stage* being `RINGING`, so a trainee (or a script) who
+    answered within a tick left the call `CONNECTED` with no agent in the room, no further join
+    signal and no error anywhere. This is that exact sequence: ring, answer immediately, tick.
+    """
     flow.container.settings = flow.container.settings.model_copy(update={"voice_join_retry_ms": 0})
     assert await flow.advance_call_flow() is True
     answered = await flow.post("/operator/call/answer")
@@ -117,7 +130,83 @@ async def test_the_retry_stops_once_the_call_is_answered(
 
     assert await flow.advance_call_flow() is False
 
+    assert len(voice_signals.joins) == published_before + 1
+    # The same call, re-advertised — not a second one.
+    ringing_event = await _event_payload(flow, EventType.CALL_RINGING)
+    assert voice_signals.joins[-1][2] == UUID(str(ringing_event["call_id"]))
+    assert (await flow.event_types()).count(EventType.CALL_RINGING.value) == 1
+
+
+async def test_the_retry_stops_once_the_agent_has_appended_an_event_for_the_call(
+    flow: OperatorFlow, voice_signals: InMemoryVoiceSignals
+) -> None:
+    """The ack is the agent's own first event for that `call_id` (R2) — the only one available."""
+    flow.container.settings = flow.container.settings.model_copy(update={"voice_join_retry_ms": 0})
+    assert await flow.advance_call_flow() is True
+    assert (await flow.post("/operator/call/answer")).status_code == 200
+    ringing_event = await _event_payload(flow, EventType.CALL_RINGING)
+    call_id = UUID(str(ringing_event["call_id"]))
+
+    await _append_agent_event(flow, call_id)
+    published_before = len(voice_signals.joins)
+
+    assert await flow.advance_call_flow() is False
+    assert await flow.advance_call_flow() is False
+
     assert len(voice_signals.joins) == published_before
+
+
+async def test_an_agent_event_of_a_previous_call_does_not_ack_the_current_one(
+    flow: OperatorFlow, voice_signals: InMemoryVoiceSignals
+) -> None:
+    """The ack is per `call_id`, so a re-dial is advertised again from scratch."""
+    flow.container.settings = flow.container.settings.model_copy(update={"voice_join_retry_ms": 0})
+    assert await flow.advance_call_flow() is True
+    await _append_agent_event(flow, uuid4())
+    published_before = len(voice_signals.joins)
+
+    assert await flow.advance_call_flow() is False
+
+    assert len(voice_signals.joins) == published_before + 1
+
+
+async def test_the_retry_stops_once_the_call_has_ended(
+    flow: OperatorFlow, voice_signals: InMemoryVoiceSignals
+) -> None:
+    """An `ENDED` call needs nobody in its room, agent or not."""
+    flow.container.settings = flow.container.settings.model_copy(update={"voice_join_retry_ms": 0})
+    assert await flow.advance_call_flow() is True
+    assert (await flow.post("/operator/call/answer")).status_code == 200
+    ended = await flow.post("/operator/call/end", json={"reason": "OPERATOR_HANGUP"})
+    assert ended.status_code == 200, ended.text
+    published_before = len(voice_signals.joins)
+
+    assert await flow.advance_call_flow() is False
+
+    assert len(voice_signals.joins) == published_before
+
+
+async def _append_agent_event(flow: OperatorFlow, call_id: UUID) -> None:
+    """One `USER_SPEECH_STARTED` for `call_id`, as the voice agent appends it (D9, §20.8)."""
+    async with flow.container.unit_of_work() as uow:
+        await uow.events.append(
+            SessionId(flow.session_id),
+            [
+                DomainEvent(
+                    event_type=EventType.USER_SPEECH_STARTED,
+                    actor=ActorRef(actor_type=ActorType.MODEL),
+                    monotonic_offset_ms=1000,
+                    payload={
+                        "call_id": str(call_id),
+                        "turn_index": 0,
+                        "turn_id": str(uuid4()),
+                        "at_offset_ms": 1000,
+                        "vad_provider": "test",
+                    },
+                )
+            ],
+        )
+        await uow.commit()
 
 
 # -- voice:cancel ----------------------------------------------------------------------------------

@@ -67,6 +67,19 @@ tts:
   # machine; on the target card run `make models-llm-qwen3-8b && make bench-vram
   # PROFILE=FINAL_3080TI_12GB` and paste its `project_peak_mb` here with `measured_at` (E19-F).
   model_variant: null
+  # ADDITIVE (E20-G/G6): the scenario's `caller_profile.voice_id` is a SCENARIO-LOGICAL casting
+  # decision (HLD 30 §"caller_profile"), not a provider voice name; only a model profile knows
+  # what this provider calls its voices, so the logical -> native table lives here. Every logical
+  # id `scenarios/examples` uses is listed (`grep -rn voice_id scenarios/`). An id NOT listed
+  # resolves to `default_voice` with one WARN — it is never an error (E20-C's §46 walk item 3:
+  # the old hard `ValueError` on an unmapped id left the caller silent on this very profile).
+  # `Serena` is the female vendor CustomVoice speaker the owner's other project maps every female
+  # logical voice onto (`~/911-trainee-simulator/tools/qwen3_tts_worker.py:67-70`:
+  # `female`/`female_alt`/`female_calm`/`elderly_female` -> `Serena`), so the same casting
+  # decision is carried over rather than re-invented.
+  voice_map:
+    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: Serena           # vendor CustomVoice speaker; every unmapped logical id
 
 vad:
   provider: silero

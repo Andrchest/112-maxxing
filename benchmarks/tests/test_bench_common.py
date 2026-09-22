@@ -111,6 +111,16 @@ def test_an_absolute_host_path_is_used_as_given(tmp_path: Path) -> None:
     assert common.resolve_model_path(str(gguf), tmp_path) == (gguf, True)
 
 
+def test_the_mapping_is_the_products_own_and_not_a_second_copy() -> None:
+    """E20 R15: the table moved into `app.config.model_paths`, and the agent, `app/cli/preflight.
+    py`, the Qwen3-TTS worker and these scripts all resolve a profile path the one way. These two
+    names are re-exports, so a drift between the benchmarks and the product is impossible."""
+    from app.config import model_paths
+
+    assert common.resolve_model_path is model_paths.resolve_model_path
+    assert common.LEGACY_MODEL_PATHS is model_paths.LEGACY_MODEL_PATHS
+
+
 # -- write_result: the honesty rule --------------------------------------------------------------
 
 

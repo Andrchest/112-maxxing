@@ -9,9 +9,18 @@ Two invariants this class exists to keep:
 
 * `next_seq_no` is never written. Sequence allocation belongs to `SqlAlchemyEventStore` under the
   §20.8 row lock; an UPDATE from here that touched the column would race it.
-* `get_for_update` takes `SELECT … FOR UPDATE` on the `simulation_sessions` row *before* the
-  aggregate is read, so the whole read-decide-write cycle of a command is serialised against
+* `get_for_update` takes `SELECT … FOR NO KEY UPDATE` on the `simulation_sessions` row *before*
+  the aggregate is read, so the whole read-decide-write cycle of a command is serialised against
   another command on the same session for the life of the Unit of Work transaction.
+
+  The mode is `FOR NO KEY UPDATE`, the same one `SqlAlchemyEventStore` allocates `seq_no` under,
+  and for the same reason (R14, E19-E3 bug #6): it conflicts with itself — so two commands, or a
+  command and a runner tick, are still strictly serialised — while staying compatible with the
+  `FOR KEY SHARE` that PostgreSQL takes on this row for every insert into a table with a foreign
+  key to it. `FOR UPDATE` is not, and a voice-agent transaction that had already written an
+  `audio_segments` / `transcript_segments` / `dialogue_turns` row therefore had to *upgrade* its
+  lock, which deadlocked against a second such transaction. `SqlAlchemyEventStore`'s module
+  docstring carries the full account and the lock order every writer follows.
 """
 
 from __future__ import annotations
@@ -191,7 +200,7 @@ class SqlAlchemySessionRepository:
         return await self._load(session_id, for_update=False)
 
     async def get_for_update(self, session_id: SessionId) -> SimulationSession | None:
-        """The aggregate, with `SELECT … FOR UPDATE` on `simulation_sessions` (§20.8)."""
+        """The aggregate, with `SELECT … FOR NO KEY UPDATE` on `simulation_sessions` (§20.8)."""
         return await self._load(session_id, for_update=True)
 
     async def list_active_session_ids(self) -> list[SessionId]:
@@ -325,7 +334,9 @@ class SqlAlchemySessionRepository:
         key = UUID(str(session_id))
         statement = sa.select(_SESSIONS).where(_SESSIONS.c.id == key)
         if for_update:
-            statement = statement.with_for_update()
+            # `key_share=True` renders `FOR NO KEY UPDATE` on PostgreSQL — see this module's
+            # docstring and `SqlAlchemyEventStore`'s (R14).
+            statement = statement.with_for_update(key_share=True)
         session_row = (await self._session.execute(statement)).one_or_none()
         if session_row is None:
             return None

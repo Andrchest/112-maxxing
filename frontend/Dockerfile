@@ -21,8 +21,13 @@ ENV VITE_API_PROXY_TARGET=http://backend:8100
 
 EXPOSE 5173
 
+# This base image has neither `wget` nor `curl` (verified 2026-09-22, E20-G: `which wget curl node`
+# inside the built image prints only `/usr/local/bin/node`; the previous `wget` probe exited 127, so
+# the container was permanently `unhealthy` and `docker compose up --wait` could never succeed).
+# Node 22's global `fetch` is the one runtime the image is guaranteed to have. Kept in step with the
+# `frontend.healthcheck` in `infra/docker-compose.yml`, which overrides this one under compose.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
-    CMD wget -q -O - "http://127.0.0.1:5173/" >/dev/null 2>&1 || exit 1
+    CMD node -e "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # `--host 0.0.0.0`: the Vite dev server binds loopback-only by default, which is unreachable from
 # outside the container.

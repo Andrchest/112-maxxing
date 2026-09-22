@@ -212,13 +212,13 @@ def test_the_speech_string_rule_requires_a_cyrillic_letter() -> None:
     assert rule == 'speech-string ::= "\\"" speech-char* [а-яА-ЯёЁ] speech-char* "\\""'
     #: `ё`/`Ё` are outside the `а-я`/`А-Я` ranges and have to be listed separately.
     assert "ёЁ" in rule
-    #: `speech-char` is the same JSON-string character class `jsonstring` uses — one definition.
+    #: `speech-char` is JSON string content MINUS escapes and the characters no caller ever
+    #: pronounces (E20-I: the real `make up` walk produced `}I не знаю…`, which the Cyrillic rule
+    #: alone passes because the line does contain Cyrillic).
     speech_char = next(
         line for line in CALLER_GRAMMAR.splitlines() if line.startswith("speech-char ::=")
     )
-    assert speech_char == (
-        r'speech-char ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})'
-    )
+    assert speech_char == r"speech-char ::= [^\"\\\x7F\x00-\x1F{}\[\]<>`]"
 
 
 def test_the_caller_json_schema_is_unchanged_by_the_marker() -> None:

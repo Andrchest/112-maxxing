@@ -156,6 +156,8 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `tts.provider` | str | `piper` \| `qwen3_tts` \| `chatterbox` \| `fake` |
 | `tts.model_path` | str | model / voice file |
 | `tts.voice_id` | str | voice selected for the default caller persona |
+| `tts.voice_map` | dict[str, str], optional | ADDITIVE (E20-G): the SCENARIO-LOGICAL `caller_profile.voice_id` (HLD 30 §30.3, e.g. `ru_female_adult_01`) -> this provider's NATIVE voice name (a Qwen3-TTS vendor speaker, a Piper voice). Only the profile knows what a provider calls its voices; overlaid onto `Settings.tts_voice_map`. |
+| `tts.default_voice` | str \| null, optional | ADDITIVE (E20-G): the native voice an UNMAPPED logical id resolves to, with one warning per `(provider, logical id)` and never an error. `null` = `tts.voice_id`. Overlaid onto `Settings.tts_default_voice`; the native id actually used is recorded on `CALLER_TTS_STARTED.voice_id_native` (HLD 10 §10.13) and dropped for trainees (HLD 40 §40.4 row 12). |
 | `tts.device` | str | `cuda` \| `cpu` |
 | `tts.output_sample_rate` | int | provider native rate |
 | `tts.max_chunk_ms` | int | 20 (D9, E14 close-out: 40 -> 20 so §6.2's barge-in budget lands under SPEC §18's 250 ms) |
@@ -175,6 +177,19 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `latency_targets.p95_ms` | int | SPEC §27 target for this profile |
 | `health.failure_threshold` | int, optional (default 3) | ADDITIVE (E18-A, R1): §4.1's READY -> NOT_READY threshold; read by `workers/voice_agent/voice_agent/health.py` (E18-C) |
 | `health.rewarm_interval_s` | int, optional (default 30) | ADDITIVE (E18-A, R1): §4.1's periodic re-warm interval; same reader as above |
+
+**As built (E20-I) — three additive `tts.*` keys and one overlay rule.** `tts.first_chunk_timeout_ms`
+/ `tts.timeout_ms` (optional ints) overlay `Settings.tts_first_chunk_timeout_ms` / `tts_timeout_ms`:
+a whole-utterance provider such as Qwen3-TTS produces its first chunk only when the whole unit is
+synthesised, so its profile must size the sink's guards from its measured first-audio distribution
+(DEV_3060TI: 12000 / 15000 ms from p95 11078 / max 14771 ms) — with the 1500 ms default every turn
+timed out. `warmup.timeout_ms` now also overlays `Settings.tts_warmup_timeout_ms`, the budget of the
+TTS provider's `warm_up()` (a cold GPU load + one generation). When `tts.fallback_provider` is
+`piper` behind another primary, `tts.fallback_model_path` overlays `Settings.tts_piper_voice_path`.
+`tts.model_variant` reaches the standalone Qwen3-TTS worker through `make profile-env`
+(`SIM_TTS_QWEN3_MODEL` in `infra/.env.profile`, read by compose's `tts-qwen3` and `make
+run-tts-qwen3`); DEV_3060TI ships `"0.6B"` by measurement (1.7B = 7448 MB > the 7168 MB budget,
+docs/benchmarks/vram.md §2.3).
 
 ### 2.2 `DEV_3060TI.yaml` (BUILT — E18-A; a dedicated card)
 
@@ -779,10 +794,10 @@ probes services and files, so it is fast and can run in CI against fakes.
 | # | SPEC §38 check | How it is performed | PASS when |
 |:--|:--|:--|:--|
 | 1 | CUDA/GPU available | `pynvml.nvmlInit()`; fall back to `nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits` | the call succeeds and reports ≥ 1 device |
-| 2 | expected GPU detected | device name contains `hardware.gpu_name_contains`; free VRAM read from the same source | name matches **and** `free_mb >= vram_budget_mb + min_vram_margin_mb` |
+| 2 | expected GPU detected | device name contains `hardware.gpu_name_contains`; free VRAM read from the same source. STACK-AWARE since E20-G: if the voice agent's loopback preflight endpoints answer 200 (its models are resident), the bound becomes the profile's own remaining allowance | name matches **and** `free_mb >= vram_budget_mb + min_vram_margin_mb` — or, on a warm stack with a `measured_peak_vram_mb`, `free_mb >= vram_budget_mb - measured_peak_vram_mb` (detail says "models loaded"). The pre-start rule alone made the check red on a healthy machine precisely because the models it checks for were loaded (E20-C's §46 walk) |
 | 3 | required model files exist | `os.path.exists` + non-zero size for `llm.model_path`, `asr.model_path`, `tts.model_path`, `vad.model_path`, `warmup.asr_sample_path` | every path exists and is non-empty |
-| 4 | LLM responds | `GET {llm.base_url}/models`, then one `complete(max_tokens=4)` with a 10 s timeout | HTTP 200 and non-empty text, and the reported model id contains `llm.model_name` |
-| 5 | ASR responds | out-of-process: `GET` the voice-agent's `/preflight/asr`, which transcribes `warmup.asr_sample_path` | HTTP 200 and non-empty text |
+| 4 | LLM responds | `GET {Settings.llm_base_url}/models`, then one `complete(max_tokens=4)` with a 10 s timeout. The EFFECTIVE url (the env overlay), never the profile literal — a profile names the compose host name, which does not resolve on a host run (E20-G) | HTTP 200 and non-empty text, and the reported model id contains `llm.model_name` |
+| 5 | ASR responds | out-of-process: `GET` the voice-agent's `/preflight/asr`, which transcribes `warmup.asr_sample_path` (real Russian speech — `models/warmup/warmup_ru.wav`; an empty `SIM_ASR_WARMUP_SAMPLE_PATH` warms on a synthesised tone instead, and a tone transcribes to nothing) | HTTP 200 and at least one CYRILLIC WORD in the text (E20-G: "non-empty" measured the fixture, not the model) |
 | 6 | TTS responds | voice-agent `/preflight/tts`, synthesising `warmup.tts_text` | HTTP 200 and `output_audio_ms > 0` |
 | 7 | PostgreSQL responds | `SELECT 1` on the configured DSN, plus `SELECT count(*) FROM alembic_version` | both succeed and exactly one migration head is present |
 | 8 | Redis responds | `PING`, then `SET`/`GET`/`DEL` of `preflight:probe` | both succeed |
@@ -1155,8 +1170,11 @@ Notes that matter for this project:
   `chat_template_kwargs.enable_thinking=false` effective. The `/no_think` prefix (D10) is kept as a
   belt-and-braces measure for builds that ignore the kwarg.
 - `--flash-attn on` is enabled on both profiles; the pinned build accepts `on|off|auto` (confirmed,
-  E19-F `--help` capture) — if the build reports it unsupported for the card, the launch script
-  falls back to `auto` and logs it.
+  E19-F `--help` capture). **CORRECTED (E20-D, 2026-09-22):** `infra/scripts/llama-server-entrypoint.sh`
+  has no runtime fallback — it always execs `llama-server` with whatever `SIM_LLAMA_FLASH_ATTENTION`
+  resolves to (default `on`) and does not catch or retry on an "unsupported" server error. A card that
+  rejects `on` currently fails the launch; an operator sets `SIM_LLAMA_FLASH_ATTENTION=auto` (or
+  `off`) in the profile/env themselves (E19-F, docs/hld/90-tbd-epics.md E20 row).
 - No flag exposes the server outside the compose network: `--host 0.0.0.0` is bound inside the
   network only and the service publishes **no** host port (SPEC §41).
 - `--metrics` exposes llama.cpp's own Prometheus endpoint for debugging. It is not the source of
@@ -1256,13 +1274,12 @@ this task's report for the timed result)
   (§4.2 step 4), not by this worker** — `voice-agent` polls this worker's `/health` (and drives
   `POST /warm_up`) the way it drives every other provider's `warm_up()`, then publishes
   `voice:health:tts` itself, same as every other service in §4.3's table.
-- **KNOWN GAP (E18-E's report, "HLD gaps"):** `workers/tts_qwen3/tts_qwen3/__main__.py` hard-codes
-  `uvicorn.run(..., host="127.0.0.1", ...)`. Inside its own container that binds the worker to its
-  OWN loopback interface only — `voice-agent` (a different container) cannot actually reach it at
-  `http://tts-qwen3:8112` as this section promises, even though no host port is published either
-  way. Fixing the bind (e.g. an env-overridable host, defaulting to loopback for the bare-metal
-  `make run-tts-qwen3` path) is outside E18-E's file ownership (`__main__.py` belongs to E14-B's
-  slice) — flagged here rather than worked around.
+- **FIXED (E20-A, R3 — was a KNOWN GAP in E18-E's report).**
+  `workers/tts_qwen3/tts_qwen3/__main__.py` reads `SIM_TTS_QWEN3_HOST` (defaulting to loopback for
+  a bare-metal `make run-tts-qwen3`); `infra/docker-compose.yml`'s `tts-qwen3` service now sets
+  `SIM_TTS_QWEN3_HOST: 0.0.0.0`, which is what makes the worker bind inside the container so
+  `voice-agent` can actually reach it at `http://tts-qwen3:8112`, as this section promises — no
+  host port is published either way (SPEC §41).
 - `depends_on`: `redis` (service_started), `postgres` (service_healthy), `livekit`
   (service_started), `llama-server` (service_healthy). It tolerates llama-server being slow anyway —
   the warm-up polls (§4.2) — but the ordering keeps the logs readable.
@@ -1279,6 +1296,15 @@ the repo-root `data/`/`models/` directories and are never baked into an image, a
 because the gate runs entirely on fake providers (D1, D13).
 
 ---
+
+**As built (E20-I) — images and preflight.** `workers/tts_qwen3/Dockerfile` installs a C toolchain
+and `sox` (qwen_tts JIT-compiles Triton kernels and shells out to sox; without them `/warm_up` and
+`/synthesize` answered 503). `workers/voice_agent/Dockerfile` and `backend/Dockerfile` install
+third-party dependencies from `uv.lock` + the workspace manifests BEFORE copying source, with a
+BuildKit uv cache mount: a source-only rebuild takes under a minute, and a PyPI timeout resumes on
+the next build. Under compose, `make preflight` runs inside the `voice-agent` container (the only
+vantage point that reaches the agent's loopback 8113 and `llama-server:8080`); `scenarios/` is
+mounted read-only there for check 10. `make demo-init` starts the compose `postgres` itself.
 
 ## 10. Open items for the manager
 
@@ -1484,18 +1510,25 @@ because the gate runs entirely on fake providers (D1, D13).
     token, bug #4, fixed in E19-E3 — the agent mints its own token via the backend's
     `LiveKitTokenService`); 34 of 39 detected turns answered, **24 of 24 scripted barge-ins cut off
     under the 250 ms budget** over real WebRTC (32 of 32 across both transports). Its *latency*
-    figure is **not publishable**: `speech_end_to_first_audio_ms` is stamped from two different
-    clocks over the LiveKit transport (capture offsets vs session offsets), so all 34 samples came
-    out negative and the benchmark discarded them (`overall.n = 0`,
-    `discarded_nonpositive_count: 34`) rather than invent a percentile (SPEC §27) — open, `E20 R13`.
-    A second, unrelated defect (`E20 R14`) makes the first LiveKit attempt at the shipped
+    figure was **not publishable** at the time of this run: `speech_end_to_first_audio_ms` was
+    stamped from two different clocks over the LiveKit transport (capture offsets vs session
+    offsets), so all 34 samples came out negative and the benchmark discarded them (`overall.n = 0`,
+    `discarded_nonpositive_count: 34`) rather than invent a percentile (SPEC §27) — **`E20 R13`,
+    fixed** (E20-F: `capture_offset_ms` is now defined session-relative on the transport port
+    itself, and a second bug in the same fix — the real agent process never passing a real
+    `started_at` to `VoiceEventAppender`, silently zeroing every offset — is fixed alongside it).
+    A second, unrelated defect (`E20 R14`, **also fixed**, E20-F: the session row's lock mode is
+    now `FOR NO KEY UPDATE` everywhere, compatible with the FK-insert `FOR KEY SHARE` the voice
+    agent's side tables take) had made the first LiveKit attempt at the shipped
     `SIM_SIM_TICK_MS=500` deadlock on the `simulation_sessions` row lock between the runner and the
-    agent after 2 turns; the measured run used a 10 s tick as a benchmark-only environment setting,
-    not a product change. The quoted headline latency therefore remains the in-process figure above,
-    a lower bound excluding the media-plane hop. `docs/benchmarks/e2e.md` (§6 lists all six product
-    bugs this benchmark found, four fixed and two open),
+    agent after 2 turns; the measured run above used a 10 s tick as a benchmark-only environment
+    setting, not a product change — the shipped 500 ms tick is safe for a future run. The quoted
+    headline latency therefore remains the in-process figure above until a post-fix LiveKit re-run
+    (E20-C's §46 walk, not yet performed as of this edit) publishes its own; the in-process figure
+    is a lower bound excluding the media-plane hop either way. `docs/benchmarks/e2e.md` (§6 lists
+    all six product bugs this benchmark found — all six now fixed),
     `docs/benchmarks/results/e2e-DEV_3060TI_SHARED-20260922T091948626Z.json` (in-process),
-    `docs/benchmarks/results/e2e-DEV_3060TI_SHARED-20260922T101931685Z.json` (LiveKit).
+    `docs/benchmarks/results/e2e-DEV_3060TI_SHARED-20260922T101931685Z.json` (LiveKit, pre-fix).
 
 ---
 

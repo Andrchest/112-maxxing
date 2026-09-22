@@ -30,6 +30,9 @@ HLD gaps resolved here, in the reading closest to SPEC (all listed in this task'
 * **§7.4's Latin-run rule** predates enum-typed caller values: the demo scenario releases
   `incident.type = FIRE`, so a caller who repeats a value the gate released would be rejected for
   speaking English. A Latin token that is in this turn's permitted set is therefore exempt.
+  §7.4 also owns the *language* of the whole utterance (E20-A, R5): a completion with letters but
+  no Cyrillic letter at all is a `META_LANGUAGE` failure, because the caller speaks Russian
+  (SPEC §23). That is checked before the Latin-run rule, which only ever saw individual tokens.
 * **§7.5's `SMALL_COUNT_ALLOWLIST`** is specified as applying "when the token is a bare count
   adjacent to a noun", which is not decidable without a part-of-speech model. The allowlist is
   applied to the value alone; the §43 run empties it, which is where the difference matters.
@@ -130,6 +133,19 @@ CALLER_UTTERANCE_FIELD = "utterance"
 #: truthy. Latin is accepted as well as Cyrillic here even though §7.4 dislikes Latin runs: that
 #: is `META_LANGUAGE`/§7.4's job, and `EMPTY` must not quietly become a second language check.
 _LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+#: §7.4, widened in E20-A (R5): the caller is a Russian speaker on a Russian emergency line
+#: (SPEC §23 — the caller's own lines and the whole trainee-facing UI are Russian), so an
+#: utterance that carries letters but not one Cyrillic letter is the model answering in the wrong
+#: language. `META_LANGUAGE` owns that: it is a *language* failure, and the existing Latin-run
+#: rule below only caught runs of `META_MIN_LATIN_RUN`+ characters that were neither allowlisted
+#: nor permitted this turn — "Ok, yes" slipped through all of them. `EMPTY` deliberately stays
+#: "no letter at all" and is not quietly turned into a second language check.
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
+#: Characters no caller ever pronounces: the JSON wrapper's own structure, markup, escapes
+#: (E20-I: the real `make up` walk produced `}I не знаю…`, which every other rule passed because the
+#: line does contain Cyrillic). Mirrors `grammar._SPEECH_CHAR`'s exclusions.
+_STRUCTURAL_RE = re.compile(r"[{}\[\]<>\\`]")
 
 
 class CallerUtterance(BaseModel):
@@ -382,6 +398,17 @@ class ResponseValidator:
             )
             return ValidationVerdict(ok=False, failures=tuple(failures))
 
+        if _STRUCTURAL_RE.search(stripped):
+            # E20-I: the grammar's `speech-char` already excludes these; this is the backstop for
+            # the non-grammar `json_schema` path and for any provider that ignores the grammar.
+            failures.append(
+                ValidationFailure(
+                    ValidationFailureCode.SCHEMA_INVALID,
+                    "structural (JSON/markup) characters leaked into the spoken text",
+                )
+            )
+            return ValidationVerdict(ok=False, failures=tuple(failures))
+
         self._check_length(stripped, failures)
         normalized = normalize_text(stripped)
         permitted = self._permitted(
@@ -531,6 +558,24 @@ class ResponseValidator:
                     )
                 )
                 return
+        # The whole-utterance language rule (E20-A, R5). The per-token Latin-run rule below only
+        # fires on runs of `META_MIN_LATIN_RUN`+ characters, so "Ok, yes" — an English answer in
+        # short words — passed every check. The same two exemptions apply as below: a value this
+        # turn's gate released, and §7.4's own `LATIN_ALLOWLIST`, are things a Russian caller may
+        # legitimately say, so an utterance made only of those is not a language failure.
+        if not _CYRILLIC_RE.search(normalized.normalized) and any(
+            _LETTER_RE.search(token.text)
+            and token.text not in LATIN_ALLOWLIST
+            and token.text not in permitted.tokens
+            for token in normalized.tokens
+        ):
+            failures.append(
+                ValidationFailure(
+                    ValidationFailureCode.META_LANGUAGE,
+                    "the utterance carries no Cyrillic letter — the caller speaks Russian",
+                )
+            )
+            return
         for token in normalized.tokens:
             if not token.is_latin or len(token.text) < META_MIN_LATIN_RUN:
                 continue

@@ -40,6 +40,7 @@ from app.application.ports.clock import Clock
 from app.application.ports.dialogue_turn_repository import DialogueTurnUpsert
 from app.application.ports.transcript_segment_repository import StoredTranscriptSegment
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.simulation.sim_time import running_ms
 from app.application.timebase import session_offset_ms
 from app.application.voice.turn_detector import DetectedTurn, SpeechStarted
 from app.domain.common.actors import ActorRef
@@ -48,6 +49,7 @@ from app.domain.enums import ActorType
 from app.domain.events.catalog import validate_payload
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
+from app.domain.session.session import SimulationSession
 
 __all__ = [
     "VoiceEventAppender",
@@ -365,6 +367,7 @@ def caller_tts_started_event(
     provider: str,
     model_version: str,
     first_audio_offset_ms: int,
+    voice_id_native: str | None = None,
 ) -> DomainEvent:
     """`CALLER_TTS_STARTED` — the **first** frame has been handed to the transport (§3.7).
 
@@ -372,6 +375,16 @@ def caller_tts_started_event(
     `speech_end_to_first_audio_ms` are both about audio that actually left, so this event is
     emitted from the playback tee and never from the `stream()` call site. `text_sent_to_tts` is
     §10.13's key and SPEC §25's requirement — the *exact* text handed to the provider.
+
+    ADDITIVE `voice_id_native` (E20-G/G6, HLD 10 §10.13): `voice_id` is the SCENARIO-LOGICAL id
+    the scenario cast (`ru_female_adult_01`); `voice_id_native` is what the selected provider was
+    actually asked to speak with after the active model profile's `tts.voice_map` resolved it
+    (`Serena`). Both are recorded because an audit that only has the logical id cannot tell which
+    voice was heard, and one that only has the native id cannot tell what the scenario asked for.
+    It is a CALLER detail and is dropped for trainees exactly like `planned_text`
+    (`app.application.realtime.redaction`, HLD 40 §40.4 row 12 — that row already whitelists only
+    `{call_id, turn_index, at_offset_ms}`, so the key never reaches a trainee socket). `None`
+    when the provider does not resolve voices (`FakeTTS`) — the key is then absent.
     """
     return _event(
         EventType.CALLER_TTS_STARTED,
@@ -391,6 +404,7 @@ def caller_tts_started_event(
             "provider": provider,
             "model_version": model_version,
             "first_audio_offset_ms": first_audio_offset_ms,
+            **({"voice_id_native": voice_id_native} if voice_id_native is not None else {}),
         },
         correlation_id=turn_id,
     )
@@ -569,10 +583,20 @@ class VoiceEventAppender:
         return self._session_id
 
     def offset_ms(self) -> int:
-        """The session offset an event appended *now* is stamped with (SPEC §39, D7).
+        """A quick, in-process estimate of the session offset *right now* (SPEC §39, D7).
 
         Derived from the persisted `started_at` and the injected `Clock`, never from a process
-        counter, so an event appended after a restart lines up with the ones before it.
+        counter, so it survives a restart. Callers use this synchronously, before `append()` is
+        even called, to build an event's payload and to measure in-process relative latencies
+        (`application/voice/turn_pipeline.py`'s hot path) — it does not read the database and does
+        not need to be exact.
+
+        It is deliberately NOT the value that ends up persisted: `append()` below re-stamps every
+        event's `monotonic_offset_ms` from a fresh read of the session row at append time, which
+        is what actually freezes during an open `ROLE_TRANSITION` (E20-E2, R11 follow-up). This
+        method stays the raw, unfrozen `session_offset_ms` it always was — good enough for a
+        payload field and a latency diff, wrong for the one number SPEC §39/D7 care about, which
+        is why `append()` no longer trusts it.
         """
         return session_offset_ms(self._clock.now(), self._started_at)
 
@@ -590,10 +614,40 @@ class VoiceEventAppender:
         the `transcript_segments` row and the `ASR_FINAL` that names it are one write, so
         `ASR_FINAL.transcript_segment_id` never points at a row that is not there — and a failure
         on either side leaves neither (E12's atomicity test asserts both directions).
+
+        **The persisted offset comes from here, not from `offset_ms()`** (E20-E2, R11 follow-up:
+        the audit-2 "raw wall offset" finding). Every other application-layer writer stamps
+        `monotonic_offset_ms` with `app.application.simulation.sim_time.running_ms` — frozen for
+        the duration of an open `ROLE_TRANSITION` (`sim_time.py`'s module docstring) — and this
+        was the one that did not. Fixed by reading the session row fresh, in the SAME transaction
+        this method already opens (`uow.sessions.get(...)`, the plain, UNLOCKED read — never
+        `get_for_update`: R14 gives the `simulation_sessions` row exactly one lock mode and one
+        acquirer, `EventStore.append`'s own `seq_no` allocation; a second lock here would be a new
+        way to deadlock it), and re-stamping every event of the batch with `running_ms(session,
+        clock.now())` before it reaches `EventStore.append`. `events` passed in already carry a
+        `monotonic_offset_ms` from `offset_ms()` above — that value is what a lookup that finds
+        nothing, or fails outright (`SessionRepository.get` raises `LookupError` for a row whose
+        `incidents` sibling is missing — a real invariant violation in production, but a shortcut
+        some lower-level fixtures take on purpose), falls back to: a session lookup problem
+        degrades to the old, raw-offset behaviour rather than refusing the append.
         """
         if not events and not segments and not transcript_segments and not dialogue_turns:
             return []
         async with self._uow_factory() as uow:
+            if events:
+                session: SimulationSession | None = None
+                try:
+                    session = await uow.sessions.get(self._session_id)
+                except LookupError:
+                    # No aggregate for this row (fixtures without an incident): keep the raw
+                    # offset already on `events` — never refuse the append for that.
+                    session = None
+                if session is not None:
+                    frozen_offset_ms = running_ms(session, self._clock.now())
+                    events = [
+                        event.model_copy(update={"monotonic_offset_ms": frozen_offset_ms})
+                        for event in events
+                    ]
             if segments:
                 await uow.audio_segments.add_all(segments)
             for segment in transcript_segments:

@@ -272,13 +272,20 @@ def test_the_limit_truncates_and_leaves_a_usable_cursor() -> None:
     assert page.last_seq_no == 2
 
 
-def test_the_source_world_event_id_travels_for_the_instructor() -> None:
-    """The view carries it; §40.4's redaction is what removes it from a trainee's *event*."""
-    page = radio_message_views(
-        [_radio_event(1, RoleType.DDS)], incident_id=INCIDENT_ID, to_role=RoleType.DDS
-    )
+def test_the_source_world_event_id_never_reaches_the_radio_view() -> None:
+    """INV 3 (E20-A, R1): the trainee-facing REST projection drops the hidden provenance id.
 
-    assert page.items[0].source_world_event_id == "ac2_breakdown"
+    The payload the projection reads still carries it — the WS path redacts it for trainees
+    (§40.4) and the instructor's own surfaces read the event log directly — but `RadioMessageView`
+    is what the DDS console renders, so it must not declare or carry the field at all.
+    """
+    event = _radio_event(1, RoleType.DDS)
+    assert event.payload["source_world_event_id"] == "ac2_breakdown"
+
+    page = radio_message_views([event], incident_id=INCIDENT_ID, to_role=RoleType.DDS)
+
+    assert "source_world_event_id" not in page.items[0].model_fields
+    assert "source_world_event_id" not in page.items[0].model_dump()
 
 
 def test_a_resource_id_in_the_payload_is_carried_through() -> None:

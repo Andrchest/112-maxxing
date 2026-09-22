@@ -1863,6 +1863,11 @@ export interface components {
             /** Format: uuid */
             actor_user_id: string;
         };
+        /**
+         * @description Trainee-facing (DDS/operator console). INV 3: the notification's
+         *     `source_world_event_id` — the hidden world event that produced it — is NOT part of this
+         *     schema, exactly as the WS path redacts it (`docs/hld/40-realtime-protocol.md` §215-239).
+         */
         NotificationView: {
             /** Format: uuid */
             notification_id: string;
@@ -1873,12 +1878,12 @@ export interface components {
             title_ru: string;
             body_ru: string;
             created_at_offset_ms: number;
-            source_world_event_id: string | null;
             acknowledged_at_offset_ms: number | null;
         };
         /**
          * @description Projected from `RADIO_MESSAGE_CREATED` events; there is no radio table
          *     (`docs/hld/20-db-schema.md` §20.1). `seq_no` is the log position it was read from.
+         *     Trainee-facing. INV 3: no `source_world_event_id`, as on `NotificationView`.
          */
         RadioMessageView: {
             /** Format: uuid */
@@ -1892,7 +1897,6 @@ export interface components {
             /** Format: uuid */
             resource_id: string | null;
             created_at_offset_ms: number;
-            source_world_event_id: string | null;
         };
         CloseIncidentRequest: {
             closure_reason: components["schemas"]["ClosureReason"];
@@ -1921,6 +1925,10 @@ export interface components {
             value_types: {
                 [key: string]: components["schemas"]["ValueType"];
             };
+            /** @description ADDITIVE (E20-E R11): `fact_id -> FactDefinition.label_ru` for every key of `facts`, joined from the active `ScenarioVersion` (§10.4). Absent for a `fact_id` the join cannot resolve; never a fabricated label. */
+            label_ru?: {
+                [key: string]: string;
+            };
         };
         /** @description `CallerBelief` — what the simulated caller believes, plus current emotion. Instructor only. */
         CallerBeliefView: {
@@ -1940,6 +1948,10 @@ export interface components {
             stress_level: number;
             /** @description Written only by `FACTS_DELIVERED`, never by the gate (D10). */
             revealed_fact_ids: string[];
+            /** @description ADDITIVE (E20-E R11): the same `fact_id -> FactDefinition.label_ru` join `WorldTruthView.label_ru` carries, over this view's own `facts` keys. */
+            label_ru?: {
+                [key: string]: string;
+            };
         };
         /** @description One `GateDecision` from `FACT_GATE_EVALUATED`. Gate internals are instructor-only (D3). */
         GateDecisionView: {
@@ -2101,10 +2113,14 @@ export interface components {
                 resource_ids: string[];
                 callsigns: string[];
                 is_additional: boolean;
+                /** @description ADDITIVE (E20-E R11): the trainee's free-text dispatch note (`RESOURCE_DISPATCHED.note_ru`, E17 R2). `null`/absent when none was given. */
+                note_ru?: string | null;
             }[];
             status_updates: components["schemas"]["StatusUpdateView"][];
             closure_reason: components["schemas"]["ClosureReason"] | null;
             closed_at_offset_ms: number | null;
+            /** @description ADDITIVE (E20-E R11): the trainee's free-text closure comment (`DDS_INCIDENT_CLOSED.comment_ru`, E17 R2). `null`/absent when none was given or the leg is not yet closed. */
+            comment_ru?: string | null;
         };
         /** @description One `RESOURCE_STATUS_CHANGED` step — the resource timeline of SPEC §29. */
         ResourceTimelineEntryView: {
@@ -2126,6 +2142,7 @@ export interface components {
             speech_end_to_first_audio_ms_p50: number | null;
             speech_end_to_first_audio_ms_p95: number | null;
             asr_latency_ms_p50: number | null;
+            /** @description null by construction on the shipped configuration (E20-H, H3), not a bug: the interpreter and generator LLM calls are non-streaming (`app/application/dialogue/interpreter.py`, `generator.py`), so their `inference_metrics.ttft_ms` is written as `None` — there is no distinct "first token" instant to measure when the whole completion arrives at once — and `percentile()` over an empty sample is `null` (SPEC §27: never fake a value). A streaming LLM provider would make this non-null without any change to this aggregation (`app.application.reports.timing_metrics`). */
             llm_ttft_ms_p50: number | null;
             tts_first_audio_ms_p50: number | null;
             barge_in_cutoff_ms_p95: number | null;

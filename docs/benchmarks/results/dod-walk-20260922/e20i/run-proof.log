@@ -1,0 +1,105 @@
+=== 00:04:57 GPU before
+7842 MiB
+8c8
+< SIM_CALL_TRANSPORT=fake
+---
+> SIM_CALL_TRANSPORT=livekit
+25,26c25,26
+< SIM_VAD_PROVIDER=energy
+< SIM_ASR_PROVIDER=fake
+---
+> SIM_VAD_PROVIDER=silero
+> SIM_ASR_PROVIDER=gigaam
+30c30
+< SIM_LLM_PROVIDER=fake
+---
+> SIM_LLM_PROVIDER=llama_cpp
+40c40
+< SIM_TTS_PROVIDER=fake
+---
+> SIM_TTS_PROVIDER=qwen3_tts
+=== 00:04:57 make demo-init
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+uv run python -m app.tools.seed_users
+seeded trainee (TRAINEE)
+seeded instructor (INSTRUCTOR)
+seeded admin (ADMIN)
+uv run python -m app.tools.import_scenarios scenarios/examples
+1 file(s): 0 scenario(s) created, 0 version(s) created, 1 version(s) already up to date
+=== 00:05:10 TTS_COMPOSE_PROFILE=qwen3-tts make up
+ Container sim112dev-voice-agent-1 Waiting 
+ Container sim112dev-livekit-1 Waiting 
+ Container sim112dev-backend-1 Waiting 
+ Container sim112dev-postgres-1 Waiting 
+ Container sim112dev-tts-qwen3-1 Waiting 
+ Container sim112dev-llama-server-1 Waiting 
+ Container sim112dev-redis-1 Healthy 
+ Container sim112dev-postgres-1 Healthy 
+ Container sim112dev-livekit-1 Healthy 
+ Container sim112dev-llama-server-1 Healthy 
+ Container sim112dev-frontend-1 Healthy 
+ Container sim112dev-backend-1 Healthy 
+ Container sim112dev-tts-qwen3-1 Healthy 
+ Container sim112dev-voice-agent-1 Healthy 
+MAKE_UP_EXIT=0 after 101 s
+backend Up About a minute (healthy)
+frontend Up About a minute (healthy)
+livekit Up About a minute (healthy)
+llama-server Up About a minute (healthy)
+postgres Up About a minute (healthy)
+redis Up About a minute (healthy)
+tts-qwen3 Up About a minute (healthy)
+voice-agent Up About a minute (healthy)
+=== 00:06:51 waiting for GET /health/ready overall=READY (cold warm-up of every model)
+ready: READY [] after 0 s
+=== 00:06:51 make preflight
+infra/scripts/preflight.sh 
+preflight — profile DEV_3060TI
+[PASS]  1. cuda_gpu_available: 1 GPU(s): NVIDIA GeForce RTX 3060 Ti
+[PASS]  2. expected_gpu_detected: NVIDIA GeForce RTX 3060 Ti: 2434 MB free >= 1608 MB required (models loaded (voice-agent :8113 ASR+TTS ready): vram_budget_mb 7168 - measured_peak_vram_mb 5560)
+[PASS]  3. model_files_exist: 5 file(s) present
+[PASS]  4. llm_responds: Qwen3.5-2B
+[PASS]  5. asr_responds: Проверка готовности перед началом смены.
+[PASS]  6. tts_responds: 1840 ms of audio (ok)
+[PASS]  7. postgresql_responds: SELECT 1 ok; exactly one alembic head
+[PASS]  8. redis_responds: PING ok; SET/GET/DEL ok
+[PASS]  9. livekit_responds: GET http://livekit:7880 -> 200
+[PASS] 10. scenario_validation: 1 scenario file(s) valid
+[SKIP] 11. audio_devices_accessible: skipped (--skip-audio-devices or AUDIO_DEVICE_CHECK != true)
+[SKIP] 12. llama_server_binary: SIM_LLAMA_SERVER_BIN is not set
+exit code: 0
+=== 00:06:57 proof call
+[00:06:58] createSession -> 201
+[00:06:58] startSession -> 200 
+[00:07:00] CALL_RINGING seq 4 offset 71 ms
+[00:07:00] answerCall -> 200
+[00:07:00] inject: 3 trainee turns, --wait-caller
+[00:08:02] inject exit 0
+[00:08:12]   seq    4 +     71 ms CALL_RINGING               {}
+[00:08:12]   seq   15 +   7278 ms ASR_FINAL                  {"text": "Служба 112. Что у вас случилось?"}
+[00:08:12]   seq   20 +   8636 ms CALLER_RESPONSE_GENERATED  {"text": "У меня в квартире горит. Видно дым. Есть риск возгорания."}
+[00:08:12]   seq   21 +  10305 ms CALLER_TTS_STARTED         {"text": "У меня в квартире горит. Видно дым. Есть риск возгорания.", "voice_id_native": "Serena", "provider": "qwen3_tts"}
+[00:08:12]   seq   22 +  18797 ms CALLER_TTS_ENDED           {}
+[00:08:12]   seq   23 +  18842 ms FACTS_DELIVERED            {"fact_ids": ["incident.type", "incident.smoke_visible"]}
+[00:08:12]   seq   29 +  20920 ms ASR_FINAL                  {"text": "Назовите улицу."}
+[00:08:12]   seq   35 +  21533 ms CALLER_RESPONSE_GENERATED  {"text": "У меня в квартире горит. Видно дым. Есть риск возгорания."}
+[00:08:12]   seq   39 +  22630 ms ASR_FINAL                  {"text": "И номер дома."}
+[00:08:12]   seq   43 +  23685 ms CALLER_RESPONSE_GENERATED  {"text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете."}
+[00:08:12]   seq   44 +  23820 ms CALLER_TTS_STARTED         {"text": "У меня в квартире горит. Видно дым. Есть риск возгорания.", "voice_id_native": "Serena", "provider": "qwen3_tts"}
+[00:08:12]   seq   45 +  25372 ms CALLER_TTS_STARTED         {"text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.", "voice_id_native": "Serena", "provider": "qwen3_tts"}
+[00:08:12]   seq   46 +  38717 ms MODEL_ERROR                {"provider": "qwen3_tts", "component": "TTS", "stage": "TTS", "error_code": "TIMEOUT"}
+[00:08:12]   seq   47 +  38972 ms MODEL_FALLBACK_USED        {"component": "TTS", "stage": "TTS"}
+[00:08:12]   seq   48 +  39075 ms CALLER_TTS_STARTED         {"text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.", "voice_id_native": "ru_RU-irina-medium", "provider": "piper"}
+[00:08:12]   seq   50 +  42783 ms CALLER_UTTERANCE_INTERRUPTED {"planned_text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете."}
+[00:08:12]   seq   55 +  44337 ms ASR_FINAL                  {"text": "Что именно горит в квартире?"}
+[00:08:12]   seq   59 +  45598 ms CALLER_RESPONSE_GENERATED  {"text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания."}
+[00:08:12]   seq   60 +  47229 ms CALLER_TTS_STARTED         {"text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.", "voice_id_native": "Serena", "provider": "qwen3_tts"}
+[00:08:12]   seq   61 +  56779 ms CALLER_TTS_ENDED           {}
+[00:08:12] session ce835582-a6f8-47f1-9199-5beec49e8652 counts {'CALL_RINGING': 1, 'ASR_FINAL': 4, 'CALLER_RESPONSE_GENERATED': 4, 'CALLER_TTS_STARTED': 5, 'CALLER_TTS_ENDED': 2, 'FACTS_DELIVERED': 1, 'MODEL_ERROR': 1, 'MODEL_FALLBACK_USED': 1, 'CALLER_UTTERANCE_INTERRUPTED': 1}
+PROOF_EXIT=0
+=== 00:08:12 GPU during
+4064887, 1504 MiB
+4065873, 1656 MiB
+4065854, 2372 MiB
+=== 00:08:12 done (stack left UP for inspection)

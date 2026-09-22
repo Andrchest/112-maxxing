@@ -16,8 +16,9 @@ table data:
   `ROLE_STAGE_COMPLETED`) is a use-case-level convention applied on top of every fired
   transition, not per-row table data — `Transition.emits` has no list field to hold two events.
 
-Guard *callables* for the `guard_name`s below are not implemented here — see
-`common/state_machine.py`'s module docstring and this task's report ("HLD gaps" / `TODO(E5)`).
+Guard *callables* for the `guard_name`s below are not implemented here — they live in
+`session/guards.py` (`SESSION_GUARDS`, `OPERATOR_112_GUARDS`, `DDS_GUARDS`) and are wired into the
+state machines by `roles/registry.py`; see `common/state_machine.py`'s module docstring.
 """
 
 from __future__ import annotations

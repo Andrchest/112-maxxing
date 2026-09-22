@@ -103,6 +103,27 @@ TRIGGER_FACT_REVEALED = "FACT_REVEALED"
 TRIGGER_INTERRUPTION_COUNT = "INTERRUPTION_COUNT"
 
 
+def _native_voice_id(provider: TTSProvider, voice_id: str) -> str | None:
+    """The provider-native voice behind the scenario's LOGICAL `voice_id`, or `None` (E20-G/G6).
+
+    `TTSProvider` (the port, `app.application.ports.tts`) does not declare a resolver: a provider
+    that has exactly one voice (`FakeTTS`) has nothing to resolve, and widening the port for an
+    optional audit field would force every adapter and every test double to implement it. The
+    adapters that DO map logical ids (`Qwen3TTS`, `PiperTTS`) expose `native_voice_id(str) -> str`
+    and are picked up here by duck-typing; anything else answers `None` and the key is simply
+    absent from `CALLER_TTS_STARTED`. The call is idempotent — an unmapped id's WARN fires once
+    per id inside the adapter, not once per event.
+    """
+    resolve = getattr(provider, "native_voice_id", None)
+    if not callable(resolve):
+        return None
+    try:
+        native = resolve(voice_id)
+    except Exception:  # an audit field must never take a turn down
+        return None
+    return native if isinstance(native, str) and native else None
+
+
 # ---------------------------------------------------------------------------------------------
 # §6.3: `delivered_text`
 # ---------------------------------------------------------------------------------------------
@@ -572,6 +593,7 @@ class TtsSpeechSink:
         """`CALLER_TTS_STARTED` + SPEC §27's `speech_end_to_first_audio_ms` (§3.7, §8)."""
         context = active.context
         planned = active.planned
+        voice_id = (await self._voice_for(context.session_id)).voice_id
         await context.appender.append(
             [
                 caller_tts_started_event(
@@ -580,7 +602,8 @@ class TtsSpeechSink:
                     turn_index=planned.turn_index,
                     offset_ms=context.appender.offset_ms(),
                     text=planned.text,
-                    voice_id=(await self._voice_for(context.session_id)).voice_id,
+                    voice_id=voice_id,
+                    voice_id_native=_native_voice_id(active.provider, voice_id),
                     provider=active.provider.provider_name,
                     model_version=active.provider.model_version,
                     first_audio_offset_ms=first_audio_offset_ms,

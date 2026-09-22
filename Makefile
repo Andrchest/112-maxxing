@@ -39,9 +39,13 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject
+# `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
+# environment down to the base dependency set, silently uninstalling the ML extras a previous
+# `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
+# targets to ADD an extra; `make deps` is only ever the baseline.
 deps:
-	$(UV) sync --all-packages --group dev
+	$(UV) sync --all-packages --group dev --inexact
 	cd frontend && npm ci
 # The heavy ML extras (E12): onnxruntime (SileroVAD) + torch/torchaudio/transformers/hydra-core/
 # omegaconf/sentencepiece (GigaAMProvider). `--inexact` so this never strips packages another
@@ -197,8 +201,13 @@ models-tts-qwen3:
 # E14-D: `QWEN3_TTS_VARIANT` (default `1.7B`, same as `models-tts-qwen3`) is passed through as
 # `SIM_TTS_QWEN3_MODEL` — `tts_qwen3.server.create_app()` resolves it against `MODEL_VARIANTS` and
 # refuses to start the process on an unknown value.
-run-tts-qwen3:
-	SIM_TTS_QWEN3_MODEL=$(QWEN3_TTS_VARIANT) workers/tts_qwen3/.venv/bin/python -m tts_qwen3
+# E20: the variant follows the active profile (`make profile-env` writes SIM_TTS_QWEN3_MODEL into
+# infra/.env.profile, exactly as compose's tts-qwen3 service reads it); an explicit
+# `QWEN3_TTS_VARIANT=...` on the command line or in the environment still wins.
+run-tts-qwen3: profile-env
+	set -a && . $(PROFILE_ENV_FILE) && set +a && \
+	SIM_TTS_QWEN3_MODEL=$(if $(filter command line environment,$(origin QWEN3_TTS_VARIANT)),$(QWEN3_TTS_VARIANT),$${SIM_TTS_QWEN3_MODEL:-$(QWEN3_TTS_VARIANT)}) \
+	workers/tts_qwen3/.venv/bin/python -m tts_qwen3
 # The fake-model-factory suite (`workers/tts_qwen3/tests/test_server.py`), in the worker's own
 # venv — this task's brief, item 1: "run in ITS OWN venv only if you created it".
 test-tts-qwen3:
@@ -322,7 +331,7 @@ run-api:
 seed-users:
 	$(UV) run python -m app.tools.seed_users
 test-backend: infra-up
-	$(UV) run pytest -q -n $(PYTEST_WORKERS) --dist loadfile
+	SIM_ENV_FILE= $(UV) run pytest -q -n $(PYTEST_WORKERS) --dist loadfile
 gate-backend: lint typecheck boundaries scenarios db-check compose-check test-backend
 gate-frontend:
 	cd frontend && npm run check:api && npm run lint && npm run typecheck && npm run test -- --run && npm run build
@@ -341,8 +350,13 @@ compose-check:
 # for infra/scripts/llama-server-entrypoint.sh to read — see that script's own header comment.
 # Depends on E18-A's `app.config.profile.load_profile`; fails loudly (not silently) if that module
 # or the named profile YAML is not yet present, rather than inventing a flag value (SPEC §26/§27).
+# PROFILE_MODELS_ROOT is where the READER of infra/.env.profile will find the model files
+# (E20-G/G8). `/models` is the compose mount, so `make up`'s llama-server container gets the
+# profile's own paths untouched; `run-llama-server` below overrides it with the host's ./models
+# (or SIM_MODELS_ROOT) so a host run needs no hand-exported SIM_LLAMA_MODEL_PATH.
+PROFILE_MODELS_ROOT ?= /models
 profile-env:
-	$(UV) run python -m app.config.profile_env --profile $(SIM_MODEL_PROFILE) --emit-env > $(PROFILE_ENV_FILE)
+	$(UV) run python -m app.config.profile_env --profile $(SIM_MODEL_PROFILE) --emit-env --models-root $(PROFILE_MODELS_ROOT) > $(PROFILE_ENV_FILE)
 # Wraps `python -m app.cli preflight` (docs/hld/60-inference-ops.md §5, SPEC §38); pass flags
 # straight through, e.g. `make preflight ARGS='--profile DEV_3060TI --json'`.
 preflight:
@@ -353,6 +367,10 @@ preflight:
 # own newer build is one example: SIM_LLAMA_SERVER_BIN=~/src/llama.cpp/build/bin/llama-server —
 # never hard-coded here, since that path is this machine's, not every developer's). Binds
 # loopback-only on LLAMA_SERVER_PORT (default 8180), never 8000/8001/8011/8012/8016.
+# E20-G/G8: a target-specific variable, which GNU make propagates into the `profile-env`
+# prerequisite — so the file this target then sources already names a path that exists on THIS
+# host. E20-C's walk had to export SIM_LLAMA_MODEL_PATH by hand because it did not.
+run-llama-server: PROFILE_MODELS_ROOT = $(or $(SIM_MODELS_ROOT),./models)
 run-llama-server: profile-env
 	set -a && . $(PROFILE_ENV_FILE) && set +a && \
 	SIM_LLAMA_HOST=$(LLAMA_SERVER_HOST) SIM_LLAMA_PORT=$(LLAMA_SERVER_PORT) \
@@ -396,3 +414,25 @@ bench-e2e:
 bench-vram:
 	$(UV) run python benchmarks/benchmark_vram.py --profile $(PROFILE) $(BENCH_ARGS)
 bench-all: bench-asr bench-llm bench-tts bench-e2e bench-vram
+
+# --- E20-B: one-shot demo bootstrap + mic-less injection (R7/R8, docs/RUNBOOK.md) ----------------
+# `demo-init` is the fresh-clone-to-demo-data path in one idempotent command: `migrate` is
+# idempotent (Alembic no-ops once the DB is at head), `seed-users` is an upsert keyed on username,
+# and `app.tools.import_scenarios` is a no-op on a version it has already imported with the same
+# content (`app/application/scenarios/import_scenarios.py`'s own D4 contract — re-running this
+# target against an already-seeded database is safe and its last line reads "0 version(s) created"
+# the second time; no `--skip-existing` flag was needed, the use case already behaves that way).
+# E20: the README's fresh-clone path runs `demo-init` BEFORE `make up` (the backend container does
+# not migrate on start), so `demo-db` starts the compose `postgres` itself first — idempotent,
+# `up --wait` returns at once when it is already healthy. Needs `.env` (COMPOSE_FULL reads it).
+demo-db:
+	$(COMPOSE_FULL) up -d --wait postgres
+demo-init: demo-db migrate seed-users
+	$(UV) run python -m app.tools.import_scenarios scenarios/examples
+# Mic-less demo: logs in as the seeded trainee, joins SESSION's LiveKit room and plays WAV(s) at
+# real-time pace (R8) — `workers/voice_agent/voice_agent/tools/inject.py`. The session's call must
+# already be RINGING or CONNECTED and `make preflight` green first (the CLI's own docstring names
+# the trap). Pass flags straight through, e.g.
+#   make demo-inject ARGS='--session <id> --wav a.wav --wav b.wav --wait-caller'
+demo-inject:
+	$(UV) run python -m voice_agent.tools.inject $(ARGS)

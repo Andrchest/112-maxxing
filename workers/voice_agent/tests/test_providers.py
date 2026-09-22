@@ -152,6 +152,60 @@ def test_the_silero_branch_passes_the_configured_model_path(
     }
 
 
+def test_a_host_run_resolves_the_profiles_container_path_onto_sim_models_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """E20 R15: off compose the weights are under `SIM_MODELS_ROOT`, never at `/models`.
+
+    A profile fills `vad_model_path` with `/models/vad/silero_vad.onnx`. Before this, a host-run
+    agent opened that verbatim, `SileroVAD` raised `ModelNotAvailableError`, the VAD went FATAL
+    and the agent served no call while reporting itself healthy (E19-E2/E3, measured).
+    """
+    weights = tmp_path / "vad" / "silero_vad.onnx"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"x")
+    captured: dict[str, Any] = {}
+
+    class StubSilero:
+        def __init__(self, *, model_path: str, threshold_hint: float | None = None) -> None:
+            captured.update(model_path=model_path)
+
+    module = _stub_module("app.inference.vad.silero_vad", SileroVAD=StubSilero)
+    monkeypatch.setitem(sys.modules, "app.inference.vad.silero_vad", module)
+
+    build_vad(
+        settings(
+            vad_provider=VAD_SILERO,
+            vad_model_path="/models/vad/silero_vad.onnx",
+            models_root=str(tmp_path),
+        ),
+        VoiceTurnConfig(),
+    )
+
+    assert captured["model_path"] == str(weights)
+
+
+def test_under_compose_the_container_path_is_passed_through_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`SIM_MODELS_ROOT` defaults to `/models`, so compose sees exactly the profile's path."""
+    captured: dict[str, Any] = {}
+
+    class StubSilero:
+        def __init__(self, *, model_path: str, threshold_hint: float | None = None) -> None:
+            captured.update(model_path=model_path)
+
+    module = _stub_module("app.inference.vad.silero_vad", SileroVAD=StubSilero)
+    monkeypatch.setitem(sys.modules, "app.inference.vad.silero_vad", module)
+
+    build_vad(
+        settings(vad_provider=VAD_SILERO, vad_model_path="/models/vad/silero_vad.onnx"),
+        VoiceTurnConfig(),
+    )
+
+    assert captured["model_path"] == "/models/vad/silero_vad.onnx"
+
+
 def test_the_gigaam_branch_passes_the_configured_model_and_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,8 +282,24 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
     captured: dict[str, Any] = {}
 
     class StubQwen3TTS:
-        def __init__(self, *, base_url: str, speaker: str, timeout_ms: int) -> None:
-            captured.update(base_url=base_url, speaker=speaker, timeout_ms=timeout_ms)
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            speaker: str,
+            timeout_ms: int,
+            warmup_timeout_ms: int | None = None,
+            voice_map: Any = None,
+            default_voice: Any = None,
+        ) -> None:
+            captured.update(
+                base_url=base_url,
+                speaker=speaker,
+                timeout_ms=timeout_ms,
+                warmup_timeout_ms=warmup_timeout_ms,
+                voice_map=voice_map,
+                default_voice=default_voice,
+            )
 
     module = _stub_module("app.inference.tts.qwen3_tts", Qwen3TTS=StubQwen3TTS)
     monkeypatch.setitem(sys.modules, "app.inference.tts.qwen3_tts", module)
@@ -240,6 +310,9 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
             tts_qwen3_base_url="http://127.0.0.1:8112",
             tts_qwen3_speaker="Serena",
             tts_timeout_ms=9000,
+            tts_warmup_timeout_ms=45000,
+            tts_voice_map={"ru_female_adult_01": "Serena"},
+            tts_default_voice="Serena",
         )
     )
 
@@ -247,6 +320,10 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
         "base_url": "http://127.0.0.1:8112",
         "speaker": "Serena",
         "timeout_ms": 9000,
+        "warmup_timeout_ms": 45000,
+        # E20-G/G6: the PRIMARY slot carries the profile's logical -> native voice table.
+        "voice_map": {"ru_female_adult_01": "Serena"},
+        "default_voice": "Serena",
     }
 
 
@@ -257,15 +334,21 @@ def test_the_piper_branch_passes_the_configured_voice_path(
     captured: dict[str, Any] = {}
 
     class StubPiperTTS:
-        def __init__(self, *, voice_path: str) -> None:
-            captured.update(voice_path=voice_path)
+        def __init__(
+            self, *, voice_path: str, voice_map: Any = None, default_voice: Any = None
+        ) -> None:
+            captured.update(voice_path=voice_path, voice_map=voice_map, default_voice=default_voice)
 
     module = _stub_module("app.inference.tts.piper_tts", PiperTTS=StubPiperTTS)
     monkeypatch.setitem(sys.modules, "app.inference.tts.piper_tts", module)
 
     build_tts(settings(tts_provider=TTS_PIPER, tts_piper_voice_path="models/piper/x.onnx"))
 
-    assert captured == {"voice_path": "models/piper/x.onnx"}
+    assert captured == {
+        "voice_path": "models/piper/x.onnx",
+        "voice_map": {},
+        "default_voice": None,
+    }
 
 
 def test_build_tts_fallback_also_uses_the_shared_branch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,18 +356,32 @@ def test_build_tts_fallback_also_uses_the_shared_branch(monkeypatch: pytest.Monk
     captured: dict[str, Any] = {}
 
     class StubPiperTTS:
-        def __init__(self, *, voice_path: str) -> None:
-            captured.update(voice_path=voice_path)
+        def __init__(
+            self, *, voice_path: str, voice_map: Any = None, default_voice: Any = None
+        ) -> None:
+            captured.update(voice_path=voice_path, voice_map=voice_map, default_voice=default_voice)
 
     module = _stub_module("app.inference.tts.piper_tts", PiperTTS=StubPiperTTS)
     monkeypatch.setitem(sys.modules, "app.inference.tts.piper_tts", module)
 
     fallback = build_tts_fallback(
-        settings(tts_fallback_provider=TTS_PIPER, tts_piper_voice_path="models/piper/y.onnx")
+        settings(
+            tts_fallback_provider=TTS_PIPER,
+            tts_piper_voice_path="models/piper/y.onnx",
+            # E20-G/G6: the profile's table describes the PRIMARY provider (here a Qwen3-TTS
+            # vendor speaker), which would be meaningless to a Piper fallback — the fallback slot
+            # resolves against its own loaded voice instead.
+            tts_voice_map={"ru_female_adult_01": "Serena"},
+            tts_default_voice="Serena",
+        )
     )
 
     assert fallback is not None
-    assert captured == {"voice_path": "models/piper/y.onnx"}
+    assert captured == {
+        "voice_path": "models/piper/y.onnx",
+        "voice_map": None,
+        "default_voice": None,
+    }
 
 
 # -- refusals ----------------------------------------------------------------------------------

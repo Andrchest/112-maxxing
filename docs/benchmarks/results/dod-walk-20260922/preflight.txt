@@ -1,0 +1,16 @@
+infra/scripts/preflight.sh 
+preflight — profile DEV_3060TI
+[PASS]  1. cuda_gpu_available: 1 GPU(s): NVIDIA GeForce RTX 3060 Ti
+[FAIL]  2. expected_gpu_detected: NVIDIA GeForce RTX 3060 Ti: 2341 MB free < 7680 MB required (vram_budget_mb 7168 + min_vram_margin_mb 512)
+[PASS]  3. model_files_exist: 5 file(s) present
+[FAIL]  4. llm_responds: ConnectError: [Errno -3] Temporary failure in name resolution
+[FAIL]  5. asr_responds: empty transcription
+[PASS]  6. tts_responds: 2560 ms of audio (ok)
+[PASS]  7. postgresql_responds: SELECT 1 ok; exactly one alembic head
+[PASS]  8. redis_responds: PING ok; SET/GET/DEL ok
+[PASS]  9. livekit_responds: GET http://127.0.0.1:7880 -> 200
+[PASS] 10. scenario_validation: 1 scenario file(s) valid
+[SKIP] 11. audio_devices_accessible: skipped (--skip-audio-devices or AUDIO_DEVICE_CHECK != true)
+[PASS] 12. llama_server_binary: /home/andreipc/src/llama.cpp/build/bin/llama-server --version exited 0
+exit code: 1
+make: *** [Makefile:353: preflight] Error 1

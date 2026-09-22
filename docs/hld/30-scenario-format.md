@@ -86,7 +86,7 @@ caller_profile:
   identity_ru: "Соседка из квартиры 41"
   relationship: VICTIM | WITNESS | NEIGHBOUR | RELATIVE | PASSERBY | OFFICIAL | UNKNOWN
   language: "ru-RU"
-  voice_id: "ru_female_01"
+  voice_id: "ru_female_01"        # SCENARIO-LOGICAL voice id (see below), never a vendor voice name
   age_group: CHILD | TEEN | ADULT | ELDERLY
   baseline_emotion: CALM | WORRIED | FRIGHTENED | PANICKED | ANGRY | CONFUSED | APATHETIC
   cooperativeness: 0.0..1.0
@@ -108,6 +108,12 @@ caller_profile:
 
 `current_emotion` and `stress_level` are **not** scenario keys: they are runtime state on
 `CallerBelief` and move only through `emotion_rules` (D4).
+
+`voice_id` is a **scenario-logical** voice id (`ru_female_adult_01`) — a casting decision that
+outlives whichever TTS provider a deployment selects — and is never a provider's native voice
+name; the active model profile's `tts.voice_map` / `tts.default_voice` (HLD 60 §2.1) map it onto
+the selected provider's native voice, and an id the map does not name resolves to
+`tts.default_voice` with a warning rather than failing the call (E20-G).
 
 ## 30.4 `available_resources` (SPEC §11)
 

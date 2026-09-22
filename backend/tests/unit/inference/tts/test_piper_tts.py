@@ -7,6 +7,7 @@ before the call is all any test here needs — the real package is only exercise
 
 from __future__ import annotations
 
+import logging
 import struct
 import sys
 import types
@@ -165,3 +166,56 @@ async def test_warm_up_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyP
     await provider.warm_up()
     await provider.warm_up()  # must not reload / must not raise
     assert provider.output_sample_rate == _SAMPLE_RATE
+
+
+# --- E20-G/G6: the logical -> native voice map ---------------------------------------------------
+
+
+def test_native_voice_id_maps_a_logical_id_and_defaults_to_the_loaded_voice(
+    tmp_path: Path,
+) -> None:
+    provider = PiperTTS(
+        voice_path=str(tmp_path / "ru_RU-irina-medium.onnx"),
+        voice_map={"ru_female_adult_01": "ru_RU-irina-medium"},
+    )
+    assert provider.native_voice_id("ru_female_adult_01") == "ru_RU-irina-medium"
+    # A miss falls back to the loaded voice file's stem — never an error.
+    assert provider.native_voice_id("ru_male_adult_01") == "ru_RU-irina-medium"
+    assert provider.native_voice_id("") == "ru_RU-irina-medium"
+
+
+def test_an_explicit_default_voice_wins_over_the_voice_file_stem(tmp_path: Path) -> None:
+    provider = PiperTTS(
+        voice_path=str(tmp_path / "whatever.onnx"), default_voice="ru_RU-irina-medium"
+    )
+    assert provider.native_voice_id("ru_female_adult_01") == "ru_RU-irina-medium"
+
+
+def test_an_unmapped_logical_voice_id_warns_exactly_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = PiperTTS(voice_path=str(tmp_path / "ru_RU-irina-medium.onnx"))
+    with caplog.at_level(logging.WARNING, logger="app.inference.tts.piper_tts"):
+        for _ in range(3):
+            provider.native_voice_id("ru_female_adult_01")
+        provider.native_voice_id("ru_male_adult_01")
+    warnings = [r for r in caplog.records if "voice_map" in r.getMessage()]
+    assert len(warnings) == 2
+
+
+async def test_stream_never_raises_for_an_unknown_logical_voice_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bug E20-C's walk hit on Qwen3-TTS, asserted for the fallback provider too."""
+    onnx_path = tmp_path / "ru_RU-irina-medium.onnx"
+    onnx_path.write_bytes(b"fake")
+    (tmp_path / "ru_RU-irina-medium.onnx.json").write_text("{}")
+    _install_fake_piper(monkeypatch, _FakeVoice())
+
+    provider = PiperTTS(voice_path=str(onnx_path))
+    await provider.warm_up()
+    stream = provider.stream(
+        "тест", TtsVoiceSpec(voice_id="ru_female_adult_01", speaking_rate=1.0), request_id="r1"
+    )
+    chunks = [chunk async for chunk in stream]
+    assert chunks

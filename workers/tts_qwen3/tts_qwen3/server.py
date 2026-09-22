@@ -294,6 +294,38 @@ def _run_generate(model: ModelHandle, payload: SynthesizeRequest) -> tuple[bytes
     return pcm, sample_rate
 
 
+#: The container prefix a model profile names (`/models/tts/qwen3-tts`), and the environment
+#: variable that says where those files live on THIS host (E20 R15).
+_CONTAINER_MODELS_PREFIX = "/models/"
+_MODELS_ROOT_ENV = "SIM_MODELS_ROOT"
+
+
+def _host_model_dir(raw: str) -> Path:
+    """Rebase a container model path onto `SIM_MODELS_ROOT`, or return it unchanged.
+
+    A model profile names `/models/tts/qwen3-tts`, which is where `infra/docker-compose.yml`
+    mounts the host's `models/` directory — so under compose (`SIM_MODELS_ROOT` unset or
+    `/models`) this is the identity, exactly as before. A **host** run
+    (`make run-tts-qwen3`) has the same files under the repository's own `models/` and nothing at
+    `/models`; it sets `SIM_MODELS_ROOT=./models` and this maps the path onto it.
+
+    This worker is deliberately **not** a `sim112-workspace` member (see this package's
+    `pyproject.toml`: `qwen-tts` pins a `torch` the backend venv cannot hold), so it cannot import
+    `app.config.model_paths.resolve_model_path` the way the voice agent, `app/cli/preflight.py`
+    and the benchmarks all do. What is reproduced here is only that function's **primary** mapping
+    — `/models/<rest>` -> `<root>/<rest>`, the layout `make models-layout` produces. Its
+    legacy-download-name fallback is not, on purpose: a second copy of that table in a second venv
+    is exactly the drift R15 exists to remove, and a worker pointed at a stale layout should fail
+    naming the path it actually opened.
+    """
+    if not raw.startswith(_CONTAINER_MODELS_PREFIX):
+        return Path(raw)
+    root = os.environ.get(_MODELS_ROOT_ENV, "").strip()
+    if not root:
+        return Path(raw)
+    return Path(root).expanduser() / raw[len(_CONTAINER_MODELS_PREFIX) :]
+
+
 def create_app(
     *,
     model_dir: Path | None = None,
@@ -335,7 +367,9 @@ def create_app(
     if model_dir is not None:
         resolved_model_dir = model_dir
     else:
-        base_model_dir = Path(os.environ.get("SIM_TTS_QWEN3_MODEL_DIR", "models/qwen3-tts"))
+        base_model_dir = _host_model_dir(
+            os.environ.get("SIM_TTS_QWEN3_MODEL_DIR", "models/qwen3-tts")
+        )
         resolved_model_dir = base_model_dir / variant_config.subdirectory
 
     factory = model_factory or _default_model_factory

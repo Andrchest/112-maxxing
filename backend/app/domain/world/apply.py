@@ -105,6 +105,15 @@ def _event(event_type: EventType, now_ms: int, payload: Mapping[str, object]) ->
 
 
 def _derived_id(*parts: str) -> UUID:
+    """`uuid5(_ID_NAMESPACE, "|".join(parts))`.
+
+    Every caller includes `state.incident_id` among `parts` (H1, E20-H): `incident_id` is a fresh
+    random id per session (`create_session.py`'s `self._ids.new()`), so two sessions of the same
+    scenario + seed — which fire the *same* `world_event_id`/`occurrence`/effect `index` — still
+    derive distinct notification/radio-message ids. Without it, `notification_repository.add_all`'s
+    `ON CONFLICT (id) DO NOTHING` (meant to make one tick's re-examination idempotent) silently
+    swallows the second session's row as a "duplicate" of the first session's.
+    """
     return uuid5(_ID_NAMESPACE, "|".join(parts))
 
 
@@ -290,6 +299,7 @@ def apply_effects(state: WorldState, fired: Sequence[FiredEvent], now_ms: int) -
                         {
                             "notification_id": _derived_id(
                                 "notification",
+                                str(state.incident_id),
                                 entry.world_event_id,
                                 str(entry.occurrence),
                                 str(index),
@@ -310,7 +320,11 @@ def apply_effects(state: WorldState, fired: Sequence[FiredEvent], now_ms: int) -
                         entry.at_ms,
                         {
                             "radio_message_id": _derived_id(
-                                "radio", entry.world_event_id, str(entry.occurrence), str(index)
+                                "radio",
+                                str(state.incident_id),
+                                entry.world_event_id,
+                                str(entry.occurrence),
+                                str(index),
                             ),
                             "from_callsign": effect.from_callsign,
                             "to_role": effect.to_role.value,

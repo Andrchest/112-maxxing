@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from app.application.ports.call_transport import TransportEvent, TransportEventType
@@ -16,11 +17,20 @@ from app.application.voice.events import (
 )
 from app.application.voice.turn_detector import DetectedTurn, SpeechStarted, TurnEndReason
 from app.domain.common.ids import SessionId
-from app.domain.enums import ActorType
+from app.domain.enums import (
+    ActorType,
+    DDSStageState,
+    Operator112StageState,
+    RoleType,
+    SessionMode,
+    SessionState,
+)
 from app.domain.events.catalog import EVENT_PAYLOAD_CATALOG, validate_payload
 from app.domain.events.types import EventType
+from app.domain.session.session import SimulationSession
 
 from tests.unit.application.voice.conftest import VoiceStore, uow_factory
+from tests.unit.domain.session import _builders as sb
 
 CALL_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 
@@ -180,3 +190,118 @@ async def test_offsets_come_from_started_at_and_the_clock_not_from_a_process_cou
     assert appender.offset_ms() == 0
     clock.advance_ms(7_500)
     assert appender.offset_ms() == 7_500
+
+
+# -- E20-E2 (R11 follow-up): append() re-stamps monotonic_offset_ms from a fresh, unlocked read
+# of the session row (sim_time.running_ms, frozen during ROLE_TRANSITION) — audit-2's "raw wall
+# offset" finding. offset_ms() itself stays the raw, quick, in-process estimate it always was;
+# only what gets PERSISTED changes. --------------------------------------------------------------
+
+_STARTED_AT = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+
+
+def _session(*, state: SessionState, transition_started_offset_ms: int | None) -> SimulationSession:
+    """A session row with nothing in it but the fields `running_ms` reads (mirrors
+    `tests.unit.application.simulation.test_sim_time._row`)."""
+    session = sb.build_session(
+        session_mode=SessionMode.FULL_CYCLE_SINGLE_TRAINEE,
+        state=state,
+        stages=[
+            sb.build_stage(
+                order_index=0,
+                role_type=RoleType.OPERATOR_112,
+                state=Operator112StageState.STAGE_COMPLETED,
+                participant_user_id=sb.user("trainee"),
+            ),
+            sb.build_stage(
+                order_index=1,
+                role_type=RoleType.DDS,
+                state=DDSStageState.RECEIVED,
+                participant_user_id=sb.user("trainee"),
+            ),
+        ],
+    )
+    return session.model_copy(
+        update={
+            "started_at": _STARTED_AT,
+            "role_transition_started_offset_ms": transition_started_offset_ms,
+        }
+    )
+
+
+def _clock_at(offset_ms: int) -> FakeClock:
+    """A `FakeClock` pinned `offset_ms` milliseconds after `_STARTED_AT`."""
+    clock = FakeClock(start=_STARTED_AT)
+    clock.advance_ms(offset_ms)
+    return clock
+
+
+async def test_offset_ms_stays_the_raw_wall_offset_its_own_local_estimate() -> None:
+    """`offset_ms()` itself is unaffected by this fix — it is never what gets persisted now."""
+    clock = _clock_at(90_000)
+    store = VoiceStore()
+    appender = VoiceEventAppender(
+        session_id=SessionId(uuid.uuid4()),
+        uow_factory=uow_factory(store, clock),
+        clock=clock,
+        started_at=_STARTED_AT,
+    )
+    assert appender.offset_ms() == 90_000
+
+
+async def test_append_stamps_the_frozen_running_ms_during_a_role_transition() -> None:
+    """A call event appended while its session sits in `ROLE_TRANSITION` is persisted with the
+    frozen `running_ms`, not the raw wall-clock elapsed time the event was built with
+    (E20-E2, R11 follow-up, audit-2)."""
+    session_id = SessionId(uuid.uuid4())
+    session = _session(state=SessionState.ROLE_TRANSITION, transition_started_offset_ms=30_000)
+    clock = _clock_at(90_000)
+    store = VoiceStore()
+    store.sessions[session_id] = session
+    appender = VoiceEventAppender(
+        session_id=session_id, uow_factory=uow_factory(store, clock), clock=clock
+    )
+    # Built with the raw, unfrozen estimate — deliberately wrong, to prove append() overwrites it.
+    turn = a_turn()
+    event = user_speech_ended_event(
+        turn, call_id=CALL_ID, offset_ms=appender.offset_ms(), endpoint_silence_ms=320
+    )
+
+    (appended,) = await appender.append([event])
+
+    assert appended.monotonic_offset_ms == 30_000, "frozen at the offset the transition began at"
+
+
+async def test_append_stamps_the_unfrozen_running_ms_outside_a_transition() -> None:
+    """A normal INTERVIEW-phase event (no open transition) gets `running_ms`'s unfrozen value —
+    the same number `offset_ms()` would already have produced, now sourced from the session row."""
+    session_id = SessionId(uuid.uuid4())
+    session = _session(state=SessionState.ACTIVE, transition_started_offset_ms=None)
+    clock = _clock_at(45_000)
+    store = VoiceStore()
+    store.sessions[session_id] = session
+    appender = VoiceEventAppender(
+        session_id=session_id, uow_factory=uow_factory(store, clock), clock=clock
+    )
+    turn = a_turn()
+    event = user_speech_ended_event(turn, call_id=CALL_ID, offset_ms=1, endpoint_silence_ms=320)
+
+    (appended,) = await appender.append([event])
+
+    assert appended.monotonic_offset_ms == 45_000
+
+
+async def test_append_falls_back_to_the_events_own_offset_when_the_session_is_not_found() -> None:
+    """No row for `session_id` in the fake store (every pre-existing test's default) -> the events
+    pass through unchanged, the same behaviour `append()` always had."""
+    clock = _clock_at(12_345)
+    store = VoiceStore()
+    appender = VoiceEventAppender(
+        session_id=SessionId(uuid.uuid4()), uow_factory=uow_factory(store, clock), clock=clock
+    )
+    turn = a_turn()
+    event = user_speech_ended_event(turn, call_id=CALL_ID, offset_ms=5300, endpoint_silence_ms=320)
+
+    (appended,) = await appender.append([event])
+
+    assert appended.monotonic_offset_ms == 5300

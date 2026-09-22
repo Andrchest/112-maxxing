@@ -214,6 +214,41 @@ async def test_disconnected_client_is_dropped_without_generating(monkeypatch) ->
     assert state.loaded is True  # the model still loads; only generation is skipped
 
 
+# -- E20 R15: SIM_MODELS_ROOT (host runs) --------------------------------------------------------
+
+
+async def test_a_container_model_dir_is_rebased_onto_sim_models_root(monkeypatch) -> None:
+    """A host run has the weights under the repo's `models/`, never at `/models` (E20 R15)."""
+    monkeypatch.setenv("SIM_TTS_QWEN3_MODEL_DIR", "/models/tts/qwen3-tts")
+    monkeypatch.setenv("SIM_MODELS_ROOT", "./models")
+
+    app = create_app(model_factory=lambda _model_dir: _FakeModel())
+
+    state: WorkerState = app.state.worker
+    assert state.model_dir == Path("models/tts/qwen3-tts") / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+
+async def test_without_sim_models_root_the_container_path_is_left_alone(monkeypatch) -> None:
+    """Under compose `/models` IS the mount point; nothing may be rewritten."""
+    monkeypatch.setenv("SIM_TTS_QWEN3_MODEL_DIR", "/models/tts/qwen3-tts")
+    monkeypatch.delenv("SIM_MODELS_ROOT", raising=False)
+
+    app = create_app(model_factory=lambda _model_dir: _FakeModel())
+
+    state: WorkerState = app.state.worker
+    assert state.model_dir == Path("/models/tts/qwen3-tts") / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+
+async def test_a_relative_model_dir_is_never_rebased(monkeypatch) -> None:
+    """Only a container path is mapped; the shipped default is already a host path."""
+    monkeypatch.setenv("SIM_MODELS_ROOT", "/somewhere/else")
+
+    app = create_app(model_factory=lambda _model_dir: _FakeModel())
+
+    state: WorkerState = app.state.worker
+    assert state.model_dir == Path("models/qwen3-tts") / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+
 # -- E14-D: configurable model variant (`SIM_TTS_QWEN3_MODEL`) -----------------------------------
 
 

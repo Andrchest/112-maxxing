@@ -13,7 +13,8 @@ value unchanged.
 The guard registry here is deliberately permissive (every `guard_name` the table references maps
 to `lambda ctx: True`): this file tests the *tables* — the row is or is not covered — not guard
 *business logic*, which needs `SimulationSession`/`RoleStage`/`OperatorCard`/`DDSAssignment` data
-this task does not own (`TODO(E5)`).
+and is covered where those guards live (`tests/unit/domain/session/test_guards.py` against
+`app/domain/session/guards.py`).
 
 A second exhaustive-adjacent test below (`test_pinned_*`) pins a handful of transitions SPEC §7 /
 the HLD tables make illegal, so a future accidental widening of a table is caught even if the

@@ -34,12 +34,26 @@ WORKDIR /workspace
 # Comma-separated so a build can trim the list (e.g. a CPU-only smoke image: --build-arg
 # VOICE_AGENT_EXTRAS=). Defaults to what DEV_3060TI's profile needs on the ASR/VAD/fallback-TTS
 # side (HLD 60 §2.2): gigaam (ASR, cuda), silero (VAD, cpu), piper (TTS fallback, cpu).
-ARG VOICE_AGENT_EXTRAS="asr-gigaam,vad-silero,tts-piper"
+#
+# `transport-livekit` (E19-E2, `workers/voice_agent/pyproject.toml:24` — the only extra declared on
+# `sim-voice-agent` itself; the other three are `sim-backend`'s) was ADDED to this default on
+# 2026-09-22 (E20-G). Without it the image has no `livekit` rtc SDK, and E20-C's `make up` walk
+# died on every call with `ModuleNotFoundError: No module named 'livekit'` ->
+# `TransportError: the 'livekit' SDK is not installed; install the voice extra or run with
+# SIM_CALL_TRANSPORT=fake` — i.e. the documented compose demo path could not place a voice call at
+# all. The compose stack runs `SIM_CALL_TRANSPORT=livekit`, so this extra is not optional there.
+ARG VOICE_AGENT_EXTRAS="asr-gigaam,vad-silero,tts-piper,transport-livekit"
 
+# Layer order (E20): the third-party dependencies are installed from the lock and the four
+# `pyproject.toml` files ALONE, before any source is copied, so editing backend/ or the agent no
+# longer re-downloads ~4 GB of CUDA wheels (E20-G measured ~38 min per rebuild and two builds lost
+# to PyPI timeouts). The uv cache is a BuildKit cache mount: a download interrupted by a timeout is
+# resumed by the next build instead of restarted. The second `uv sync` below then installs only the
+# two workspace packages (editable) from the copied source.
 COPY pyproject.toml uv.lock ./
 COPY benchmarks/pyproject.toml benchmarks/pyproject.toml
-COPY backend/ backend/
-COPY workers/voice_agent/ workers/voice_agent/
+COPY backend/pyproject.toml backend/pyproject.toml
+COPY workers/voice_agent/pyproject.toml workers/voice_agent/pyproject.toml
 
 # E19-F, first real build (2026-09-22): `--package sim-voice-agent` alone FAILED —
 # `error: Extra 'asr-gigaam' is not defined in the project's optional-dependencies table`. The
@@ -50,7 +64,24 @@ COPY workers/voice_agent/ workers/voice_agent/
 # real lock file before use here: pass BOTH `--package sim-backend --package sim-voice-agent` so the
 # extras resolve against the package that actually declares them while still syncing (installing)
 # `sim-voice-agent` itself into the same venv.
-RUN set -eu; \
+ENV UV_LINK_MODE=copy \
+    UV_HTTP_TIMEOUT=300
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eu; \
+    extra_flags=""; \
+    old_ifs="$IFS"; IFS=","; \
+    for e in $VOICE_AGENT_EXTRAS; do \
+        [ -n "$e" ] && extra_flags="$extra_flags --extra $e"; \
+    done; \
+    IFS="$old_ifs"; \
+    uv sync --frozen --no-dev --no-install-workspace \
+        --package sim-backend --package sim-voice-agent $extra_flags
+
+COPY backend/ backend/
+COPY workers/voice_agent/ workers/voice_agent/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eu; \
     extra_flags=""; \
     old_ifs="$IFS"; IFS=","; \
     for e in $VOICE_AGENT_EXTRAS; do \
@@ -71,11 +102,10 @@ WORKDIR /workspace
 # reachable from other containers on the compose network only, never published here.
 #
 # HLD 60 §9's documented healthcheck (`python -m voice_agent.cli health`, returns 0 only when every
-# `voice:health:{service}` key this process owns is READY or WARMING) is not built yet as of this
-# task — `workers/voice_agent/voice_agent/cli.py` does not exist (owned by the E18 slice that adds
-# the health/readiness backend wiring, not by this compose/Dockerfile task). The HEALTHCHECK line
-# below is written to match the HLD exactly and will start working once that CLI lands; until then
-# it fails (container shows "unhealthy"), which is visible and correct, not silently green.
+# `voice:health:{service}` key this process owns is READY or WARMING) is built:
+# `workers/voice_agent/voice_agent/cli.py:100` registers the `health` subcommand (E20-D2,
+# 2026-09-22 — corrected from a stale "not built yet" comment; the CLI landed before this compose
+# task's own hand-back and the healthcheck below has been live since).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
     CMD python -m voice_agent.cli health || exit 1
 

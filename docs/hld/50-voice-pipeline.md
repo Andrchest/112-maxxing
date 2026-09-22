@@ -605,6 +605,25 @@ class Clock(Protocol):
 
 ## 3. Stage classes
 
+### 3.0 One clock origin for every offset in a call (E20 R13)
+
+`AudioFrame.capture_offset_ms` and `TransportEvent.at_offset_ms` are **defined** as
+`app.application.timebase.session_offset_ms(clock.now(), session.started_at)` — milliseconds since
+`SESSION_STARTED`, from the injected `Clock`. That is the same helper, the same clock and the same
+origin `VoiceEventAppender.offset_ms()` stamps every event of the call with, which is what makes
+SPEC §27's `speech_end_to_first_audio_ms` — `CALLER_TTS_STARTED.first_audio_offset_ms` minus
+`USER_SPEECH_ENDED.at_offset_ms` — a subtraction of two comparable numbers.
+
+It is therefore the **port's** contract, not a transport's private choice: every `CallTransport`
+is constructed with the session's `started_at` and the `Clock`, and a transport that cannot be
+given them is a wiring bug (`voice_agent.wiring.build_transport` refuses to build one).
+`LiveKitCallTransport` measured from its own first frame until E20, and since a session starts well
+before the agent's transport does (create → ring → join → answer) the two events above were stamped
+against different zeros: E19-E3's real run produced 34 samples of the metric, every one negative
+and drifting further apart each turn, and `benchmark_e2e.py` discarded all of them rather than
+publish a percentile over impossible numbers. `FakeCallTransport` (D13) shares the definition, so
+the gate measures what the media plane measures.
+
 The pipeline order is fixed by D9 and SPEC §16 and is never reordered or collapsed:
 
 ```
@@ -1351,6 +1370,12 @@ class ValidationFailureCode(enum.StrEnum):
 - Validated by the Pydantic model `CallerUtterance` with `extra="forbid"`; any additional key →
   `EXTRA_FIELD` (this is the "no unexpected structured fields" check).
 - `utterance` stripped; empty → `EMPTY`.
+- **As built (E20-I):** a spoken line containing structural characters — `{ } [ ] < >`, backslash,
+  backtick — → `SCHEMA_INVALID`: the output's structure leaked into speech (the real `make up` walk
+  heard `}I не знаю…`, which every other rule passed because the line does contain Cyrillic). The
+  caller GBNF's `speech-char` excludes the same characters, so the grammar path cannot produce
+  them; this check is the backstop for the `json_schema` path. Russian quotes are «», so `"` is not
+  needed inside speech.
 - Token length is measured with the **same tokenizer the LLM uses**, obtained from
   `LLMClient.count_tokens`; `> max_response_tokens` (80, SPEC §22) → `TOO_LONG`. A character
   guard `len(utterance) > 400` is applied first so a pathological output never reaches the tokenizer.
@@ -1411,6 +1436,26 @@ listed two-word phrase) → `META_LANGUAGE`.
 Any Latin-script run of ≥ 3 letters that is not in a small `LATIN_ALLOWLIST` (vehicle marks,
 `СМС`, `112` written as text) also raises `META_LANGUAGE`: a Russian caller has no reason to emit
 English, and this catches refusal boilerplate the lexicon missed.
+
+**Whole-utterance language rule (E20-A, MANAGER RULING R5).** The per-token rule above only sees
+runs of ≥ 3 letters, so an English answer written in short words (`Ok, yes.`, `No.`) passed every
+check. §7.4 therefore also owns the language of the utterance as a whole: **a completion that
+carries at least one letter but not one Cyrillic letter raises `META_LANGUAGE`.** The caller
+speaks Russian — SPEC §23 fixes the caller's own lines, and the whole trainee-facing surface, in
+Russian — so answering in another script is a language failure, not empty speech. The two
+exemptions of the per-token rule apply unchanged: an utterance made only of `LATIN_ALLOWLIST`
+entries and values this turn's Fact Access Gate released (e.g. a Latin-valued callsign) is the
+caller repeating something permitted and is allowed. The rule runs after the lexicon match, so a
+Latin meta-phrase still reports the lexicon's own message.
+
+This rule does **not** widen `EMPTY` (§7.1), which stays "no letter at all".
+
+**Numeric-only answers — current policy, owner to confirm.** A completion that is only digits
+(`27`, `3, 45`) carries no letter, so it fails §7.1 as `EMPTY` and never reaches this rule: the
+caller must speak a word («Подъезд 3, квартира 45»). That was E19-C2's widening of `EMPTY` and it
+is unchanged here. Whether a bare number should instead be an acceptable caller answer is an
+**open question for the owner**; until they rule, the behaviour above is the shipped policy and
+`backend/tests/unit/application/dialogue/test_validator.py` pins it.
 
 ### 7.5 New entities (SPEC §24 item 5)
 

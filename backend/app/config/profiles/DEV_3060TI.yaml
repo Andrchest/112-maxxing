@@ -85,14 +85,43 @@ tts:
   fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
   fallback_voice_id: ru_RU-irina-medium
   fallback_output_sample_rate: 22050
-  # ADDITIVE (E18-A, R2), maps to SIM_TTS_QWEN3_MODEL (read directly by the separate tts_qwen3
-  # worker process, not through this repo's Settings — see app.config.profile.TtsProfile's
-  # docstring): "0.6B" MEASURED peak ~2746 MiB, RTF mean 0.831 on this shared card (task report
-  # e14-d); "1.7B" is the owner's evaluated checkpoint but is still NOT_RUN on this machine (task
-  # report e14-d §10 open item 6, docs/hld/60-inference-ops.md §10). null = the worker's own
-  # default (DEFAULT_MODEL_VARIANT = "1.7B", workers/tts_qwen3/tts_qwen3/server.py) until a real
-  # combined-load measurement (E19) or a later owner decision sets one explicitly.
-  model_variant: null
+  # ADDITIVE (E18-A, R2), maps to SIM_TTS_QWEN3_MODEL. The standalone tts_qwen3 worker reads it
+  # from `infra/.env.profile` (`make profile-env`, E20) — under compose and `make run-tts-qwen3`
+  # alike — and the voice agent through `Settings.tts_model_variant`.
+  # MEASURED 2026-09-22, the whole DEV stack on a free card (benchmark_vram.py, 20 turns):
+  #   0.6B -> project peak 5560 MB, LLM GPU_FULL, margin 1608 MB
+  #          (docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json)
+  #   1.7B -> project peak 7448 MB > vram_budget_mb 7168; only 2013 MB left for the LLM, which
+  #          fell back to GPU_PARTIAL (23 layers) = slower caller replies
+  #          (docs/benchmarks/results/vram-DEV_3060TI-20260922T192503527Z.json, E20-I)
+  # So DEV_3060TI ships 0.6B — the variant its measured_peak_vram_mb describes and the one
+  # `make models` downloads. 1.7B (the owner's evaluated checkpoint; RTF 0.823 vs 0.848, i.e. a
+  # quality choice, not a speed one) needs a card with ~2 GB more headroom or the LLM partly on
+  # CPU; select it with `make models-tts-qwen3 QWEN3_TTS_VARIANT=1.7B` + this key.
+  model_variant: "0.6B"
+  # ADDITIVE (E20-I). Qwen3-TTS is WHOLE-UTTERANCE (qwen_tts 0.1.1 has no streaming API): its first
+  # chunk arrives only when the whole unit is synthesised. MEASURED first-audio latency, 0.6B on
+  # this card (docs/benchmarks/results/tts-DEV_3060TI-20260922T045733Z.json, n=90): p50 4130 ms,
+  # p95 11078 ms, max 14771 ms. With the Settings default guard (1500 ms, sized for streaming
+  # providers) every turn timed out and the caller was silent (E20-I proof). Guards sized from the
+  # measurement: first chunk >= p95 rounded up, the unit >= max rounded up. The caller's first
+  # audio is therefore ~4 s after the trainee stops at p50 — the known Qwen3-TTS latency item
+  # recorded for the owner (docs/benchmarks/tts.md), not hidden by a tighter guard.
+  first_chunk_timeout_ms: 12000
+  timeout_ms: 15000
+  # ADDITIVE (E20-G/G6): the scenario's `caller_profile.voice_id` is a SCENARIO-LOGICAL casting
+  # decision (HLD 30 §"caller_profile"), not a provider voice name; only a model profile knows
+  # what this provider calls its voices, so the logical -> native table lives here. Every logical
+  # id `scenarios/examples` uses is listed (`grep -rn voice_id scenarios/`). An id NOT listed
+  # resolves to `default_voice` with one WARN — it is never an error (E20-C's §46 walk item 3:
+  # the old hard `ValueError` on an unmapped id left the caller silent on this very profile).
+  # `Serena` is the female vendor CustomVoice speaker the owner's other project maps every female
+  # logical voice onto (`~/911-trainee-simulator/tools/qwen3_tts_worker.py:67-70`:
+  # `female`/`female_alt`/`female_calm`/`elderly_female` -> `Serena`), so the same casting
+  # decision is carried over rather than re-invented.
+  voice_map:
+    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: Serena           # vendor CustomVoice speaker; every unmapped logical id
 
 vad:
   provider: silero

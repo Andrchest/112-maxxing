@@ -15,8 +15,15 @@ describe('WorldTruthSection — instructor-only ground truth', () => {
     expect(screen.getByText(ru.instructorWorldTruthEmpty)).toBeInTheDocument();
   });
 
-  it('renders each fact by its raw fact id and value', () => {
-    render(<WorldTruthSection worldTruth={makeWorldTruthView({ facts: { 'address.house': '27' } })} />);
+  it('renders each fact by its label_ru and value', () => {
+    const worldTruth = makeWorldTruthView({ facts: { 'address.house': '27' } });
+    render(<WorldTruthSection worldTruth={worldTruth} />);
+    expect(screen.getByText(worldTruth.label_ru!['address.house']!)).toBeInTheDocument();
+    expect(screen.getByText('27')).toBeInTheDocument();
+  });
+
+  it('falls back to the raw fact id when label_ru has no entry for it (E20-E R11)', () => {
+    render(<WorldTruthSection worldTruth={makeWorldTruthView({ facts: { 'address.house': '27' }, label_ru: {} })} />);
     expect(screen.getByText('address.house')).toBeInTheDocument();
     expect(screen.getByText('27')).toBeInTheDocument();
   });

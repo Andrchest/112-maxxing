@@ -311,8 +311,10 @@ def guard_resolution_condition(ctx: GuardContext) -> bool:
     """`WORKING --incident_resolved--> RESOLVED`: the scenario's
     `expected_response.resolution_condition` evaluates true.
 
-    TODO(E6): evaluating the `Condition` against the live `WorldState` belongs to the world-engine
-    / simulation slice; the domain guard only reads the projected verdict.
+    Evaluating the `Condition` against the live `WorldState` belongs to the world-engine /
+    simulation slice, not to this pure domain guard, which only reads the projected verdict.
+    `app.application.simulation.tick_session.TickSession.resolution_condition_met` (E6) is what
+    computes it; `app.api.container` binds that method as the verdict source.
     """
     return ctx.runtime.resolution_condition_met
 

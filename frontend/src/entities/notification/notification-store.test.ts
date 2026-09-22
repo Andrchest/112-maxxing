@@ -10,7 +10,6 @@ function makeNotification(overrides: Partial<NotificationView> = {}): Notificati
     title_ru: 't',
     body_ru: 'b',
     created_at_offset_ms: 0,
-    source_world_event_id: null,
     acknowledged_at_offset_ms: null,
     ...overrides,
   };

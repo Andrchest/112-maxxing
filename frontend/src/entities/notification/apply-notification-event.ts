@@ -4,6 +4,10 @@
 // already-known value in the caller's own state (the session's own incident), not a fabricated
 // fact (SPEC §10, §42 test 3 is about WorldTruth/CallerBelief facts, not this bookkeeping id).
 //
+// INV 3: `source_world_event_id` is neither read from the payload nor stored. The WS path
+// redacts it for trainees and `NotificationView` no longer carries it; see
+// `features/dds/no-world-truth-guard.test.ts`.
+//
 // Idempotent by `notification_id` on create (a duplicate delivery is a no-op) and by absolute
 // overwrite on acknowledge — matching `entities/card`'s `applyCardEvent` convergence pattern.
 import type { NotificationView } from './notification-store';
@@ -19,7 +23,6 @@ interface NotificationCreatedPayload {
   severity: NotificationSeverity;
   title_ru: string;
   body_ru: string;
-  source_world_event_id: string | null;
   at_offset_ms: number;
 }
 interface NotificationAcknowledgedPayload {
@@ -51,7 +54,6 @@ export function applyNotificationEvent(
         title_ru: payload.title_ru,
         body_ru: payload.body_ru,
         created_at_offset_ms: payload.at_offset_ms,
-        source_world_event_id: payload.source_world_event_id,
         acknowledged_at_offset_ms: null,
       };
       return [created, ...previous];

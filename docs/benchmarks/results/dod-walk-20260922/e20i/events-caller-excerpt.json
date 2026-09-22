@@ -1,0 +1,363 @@
+[
+ {
+  "seq_no": 4,
+  "offset_ms": 71,
+  "event_type": "CALL_RINGING",
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "room_name": "session-ce835582-a6f8-47f1-9199-5beec49e8652",
+   "at_offset_ms": 71,
+   "caller_display_ru": "Входящий вызов 112"
+  }
+ },
+ {
+  "seq_no": 15,
+  "offset_ms": 7278,
+  "event_type": "ASR_FINAL",
+  "payload": {
+   "text": "Служба 112. Что у вас случилось?",
+   "end_ms": 6131,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "start_ms": 2863,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9978236556053162,
+   "turn_index": 0,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "2b643fdd-54ee-4e62-b269-c017c6de5ccc",
+   "transcript_segment_id": "44e97b42-9d46-4a4a-8f42-1e1be9b49dac"
+  }
+ },
+ {
+  "seq_no": 20,
+  "offset_ms": 8636,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 0,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "prompt_tokens": 533,
+   "completion_tokens": 24,
+   "validator_verdict": "PASS",
+   "output_token_count": 24,
+   "regeneration_count": 0
+  }
+ },
+ {
+  "seq_no": 21,
+  "offset_ms": 10305,
+  "event_type": "CALLER_TTS_STARTED",
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 0,
+   "at_offset_ms": 10303,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 10303
+  }
+ },
+ {
+  "seq_no": 22,
+  "offset_ms": 18797,
+  "event_type": "CALLER_TTS_ENDED",
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "completed": true,
+   "turn_index": 0,
+   "at_offset_ms": 15903,
+   "delivered_text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "total_audio_ms": 5600,
+   "audio_segment_id": "4df59d32-7118-42b6-a9a1-70112b3033ac"
+  }
+ },
+ {
+  "seq_no": 23,
+  "offset_ms": 18842,
+  "event_type": "FACTS_DELIVERED",
+  "payload": {
+   "turn_id": "38efd388-f65e-4d47-96f3-d95b3a25aa04",
+   "fact_ids": [
+    "incident.type",
+    "incident.smoke_visible"
+   ],
+   "turn_index": 0,
+   "at_offset_ms": 18841,
+   "delivered_via": "TTS_COMPLETED"
+  }
+ },
+ {
+  "seq_no": 29,
+  "offset_ms": 20920,
+  "event_type": "ASR_FINAL",
+  "payload": {
+   "text": "Назовите улицу.",
+   "end_ms": 20531,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "start_ms": 18735,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9999865293502808,
+   "turn_index": 1,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "1de7cb10-5709-42c4-930e-e2c81b103f62",
+   "transcript_segment_id": "5c9032a4-45c1-4db3-8396-2f9bfcfbb6f8"
+  }
+ },
+ {
+  "seq_no": 35,
+  "offset_ms": 21533,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 1,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "prompt_tokens": 575,
+   "completion_tokens": 24,
+   "validator_verdict": "PASS",
+   "output_token_count": 24,
+   "regeneration_count": 0
+  }
+ },
+ {
+  "seq_no": 39,
+  "offset_ms": 22630,
+  "event_type": "ASR_FINAL",
+  "payload": {
+   "text": "И номер дома.",
+   "end_ms": 22227,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "start_ms": 20751,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9648404717445374,
+   "turn_index": 2,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "3c211f02-5672-4a8e-a488-503e1543a6c1",
+   "transcript_segment_id": "ad4d7d30-4fa9-46d6-97cd-5df9309c217c"
+  }
+ },
+ {
+  "seq_no": 43,
+  "offset_ms": 23685,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "attempt": 1,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 2,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "prompt_tokens": 611,
+   "completion_tokens": 31,
+   "validator_verdict": "PASS",
+   "output_token_count": 31,
+   "regeneration_count": 0
+  }
+ },
+ {
+  "seq_no": 44,
+  "offset_ms": 23820,
+  "event_type": "CALLER_TTS_STARTED",
+  "payload": {
+   "text": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "0a9d76fe-7a17-4955-b659-cf868f0a8a1b",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 1,
+   "at_offset_ms": 23818,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "У меня в квартире горит. Видно дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 23818
+  }
+ },
+ {
+  "seq_no": 45,
+  "offset_ms": 25372,
+  "event_type": "CALLER_TTS_STARTED",
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 2,
+   "at_offset_ms": 25370,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "first_audio_offset_ms": 25370
+  }
+ },
+ {
+  "seq_no": 46,
+  "offset_ms": 38717,
+  "event_type": "MODEL_ERROR",
+  "payload": {
+   "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "stage": "TTS",
+   "message": "TTS exceeded 15000 ms",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "qwen3_tts",
+   "component": "TTS",
+   "error_code": "TIMEOUT",
+   "error_kind": "TIMEOUT",
+   "turn_index": 2,
+   "recoverable": true
+  }
+ },
+ {
+  "seq_no": 47,
+  "offset_ms": 38972,
+  "event_type": "MODEL_FALLBACK_USED",
+  "payload": {
+   "stage": "TTS",
+   "reason": "TTS_PROVIDER_FAILED",
+   "attempt": 1,
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "component": "TTS",
+   "turn_index": 2,
+   "fallback_kind": "TTS_FALLBACK_PROVIDER"
+  }
+ },
+ {
+  "seq_no": 48,
+  "offset_ms": 39075,
+  "event_type": "CALLER_TTS_STARTED",
+  "payload": {
+   "text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "provider": "piper",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "ru_RU-irina-medium",
+   "turn_index": 2,
+   "at_offset_ms": 39072,
+   "tts_provider": "piper",
+   "model_version": "ru_RU-irina-medium",
+   "voice_id_native": "ru_RU-irina-medium",
+   "text_sent_to_tts": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "first_audio_offset_ms": 39072
+  }
+ },
+ {
+  "seq_no": 50,
+  "offset_ms": 42783,
+  "event_type": "CALLER_UTTERANCE_INTERRUPTED",
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "1ff101cc-7621-4df1-adf8-7098589ed35b",
+   "turn_index": 2,
+   "planned_text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "delivered_text": "Никаких данных нет. Я не знаю номер дома или адрес. Скажите, какой именно дом вы ждете.",
+   "cutoff_latency_ms": 66,
+   "alignment_is_exact": false,
+   "delivered_audio_ms": 3872,
+   "interrupting_turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "fact_ids_not_revealed": [],
+   "total_audio_ms_generated": 3904
+  }
+ },
+ {
+  "seq_no": 55,
+  "offset_ms": 44337,
+  "event_type": "ASR_FINAL",
+  "payload": {
+   "text": "Что именно горит в квартире?",
+   "end_ms": 43955,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "start_ms": 42415,
+   "asr_model": "v3_e2e_ctc",
+   "confidence": 0.9630603790283203,
+   "turn_index": 3,
+   "asr_provider": "gigaam",
+   "audio_segment_id": "b74d2b67-c127-46a0-83e5-360552e3de29",
+   "transcript_segment_id": "9e6ff36d-13d1-400d-b18c-7b6ea8782dd9"
+  }
+ },
+ {
+  "seq_no": 59,
+  "offset_ms": 45598,
+  "event_type": "CALLER_RESPONSE_GENERATED",
+  "payload": {
+   "text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "attempt": 2,
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "llm_model": "Qwen3.5-2B",
+   "validated": true,
+   "turn_index": 3,
+   "llm_provider": "Qwen3.5-2B",
+   "utterance_ru": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "prompt_tokens": 687,
+   "completion_tokens": 27,
+   "validator_verdict": "REGENERATED",
+   "output_token_count": 27,
+   "regeneration_count": 1
+  }
+ },
+ {
+  "seq_no": 60,
+  "offset_ms": 47229,
+  "event_type": "CALLER_TTS_STARTED",
+  "payload": {
+   "text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "provider": "qwen3_tts",
+   "voice_id": "ru_female_adult_01",
+   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "turn_index": 3,
+   "at_offset_ms": 47228,
+   "tts_provider": "qwen3_tts",
+   "model_version": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5",
+   "voice_id_native": "Serena",
+   "text_sent_to_tts": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "first_audio_offset_ms": 47228
+  }
+ },
+ {
+  "seq_no": 61,
+  "offset_ms": 56779,
+  "event_type": "CALLER_TTS_ENDED",
+  "payload": {
+   "call_id": "03fcf3cc-ebc4-49a9-8a3d-564f7bc61893",
+   "turn_id": "3135d9e5-6987-4ceb-a893-a8b95398e24e",
+   "completed": true,
+   "turn_index": 3,
+   "at_offset_ms": 53372,
+   "delivered_text": "Я не знаю, что горит. У меня в квартире дым. Есть риск возгорания.",
+   "total_audio_ms": 6144,
+   "audio_segment_id": "b53c04f4-0fa8-4a31-b289-7315684140be"
+  }
+ }
+]

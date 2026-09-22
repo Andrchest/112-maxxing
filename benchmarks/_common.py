@@ -36,6 +36,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.config.model_paths import LEGACY_MODEL_PATHS as _LEGACY_MODEL_PATHS
+from app.config.model_paths import resolve_model_path as _resolve_model_path
+
 __all__ = [
     "COLLISION_SUFFIX_LIMIT",
     "DEFAULT_MODELS_ROOT",
@@ -173,52 +176,12 @@ def load_profile_for_bench(name: str) -> Any:
 # Model paths: the profile's compose paths -> this host's layout (R1)
 # ---------------------------------------------------------------------------------------------
 
-#: The profile YAMLs name container paths (`/models/<kind>/<file>`), which `make models-layout`
-#: (E19-F) materialises under the host `models/` directory. The primary mapping is therefore the
-#: trivial one: `/models/<rest>` -> `<models_root>/<rest>`.
-#:
-#: Until that layout step has been run, the files are still under the flat names the individual
-#: `make models-*` targets downloaded them to (recon §5). This table is that fallback, keyed by
-#: the path *relative to* `/models/`, most specific first. It is a documented mapping of what is
-#: actually on disk today — never a guess: a path that resolves to neither form is reported as
-#: missing and the benchmark writes `NOT_RUN` with the path in `reason`.
-LEGACY_MODEL_PATHS: tuple[tuple[str, str], ...] = (
-    ("asr/gigaam-v3-e2e-ctc", "gigaam-v3-e2e_ctc"),
-    ("asr/gigaam-v3-ctc", "gigaam-v3-ctc"),
-    ("vad/silero_vad.onnx", "silero-vad/silero_vad.onnx"),
-    ("tts/piper", "piper"),
-    ("tts/qwen3-tts", "qwen3-tts"),
-    ("warmup/warmup_ru.wav", "warmup/warmup_ru.wav"),
-    # The GGUFs `make models-llm*` fetches land in `models/llm/`; the one that predates that
-    # target (recon §5) sits at the top level under its bare file name.
-    ("llm", ""),
-)
-
-
-def resolve_model_path(profile_path: str, models_root: Path) -> tuple[Path, bool]:
-    """Map a profile's `/models/<kind>/<file>` onto this host, returning `(host_path, exists)`.
-
-    A path that is not under `/models/` is returned as-is (an operator may point a profile at an
-    absolute host path — the owner's read-only GGUFs are used exactly that way, through
-    `--model-path`). `exists` is the caller's cue to write `NOT_RUN` with the path in `reason`
-    rather than invent a number.
-    """
-    raw = str(profile_path)
-    if not raw.startswith("/models/"):
-        candidate = Path(raw).expanduser()
-        return candidate, candidate.exists()
-    rest = raw[len("/models/") :]
-    primary = models_root / rest
-    if primary.exists():
-        return primary, True
-    for prefix, replacement in LEGACY_MODEL_PATHS:
-        if rest == prefix or rest.startswith(prefix + "/"):
-            tail = rest[len(prefix) :].lstrip("/")
-            legacy_rel = "/".join(part for part in (replacement, tail) if part)
-            legacy = models_root / legacy_rel if legacy_rel else models_root
-            if legacy.exists():
-                return legacy, True
-    return primary, False
+#: The mapping itself lives in the **application** now (`app.config.model_paths`, E20 R15), so the
+#: voice agent, `app/cli/preflight.py`, the Qwen3-TTS worker and these five scripts all resolve a
+#: profile path exactly one way. These two names are re-exported unchanged: the benchmarks keep
+#: their `--models-root` flag and their behaviour, and there is no second copy of the table.
+LEGACY_MODEL_PATHS = _LEGACY_MODEL_PATHS
+resolve_model_path = _resolve_model_path
 
 
 # ---------------------------------------------------------------------------------------------

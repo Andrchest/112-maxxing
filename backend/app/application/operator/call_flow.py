@@ -30,10 +30,20 @@ room whose `CALL_RINGING` a rollback then erased, so the signal is published by 
 Unit of Work, never inside it.
 
 §40.6 also makes `voice:join` self-healing: "Loss ⇒ the agent never joins; the backend
-re-publishes every `VOICE_JOIN_RETRY_MS` (default 2000) while the stage is `RINGING`." That retry
-is this same `after_tick` hook: every tick on which the stage is still `RINGING` and
-`VOICE_JOIN_RETRY_MS` has elapsed since the last publish re-sends the same payload. It stops by
-itself when the trainee answers, because `CONNECTED` is no longer `RINGING`.
+re-publishes every `VOICE_JOIN_RETRY_MS` (default 2000) until the agent has joined." That retry is
+this same `after_tick` hook: every tick on which the call is still live, no agent has joined it and
+`VOICE_JOIN_RETRY_MS` has elapsed since the last publish re-sends the same payload.
+
+**What stops the retry is the agent, not the trainee (R2, E19-E3 finding E20-1).** Until E20 the
+retry ran only while the *stage* was `RINGING`, so the answer stopped it: a trainee (or a script)
+that answered within a tick silenced the only self-healing signal the session ever emits, and a
+voice agent that was still starting, reconnecting or re-adopting that session never heard about the
+room again. The call sat `CONNECTED` with nobody in the room and no error anywhere — E19's
+benchmark had to sleep 15 s before answering to work around it. The retry now runs while the call
+phase is `RINGING` **or** `CONNECTED` and stops on the first event the agent itself appended for
+that call (`_agent_joined` below), or when the call reaches `ENDED`. Re-publishing at a joined
+agent costs nothing: `VoiceAgent._on_join` returns early for a session it already serves, which is
+the same idempotence the RINGING retry always relied on.
 """
 
 from __future__ import annotations
@@ -94,6 +104,40 @@ there is no lookup that could leak.
 """
 
 
+_LIVE_CALL_PHASES = frozenset({CallPhase.RINGING, CallPhase.CONNECTED})
+"""The phases in which an agent still has something to join (R2). `ENDED` needs nobody."""
+
+_BACKEND_CALL_EVENTS = frozenset(
+    {EventType.CALL_RINGING, EventType.CALL_ANSWERED, EventType.CALL_ENDED}
+)
+"""The three `call_id`-carrying events the BACKEND appends; everything else is the agent's.
+
+`CALL_RINGING` is this module's, `CALL_ANSWERED` is `answer_call`'s and `CALL_ENDED` is
+`end_call`'s (the agent writes one too, but only to say the call is over, which already stops the
+retry through the phase). Every other event that names a `call_id` —
+`USER_SPEECH_STARTED`/`_ENDED`, `ASR_PARTIAL`/`_FINAL`, `CALLER_TTS_STARTED`/`_ENDED`,
+`CALLER_UTTERANCE_INTERRUPTED`, `DIALOGUE_INTERPRETED`, `FACTS_DELIVERED`, `MODEL_ERROR`,
+`MODEL_FALLBACK_USED`, `TRANSPORT_DISCONNECTED`/`_RECONNECTED` — is written by the voice agent's
+own `VoiceEventAppender`, over the D5 event store and never over REST (D9). So the presence of any
+of them for a call is proof that an agent adopted it, and that is the only ack available: the agent
+appends nothing at the moment it joins (`TransportEventType.CONNECTED` has no persisted domain
+event), and adding a new `EventType` for one would change the §8 event catalogue — see this task's
+report under "HLD gaps".
+"""
+
+
+def _agent_joined(log: Sequence[SessionEvent], call_id: UUID) -> bool:
+    """True once the voice agent has appended anything of its own for this call (R2)."""
+    wanted = str(call_id).lower()
+    for event in log:
+        if event.event_type in _BACKEND_CALL_EVENTS:
+            continue
+        raw = event.payload.get("call_id")
+        if raw is not None and str(raw).lower() == wanted:
+            return True
+    return False
+
+
 def room_name_for(session_id: SessionId) -> str:
     """The call's room name: `session-{session_id}` (§40.6 placeholder rules).
 
@@ -148,41 +192,37 @@ class AdvanceCallFlow:
             log = await uow.events.read(session_id)
             now_ms = running_ms(session, self._clock.now())
 
-            if stage.state is Operator112StageState.RINGING:
-                # Nothing to fire — but §40.6's retry lives here: while the stage is RINGING the
-                # agent may still be missing, so the same `voice:join` is re-sent on a timer.
-                signal = self._retry_join(session_id, log)
-            elif stage.state is Operator112StageState.WAITING_FOR_CALL:
+            # §40.6's retry, evaluated for every stage state and not just `RINGING` (R2): what
+            # ends it is the agent's own first event for the call, or the call ending — never the
+            # trainee's answer. See this module's docstring.
+            signal = self._retry_join(session_id, log)
+
+            if stage.state is Operator112StageState.WAITING_FOR_CALL:
                 transport_ready = await self._call_transport.transport_ready(session_id)
-                if not transport_ready:
-                    return False
-                runtime = build_guard_runtime(
-                    log, scenario_valid=True, inference_ready=True, transport_ready=True
-                )
-                rung = await self._ring(uow, session, stage.role_stage_id, now_ms, log, runtime)
-                if rung is None:
-                    return False
-                signal, state = rung.signal, rung.call_state
-                fired = True
+                if transport_ready:
+                    runtime = build_guard_runtime(
+                        log, scenario_valid=True, inference_ready=True, transport_ready=True
+                    )
+                    rung = await self._ring(uow, session, stage.role_stage_id, now_ms, log, runtime)
+                    if rung is not None:
+                        signal, state = rung.signal, rung.call_state
+                        fired = True
             elif stage.state is Operator112StageState.CONNECTED:
                 # `guard_first_finalized_turn` is answered by the log alone, so the cheap half is
                 # checked first and the transport is read only on the tick that actually fires —
                 # a probe is a network round trip and this hook runs every `SIM_TICK_MS`.
-                if not build_guard_runtime(
+                if build_guard_runtime(
                     log, scenario_valid=True, inference_ready=True
                 ).first_finalized_turn:
-                    return False
-                runtime = build_guard_runtime(
-                    log,
-                    scenario_valid=True,
-                    inference_ready=True,
-                    transport_ready=await self._call_transport.transport_ready(session_id),
-                )
-                fired = await self._begin_interview(
-                    uow, session, stage.role_stage_id, now_ms, runtime
-                )
-            else:
-                return False
+                    runtime = build_guard_runtime(
+                        log,
+                        scenario_valid=True,
+                        inference_ready=True,
+                        transport_ready=await self._call_transport.transport_ready(session_id),
+                    )
+                    fired = await self._begin_interview(
+                        uow, session, stage.role_stage_id, now_ms, runtime
+                    )
 
             if not fired and signal is None:
                 return False
@@ -262,7 +302,12 @@ class AdvanceCallFlow:
     # -- §40.6's two side effects, both after the commit ------------------------------------------
 
     def _retry_join(self, session_id: SessionId, log: Sequence[SessionEvent]) -> _JoinSignal | None:
-        """The `voice:join` re-publish of §40.6, at most once per `VOICE_JOIN_RETRY_MS`."""
+        """The `voice:join` re-publish of §40.6, at most once per `VOICE_JOIN_RETRY_MS`.
+
+        The timer is checked before the fold because this runs on every tick of every session and
+        the fold walks the whole log; the two state questions — is the call still live, and has the
+        agent joined it — are only asked on a tick that could actually publish.
+        """
         if self._voice_signals is None:
             return None
         last = self._last_join_ms.get(session_id)
@@ -270,7 +315,9 @@ class AdvanceCallFlow:
         if last is not None and now - last < self._join_retry_ms:
             return None
         call = project_call_state(log)
-        if call.phase is not CallPhase.RINGING or call.call_id is None or call.room_name is None:
+        if call.phase not in _LIVE_CALL_PHASES or call.call_id is None or call.room_name is None:
+            return None
+        if _agent_joined(log, call.call_id):
             return None
         return _JoinSignal(room=call.room_name, call_id=call.call_id)
 

@@ -137,6 +137,29 @@ def test_an_utterance_with_a_letter_is_not_empty(text: str) -> None:
     assert ValidationFailureCode.EMPTY not in check(answer(text))
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "}I не знаю, где находится ваш дом, но дым действительно видно.",
+        "Горит кухня.}",
+        "[Звонящий] Горит кухня.",
+        "<пауза> Горит кухня.",
+        "`Горит кухня.`",
+        "Горит кухня\\ быстрее",
+    ],
+)
+def test_structural_characters_in_speech_are_schema_invalid(text: str) -> None:
+    """E20-I: the real `make up` walk heard the DEV caller say `}I не знаю…` — every other rule
+    passed it (the line does contain Cyrillic). A caller never pronounces JSON structure, markup
+    or an escape; it is the output's structure leaking, i.e. §7.1's SCHEMA_INVALID."""
+    assert check(answer(text)) == (ValidationFailureCode.SCHEMA_INVALID,)
+
+
+@pytest.mark.parametrize("text", ["Горит кухня.", "Да, «скорая» уже едет?", "Подъезд 3, этаж 5."])
+def test_ordinary_speech_punctuation_is_not_structural(text: str) -> None:
+    assert ValidationFailureCode.SCHEMA_INVALID not in check(answer(text))
+
+
 # ---------------------------------------------------------------------------------------------
 # §7.3 — forbidden identifiers
 # ---------------------------------------------------------------------------------------------
@@ -219,6 +242,64 @@ def test_the_raw_enum_member_the_gate_released_is_rejected_not_the_russian_label
     codes = check(answer("Кажется, это FIRE."), package=package)
     assert ValidationFailureCode.META_LANGUAGE in codes
     assert ValidationFailureCode.FORBIDDEN_IDENTIFIER not in codes
+
+
+def test_a_latin_only_answer_is_a_language_failure_not_empty_speech() -> None:
+    """MANAGER RULING (E20-A, R5): §7.4 owns "the caller answered in the wrong language".
+
+    The caller is a Russian speaker on a Russian emergency line (SPEC §23 — the caller's lines
+    and the whole trainee-facing UI are Russian). An answer with letters but not one Cyrillic
+    letter is a `META_LANGUAGE` failure; `EMPTY` stays "no letter at all" and must not quietly
+    become a second language check.
+    """
+    codes = check(answer("Ok, yes."))
+
+    assert ValidationFailureCode.META_LANGUAGE in codes
+    assert ValidationFailureCode.EMPTY not in codes
+
+
+@pytest.mark.parametrize("text", ["Ok, yes.", "I am at home.", "Help me please!", "No."])
+def test_every_latin_only_answer_fails_7_4(text: str) -> None:
+    """Including the short words the per-token Latin-run rule (>= 3 characters) never saw."""
+    assert ValidationFailureCode.META_LANGUAGE in check(answer(text))
+
+
+def test_a_russian_answer_that_merely_contains_a_latin_word_is_judged_token_by_token() -> None:
+    """The whole-utterance rule only fires when there is NO Cyrillic letter anywhere."""
+    codes = check(answer("Да, это на улице Николаева."))
+
+    assert ValidationFailureCode.META_LANGUAGE not in codes
+
+
+def test_a_latin_only_answer_made_of_permitted_values_is_still_allowed() -> None:
+    """The same exemption the Latin-run rule already grants: a released value may be spoken.
+
+    `ECHO-7` is what this turn's gate released, so an utterance that says nothing else is the
+    caller repeating a permitted value, not the model switching language.
+    """
+    fact_id = "callback.voice_id"
+    fact_def = FactDefinition(
+        fact_id=fact_id,
+        world_value="ECHO-7",
+        value_type=ValueType.STRING,
+        label_ru="Позывной",
+        caller_value="ECHO-7",
+        knowledge=KnowledgeState.KNOWN,
+        policy=DisclosurePolicy.ON_ASK,
+    )
+    package, _ = gate_package([fact_id], definitions={fact_id: fact_def})
+
+    assert ValidationFailureCode.META_LANGUAGE not in check(answer("ECHO-7."), package=package)
+
+
+def test_a_numeric_only_answer_stays_empty_pending_the_owners_confirmation() -> None:
+    """E19-C2's policy is UNCHANGED by R5: a bare number is still `EMPTY`, not `META_LANGUAGE`.
+
+    It carries no letter at all, so the language rule never reaches it. Recorded here so that the
+    open question — whether «27» alone should be a valid caller answer — is visible in the suite;
+    `docs/hld/50-voice-pipeline.md` §7.4 states it as current policy, owner to confirm.
+    """
+    assert check(answer("27")) == (ValidationFailureCode.EMPTY,)
 
 
 # ---------------------------------------------------------------------------------------------

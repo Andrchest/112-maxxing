@@ -127,6 +127,43 @@ def test_the_gate_is_not_a_collaborator() -> None:
     assert not hasattr(responder, "_gate")
 
 
+def test_build_pipeline_shares_one_metrics_recorder_between_asr_and_tts() -> None:
+    """H3 (E20-H) bite proof: `register_turn` (ASR side) and `record_turn_latency` (TTS side,
+    called from `TtsSpeechSink`) must land on the *same* `MetricsRecorder` instance, or a real
+    `PgMetricsRecorder`'s `turn_id -> turn_index` registry never has the pairing
+    `record_turn_latency` looks up — `dialogue_turns.speech_end_to_first_audio_ms` then stays
+    `NULL` forever (reproduced on the real stack, E20-C's §46 walk item 16).
+
+    Reverting `build_pipeline` to call `build_responder(deps, asr=provider, next_stage=
+    build_dialogue_responder(deps, llm=llm, tts=tts, guard=guard), guard=guard)` — no `metrics=`
+    passed to either — turns this red: each builder then falls back to its own fresh
+    `build_metrics(deps)`, and the two recorders below are no longer the same object.
+    """
+    import uuid
+
+    from app.application.ports.call_transport import CallTransport
+    from app.application.testing.fakes import FakeCallTransport, FakeClock
+    from app.domain.common.ids import SessionId
+    from voice_agent.wiring import build_pipeline
+
+    clock = FakeClock()
+    transport: CallTransport = FakeCallTransport(clock=clock)
+    pipeline = build_pipeline(
+        deps(),
+        session_id=SessionId(uuid.uuid4()),
+        call_id=uuid.uuid4(),
+        transport=transport,
+        record=False,
+    )
+
+    asr_side_metrics = pipeline._responder._metrics  # type: ignore[attr-defined]
+    dialogue = pipeline._responder.next_stage  # type: ignore[attr-defined]
+    assert isinstance(dialogue, DialogueResponder)
+    tts_side_metrics = dialogue._sink._metrics  # type: ignore[attr-defined]
+
+    assert asr_side_metrics is tts_side_metrics
+
+
 # ---------------------------------------------------------------------------------------------
 # The fake provider answers validly (R10)
 # ---------------------------------------------------------------------------------------------

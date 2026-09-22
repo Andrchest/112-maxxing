@@ -22,7 +22,9 @@ so E10's action gating cannot break on the operator's click order.
 
 The *instructor's* `InstructorSessionOverview.assignments` and the report's `dds_decisions` are
 the N legs verbatim — same schema, two documented readings (see `openapi.yaml`'s `DdsWorkItem`
-description). They are owed by E16/E15; this module builds the trainee's reading only.
+description). E16 built the report's reading (`app.application.reports.dds_decisions`) and E17
+built the instructor's (`app.application.instructor.get_overview._assignments`); this module
+builds the trainee's reading only.
 
 **D3, structurally.** The inputs are a `HandoffSnapshot` and a sequence of `DDSAssignment`, and
 there is no third. Nothing here imports `WorldTruth`, `CallerBelief` or `OperatorCard`, and no

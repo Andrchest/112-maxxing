@@ -106,7 +106,13 @@ class EmergencyResourceView(DdsView):
 
 
 class NotificationView(DdsView):
-    """`openapi.yaml`'s `NotificationView` — one `notifications` row (§10.7, §20.5)."""
+    """`openapi.yaml`'s `NotificationView` — one `notifications` row (§10.7, §20.5).
+
+    INV 3: the row's `source_world_event_id` — the hidden world event that produced the
+    notification — is deliberately absent. The WS path redacts it for trainees
+    (`application/realtime/redaction.py`, HLD 40 §215-239) and this REST projection, which feeds
+    the same trainee consoles, must not reintroduce it.
+    """
 
     notification_id: UUID
     incident_id: UUID
@@ -115,12 +121,14 @@ class NotificationView(DdsView):
     title_ru: str
     body_ru: str
     created_at_offset_ms: int
-    source_world_event_id: str | None
     acknowledged_at_offset_ms: int | None
 
 
 class RadioMessageView(DdsView):
-    """`openapi.yaml`'s `RadioMessageView` — projected from one `RADIO_MESSAGE_CREATED` row."""
+    """`openapi.yaml`'s `RadioMessageView` — projected from one `RADIO_MESSAGE_CREATED` row.
+
+    INV 3: `source_world_event_id` is dropped here for the same reason as on `NotificationView`.
+    """
 
     radio_message_id: UUID
     seq_no: int
@@ -130,7 +138,6 @@ class RadioMessageView(DdsView):
     text_ru: str
     resource_id: UUID | None
     created_at_offset_ms: int
-    source_world_event_id: str | None
 
 
 class RadioMessagePage(DdsView):
@@ -248,7 +255,6 @@ def notification_view(stored: StoredNotification) -> NotificationView:
         title_ru=stored.title_ru,
         body_ru=stored.body_ru,
         created_at_offset_ms=stored.created_at_offset_ms,
-        source_world_event_id=stored.source_world_event_id,
         acknowledged_at_offset_ms=stored.acknowledged_at_offset_ms,
     )
 
@@ -288,7 +294,6 @@ def radio_message_views(
                 text_ru=str(payload.get("text_ru", "")),
                 resource_id=_optional_uuid(payload.get("resource_id")),
                 created_at_offset_ms=int(payload.get("at_offset_ms", event.monotonic_offset_ms)),
-                source_world_event_id=_optional_str(payload.get("source_world_event_id")),
             )
         )
         if len(items) >= limit:
@@ -337,7 +342,3 @@ def _uuid(value: Any) -> UUID:
 
 def _optional_uuid(value: Any) -> UUID | None:
     return None if value is None else _uuid(value)
-
-
-def _optional_str(value: Any) -> str | None:
-    return value if isinstance(value, str) else None

@@ -5,9 +5,11 @@ passwords without changing an account's `id` and therefore without orphaning any
 references it.
 
 **No password is ever a literal in this source file.** Each one is read from the environment —
-`SIM_SEED_TRAINEE_PASSWORD`, `SIM_SEED_INSTRUCTOR_PASSWORD`, `SIM_SEED_ADMIN_PASSWORD` — and a
-missing variable is a refusal, not a default: a default would be a credential committed to the
-repository, which is exactly what SPEC §41 forbids ("Secrets/configuration belong in
+`SIM_SEED_TRAINEE_PASSWORD`, `SIM_SEED_INSTRUCTOR_PASSWORD`, `SIM_SEED_ADMIN_PASSWORD` — taken
+from the process environment first, then from the same dotenv file `Settings` reads (`./.env`, or
+`SIM_ENV_FILE`), so `cp .env.example .env && make demo-init` works without exporting anything
+(E20). A missing variable is a refusal, not a default: a default would be a credential committed
+to the repository, which is exactly what SPEC §41 forbids ("Secrets/configuration belong in
 environment/config files, not source code"). `.env.example` documents the three names with
 obviously-fake values.
 
@@ -18,14 +20,13 @@ and the role of each account. The plaintext is never logged, echoed or written a
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import uuid4
 
 from app.application.ports.user_repository import UserRole
-from app.config.settings import Settings, get_settings
+from app.config.settings import Settings, get_settings, read_env_value
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import UserId
 from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
@@ -73,8 +74,8 @@ class MissingSeedPasswordError(RuntimeError):
 
 
 def _password(account: SeedAccount) -> str:
-    """The account's password from the environment; a missing one refuses the whole run."""
-    password = os.environ.get(account.password_env, "")
+    """The account's password: environment first, then the dotenv file; missing refuses."""
+    password = read_env_value(account.password_env) or ""
     if not password:
         raise MissingSeedPasswordError(
             f"{account.password_env} is unset or empty. Seed passwords are never defaulted in "

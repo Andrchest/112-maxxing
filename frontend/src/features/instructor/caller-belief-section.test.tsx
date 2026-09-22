@@ -16,19 +16,31 @@ describe('CallerBeliefSection — instructor-only caller belief', () => {
   });
 
   it('renders each fact with its knowledge state and marks revealed facts', () => {
+    const callerBelief = makeCallerBeliefView({
+      facts: { 'address.house': '72' },
+      knowledge: { 'address.house': 'INCORRECT_BELIEF' },
+      certainty: { 'address.house': 0.7 },
+      revealed_fact_ids: ['address.house'],
+    });
+    render(<CallerBeliefSection callerBelief={callerBelief} />);
+    expect(screen.getByText(callerBelief.label_ru!['address.house']!)).toBeInTheDocument();
+    expect(screen.getByText('72')).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(ru.knowledgeStateIncorrectBelief))).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorCallerBeliefRevealedLabel)).toBeInTheDocument();
+  });
+
+  it('falls back to the raw fact id when label_ru has no entry for it (E20-E R11)', () => {
     render(
       <CallerBeliefSection
         callerBelief={makeCallerBeliefView({
           facts: { 'address.house': '72' },
           knowledge: { 'address.house': 'INCORRECT_BELIEF' },
           certainty: { 'address.house': 0.7 },
-          revealed_fact_ids: ['address.house'],
+          revealed_fact_ids: [],
+          label_ru: {},
         })}
       />,
     );
     expect(screen.getByText('address.house')).toBeInTheDocument();
-    expect(screen.getByText('72')).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(ru.knowledgeStateIncorrectBelief))).toBeInTheDocument();
-    expect(screen.getByText(ru.instructorCallerBeliefRevealedLabel)).toBeInTheDocument();
   });
 });

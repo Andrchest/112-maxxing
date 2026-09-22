@@ -235,3 +235,39 @@ def test_an_unwhitelisted_payload_key_is_hidden_from_trainees_and_named() -> Non
     instructor = redact(event, INSTRUCTOR, _PARTIALS_ON)
     assert instructor is not None
     assert instructor.payload["invented_by_a_future_epic"] == "secret"
+
+
+# -- E20-G/G6: the additive `voice_id_native` key --------------------------------------------------
+
+
+def test_voice_id_native_never_reaches_a_trainee() -> None:
+    """Which vendor voice the caller was really synthesised with is a CALLER detail.
+
+    It rides beside §10.13's catalogued keys (like `planned_text` on
+    `CALLER_UTTERANCE_INTERRUPTED`), so §40.4 row 12's "trainee receives only
+    `{call_id, turn_index, at_offset_ms}`" is what keeps it out — asserted here BY NAME so the
+    guarantee survives someone widening that row.
+    """
+    # §40.4 pushes this type to the 112 OPERATOR only; the DDS trainee never sees it at all.
+    role = RoleType.OPERATOR_112
+    payload = _payload(EventType.CALLER_TTS_STARTED, role)
+    payload["voice_id_native"] = "Serena"
+
+    assert redact(_event(EventType.CALLER_TTS_STARTED, payload), RoleType.DDS, _PARTIALS_ON) is None
+    envelope = redact(_event(EventType.CALLER_TTS_STARTED, payload), role, _PARTIALS_ON)
+
+    assert envelope is not None
+    assert "voice_id_native" not in envelope.payload
+    assert "voice_id" not in envelope.payload
+    assert "voice_id_native" in envelope.redacted_keys
+
+
+def test_voice_id_native_reaches_the_instructor() -> None:
+    payload = _payload(EventType.CALLER_TTS_STARTED, RoleType.OPERATOR_112)
+    payload["voice_id_native"] = "Serena"
+
+    envelope = redact(_event(EventType.CALLER_TTS_STARTED, payload), INSTRUCTOR, _PARTIALS_ON)
+
+    assert envelope is not None
+    assert envelope.payload["voice_id_native"] == "Serena"
+    assert list(envelope.redacted_keys) == []

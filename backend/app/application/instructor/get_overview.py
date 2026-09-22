@@ -50,7 +50,7 @@ runs the same probes and the same fold for this endpoint, and this view has no f
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -82,6 +82,8 @@ from app.domain.layers.caller_belief import CallerBelief
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import OperatorCard
 from app.domain.layers.world_truth import WorldTruth
+from app.domain.scenario.validation import build_fact_definitions
+from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession
 
 __all__ = [
@@ -138,6 +140,13 @@ class InstructorSessionOverviewView:
     resources: tuple[EmergencyResourceView, ...]
     call_state: CallStateView
     last_seq_no: int
+    fact_labels_ru: Mapping[str, str]
+    """ADDITIVE (E20-E R11): `fact_id -> FactDefinition.label_ru`, the same §10.4 join
+    `app.application.dialogue.dialogue_context` reads, over every fact the scenario declares —
+    `app.api.schemas.instructor` narrows it to each view's own `facts` keys when it maps
+    `WorldTruthView.label_ru`/`CallerBeliefView.label_ru`. Empty when the scenario version's
+    stored document cannot be loaded (a storage bug, not a request error — this read stays a
+    pure GET regardless, same posture as the rest of this module)."""
 
 
 class GetInstructorSessionOverview:
@@ -176,6 +185,7 @@ class GetInstructorSessionOverview:
             handoff = await _handoff(uow, events)
             assignments = await _assignments(uow, session)
             resources = await _resources(uow, session, self._clock)
+            fact_labels_ru = await _fact_labels_ru(uow, session)
 
             await uow.commit()
 
@@ -190,6 +200,7 @@ class GetInstructorSessionOverview:
             resources=resources,
             call_state=project_call_state(events),
             last_seq_no=last_seq_no,
+            fact_labels_ru=fact_labels_ru,
         )
 
 
@@ -284,6 +295,21 @@ def _stage_state(session: SimulationSession) -> DDSStageState:
         if other.role_type is RoleType.DDS and isinstance(other.state, DDSStageState):
             return other.state
     return DDSStageState.RECEIVED
+
+
+async def _fact_labels_ru(uow: UnitOfWork, session: SimulationSession) -> Mapping[str, str]:
+    """ADDITIVE (E20-E R11): `fact_id -> FactDefinition.label_ru`, the §10.4 join
+    `dialogue_context._scenario_version`/`build_fact_definitions` already perform for the turn
+    pipeline — reused here rather than reimplemented. Empty (never raised) when the version's
+    stored document is missing: `world_truth`/`caller_belief` still render, under their raw
+    `fact_id` (`app.api.schemas.instructor`'s mapper, same posture as the frontend's own fallback,
+    `features/instructor/world-truth-section.tsx`)."""
+    document = await uow.scenarios.get_version_document(session.scenario_version_id)
+    if document is None:  # pragma: no cover - a session always has a stored scenario version
+        return {}
+    version = ScenarioVersion.model_validate(dict(document))
+    definitions = build_fact_definitions(version)
+    return {fact_id: definition.label_ru for fact_id, definition in definitions.items()}
 
 
 def _gate_turns(events: Sequence[SessionEvent]) -> tuple[GateTurnEntry, ...]:

@@ -14,6 +14,14 @@ provider. Two rules shape them:
 
 The gate's selection is `SIM_VAD_PROVIDER=energy` + `SIM_ASR_PROVIDER=fake` (D13); every model
 profile selects `silero` + `gigaam` (§10).
+
+**Every model path goes through `host_model_path` (E20 R15).** A profile names container paths
+(`/models/vad/silero_vad.onnx`), which is where compose mounts them and where a host run has
+nothing at all: before E20 a host-run agent opened those paths verbatim, every warm-up raised
+`ModelNotAvailableError`, all four components went FATAL and the agent served no call while
+reporting itself healthy (E19-E2/E3, measured). `app.config.model_paths.resolve_model_path` maps a
+profile path onto `SIM_MODELS_ROOT` — `/models` by default, so compose is unchanged — and it is the
+same mapping the five benchmark scripts use, not a second copy of it.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ from app.application.ports.llm import LLMClient
 from app.application.ports.tts import TTSProvider
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import VoiceTurnConfig, voice_turn_config_from_settings
+from app.config.model_paths import host_model_path
 from app.config.settings import Settings
 
 __all__ = [
@@ -86,7 +95,7 @@ def build_vad(settings: Settings, config: VoiceTurnConfig | None = None) -> VADP
         from app.inference.vad.silero_vad import SileroVAD
 
         return SileroVAD(
-            model_path=settings.vad_model_path,
+            model_path=host_model_path(settings.vad_model_path, settings.models_root),
             threshold_hint=resolved.speech_start_threshold,
         )
     raise ValueError(
@@ -106,7 +115,7 @@ def build_asr(settings: Settings) -> ASRProvider:
         from app.inference.asr.gigaam_provider import GigaAMProvider
 
         return GigaAMProvider(
-            model_dir=settings.asr_model_dir,
+            model_dir=host_model_path(settings.asr_model_dir, settings.models_root),
             model_version=settings.asr_model_version,
             device=settings.asr_device,
             compute_type=settings.asr_compute_type,
@@ -116,7 +125,7 @@ def build_asr(settings: Settings) -> ASRProvider:
         from app.inference.asr.faster_whisper_provider import FasterWhisperProvider
 
         return FasterWhisperProvider(
-            model_path=settings.asr_model_dir,
+            model_path=host_model_path(settings.asr_model_dir, settings.models_root),
             device=settings.asr_device,
             compute_type=settings.asr_compute_type,
         )
@@ -153,10 +162,19 @@ def build_llm(settings: Settings) -> LLMClient:
     )
 
 
-def _build_named_tts(provider: str, settings: Settings) -> TTSProvider:
+def _build_named_tts(provider: str, settings: Settings, *, primary: bool = True) -> TTSProvider:
     """The `TTSProvider` named by `provider` — the shared branch `build_tts`/`build_tts_fallback`
     both dispatch through, so a provider name always means the same construction regardless of
-    which of the two slots (primary/fallback) it fills (E14-B)."""
+    which of the two slots (primary/fallback) it fills (E14-B).
+
+    `primary` selects who gets the profile's logical -> native voice table (E20-G/G6):
+    `tts.voice_map`/`tts.default_voice` describe the profile's PRIMARY provider, and a
+    `default_voice` naming a Qwen3-TTS vendor speaker is meaningless to a Piper fallback. The
+    fallback therefore resolves against its own natural default (its loaded voice file), which is
+    exactly what the ruling's "`default_voice` = the downloaded ru_RU-irina-medium" asks for.
+    """
+    voice_map = settings.tts_voice_map if primary else None
+    default_voice = settings.tts_default_voice if primary else None
     if provider == TTS_FAKE:
         from app.inference.tts.fake_tts import FakeTTS
 
@@ -170,12 +188,19 @@ def _build_named_tts(provider: str, settings: Settings) -> TTSProvider:
             base_url=settings.tts_qwen3_base_url,
             speaker=settings.tts_qwen3_speaker,
             timeout_ms=settings.tts_timeout_ms,
+            warmup_timeout_ms=settings.tts_warmup_timeout_ms,
+            voice_map=voice_map,
+            default_voice=default_voice,
         )
     if provider == TTS_PIPER:
         # Lazy: `piper-tts` is the `tts-piper` extra.
         from app.inference.tts.piper_tts import PiperTTS
 
-        return PiperTTS(voice_path=settings.tts_piper_voice_path)
+        return PiperTTS(
+            voice_path=host_model_path(settings.tts_piper_voice_path, settings.models_root),
+            voice_map=voice_map,
+            default_voice=default_voice,
+        )
     raise ValueError(
         f"{provider!r} is not a TTS provider; use {TTS_FAKE!r}, {TTS_QWEN3!r} or {TTS_PIPER!r}"
     )
@@ -201,4 +226,4 @@ def build_tts_fallback(settings: Settings) -> TTSProvider | None:
     provider = settings.tts_fallback_provider
     if provider == TTS_NONE:
         return None
-    return _build_named_tts(provider, settings)
+    return _build_named_tts(provider, settings, primary=False)

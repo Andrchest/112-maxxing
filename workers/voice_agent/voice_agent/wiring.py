@@ -220,24 +220,41 @@ def build_agent_token(settings: Settings, *, room: str, call_id: uuid.UUID) -> s
 
 
 def build_transport(
-    settings: Settings, config: VoiceTurnConfig, *, token: str | None = None
+    settings: Settings,
+    config: VoiceTurnConfig,
+    *,
+    token: str | None = None,
+    clock: Clock | None = None,
+    started_at: datetime | None = None,
 ) -> CallTransport:
     """The `CallTransport` named by `SIM_CALL_TRANSPORT` (D9).
 
     `fake` is the gate's (D13) and needs a `FakeClock`, so it is not built here: a process running
     against the fake transport constructs it in its own test. This factory covers the two
     transports a deployment can select.
+
+    `clock` and `started_at` are the session's time base (R13): the LiveKit transport stamps every
+    `AudioFrame.capture_offset_ms` and `TransportEvent.at_offset_ms` as a session offset through
+    them, so that SPEC §27's `speech_end_to_first_audio_ms` subtracts two offsets with one origin.
+    A LiveKit transport asked for without a `clock` is a wiring bug, not a default.
     """
     if settings.call_transport == TRANSPORT_LIVEKIT:
         from voice_agent.transport.livekit_transport import LiveKitCallTransport
 
         if not token:
             raise ValueError("the LiveKit transport needs a backend-minted access token")
+        if clock is None:
+            raise ValueError(
+                "the LiveKit transport needs the session's Clock: its capture offsets are "
+                "session offsets (R13)"
+            )
         return LiveKitCallTransport(
             url=settings.livekit_url,
             token=token,
             outbound_queue_ms=config.outbound_queue_ms,
             outbound_sample_rate=config.sample_rate,
+            clock=clock,
+            started_at=started_at,
         )
     if settings.call_transport == TRANSPORT_SIP:
         from voice_agent.transport.sip_transport import SipCallTransport
@@ -433,6 +450,7 @@ def build_speech_sink(
     deps: VoiceAgentDeps,
     *,
     tts: TTSProvider | None = None,
+    tts_fallback: TTSProvider | None = None,
     metrics: MetricsRecorder | None = None,
     guard: InferenceGuard | None = None,
 ) -> TtsSpeechSink:
@@ -446,7 +464,16 @@ def build_speech_sink(
     settings = deps.settings
     return TtsSpeechSink(
         provider=tts if tts is not None else build_tts(settings),
-        fallback_provider=build_tts_fallback(settings),
+        # E20-G/G5: `tts_fallback` is a parameter for the SAME reason `vad` is (E19-E2). It used to
+        # be built here, fresh and UNWARMED, on every call, while `voice_agent.main` warmed a
+        # *different* instance at start-up — so INV 14's "retry the whole utterance once on the
+        # configured fallback" could only ever raise
+        # `RuntimeError: PiperTTS.warm_up() must be called before stream()`, which surfaced as a
+        # misleading `MODEL_ERROR{TIMEOUT}` and, to the trainee, as a silent caller (E20-C's §46
+        # walk, open item 6). The process warms one fallback and passes it here.
+        fallback_provider=(
+            tts_fallback if tts_fallback is not None else build_tts_fallback(settings)
+        ),
         metrics=metrics if metrics is not None else build_metrics(deps),
         clock=deps.clock,
         config=deps.config,
@@ -467,6 +494,7 @@ def build_dialogue_responder(
     metrics: MetricsRecorder | None = None,
     sink: CallerSpeechSink | None = None,
     tts: TTSProvider | None = None,
+    tts_fallback: TTSProvider | None = None,
     guard: InferenceGuard | None = None,
 ) -> DialogueResponder:
     """The whole E13 chain: interpreter → Fact Access Gate → generator → validator → §7.8 (R10).
@@ -500,7 +528,9 @@ def build_dialogue_responder(
         sink=(
             sink
             if sink is not None
-            else build_speech_sink(deps, tts=tts, metrics=recorder, guard=guard)
+            else build_speech_sink(
+                deps, tts=tts, tts_fallback=tts_fallback, metrics=recorder, guard=guard
+            )
         ),
         uow_factory=deps.uow_factory,
     )
@@ -537,6 +567,8 @@ def build_pipeline(
     asr: ASRProvider | None = None,
     llm: LLMClient | None = None,
     tts: TTSProvider | None = None,
+    tts_fallback: TTSProvider | None = None,
+    metrics: MetricsRecorder | None = None,
     record: bool = True,
     guard: InferenceGuard | None = None,
 ) -> TurnPipeline:
@@ -555,9 +587,22 @@ def build_pipeline(
     `main.VoiceAgent`'s own comment already says the VAD is "built once per process, warmed once,
     shared by every call" — this parameter is what makes that true. Re-use across calls is safe
     because `TurnPipeline.run()` calls `vad.reset()` before the first frame of every call.
+
+    **`metrics` is a parameter for the same reason, and this is H3 (E20-H).** Left to their own
+    defaults, `build_responder` (the ASR side, which calls `register_turn`) and
+    `build_dialogue_responder` (the TTS side, through `build_speech_sink`, which calls
+    `record_turn_latency`) each fall back to their own `build_metrics(deps)` — **two different**
+    `PgMetricsRecorder` instances, each with its own in-memory `turn_id -> turn_index` registry.
+    `record_turn_latency` then looks up a `turn_id` nobody ever registered on *its* instance,
+    logs "no turn_index is registered" and returns without writing, so
+    `dialogue_turns.speech_end_to_first_audio_ms` — SPEC §27's own metric — stays `NULL` on every
+    real call (reproduced on the real stack, E20-C's §46 walk item 16). One recorder, built once
+    per call and threaded through both builders, is what makes the registration and the lookup
+    the same dictionary.
     """
     vad = vad if vad is not None else build_vad(deps.settings, deps.config)
     provider = asr if asr is not None else build_asr(deps.settings)
+    recorder = metrics if metrics is not None else build_metrics(deps)
     return TurnPipeline(
         session_id=session_id,
         call_id=call_id,
@@ -582,7 +627,15 @@ def build_pipeline(
             else build_responder(
                 deps,
                 asr=provider,
-                next_stage=build_dialogue_responder(deps, llm=llm, tts=tts, guard=guard),
+                metrics=recorder,
+                next_stage=build_dialogue_responder(
+                    deps,
+                    llm=llm,
+                    tts=tts,
+                    tts_fallback=tts_fallback,
+                    metrics=recorder,
+                    guard=guard,
+                ),
                 guard=guard,
             )
         ),

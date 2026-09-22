@@ -178,6 +178,131 @@ def test_closure_comes_from_the_leg_itself() -> None:
     assert decision.closure_reason is ClosureReason.RESOLVED
 
 
+# -- E20-E R11: note_ru / comment_ru, additive from the catalog keys E17-A recorded -------------
+
+
+def test_a_dispatch_note_is_carried_onto_its_dispatch_event() -> None:
+    (decision,) = dds_decisions(
+        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [
+            _event(
+                1,
+                EventType.RESOURCE_DISPATCHED,
+                assignment_id=str(FIRE),
+                resource_ids=[],
+                callsigns=[],
+                at_offset_ms=5000,
+                is_additional=False,
+                note_ru="Заблокированный подъезд, заезжать со двора",
+            )
+        ],
+    )
+    (dispatch,) = decision.dispatch_events
+    assert dispatch.note_ru == "Заблокированный подъезд, заезжать со двора"
+
+
+def test_a_dispatch_with_no_note_is_none_not_an_empty_string() -> None:
+    (decision,) = dds_decisions(
+        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [
+            _event(
+                1,
+                EventType.RESOURCE_DISPATCHED,
+                assignment_id=str(FIRE),
+                resource_ids=[],
+                callsigns=[],
+                at_offset_ms=5000,
+                is_additional=False,
+            )
+        ],
+    )
+    (dispatch,) = decision.dispatch_events
+    assert dispatch.note_ru is None
+
+
+def test_a_closure_comment_is_carried_onto_the_decision() -> None:
+    (decision,) = dds_decisions(
+        [
+            _leg(
+                FIRE,
+                ServiceType.FIRE_RESCUE,
+                received_at_offset_ms=0,
+                closed_at_offset_ms=60000,
+                closure_reason=ClosureReason.RESOLVED,
+            )
+        ],
+        [
+            _event(
+                1,
+                EventType.DDS_INCIDENT_CLOSED,
+                assignment_id=str(FIRE),
+                closure_reason=ClosureReason.RESOLVED.value,
+                released_resource_ids=[],
+                at_offset_ms=60000,
+                actor_user_id=str(ACTOR),
+                comment_ru="Ложный вызов подтверждён на месте",
+            )
+        ],
+    )
+    assert decision.comment_ru == "Ложный вызов подтверждён на месте"
+
+
+def test_a_closure_with_no_comment_is_none() -> None:
+    (decision,) = dds_decisions(
+        [
+            _leg(
+                FIRE,
+                ServiceType.FIRE_RESCUE,
+                received_at_offset_ms=0,
+                closed_at_offset_ms=60000,
+                closure_reason=ClosureReason.RESOLVED,
+            )
+        ],
+        [],
+    )
+    assert decision.comment_ru is None
+
+
+def test_another_legs_note_and_comment_do_not_leak_onto_this_leg() -> None:
+    decisions = dds_decisions(
+        [
+            _leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0),
+            _leg(
+                AMBULANCE,
+                ServiceType.AMBULANCE,
+                received_at_offset_ms=1,
+                closed_at_offset_ms=60000,
+                closure_reason=ClosureReason.RESOLVED,
+            ),
+        ],
+        [
+            _event(
+                1,
+                EventType.RESOURCE_DISPATCHED,
+                assignment_id=str(FIRE),
+                resource_ids=[],
+                callsigns=[],
+                at_offset_ms=5000,
+                is_additional=False,
+                note_ru="Только для пожарного расчёта",
+            ),
+            _event(
+                2,
+                EventType.DDS_INCIDENT_CLOSED,
+                assignment_id=str(AMBULANCE),
+                closure_reason=ClosureReason.RESOLVED.value,
+                released_resource_ids=[],
+                at_offset_ms=60000,
+                actor_user_id=str(ACTOR),
+                comment_ru="Только для бригады скорой",
+            ),
+        ],
+    )
+    fire, ambulance = decisions
+    assert fire.comment_ru is None
+    assert ambulance.dispatch_events == ()
+
+
 def test_an_event_without_a_resolvable_assignment_is_ignored() -> None:
     """A payload that cannot name its leg is dropped rather than attributed to an arbitrary one."""
     (decision,) = dds_decisions(

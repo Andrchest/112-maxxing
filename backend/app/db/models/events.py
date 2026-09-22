@@ -34,6 +34,16 @@ INFERENCE_COMPONENTS: tuple[str, ...] = ("ASR", "LLM_INTERPRETER", "LLM_GENERATO
 METRIC_STATUSES: tuple[str, ...] = ("OK", "TIMEOUT", "ERROR", "CANCELLED")
 #: `recording_purge_audit.reason` (SPEC §41, D9); likewise literal in the HLD.
 PURGE_REASONS: tuple[str, ...] = ("RETENTION_WINDOW", "MANUAL_REQUEST", "ADMIN_DELETE")
+#: `recording_purge_audit.actor_type` — `ActorType` plus `ADMIN` (E20-E R11, migration
+#: `0008_purge_audit_actor_admin`). `purgeRecordings` (`POST /api/v1/admin/recordings/purge`) is
+#: ADMIN-only (`routers/admin.py`'s `AdminDep`), but the column's `CHECK` was built from the
+#: domain-wide `ActorType` (`TRAINEE|INSTRUCTOR|SIMULATION|MODEL|SYSTEM`), which has no `ADMIN`
+#: member — `app.application.recording.purge_recordings.PurgeRecordings` folded every
+#: authenticated caller into `INSTRUCTOR` as a result (see that module's own former "HLD gap"
+#: docstring, now fixed). Additive to this ONE table's own column only — `ActorType` itself, and
+#: every `session_events.actor_type` reader, is unchanged (D5's actor model elsewhere never
+#: admits `ADMIN`).
+RECORDING_PURGE_ACTOR_TYPES: tuple[str, ...] = (*(member.value for member in ActorType), "ADMIN")
 
 
 class SessionEvent(Base):
@@ -203,7 +213,9 @@ class RecordingPurgeAudit(Base):
 
     __table_args__ = (
         sa.Index("ix_recording_purge_audit_session", "session_id", "purged_at"),
-        sa.CheckConstraint(enum_check("actor_type", ActorType), name="actor_type"),
+        sa.CheckConstraint(
+            enum_check("actor_type", RECORDING_PURGE_ACTOR_TYPES), name="actor_type"
+        ),
         sa.CheckConstraint(enum_check("reason", PURGE_REASONS), name="reason"),
     )
 

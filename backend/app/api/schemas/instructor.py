@@ -17,6 +17,7 @@ compares each response model's field-name set against the YAML's `properties` ke
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from uuid import UUID
 
 from app.api.schemas.common import ApiModel
@@ -62,6 +63,7 @@ class WorldTruthViewSchema(ApiModel):
     revision: int
     facts: dict[str, FactValueSchema]
     value_types: dict[str, ValueType]
+    label_ru: dict[str, str]
 
 
 class CallerBeliefViewSchema(ApiModel):
@@ -75,6 +77,7 @@ class CallerBeliefViewSchema(ApiModel):
     emotion: EmotionLabel
     stress_level: float
     revealed_fact_ids: list[str]
+    label_ru: dict[str, str]
 
 
 class GateDecisionViewSchema(ApiModel):
@@ -114,6 +117,14 @@ class InstructorSessionOverviewSchema(ApiModel):
     inference_health: HealthReadyResponseSchema
 
 
+def _labels_for(fact_labels_ru: Mapping[str, str], facts: Mapping[str, object]) -> dict[str, str]:
+    """`fact_labels_ru` narrowed to one view's own `facts` keys (E20-E R11) — `WorldTruthView` and
+    `CallerBeliefView` each carry only the labels their own `facts` dict needs, not the whole
+    scenario catalog; a `fact_id` the join could not resolve is simply absent (never a fabricated
+    label, `format-fact-value.ts`'s raw-`fact_id` fallback on the frontend handles that)."""
+    return {fact_id: label for fact_id, label in fact_labels_ru.items() if fact_id in facts}
+
+
 def _gate_decision_schema(entry: GateDecisionEntry) -> GateDecisionViewSchema:
     return GateDecisionViewSchema(fact_id=entry.fact_id, outcome=entry.outcome, reason=entry.reason)
 
@@ -146,6 +157,7 @@ def instructor_session_overview_schema(
             revision=view.world_truth.revision,
             facts=dict(view.world_truth.facts),
             value_types=dict(view.world_truth.value_types),
+            label_ru=_labels_for(view.fact_labels_ru, view.world_truth.facts),
         ),
         caller_belief=CallerBeliefViewSchema(
             incident_id=UUID(str(view.caller_belief.incident_id)),
@@ -156,6 +168,7 @@ def instructor_session_overview_schema(
             emotion=view.caller_belief.emotion.emotion,
             stress_level=view.caller_belief.emotion.stress_level,
             revealed_fact_ids=sorted(view.caller_belief.revealed_fact_ids),
+            label_ru=_labels_for(view.fact_labels_ru, view.caller_belief.facts),
         ),
         gate_turns=[_gate_turn_schema(entry) for entry in view.gate_turns],
         card=None if view.card is None else operator_card_schema(card_view(view.card)),

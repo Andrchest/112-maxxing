@@ -66,8 +66,8 @@ async def _audit_rows(uow_factory: Any, session_id: UUID) -> list[dict[str, Any]
             (
                 await uow.session.execute(
                     sa.text(
-                        "SELECT audio_segment_id, bytes, reason, retention_days, file_path_was"
-                        " FROM recording_purge_audit WHERE session_id = :sid"
+                        "SELECT audio_segment_id, bytes, reason, retention_days, file_path_was,"
+                        " actor_type FROM recording_purge_audit WHERE session_id = :sid"
                     ),
                     {"sid": session_id},
                 )
@@ -241,6 +241,47 @@ async def test_no_session_events_row_is_appended(
     assert result.segment_count > 0
     after_count = await _event_count(uow_factory, session_id)
     assert after_count == before_count, "the purge must not append to the closed event log"
+
+
+async def test_an_admin_actor_is_recorded_as_admin_not_instructor(
+    completed: OperatorFlow, api_settings: Settings, uow_factory: Any, users: dict[str, UserId]
+) -> None:
+    """E20-E R11: `recording_purge_audit.actor_type` gains `ADMIN` (migration
+    `0008_purge_audit_actor_admin`) — `purgeRecordings` is ADMIN-only, so its caller's true role
+    must be recorded, not folded into `INSTRUCTOR`."""
+    session_id = UUID(str(completed.session_id))
+    await _backdate_completed_at(uow_factory, session_id, days_ago=40)
+    admin = AuthenticatedUser(
+        user_id=users["admin1"],
+        username="admin1",
+        display_name_ru="Администратор",
+        user_role=UserRole.ADMIN,
+    )
+
+    use_case = _purge_recordings(uow_factory, api_settings)
+    result = await use_case(
+        PurgeRecordingsRequest(dry_run=False, session_id=SessionId(session_id)), actor=admin
+    )
+
+    assert result.segment_count > 0
+    audit = await _audit_rows(uow_factory, session_id)
+    assert audit != []
+    assert all(row["actor_type"] == "ADMIN" for row in audit)
+
+
+async def test_the_cli_with_no_actor_is_still_recorded_as_system(
+    completed: OperatorFlow, api_settings: Settings, uow_factory: Any
+) -> None:
+    session_id = UUID(str(completed.session_id))
+    await _backdate_completed_at(uow_factory, session_id, days_ago=40)
+
+    use_case = _purge_recordings(uow_factory, api_settings)
+    result = await use_case(PurgeRecordingsRequest(dry_run=False, session_id=SessionId(session_id)))
+
+    assert result.segment_count > 0
+    audit = await _audit_rows(uow_factory, session_id)
+    assert audit != []
+    assert all(row["actor_type"] == "SYSTEM" for row in audit)
 
 
 async def test_rescore_checksum_is_identical_before_and_after_purge(

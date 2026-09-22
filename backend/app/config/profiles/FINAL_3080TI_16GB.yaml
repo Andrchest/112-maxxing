@@ -57,6 +57,13 @@ tts:
   fallback_voice_id: ru_RU-irina-medium
   fallback_output_sample_rate: 22050
   model_variant: null
+  # ADDITIVE (E20-G/G6): logical -> native, see DEV_3060TI.yaml's `voice_map` comment. UNVERIFIED
+  # like the rest of this profile's TTS block — the Chatterbox provider is NOT IMPLEMENTED
+  # (E20 R12) and its native voice names are unknown, so this maps onto the profile's own
+  # `voice_id` placeholder and must be re-checked when that provider is built.
+  voice_map:
+    ru_female_adult_01: ru_female_calm       # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: ru_female_calm              # UNVERIFIED (HLD 60 §2.4)
 
 vad:
   provider: silero

@@ -157,6 +157,27 @@ async def test_world_truth_caller_belief_and_gate_turns_are_present(
     assert isinstance(body["gate_turns"], list)
 
 
+async def test_world_truth_and_caller_belief_carry_the_scenarios_fact_labels(
+    dds_active: OperatorFlow,
+) -> None:
+    """E20-E R11 (additive): `label_ru` is a `fact_id -> FactDefinition.label_ru` join, present for
+    every fact the demo scenario declares — never a fabricated label for a key `facts` does not
+    carry."""
+    response = await overview(dds_active)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    world_truth = body["world_truth"]
+    assert world_truth["label_ru"], "the demo scenario's facts all have a label_ru"
+    assert set(world_truth["label_ru"]) <= set(world_truth["facts"])
+    assert all(isinstance(label, str) and label for label in world_truth["label_ru"].values())
+
+    caller_belief = body["caller_belief"]
+    assert caller_belief["label_ru"]
+    assert set(caller_belief["label_ru"]) <= set(caller_belief["facts"])
+    assert all(isinstance(label, str) and label for label in caller_belief["label_ru"].values())
+
+
 async def test_assignments_are_the_n_legs_verbatim_not_the_trainees_union(
     resolved: OperatorFlow,
 ) -> None:

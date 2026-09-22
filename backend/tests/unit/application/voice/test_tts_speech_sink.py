@@ -270,6 +270,67 @@ async def test_caller_tts_started_carries_the_exact_text_and_the_provider(
     assert payload["first_audio_offset_ms"] == payload["at_offset_ms"]
 
 
+# -- E20-G/G6: `voice_id_native` ------------------------------------------------------------------
+
+
+class _MappingTTS(FakeTTS):
+    """`FakeTTS` plus the optional `native_voice_id` resolver the real adapters expose."""
+
+    def native_voice_id(self, voice_id: str) -> str:
+        return {"ru_female_1": "Serena"}.get(voice_id, "Aiden")
+
+
+async def test_caller_tts_started_records_the_native_voice_beside_the_logical_one(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    """The logical id says what the scenario cast; the native id says what was actually heard."""
+    sink = make_sink(factory, clock, config, NullMetricsRecorder(), provider=_MappingTTS())
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    payload = store.events[0].payload
+    assert payload["voice_id"] == "ru_female_1"
+    assert payload["voice_id_native"] == "Serena"
+
+
+async def test_a_provider_without_a_resolver_leaves_the_key_absent(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    """`FakeTTS` has one voice and nothing to resolve; the port is not widened for it."""
+    sink = make_sink(factory, clock, config, NullMetricsRecorder())
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    assert "voice_id_native" not in store.events[0].payload
+
+
+async def test_a_resolver_that_raises_never_takes_the_turn_down(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    class _BrokenTTS(FakeTTS):
+        def native_voice_id(self, voice_id: str) -> str:
+            raise RuntimeError("resolver blew up")
+
+    sink = make_sink(factory, clock, config, NullMetricsRecorder(), provider=_BrokenTTS())
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    assert types_of(store)[0] == EventType.CALLER_TTS_STARTED
+    assert "voice_id_native" not in store.events[0].payload
+
+
 async def test_facts_delivered_names_every_planned_fact(
     session_id: SessionId,
     factory: Callable[[], InMemoryVoiceUnitOfWork],
@@ -690,7 +751,7 @@ async def test_the_fact_revealed_trigger_fires_once_per_delivered_fact(
     config: VoiceTurnConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§10.5 / R7: E13's helper, called by E14 — the `TODO(E14)` it was left for."""
+    """§10.5 / R7: E13 wrote `apply_dialogue_emotion_trigger`; E14 is what calls it, here."""
     seen: list[tuple[str, object]] = []
 
     async def spy(*args: object, **kwargs: object) -> None:

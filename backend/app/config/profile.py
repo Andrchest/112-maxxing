@@ -134,11 +134,11 @@ class TtsProfile(BaseModel):
     declared here, not just the ones in the §2.1 summary table.
 
     `model_variant` is ADDITIVE (E18-A, R2): `"0.6B" | "1.7B" | None`, maps to
-    `SIM_TTS_QWEN3_MODEL` — an env var read directly by the separate `workers/tts_qwen3` worker
-    process (its own venv, `os.environ.get("SIM_TTS_QWEN3_MODEL", ...)`), never through this
-    repo's `app.config.settings.Settings`. `apply_profile` therefore does not overlay it onto
-    `Settings` at all; whichever process launches that worker (E18-E's compose/Makefile wiring)
-    reads it straight off the loaded `ModelProfile`.
+    `SIM_TTS_QWEN3_MODEL` — an env var the separate `workers/tts_qwen3` worker process (its own
+    venv, `os.environ.get("SIM_TTS_QWEN3_MODEL", ...)`) reads directly. E20-E R11:
+    `apply_profile` now overlays it onto `Settings.tts_model_variant`, which is aliased onto that
+    SAME env name (`config/settings.py`) — the backend/voice-agent side of the process and the
+    standalone worker read one name, not two.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -154,6 +154,21 @@ class TtsProfile(BaseModel):
     fallback_voice_id: str | None = None
     fallback_output_sample_rate: int | None = None
     model_variant: str | None = None
+    #: ADDITIVE (E20-G/G6). Logical -> native voice table for THIS profile's PRIMARY `provider`:
+    #: the scenario's `caller_profile.voice_id` is a logical casting decision (HLD 30) and only the
+    #: profile knows what a provider calls its voices. Overlaid onto `Settings.tts_voice_map`.
+    voice_map: dict[str, str] = Field(default_factory=dict)
+    #: ADDITIVE (E20-G/G6). The provider-native voice every unmapped logical id resolves to;
+    #: `None` means "`voice_id` above". Overlaid onto `Settings.tts_default_voice`.
+    default_voice: str | None = None
+    #: ADDITIVE (E20-I). The speech sink's guard on the FIRST audio chunk of one unit, and on every
+    #: later pull (`Settings.tts_first_chunk_timeout_ms` / `tts_timeout_ms`). `None` keeps the
+    #: Settings defaults (1500 / 8000 ms, sized for a streaming provider). A whole-utterance
+    #: provider (Qwen3-TTS: `qwen_tts` has no streaming API) produces its first chunk only when the
+    #: whole unit is synthesised, so its profile MUST size these from its measured first-audio
+    #: distribution or every turn is a guaranteed `MODEL_ERROR{TIMEOUT}` (E20-I, a silent caller).
+    first_chunk_timeout_ms: int | None = None
+    timeout_ms: int | None = None
 
     @field_validator("model_variant")
     @classmethod
@@ -341,13 +356,15 @@ _TTS_PIPER_PROVIDER = "piper"
 #: listed here (E18-A2, R3's "every existing field they have a counterpart for"); a profile key
 #: left out — `hardware.*`, `warmup.*`, `latency_targets.*`, llama-server launch flags
 #: (`n_gpu_layers`/`n_batch`/`n_ubatch`/`flash_attention`/`kv_cache_type`/`quantization`),
-#: `asr.sample_rate`, `tts.device`/`output_sample_rate`/`max_chunk_ms`, `tts.model_variant`,
-#: `vad.device`, and `llm.thinking_enabled` — has **no** `Settings` field today and no provider
-#: constructor reads one; each is read straight off `ModelProfile` by whichever process needs it
-#: (preflight, the warm-up sequence, the llama-server entrypoint) or, for `thinking_enabled`,
-#: refused outright at profile load by `LlmProfile`'s own validator. See the E18-A task report's
-#: "HLD gaps" (and E18-A2's addendum) for the reasoning behind each omission — none was added as a
-#: new `Settings` field, per the ruling that a field is added only when a provider reads it today.
+#: `asr.sample_rate`, `tts.max_chunk_ms`, and `llm.thinking_enabled` — has **no** `Settings` field
+#: today and no provider constructor reads one; each is read straight off `ModelProfile` by
+#: whichever process needs it (preflight, the warm-up sequence, the llama-server entrypoint) or,
+#: for `thinking_enabled`, refused outright at profile load by `LlmProfile`'s own validator. See
+#: the E18-A task report's "HLD gaps" (and E18-A2's addendum) for the reasoning behind each
+#: omission. `tts.device`/`output_sample_rate`, `tts.model_variant` and `vad.device` USED to be on
+#: this list too (E18-A2's ruling that a field is added only when a provider reads it today); E20-E
+#: R11 added `Settings.tts_device`/`tts_output_sample_rate`/`tts_model_variant`/`vad_device` and
+#: they are overlaid below like every other field.
 def _direct_mapping(profile: ModelProfile) -> dict[str, Any]:
     mapping: dict[str, Any] = {
         "llm_provider": profile.llm.provider,
@@ -368,8 +385,19 @@ def _direct_mapping(profile: ModelProfile) -> dict[str, Any]:
         "asr_compute_type": profile.asr.compute_type,
         "tts_provider": profile.tts.provider,
         "tts_fallback_provider": profile.tts.fallback_provider,
+        # E20-E R11: previously read straight off ModelProfile only (no Settings counterpart).
+        "tts_device": profile.tts.device,
+        "tts_output_sample_rate": profile.tts.output_sample_rate,
+        "tts_model_variant": profile.tts.model_variant,
+        # E20-G R/G6: the logical -> native voice table and its default. `default_voice` falls back
+        # to the profile's own `tts.voice_id`, which is already the provider-native id every
+        # profile names (a vendor speaker for qwen3_tts, a Piper voice for piper) — so a profile
+        # that declares neither new key behaves exactly as before.
+        "tts_voice_map": dict(profile.tts.voice_map),
+        "tts_default_voice": profile.tts.default_voice or profile.tts.voice_id,
         "vad_provider": profile.vad.provider,
         "vad_model_path": profile.vad.model_path,
+        "vad_device": profile.vad.device,
         # voice_turn.* -> the SIM_VOICE_* fields VoiceTurnConfig is built from (R3).
         "voice_speech_start_threshold": profile.voice_turn.speech_start_threshold,
         "voice_speech_end_threshold": profile.voice_turn.speech_end_threshold,
@@ -397,6 +425,20 @@ def _direct_mapping(profile: ModelProfile) -> dict[str, Any]:
     elif profile.tts.provider == _TTS_PIPER_PROVIDER:
         mapping["tts_piper_voice_path"] = profile.tts.model_path
         mapping["tts_voice_id"] = profile.tts.voice_id
+    # E20-I: a Piper FALLBACK behind a Qwen3-TTS primary needs its voice file too. Without this
+    # the fallback kept `Settings`' host-relative default (`models/piper/...`), which does not
+    # exist inside the voice-agent container, so INV 14's retry had no warmed provider.
+    if (
+        profile.tts.provider != _TTS_PIPER_PROVIDER
+        and profile.tts.fallback_provider == _TTS_PIPER_PROVIDER
+        and profile.tts.fallback_model_path
+    ):
+        mapping["tts_piper_voice_path"] = profile.tts.fallback_model_path
+    if profile.tts.first_chunk_timeout_ms is not None:
+        mapping["tts_first_chunk_timeout_ms"] = profile.tts.first_chunk_timeout_ms
+    if profile.tts.timeout_ms is not None:
+        mapping["tts_timeout_ms"] = profile.tts.timeout_ms
+    mapping["tts_warmup_timeout_ms"] = profile.warmup.timeout_ms
     return mapping
 
 

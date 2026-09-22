@@ -92,9 +92,15 @@ voice_agent    -> application, inference, infrastructure
 ## D5. Event sourcing and persistence (§8, §30)
 
 - One append-only table `session_events` with the SPEC §8 fields. `seq_no` is allocated under a row
-  lock: `simulation_sessions.next_seq_no` is incremented with `SELECT … FOR UPDATE` in the same
-  transaction as the insert; `UNIQUE(session_id, seq_no)`. A DB trigger rejects UPDATE and DELETE on
-  `session_events`. Several processes (backend, voice-agent) append safely.
+  lock: `simulation_sessions.next_seq_no` is incremented with `SELECT … FOR NO KEY UPDATE` in the
+  same transaction as the insert; `UNIQUE(session_id, seq_no)`. A DB trigger rejects UPDATE and
+  DELETE on `session_events`. Several processes (backend, voice-agent) append safely.
+  `FOR NO KEY UPDATE` is the one lock mode any writer takes on a `simulation_sessions` row — the
+  aggregate lock of `get_for_update` too — and a writer that takes both takes the aggregate lock
+  first. `FOR UPDATE` would conflict with the `FOR KEY SHARE` that a foreign key from
+  `audio_segments` / `transcript_segments` / `dialogue_turns` / `inference_metrics` already holds on
+  that row, turning the allocation into a lock upgrade that deadlocks (E20 R14; `20-db-schema.md`
+  §20.8 carries the full account).
 - Every use case runs in one Unit of Work: load aggregate → call pure domain method → get
   `(new_state, [DomainEvent])` → persist materialized state **and** append events in one transaction →
   after commit, publish event envelopes to Redis channel `session:{id}:events`.

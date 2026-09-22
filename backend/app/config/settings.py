@@ -7,9 +7,12 @@ ever gets a default here.
 
 from __future__ import annotations
 
+import os
 import secrets
 from functools import lru_cache
+from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,10 +31,41 @@ overrides it when a deployment wants a stable, human-readable name.
 """
 
 
+def resolve_env_file() -> str | None:
+    """Which dotenv file `Settings` reads: `SIM_ENV_FILE` if set (empty = none), else `./.env`.
+
+    `.env` is resolved against the process CWD, so a real `.env` at the repo root (a host run
+    of the demo) would otherwise leak real-provider values into `make gate`'s test processes
+    — the gate and the test conftests set `SIM_ENV_FILE=` to read none (E20).
+    """
+    value = os.environ.get("SIM_ENV_FILE")
+    if value is None:
+        return ".env"
+    return value or None
+
+
+def read_env_value(name: str) -> str | None:
+    """`name` from the process environment, else from the dotenv file `Settings` reads.
+
+    For the few variables that are deliberately NOT `Settings` fields — the seed passwords
+    `seed_users` and `voice_agent.tools.inject` need — so `cp .env.example .env` alone is enough
+    for them too, exactly as it is for every `Settings` field (E20). Empty counts as unset.
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+    env_file = resolve_env_file()
+    if env_file is None or not Path(env_file).is_file():
+        return None
+    return dotenv_values(env_file).get(name) or None
+
+
 class Settings(BaseSettings):
     """Backend process configuration, sourced from environment variables prefixed `SIM_`."""
 
-    model_config = SettingsConfigDict(env_prefix="SIM_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="SIM_", env_file=resolve_env_file(), extra="ignore"
+    )
 
     database_url: str
     redis_url: str
@@ -67,6 +101,16 @@ class Settings(BaseSettings):
     #: explicitly, so no background task can outlive a test.
     runner_enabled: bool = True
     data_dir: str = "data"
+    #: `SIM_MODELS_ROOT` — where THIS host keeps the model files a profile names (E20 R15).
+    #:
+    #: A model profile names container paths (`/models/asr/gigaam-v3-e2e-ctc`), which is exactly
+    #: where `infra/docker-compose.yml` mounts them, so `/models` is the default and compose needs
+    #: no new variable. A **host** run (`make run-voice-agent`, `make run-tts-qwen3`,
+    #: `python -m app.cli.preflight`) has the same files under the repository's `models/` directory
+    #: and nothing at `/models`, and sets `SIM_MODELS_ROOT=./models`. `app.config.model_paths.
+    #: resolve_model_path` is the single mapping — the voice agent's providers, preflight check 3,
+    #: the Qwen3-TTS worker and the five benchmark scripts all go through it.
+    models_root: str = "/models"
     require_inference_ready: bool = True
     sim_tick_ms: int = 500
     sim_runner_lock_ttl_s: int = 30
@@ -136,6 +180,11 @@ class Settings(BaseSettings):
     #: `energy` | `silero`.
     vad_provider: str = "energy"
     vad_model_path: str = "models/silero-vad/silero_vad.onnx"
+    #: ADDITIVE (E20-E R11): `vad.device` (`60-inference-ops.md` §2.1) — `"cuda"` | `"cpu"`.
+    #: E18-A2's `_direct_mapping` comment used to list this among the profile keys deliberately
+    #: left off (no `Settings` field, read straight off `ModelProfile`); this field + `apply_
+    #: profile`'s overlay is the fix (every real profile's `vad.device` is `"cpu"` today).
+    vad_device: str = "cpu"
     #: `fake` | `gigaam` | `faster_whisper`.
     asr_provider: str = "fake"
     #: GigaAM v3: `v3_e2e_ctc` (primary, emits punctuation) or `v3_ctc` (benchmarked). The
@@ -209,12 +258,27 @@ class Settings(BaseSettings):
     tts_voice_id: str = "ru_female_1"
     #: `TtsVoiceSpec.speaking_rate`'s default; 1.0 is "the provider's own".
     tts_speaking_rate: float = 1.0
+    #: ADDITIVE (E20-G/G6). `SIM_TTS_VOICE_MAP`, a JSON object: the active model profile's
+    #: `tts.voice_map`, mapping the SCENARIO-LOGICAL `caller_profile.voice_id` (e.g.
+    #: `"ru_female_adult_01"`, HLD 30) onto the selected provider's NATIVE voice id (a Qwen3-TTS
+    #: vendor speaker, a Piper voice name). Logical ids are authored once per scenario and outlive
+    #: whichever provider a deployment picks, so the table belongs to the profile, not the
+    #: scenario. An id this map does not name resolves to `tts_default_voice` with ONE warning —
+    #: never an error (E20-C's §46 walk found the old hard `ValueError` silencing the caller).
+    tts_voice_map: dict[str, str] = Field(default_factory=dict)
+    #: ADDITIVE (E20-G/G6). `SIM_TTS_DEFAULT_VOICE` — the provider-NATIVE voice every unmapped
+    #: logical id resolves to. `None` means "the provider's own default": `tts_qwen3_speaker` for
+    #: `Qwen3TTS`, the loaded `.onnx`'s stem for `PiperTTS`.
+    tts_default_voice: str | None = None
     #: How long one whole utterance may take before the turn ends with `MODEL_ERROR{TIMEOUT}`.
     #: §8 budgets 200 ms to the *first* chunk; this is "the provider is wedged", not "slow".
     tts_timeout_ms: int = 8000
     #: The tighter guard on §8 row 8 — first audio. A provider that has produced nothing after
     #: this long has already lost the turn's latency budget.
     tts_first_chunk_timeout_ms: int = 1500
+    #: ADDITIVE (E20-I). How long a provider's `warm_up()` may take — a cold GPU load plus one real
+    #: generation, not one utterance. Overlaid from the profile's `warmup.timeout_ms`.
+    tts_warmup_timeout_ms: int = 60000
     #: `split_for_tts`'s `max_unit_chars` (`app.application.voice.sentence_chunker`): the length
     #: above which a sentence is subdivided at clause separators so the first chunk of audio is
     #: not held hostage by a run-on sentence (§2.4, §8 lever 1).
@@ -241,6 +305,19 @@ class Settings(BaseSettings):
     #: `PiperTTS`'s `.onnx` voice file (+ sibling `.onnx.json`), `models/piper/` (gitignored),
     #: fetched by `make models-piper`.
     tts_piper_voice_path: str = "models/piper/ru_RU-irina-medium.onnx"
+    #: ADDITIVE (E20-E R11): `tts.device` (`60-inference-ops.md` §2.1) — `"cuda"` | `"cpu"`. Same
+    #: "no `Settings` field yet" gap `vad_device` above closes, for the TTS provider.
+    tts_device: str = "cuda"
+    #: ADDITIVE (E20-E R11): `tts.output_sample_rate`, same treatment as `tts_device` above.
+    tts_output_sample_rate: int = 24000
+    #: ADDITIVE (E20-E R11): `tts.model_variant` (`"0.6B"` | `"1.7B"` | `None`). Aliased onto
+    #: `SIM_TTS_QWEN3_MODEL` rather than the prefix-derived `SIM_TTS_MODEL_VARIANT` — that is the
+    #: SAME env var the standalone `workers/tts_qwen3` worker process reads directly (its own
+    #: venv, `os.environ.get("SIM_TTS_QWEN3_MODEL", ...)`, never through this class): one env
+    #: name, two readers, so a deployment sets it once. `apply_profile` still overlays it from
+    #: `tts.model_variant` like every other field here (R3's precedence: an explicit env value
+    #: set under either process wins over the profile).
+    tts_model_variant: str | None = Field(default=None, validation_alias="SIM_TTS_QWEN3_MODEL")
     # -- E13-B2: the caller prompt builder and the response validator (§5.2, §5.3, §7) --------
     #: §5.2's turn window: "the last 6 turns … but never drops below 4" (valid 4-6, SPEC §22).
     dialogue_window_turns: int = 6

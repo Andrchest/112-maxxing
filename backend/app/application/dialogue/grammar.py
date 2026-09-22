@@ -62,7 +62,13 @@ _JSON_CHAR = r'[^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})'
 _JSONSTRING_RULE = f'jsonstring ::= "\\"" ( {_JSON_CHAR} )* "\\""'
 #: Russian letters, including `ё`/`Ё`, which are outside the `а-я`/`А-Я` ranges.
 _CYRILLIC_LETTER = "[а-яА-ЯёЁ]"
-_SPEECH_CHAR_RULE = f"speech-char ::= {_JSON_CHAR}"
+#: What a spoken line may contain (E20-I): JSON string content MINUS escapes and the structural
+#: characters `{ } [ ] < > \\`. The real `make up` walk heard the DEV caller say `}I не знаю…` —
+#: the Cyrillic-letter rule above passes it, because the line does contain Cyrillic. A human caller
+#: never pronounces a brace, a bracket or an escape; Russian quotes are «», so `"` is not needed
+#: inside speech either.
+_SPEECH_CHAR = r"[^\"\\\x7F\x00-\x1F{}\[\]<>`]"
+_SPEECH_CHAR_RULE = f"speech-char ::= {_SPEECH_CHAR}"
 #: A JSON string with at least one Cyrillic letter somewhere in it — see `SpokenText`.
 _SPEECH_STRING_RULE = f'speech-string ::= "\\"" speech-char* {_CYRILLIC_LETTER} speech-char* "\\""'
 _BOOLEAN_RULE = 'boolean ::= "true" | "false"'

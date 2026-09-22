@@ -33,7 +33,16 @@ function extractInterfaceBody(schemaName: string): string {
 // `<indent>property_name?: type;` (optionally preceded by a JSDoc block), so this only looks at
 // identifier-like tokens directly followed by `?:` or `:`.
 const PROPERTY_LINE = /^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\??:\s/gm;
-const FORBIDDEN_NAME = /^world_|^caller_|hidden|truth/i;
+// `world_event` (unanchored) also catches `source_world_event_id` — the hidden world event that
+// produced a notification or a radio message. It is not a world *value*, but it names the
+// scenario's hidden world event, which is exactly what INV 3 keeps out of trainee bytes; the WS
+// path already redacts it (`backend/app/application/realtime/redaction.py`, HLD 40 §215-239) and
+// since E20 the REST list schemas do not declare it either.
+const FORBIDDEN_NAME = /^world_|^caller_|world_event|hidden|truth/i;
+
+// Named outright so a future schema edit that reintroduces one of these is a red test with an
+// unambiguous message, not just an empty-array mismatch.
+const FORBIDDEN_EXACT_NAMES = ['source_world_event_id', 'world_event'] as const;
 
 function forbiddenPropertyNames(body: string): string[] {
   const offenders: string[] = [];
@@ -56,6 +65,17 @@ describe('DDS-facing schemas never carry world truth / caller belief / hidden ga
       // the file are not what this assertion is about.
       const topLevelBody = body.replace(/\{[\s\S]*?\}/g, '{}');
       expect(forbiddenPropertyNames(topLevelBody)).toEqual([]);
+    },
+  );
+
+  it.each(['NotificationView', 'RadioMessageView'])(
+    '%s declares neither source_world_event_id nor world_event (INV 3, REST path)',
+    (schemaName) => {
+      const topLevelBody = extractInterfaceBody(schemaName).replace(/\{[\s\S]*?\}/g, '{}');
+      const declared = [...topLevelBody.matchAll(PROPERTY_LINE)].map((match) => match[1]!);
+      for (const forbidden of FORBIDDEN_EXACT_NAMES) {
+        expect(declared, `${schemaName} must not declare ${forbidden}`).not.toContain(forbidden);
+      }
     },
   );
 });

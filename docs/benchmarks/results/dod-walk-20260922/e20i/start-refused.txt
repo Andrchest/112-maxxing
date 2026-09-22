@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"a required inference service is not READY and REQUIRE_INFERENCE_READY is true","instance":"/api/v1/sessions/bc27dc25-786b-4f3f-af9b-561b7c7b6445/start","code":"INFERENCE_NOT_READY"}

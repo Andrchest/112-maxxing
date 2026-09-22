@@ -172,7 +172,10 @@ class StatusUpdateViewSchema(ApiModel):
 
 
 class NotificationViewSchema(ApiModel):
-    """`openapi.yaml`'s `NotificationView` — one `notifications` row."""
+    """`openapi.yaml`'s `NotificationView` — one `notifications` row.
+
+    INV 3: no `source_world_event_id` — see `application/dds/views.NotificationView`.
+    """
 
     notification_id: UUID
     incident_id: UUID
@@ -181,7 +184,6 @@ class NotificationViewSchema(ApiModel):
     title_ru: str
     body_ru: str
     created_at_offset_ms: int
-    source_world_event_id: str | None = None
     acknowledged_at_offset_ms: int | None = None
 
 
@@ -193,7 +195,10 @@ class NotificationPageSchema(ApiModel):
 
 
 class RadioMessageViewSchema(ApiModel):
-    """`openapi.yaml`'s `RadioMessageView` — projected from the log, never from a table."""
+    """`openapi.yaml`'s `RadioMessageView` — projected from the log, never from a table.
+
+    INV 3: no `source_world_event_id` — see `application/dds/views.RadioMessageView`.
+    """
 
     radio_message_id: UUID
     seq_no: int = Field(ge=1)
@@ -203,7 +208,6 @@ class RadioMessageViewSchema(ApiModel):
     text_ru: str
     resource_id: UUID | None = None
     created_at_offset_ms: int
-    source_world_event_id: str | None = None
 
 
 class RadioMessagePageSchema(ApiModel):
@@ -300,7 +304,6 @@ def notification_schema(view: NotificationView) -> NotificationViewSchema:
         title_ru=view.title_ru,
         body_ru=view.body_ru,
         created_at_offset_ms=view.created_at_offset_ms,
-        source_world_event_id=view.source_world_event_id,
         acknowledged_at_offset_ms=view.acknowledged_at_offset_ms,
     )
 
@@ -316,7 +319,6 @@ def radio_message_schema(view: RadioMessageView) -> RadioMessageViewSchema:
         text_ru=view.text_ru,
         resource_id=view.resource_id,
         created_at_offset_ms=view.created_at_offset_ms,
-        source_world_event_id=view.source_world_event_id,
     )
 
 

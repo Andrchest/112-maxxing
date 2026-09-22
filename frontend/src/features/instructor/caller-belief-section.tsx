@@ -1,6 +1,6 @@
 // Caller belief panel (D3, D10, R4): "exposes ... CallerBelief ONLY here and in the report diff."
-// Same raw-fact-id treatment as `world-truth-section.tsx` (no server-provided label catalog for
-// `CallerBeliefView.facts`/`knowledge`/`certainty` keys — HLD gap, see the task report).
+// `CallerBeliefView.label_ru` (E20-E R11, additive) labels the `facts`/`knowledge`/`certainty`
+// keys, same join and same raw-`fact_id` fallback as `world-truth-section.tsx`.
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
@@ -38,7 +38,7 @@ export function CallerBeliefSection({ callerBelief }: CallerBeliefSectionProps) 
               const knowledge = callerBelief.knowledge[factId];
               return (
                 <div key={factId} className="flex flex-col gap-0.5 rounded-md border border-border p-2">
-                  <dt className="text-xs text-muted-foreground">{factId}</dt>
+                  <dt className="text-xs text-muted-foreground">{callerBelief.label_ru?.[factId] ?? factId}</dt>
                   <dd className="text-sm">{formatRawFactValueRu(callerBelief.facts[factId])}</dd>
                   <dd className="text-xs text-muted-foreground">
                     {knowledge ? knowledgeStateLabelRu(knowledge) : null}

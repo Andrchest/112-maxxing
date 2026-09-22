@@ -438,6 +438,18 @@ export function startSession(sessionId: string): Promise<SessionDetail> {
   });
 }
 
+// -- E20-E R11: abortSession client wrapper (INSTRUCTOR/ADMIN, confirm dialog on the live overview) --
+export type AbortSessionRequest = operations['abortSession']['requestBody']['content']['application/json'];
+
+/** Fires `abort` (`CREATED|READY|ACTIVE|ROLE_TRANSITION -> ABORTED`, openapi.yaml). The event log
+ * is preserved, never deleted (SPEC §39, §42 test 14) — this only ends the exercise early. */
+export function abortSession(sessionId: string, body: AbortSessionRequest): Promise<SessionDetail> {
+  return apiFetch<SessionDetail>(`/sessions/${encodeURIComponent(sessionId)}/abort`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails

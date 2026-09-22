@@ -1,17 +1,52 @@
 """`SqlAlchemyEventStore` — the `seq_no` allocation protocol of HLD `20-db-schema.md` §20.8 (D5).
 
-The two statements of §20.8 step 1 are issued literally and in that order:
+The two statements of §20.8 step 1 are issued in that order:
 
 ```sql
-SELECT next_seq_no FROM simulation_sessions WHERE id = :session_id FOR UPDATE;
+SELECT next_seq_no FROM simulation_sessions WHERE id = :session_id FOR NO KEY UPDATE;
 UPDATE simulation_sessions SET next_seq_no = next_seq_no + :event_count
  WHERE id = :session_id RETURNING next_seq_no - :event_count AS first_seq_no;
 ```
 
-The `FOR UPDATE` row lock is what serialises concurrent appenders (backend and voice-agent), so
+The row lock is what serialises concurrent appenders (backend and voice-agent), so
 `uq_session_events_session_seq` can never be violated and the sequence has no gaps. Both statements
 run inside the caller's Unit of Work transaction; the events are inserted with the numbers reserved
 here (step 3) and published only after that transaction commits.
+
+**The lock mode is `FOR NO KEY UPDATE`, and that is the whole of R14** (E19-E3 bug #6). §20.8's
+text says "FOR UPDATE", which is the strongest row lock PostgreSQL has, and it was taken literally
+until E20. Every table the voice agent writes beside its events — `audio_segments`,
+`transcript_segments`, `dialogue_turns`, `inference_metrics` — has a foreign key to
+`simulation_sessions.id`, and PostgreSQL takes a `FOR KEY SHARE` lock on the **referenced** row for
+each such insert. `VoiceEventAppender.append` writes those rows first and allocates the `seq_no`
+afterwards, so its transaction already holds `FOR KEY SHARE` on the session row when it asks for
+the allocation lock. `FOR UPDATE` conflicts with `FOR KEY SHARE`, so two such transactions each
+held a lock the other had to wait for and PostgreSQL broke the cycle the only way it can:
+
+```
+asyncpg.exceptions.DeadlockDetectedError: deadlock detected
+[SQL: SELECT next_seq_no FROM simulation_sessions WHERE id = $1 FOR UPDATE]
+```
+
+— which is what killed E19-E3's first real LiveKit run after two turns, and why that run had to be
+repeated with `SIM_SIM_TICK_MS=10000` instead of the shipped 500.
+
+`FOR NO KEY UPDATE` is exactly the mode the very next statement (an `UPDATE` of a non-key column)
+takes anyway. It still conflicts with **itself**, which is the only property §20.8 needs — two
+allocations of one session are still strictly serialised — and it is *compatible* with
+`FOR KEY SHARE`, so a transaction that already wrote a child row can acquire it without an upgrade
+and no cycle can form. `SessionRepository.get_for_update` uses the same mode for the same reason,
+so there is **one lock mode on `simulation_sessions` for every writer in both processes**.
+
+**The lock order, documented once (D5).** A writer that takes both takes the session-row lock
+(`SessionRepository.get_for_update`) before the allocation — which every command, the
+`SimulationRunner`'s tick and its `after_tick` hooks already do — and never the other way round.
+Because both are now the same mode on the same row, that order is an ordering of equal locks and
+cannot deadlock either way; it is stated so that a future writer taking a *different* row lock has
+a rule to follow rather than a convention to guess.
+
+`backend/tests/integration/persistence/test_seq_lock_order.py` is the regression test, and it bites
+against real PostgreSQL when either mode here is put back to `FOR UPDATE`.
 """
 
 from __future__ import annotations
@@ -39,10 +74,13 @@ __all__ = ["SqlAlchemyEventStore", "UnknownSessionError"]
 
 logger = logging.getLogger(__name__)
 
-#: §20.8 step 1, verbatim. Taking the row lock first is the whole protocol: without it two
-#: appenders could read the same `next_seq_no` and reserve overlapping ranges.
+#: §20.8 step 1. Taking the row lock first is the whole protocol: without it two appenders could
+#: read the same `next_seq_no` and reserve overlapping ranges. `FOR NO KEY UPDATE` rather than
+#: §20.8's literal `FOR UPDATE` — see this module's docstring (R14): it conflicts with itself, so
+#: allocation is still serialised, and is compatible with the `FOR KEY SHARE` an appender's own
+#: foreign keys already hold on this row, so no lock-upgrade cycle can form.
 _LOCK_SESSION_ROW = sa.text(
-    "SELECT next_seq_no FROM simulation_sessions WHERE id = :session_id FOR UPDATE"
+    "SELECT next_seq_no FROM simulation_sessions WHERE id = :session_id FOR NO KEY UPDATE"
 )
 _ALLOCATE_SEQ_NOS = sa.text(
     "UPDATE simulation_sessions SET next_seq_no = next_seq_no + :event_count"

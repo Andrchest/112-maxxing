@@ -41,7 +41,8 @@ where this should be revisited if it turns out to matter.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,9 +53,55 @@ from app.inference.errors import ModelNotAvailableError
 
 __all__ = ["PiperTTS"]
 
+logger = logging.getLogger(__name__)
+
 _BYTES_PER_SAMPLE = 2
 _MS_PER_S = 1000
 _STOP = object()  # sentinel: "the generator is exhausted"
+
+
+class _VoiceResolver:
+    """`TtsVoiceSpec.voice_id` (a SCENARIO-LOGICAL id) -> Piper's NATIVE voice name (E20-G).
+
+    Same contract and same reasoning as `app.inference.tts.qwen3_tts._VoiceResolver` (read its
+    docstring): the logical -> native table lives in the active model profile (`tts.voice_map`),
+    `tts.default_voice` answers every miss, a miss is one WARN per `(provider, logical id)` pair
+    and never an error. Duplicated rather than shared for the same reason `_chunk_pcm` is.
+
+    Piper's "native voice" is the voice MODEL this process loaded (`ru_RU-irina-medium`): a single
+    `.onnx` file chosen by `SIM_TTS_PIPER_VOICE_PATH`, not a per-utterance parameter. So the
+    resolved id here does not change what is synthesised — it is what
+    `CALLER_TTS_STARTED.voice_id_native` records, and it keeps one resolution rule across
+    providers rather than a special case per adapter.
+    """
+
+    __slots__ = ("_default", "_map", "_provider_name", "_warned")
+
+    def __init__(
+        self, *, provider_name: str, voice_map: Mapping[str, str] | None, default: str
+    ) -> None:
+        self._provider_name = provider_name
+        self._map = dict(voice_map or {})
+        self._default = default
+        self._warned: set[str] = set()
+
+    def resolve(self, voice_id: str) -> str:
+        if not voice_id:
+            return self._default
+        native = self._map.get(voice_id)
+        if native is not None:
+            return native
+        if voice_id not in self._warned:
+            self._warned.add(voice_id)
+            logger.warning(
+                "TTS voice_id %r is not in %s's tts.voice_map; falling back to the profile's "
+                "tts.default_voice %r (add the mapping to the active model profile to silence "
+                "this)",
+                voice_id,
+                self._provider_name,
+                self._default,
+            )
+        return self._default
 
 
 def _config_path_for(onnx_path: Path) -> Path:
@@ -169,11 +216,25 @@ class PiperTTS:
 
     provider_name = "piper"
 
-    def __init__(self, *, voice_path: str) -> None:
+    def __init__(
+        self,
+        *,
+        voice_path: str,
+        voice_map: Mapping[str, str] | None = None,
+        default_voice: str | None = None,
+    ) -> None:
         self._voice_path = Path(voice_path)
         self._voice: Any = None
         self._sample_rate: int | None = None
         self._lock = asyncio.Lock()
+        # E20-G: `voice_map`/`default_voice` come from the active model profile's `tts.voice_map` /
+        # `tts.default_voice`. Piper's own natural default is the stem of the voice file it loads
+        # (`ru_RU-irina-medium`), which is what `tts.default_voice` is expected to name anyway.
+        self._voices = _VoiceResolver(
+            provider_name=self.provider_name,
+            voice_map=voice_map,
+            default=default_voice or self._voice_path.stem,
+        )
 
     @property
     def model_version(self) -> str:
@@ -214,7 +275,18 @@ class PiperTTS:
         request_id: str,
         max_chunk_ms: int = 20,
     ) -> _PiperTtsStream:
+        # E20-G: resolve for the WARN/record side-effect; the loaded `.onnx` is what actually
+        # speaks (see `_VoiceResolver`'s docstring). An unknown logical id never raises.
+        self.native_voice_id(voice.voice_id)
         return _PiperTtsStream(self, text, voice, request_id, max_chunk_ms)
+
+    def native_voice_id(self, voice_id: str) -> str:
+        """The native Piper voice this adapter reports for `voice_id` (E20-G).
+
+        Public because `CALLER_TTS_STARTED` records both the logical `voice_id` and the
+        `voice_id_native` that was really used (HLD 10 §10.13). Idempotent.
+        """
+        return self._voices.resolve(voice_id)
 
     async def close(self) -> None:
         self._voice = None

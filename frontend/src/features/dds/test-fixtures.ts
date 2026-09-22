@@ -67,7 +67,6 @@ export function makeNotification(overrides: Partial<NotificationView> = {}): Not
     title_ru: 'Fire spreading',
     body_ru: 'Fire moved to the next room.',
     created_at_offset_ms: 1000,
-    source_world_event_id: 'fire_spreads',
     acknowledged_at_offset_ms: null,
     ...overrides,
   };
@@ -83,7 +82,6 @@ export function makeRadioMessage(overrides: Partial<RadioMessageView> = {}): Rad
     text_ru: 'En route to the address.',
     resource_id: 'res-ac2',
     created_at_offset_ms: 1000,
-    source_world_event_id: null,
     ...overrides,
   };
 }

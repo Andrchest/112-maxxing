@@ -11,7 +11,6 @@ function makeMessage(overrides: Partial<RadioMessageView> = {}): RadioMessageVie
     text_ru: 'x',
     resource_id: null,
     created_at_offset_ms: 0,
-    source_world_event_id: null,
     ...overrides,
   };
 }

@@ -10,6 +10,8 @@ frontend/dist
 # tracked (it is derived, deterministically, from a profile YAML that IS tracked).
 infra/.env.profile
 /data/
+# A test or host run started from backend/ resolves the default `data/recordings` there (E20).
+/backend/data/
 /models/
 *.gguf
 benchmarks/results/

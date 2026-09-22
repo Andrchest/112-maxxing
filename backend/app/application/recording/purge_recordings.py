@@ -31,12 +31,12 @@ whichever candidate is processed first; every later candidate that names the sam
 already gone and is recorded with `bytes_freed = 0` — still a purged, audited row, never a skipped
 one, and never a *second* charge for bytes this purge already freed.
 
-**HLD gap** (see this task's report): `recording_purge_audit.actor_type` is `ActorType`
-(`TRAINEE|INSTRUCTOR|SIMULATION|MODEL|SYSTEM`, `app.domain.enums`) — there is no `ADMIN` member,
-even though `purgeRecordings` is ADMIN-only. `INSTRUCTOR` is used for any authenticated caller
-(`AuthenticatedUser.is_instructor_or_admin` already treats the two roles as one authorization
-tier elsewhere, e.g. `app.application.reports.visibility`); the CLI, which has no authenticated
-user, uses `SYSTEM`.
+**`recording_purge_audit.actor_type`** (E20-E R11, migration `0008_purge_audit_actor_admin`):
+widened to `RECORDING_PURGE_ACTOR_TYPES` (`ActorType` plus `ADMIN`, `app.db.models.events`) so
+`purgeRecordings` (ADMIN-only, `routers/admin.py`'s `AdminDep`) records its true caller instead of
+folding it into `INSTRUCTOR` — the row now carries `actor.user_role.value` verbatim (`ADMIN` in
+practice, since `AdminDep` admits no other role); the CLI, which has no authenticated user, still
+uses `SYSTEM`.
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ class PurgeRecordings:
                     reason=reason,
                 )
 
-            actor_type = "INSTRUCTOR" if actor is not None else "SYSTEM"
+            actor_type = actor.user_role.value if actor is not None else "SYSTEM"
             actor_user_id = UUID(str(actor.user_id)) if actor is not None else None
             bytes_freed = 0
             for candidate in candidates:

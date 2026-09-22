@@ -26,11 +26,13 @@ from app.cli.preflight import (
     check_redis_responds,
     check_scenario_validation,
     check_tts_responds,
+    has_cyrillic_word,
     profile_model_file_paths,
     render_json,
     render_table,
 )
 from app.config.profile import ModelProfile, load_profile
+from app.config.settings import Settings
 from app.domain.common.errors import ScenarioValidationError
 
 
@@ -92,6 +94,70 @@ async def test_expected_gpu_detected_fails_when_free_vram_is_below_the_margin(
     assert "MB free" in result.detail
 
 
+# E20-G/G7: STACK-AWARE. On a warm stack the pre-start rule ("the whole budget must be FREE")
+# fails precisely because the models it checks for are loaded — E20-C's §46 walk got
+# `2341 MB free < 7680 MB required` against a healthy machine.
+
+
+async def _loaded() -> tuple[bool, str]:
+    return True, "voice-agent :8113 ASR+TTS ready"
+
+
+async def _cold() -> tuple[bool, str]:
+    return False, "ConnectError: connection refused"
+
+
+async def test_expected_gpu_detected_passes_on_a_warm_stack_with_only_the_remaining_allowance(
+    profile: ModelProfile,
+) -> None:
+    assert profile.measured_peak_vram_mb is not None
+    remaining = profile.vram_budget_mb - profile.measured_peak_vram_mb
+    pre_start = profile.vram_budget_mb + profile.min_vram_margin_mb
+    free = remaining + 10
+    assert free < pre_start  # the same card would FAIL the pre-start rule
+
+    result = await check_expected_gpu_detected(
+        lambda: [GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, free)], profile, _loaded
+    )
+    assert result.status == "PASS"
+    assert "models loaded" in result.detail
+
+
+async def test_expected_gpu_detected_keeps_the_pre_start_rule_when_nothing_is_loaded(
+    profile: ModelProfile,
+) -> None:
+    remaining = profile.vram_budget_mb - (profile.measured_peak_vram_mb or 0)
+    result = await check_expected_gpu_detected(
+        lambda: [GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, remaining + 10)], profile, _cold
+    )
+    assert result.status == "FAIL"
+    assert "models loaded" not in result.detail
+
+
+async def test_expected_gpu_detected_still_fails_on_a_warm_stack_below_the_remaining_allowance(
+    profile: ModelProfile,
+) -> None:
+    assert profile.measured_peak_vram_mb is not None
+    remaining = profile.vram_budget_mb - profile.measured_peak_vram_mb
+    result = await check_expected_gpu_detected(
+        lambda: [GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, remaining - 1)], profile, _loaded
+    )
+    assert result.status == "FAIL"
+
+
+async def test_expected_gpu_detected_assumes_cold_when_the_loaded_probe_raises(
+    profile: ModelProfile,
+) -> None:
+    async def raising() -> tuple[bool, str]:
+        raise RuntimeError("no route to host")
+
+    remaining = profile.vram_budget_mb - (profile.measured_peak_vram_mb or 0)
+    result = await check_expected_gpu_detected(
+        lambda: [GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, remaining + 10)], profile, raising
+    )
+    assert result.status == "FAIL"
+
+
 # -- #3 model_files_exist -------------------------------------------------------------------------
 
 
@@ -108,6 +174,40 @@ async def test_model_files_exist_fails_when_a_path_is_missing(profile: ModelProf
     result = await check_model_files_exist(profile, stat)
     assert result.status == "FAIL"
     assert "llm.model_path" in result.detail
+
+
+async def test_check_3_resolves_the_profiles_container_paths_onto_the_host(
+    profile: ModelProfile, tmp_path: Path
+) -> None:
+    """E20 R15: on a host run the files are under `SIM_MODELS_ROOT`, never at `/models`.
+
+    Before this, check #3 stat-ed `/models/...` verbatim and therefore FAILed on every host run no
+    matter what was installed — the same defect that made the voice agent's four components go
+    FATAL (E19-E2/E3).
+    """
+    seen: list[Path] = []
+
+    def stat(path: Path) -> int | None:
+        seen.append(path)
+        return 1024
+
+    result = await check_model_files_exist(profile, stat, str(tmp_path))
+
+    assert result.status == "PASS"
+    assert seen, "check #3 stat-ed nothing"
+    assert all(str(path).startswith(str(tmp_path)) for path in seen), seen
+    assert not any(str(path).startswith("/models/") for path in seen)
+
+
+async def test_check_3_is_unchanged_under_compose(profile: ModelProfile) -> None:
+    """`/models` is the default root, so compose sees exactly the paths the profile names."""
+    assert profile_model_file_paths(profile) == {
+        "llm.model_path": profile.llm.model_path,
+        "asr.model_path": profile.asr.model_path,
+        "tts.model_path": profile.tts.model_path,
+        "vad.model_path": profile.vad.model_path,
+        "warmup.asr_sample_path": profile.warmup.asr_sample_path,
+    }
 
 
 # -- #4 llm_responds ------------------------------------------------------------------------------
@@ -156,6 +256,36 @@ async def test_asr_responds_fails_when_the_probe_reports_not_ok() -> None:
 
     result = await check_asr_responds(probe)
     assert result.status == "FAIL"
+
+
+# E20-G/G7: the bar is a CYRILLIC WORD, not "non-empty". A 440 Hz tone (what `.env.example` used
+# to make the agent warm on) transcribes to nothing or to noise, and check 5 must say why.
+
+
+async def test_asr_responds_fails_when_the_transcription_has_no_cyrillic_word() -> None:
+    async def probe() -> tuple[bool, str]:
+        return True, "beep beep 440"
+
+    result = await check_asr_responds(probe)
+    assert result.status == "FAIL"
+    assert "Cyrillic" in result.detail
+    assert "warmup_ru.wav" in result.detail
+
+
+async def test_asr_responds_fails_on_an_empty_transcription_from_a_tone() -> None:
+    async def probe() -> tuple[bool, str]:
+        return True, ""
+
+    result = await check_asr_responds(probe)
+    assert result.status == "FAIL"
+
+
+def test_has_cyrillic_word() -> None:
+    assert has_cyrillic_word("проверка связи")
+    assert has_cyrillic_word("mixed текст here")
+    assert not has_cyrillic_word("")
+    assert not has_cyrillic_word("beep 440 hz")
+    assert not has_cyrillic_word("a б c")  # one stray letter is not a word
 
 
 # -- #6 tts_responds ------------------------------------------------------------------------------
@@ -383,3 +513,43 @@ def test_render_json_round_trips_through_json() -> None:
     assert body["profile"] == "DEV_3060TI"
     assert body["exit_code"] == 0
     assert body["checks"][0]["status"] == "PASS"
+
+
+# -- E20-G/G7: check #4 dials the EFFECTIVE base url ----------------------------------------------
+
+
+async def test_build_real_checks_dials_the_settings_llm_base_url_not_the_profile_literal(
+    profile: ModelProfile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A profile names the COMPOSE url; on a host run `SIM_LLM_BASE_URL` overrides it.
+
+    E20-C's §46 walk got `[FAIL] 4. llm_responds: ConnectError: [Errno -3] Temporary failure in
+    name resolution` against a llama-server that was answering perfectly on 127.0.0.1:8101,
+    because the check dialled `profile.llm.base_url` (`http://llama-server:8080/v1`).
+    """
+    from app.cli import preflight as preflight_module
+
+    dialled: list[str] = []
+
+    async def fake_probe(base_url: str) -> tuple[bool, str]:
+        dialled.append(base_url)
+        return True, profile.llm.model_name
+
+    monkeypatch.setattr(preflight_module, "_probe_llm_real", fake_probe)
+    settings = Settings(  # type: ignore[call-arg]
+        database_url="postgresql+asyncpg://sim:sim@localhost:55432/sim_test",
+        redis_url="redis://localhost:56379/0",
+        jwt_secret="test-only-secret-padded-32-bytes!",
+        livekit_url="ws://localhost:7880",
+        livekit_api_key="devkey",
+        livekit_api_secret="devsecret1234567890",
+        llm_base_url="http://127.0.0.1:8101/v1",
+    )
+    assert settings.llm_base_url != profile.llm.base_url
+
+    checks = preflight_module.build_real_checks(profile, settings, skip_audio_devices=True)
+    result = await checks[3]()
+
+    assert dialled == ["http://127.0.0.1:8101/v1"]
+    assert result.number == 4
+    assert result.status == "PASS"

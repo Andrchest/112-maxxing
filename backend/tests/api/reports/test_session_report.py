@@ -13,9 +13,12 @@ checksum, no new events, and `rescoreSession` afterwards still `identical_to_sto
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from app.application.ports.dialogue_turn_repository import DialogueTurnUpsert
+from app.domain.common.ids import SessionId
 
 from tests.api.conftest import auth, create_demo_session, participant
 from tests.api.reports.conftest import OperatorFlow, dds_post, release, report
@@ -350,6 +353,41 @@ async def test_the_metrics_page_shares_the_report_s_timing_block(
     assert isinstance(body["items"], list)
     assert body["total"] == len(body["items"]) or body["total"] >= len(body["items"])
     assert body["timing_metrics"] == (await report(completed)).json()["timing_metrics"]
+
+
+async def test_speech_end_to_first_audio_percentiles_are_present_over_three_turns(
+    completed: OperatorFlow, uow_factory: Any
+) -> None:
+    """H3 (E20-H): the report reads the *stored* `dialogue_turns.speech_end_to_first_audio_ms`
+    column (E16's stored-only rule, no recomputation from events) — SPEC §27's own metric, so it
+    must not silently stay `null` when the column has rows to aggregate.
+
+    `completed` already seeds turn 0 at 880 ms (`tests.api.reports.conftest._seed_voice_artefacts`);
+    this adds two more turns directly through the port, exactly as E12/E14 would in production, and
+    checks the nearest-rank percentiles of the three (`app.application.reports.timing_metrics
+    .percentile`: p50 of `[880, 1200, 2000]` is the 2nd value, p95 is the 3rd).
+    """
+    session_id = SessionId(completed.session_id)
+    async with uow_factory() as uow:
+        stage_id = (await uow.sessions.get(session_id)).stages[0].role_stage_id
+        for turn_index, value in ((1, 1200), (2, 2000)):
+            await uow.dialogue_turns.upsert(
+                DialogueTurnUpsert(
+                    id=uuid4(),
+                    session_id=session_id,
+                    role_stage_id=stage_id,
+                    turn_index=turn_index,
+                    user_speech_started_offset_ms=3000 + turn_index * 1000,
+                )
+            )
+            await uow.dialogue_turns.set_speech_end_to_first_audio_ms(session_id, turn_index, value)
+        await uow.commit()
+
+    body = (await report(completed)).json()
+    timing = body["timing_metrics"]
+    assert timing["turn_count"] == 3
+    assert timing["speech_end_to_first_audio_ms_p50"] == 1200.0
+    assert timing["speech_end_to_first_audio_ms_p95"] == 2000.0
 
 
 async def test_the_component_filter_does_not_move_the_aggregate(

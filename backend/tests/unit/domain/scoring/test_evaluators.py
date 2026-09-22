@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
+from app.domain.common.ids import EventId
 from app.domain.enums import EvaluatorType, ServiceType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
@@ -35,6 +36,7 @@ from tests.unit.domain.scoring._event_log_builders import (
     VICTIM_FACT_MS,
     dds_only_log,
     demo_scenario,
+    det_uuid,
     good_log,
     mutate,
 )
@@ -562,6 +564,78 @@ def test_required_status_update_in_time() -> None:
     assert result.passed
 
 
+def _with_second_unanswered_status_change(
+    *, second_status_update_ms: int | None
+) -> tuple[SessionEvent, ...]:
+    """`good_log()` plus a *second* `RESOURCE_STATUS_CHANGED` (H4, E20-H): each qualifying change
+    opens its own window, so this is what makes the difference between "first reference in the
+    whole log" (the pre-H4 reading) and "every reference" observable in a test — the first
+    window (`ON_SCENE_MS`, answered by `STATUS_UPDATE_MS`) is always satisfied here; only the
+    second one varies.
+    """
+    base = good_log()
+    reference_template = next(
+        event for event in base if event.event_type is EventType.RESOURCE_STATUS_CHANGED
+    )
+    update_template = next(
+        event for event in base if event.event_type is EventType.DDS_STATUS_UPDATE_SENT
+    )
+    next_seq = max(event.seq_no for event in base) + 1
+    second_reference_ms = ON_SCENE_MS + 100_000
+    extra = [
+        reference_template.model_copy(
+            update={
+                "id": EventId(det_uuid("event:second-status-change")),
+                "seq_no": next_seq,
+                "monotonic_offset_ms": second_reference_ms,
+                "payload": {**reference_template.payload, "new_status": "WORKING"},
+            }
+        )
+    ]
+    if second_status_update_ms is not None:
+        extra.append(
+            update_template.model_copy(
+                update={
+                    "id": EventId(det_uuid("event:second-status-update")),
+                    "seq_no": next_seq + 1,
+                    "monotonic_offset_ms": second_status_update_ms,
+                }
+            )
+        )
+    return (*base, *extra)
+
+
+def test_required_status_update_every_qualifying_change_needs_its_own_answer() -> None:
+    """H4 (E20-H) bite proof: a second `RESOURCE_STATUS_CHANGED` with NO timely report of its own
+    must fail the rule, even though the *first* one (which the pre-H4 code alone checked) was
+    answered in time. Reverting `evaluate()` to `ctx.first_of_type(...)` / `updates[0]` (the
+    pre-H4 shape) turns this green again — that is exactly the unsatisfiable-in-a-real-session bug
+    E20-C's walk reproduced (`"Задержка … 279160 мс при норме 60000 мс"`), just inverted: here the
+    *first* window is fine and the *second* is silently ignored instead of wrongly blocking
+    everything.
+    """
+    events = _with_second_unanswered_status_change(second_status_update_ms=None)
+
+    result = run(DEMO_RULES["status_on_scene_report"], events)
+
+    assert not result.passed
+    assert result.points_awarded == -2.0
+    assert EventType.RESOURCE_STATUS_CHANGED in evidence_events(result, events)
+
+
+def test_required_status_update_every_qualifying_change_answered_in_time_passes() -> None:
+    """Both windows answered in time: the rule passes and evidence lists both pairs."""
+    events = _with_second_unanswered_status_change(
+        second_status_update_ms=ON_SCENE_MS + 100_000 + 30_000
+    )
+
+    result = run(DEMO_RULES["status_on_scene_report"], events)
+
+    assert result.passed
+    assert result.points_awarded == 5.0
+    assert evidence_events(result, events).count(EventType.DDS_STATUS_UPDATE_SENT) == 2
+
+
 def test_required_status_update_at_exactly_the_limit_still_passes() -> None:
     events = good_log(status_update_ms=ON_SCENE_MS + 60_000)
 
@@ -583,8 +657,26 @@ def test_required_status_update_before_the_reference_event_does_not_count() -> N
     assert not run(DEMO_RULES["status_on_scene_report"], events).passed
 
 
-def test_required_status_update_missing_points_at_the_stage_bound() -> None:
+def test_required_status_update_missing_points_at_the_missed_window() -> None:
+    """H4 (E20-H): the reference event (`RESOURCE_STATUS_CHANGED`, the qualifying change whose
+    window went unanswered) is now the evidence, not a generic stage-bound fallback — the rule
+    still has a reference event, it just never got a matching report (§10.14 #9)."""
     events = mutate("missing_status_update")
+
+    result = run(DEMO_RULES["status_on_scene_report"], events)
+
+    assert not result.passed
+    assert evidence_events(result, events) == [EventType.RESOURCE_STATUS_CHANGED]
+
+
+def test_required_status_update_with_no_reference_event_at_all_points_at_the_stage_bound() -> None:
+    """The pre-existing "event never happened" reading (§10.14) stays: no `RESOURCE_STATUS_CHANGED`
+    at all means no window was ever opened, so the rule falls back to the stage-bound evidence."""
+    events = tuple(
+        event
+        for event in mutate("missing_status_update")
+        if event.event_type is not EventType.RESOURCE_STATUS_CHANGED
+    )
 
     result = run(DEMO_RULES["status_on_scene_report"], events)
 

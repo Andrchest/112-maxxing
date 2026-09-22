@@ -7,9 +7,12 @@
 # reached over loopback HTTP, never imported by `backend`/`voice-agent`), gated behind
 # `profiles: ["qwen3-tts"]` so it only starts with `docker compose --profile qwen3-tts up`.
 #
-# This file is for `make dev-infra-up` (three infra services only, unchanged behaviour) and the new
-# `make up` (the seven, or all eight with `TTS_COMPOSE_PROFILE=qwen3-tts make up` — see the
-# Makefile). It is **not** the test stack: `infra/docker-compose.test.yml` owns that, uses tmpfs
+# This file is for `make dev-infra-up` and the new `make up` (the seven, or all eight with
+# `TTS_COMPOSE_PROFILE=qwen3-tts make up` — see the Makefile). CORRECTED (E20-D2, 2026-09-22):
+# `dev-infra-up` passes no service filter, so it starts the same seven containers `make up` does,
+# not "three infra services only" as this comment used to claim — README.md's Host-run section
+# documents the explicit `docker compose ... up postgres redis livekit` filter for an infra-only
+# start. It is **not** the test stack: `infra/docker-compose.test.yml` owns that, uses tmpfs
 # storage and different ports,
 # and the two are meant to be able to run side by side. No port here is 8000, 8001, 8011, 8012 or
 # 8016 — those belong to another project on the developer machine.
@@ -92,9 +95,14 @@ services:
               capabilities: ["gpu"]
     environment:
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
-      # SIM_LLAMA_SERVER_BIN defaults to whatever this pinned image puts on PATH (UNVERIFIED without
-      # a real pull — flagged above); override if the image's binary lives elsewhere.
-      SIM_LLAMA_SERVER_BIN: ${SIM_LLAMA_SERVER_BIN:-llama-server}
+      # SIM_LLAMA_SERVER_BIN is the ABSOLUTE path of the server binary inside this pinned image.
+      # VERIFIED 2026-09-22 (E20-G): `docker run --rm --entrypoint ls
+      # ghcr.io/ggml-org/llama.cpp:server-cuda-b11065 -l /app/llama-server` ->
+      # `-rwxr-xr-x 1 root root 17880 Sep 21 05:51 /app/llama-server` (exit 0). The bare name
+      # `llama-server` is NOT on this image's PATH: E20-C's `make up` attempt died with
+      # `/entrypoint.sh: line 65: exec: llama-server: not found`. Override if a different image tag
+      # puts the binary elsewhere.
+      SIM_LLAMA_SERVER_BIN: ${SIM_LLAMA_SERVER_BIN:-/app/llama-server}
     # `infra/.env.profile` is written by `make profile-env` (`app.config.profile_env --emit-env`,
     # E18-E) from the active profile's `llm.*` block — the SIM_LLAMA_* flags this entrypoint reads.
     # It is gitignored; `make up`/`make run-llama-server` regenerate it before starting.
@@ -103,6 +111,10 @@ services:
       - path: .env.profile
         required: false
     volumes:
+      # MODELS_DIR is resolved by compose against THIS FILE's directory (`infra/`), not against the
+      # repo root and not against the shell's cwd — so the repo's `models/` is `../models` here.
+      # Absolute paths work too. (E20-G: `.env.example` used to say `./models`, which silently
+      # mounted an empty auto-created `infra/models`.)
       - ${MODELS_DIR:-../models}:/models:ro
       - ./scripts/llama-server-entrypoint.sh:/entrypoint.sh:ro
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
@@ -129,6 +141,9 @@ services:
       # Compose-internal service hostnames override `.env`'s host-oriented defaults (which target
       # the published dev ports 15432/16379/7880 for a bare `make run-api` on the host).
       SIM_DATABASE_URL: postgresql+asyncpg://${SIM_POSTGRES_USER:-sim}:${SIM_POSTGRES_PASSWORD:-sim}@postgres:5432/${SIM_POSTGRES_DB:-sim}
+      # Container mount point for the models volume; overrides a host `.env` value such as
+      # `SIM_MODELS_ROOT=./models` (E20 R15 — `environment:` wins over `env_file`).
+      SIM_MODELS_ROOT: /models
       SIM_REDIS_URL: redis://redis:6379/0
       SIM_LIVEKIT_URL: ws://livekit:7880
       SIM_LIVEKIT_PUBLIC_URL: ${SIM_LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
@@ -170,7 +185,13 @@ services:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5173/ >/dev/null 2>&1 || exit 1"]
+      # The `node:22-slim` base has NEITHER `wget` NOR `curl` (verified 2026-09-22, E20-G:
+      # `docker run --rm --entrypoint sh sim112dev-frontend -c 'which wget curl node'` prints only
+      # `/usr/local/bin/node`; the old `wget` probe exited 127 inside the container, so the service
+      # was permanently `unhealthy` and `make up --wait` could never exit 0). Node 22 has a global
+      # `fetch`, so the probe uses the one runtime the image is guaranteed to have. Kept in step
+      # with `frontend/Dockerfile`'s own HEALTHCHECK.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       start_period: 15s
@@ -196,15 +217,28 @@ services:
       SIM_DATABASE_URL: postgresql+asyncpg://${SIM_POSTGRES_USER:-sim}:${SIM_POSTGRES_PASSWORD:-sim}@postgres:5432/${SIM_POSTGRES_DB:-sim}
       SIM_REDIS_URL: redis://redis:6379/0
       SIM_LIVEKIT_URL: ws://livekit:7880
+      # Container mount point for the models volume; overrides a host `.env` value such as
+      # `SIM_MODELS_ROOT=./models` (E20 R15 — `environment:` wins over `env_file`).
+      SIM_MODELS_ROOT: /models
       SIM_MODEL_PROFILE: ${SIM_MODEL_PROFILE:-DEV_3060TI}
       SIM_DATA_DIR: /data
       SIM_LLM_BASE_URL: http://llama-server:8080/v1
       SIM_TTS_QWEN3_BASE_URL: http://tts-qwen3:8112
+      # E20-G: the ASR warm-up sample is read by RAW path (no `SIM_MODELS_ROOT` resolution), so
+      # the host-relative value in `.env` (`models/warmup/warmup_ru.wav`) does not exist inside
+      # this container and the agent would silently warm on a 440 Hz tone — which is what made
+      # preflight check 5 red on a healthy stack. Pin the mounted path here.
+      SIM_ASR_WARMUP_SAMPLE_PATH: /models/warmup/warmup_ru.wav
       # loopback only, INSIDE this container (R7 of the E18 brief) — never published to the host.
       SIM_VOICE_AGENT_HTTP_PORT: ${SIM_VOICE_AGENT_HTTP_PORT:-8113}
     volumes:
       - ${MODELS_DIR:-../models}:/models:ro
       - recordings-data:/data
+      # Read-only, for `make preflight` only (E20): under compose the preflight runs INSIDE this
+      # container — the one vantage point that reaches every dependency (its own loopback 8113,
+      # `llama-server:8080`, `/models`, the GPU) — and check #10 validates `scenarios/examples`
+      # relative to the WORKDIR /workspace. See infra/scripts/preflight.sh.
+      - ../scenarios:/workspace/scenarios:ro
     # Publishes NO port (HLD 60 §9). Does not hard-depend on `tts-qwen3`: that service is the
     # profiled eighth and a plain `up` (the SPEC's seven) never starts it — `Qwen3TTS`'s httpx
     # client fails its own calls if unreachable, exactly like any other TTS-provider failure
@@ -218,9 +252,8 @@ services:
         condition: service_started
       llama-server:
         condition: service_healthy
-    # HLD 60 §9's documented healthcheck (`python -m voice_agent.cli health`) is not built yet as
-    # of this task (owned by a different E18 slice) — see workers/voice_agent/Dockerfile's own
-    # comment. Written to match the HLD; will start passing once that CLI lands.
+    # HLD 60 §9's documented healthcheck. `voice_agent.cli`'s `health` subcommand is built
+    # (`workers/voice_agent/voice_agent/cli.py`): it exits 0 only when this agent is up and warm.
     healthcheck:
       test: ["CMD-SHELL", "python -m voice_agent.cli health || exit 1"]
       interval: 15s
@@ -246,18 +279,30 @@ services:
             - driver: nvidia
               device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
               capabilities: ["gpu"]
+    # The model VARIANT comes from the active profile (E20): `make profile-env` (run by `make up`)
+    # writes `SIM_TTS_QWEN3_MODEL=<tts.model_variant>` into `.env.profile`; DEV_3060TI ships 0.6B,
+    # the variant its measured VRAM peak describes. Absent a variant the worker keeps its default.
+    env_file:
+      - path: .env.profile
+        required: false
     environment:
-      SIM_TTS_QWEN3_MODEL: ${QWEN3_TTS_VARIANT:-1.7B}
       SIM_TTS_QWEN3_MODEL_DIR: /models/qwen3-tts
       SIM_TTS_QWEN3_PORT: "8112"
+      # Container-internal bind. The worker defaults to loopback (correct for a host run); inside
+      # this container it must listen on every interface or `voice-agent` cannot reach it at
+      # `http://tts-qwen3:8112` (HLD 60 §9). This is NOT an exposure: the service publishes no
+      # host port, so 8112 is reachable only from the compose network.
+      SIM_TTS_QWEN3_HOST: 0.0.0.0
+      # E20-G found this image could not SYNTHESISE (no C compiler for qwen_tts's Triton JIT, no
+      # `sox`; /warm_up + /synthesize answered 503). FIXED E20-I: workers/tts_qwen3/Dockerfile
+      # installs build-essential + sox in a late layer; /warm_up 200 in 25.9 s, a Russian line
+      # synthesised in 4.3 s on the RTX 3060 Ti (docs/DOD_WALK.md §7).
     volumes:
       - ${MODELS_DIR:-../models}:/models:ro
       - recordings-data:/data
-    # KNOWN GAP (this task's report, "HLD gaps"): `workers/tts_qwen3/tts_qwen3/__main__.py` hard-
-    # codes `uvicorn.run(..., host="127.0.0.1", ...)`, so inside this container the worker is only
-    # reachable from ITSELF, not from `voice-agent` at `http://tts-qwen3:8112` as HLD 60 §9 promises
-    # — fixing that bind is outside this task's file ownership (`__main__.py` belongs to E14-B's
-    # slice). No host port is published either way (HLD 60 §9).
+    # `workers/tts_qwen3/tts_qwen3/__main__.py` binds `SIM_TTS_QWEN3_HOST` (loopback by default),
+    # which the environment above sets to `0.0.0.0` so `voice-agent` reaches it at
+    # `http://tts-qwen3:8112` as HLD 60 §9 promises. No host port is published (HLD 60 §9).
     depends_on:
       redis:
         condition: service_started

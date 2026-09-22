@@ -318,6 +318,7 @@ class DispatchEventSchema(ApiModel):
     resource_ids: list[UUID]
     callsigns: list[str]
     is_additional: bool
+    note_ru: str | None = None
 
 
 class DdsDecisionViewSchema(ApiModel):
@@ -330,6 +331,7 @@ class DdsDecisionViewSchema(ApiModel):
     status_updates: list[StatusUpdateViewSchema]
     closure_reason: ClosureReason | None
     closed_at_offset_ms: int | None
+    comment_ru: str | None = None
 
 
 class ResourceTimelineEntryViewSchema(ApiModel):
@@ -497,12 +499,14 @@ def dds_decision_schema(decision: DdsDecision) -> DdsDecisionViewSchema:
                 resource_ids=list(dispatch.resource_ids),
                 callsigns=list(dispatch.callsigns),
                 is_additional=dispatch.is_additional,
+                note_ru=dispatch.note_ru,
             )
             for dispatch in decision.dispatch_events
         ],
         status_updates=[status_update_schema(update) for update in decision.status_updates],
         closure_reason=decision.closure_reason,
         closed_at_offset_ms=decision.closed_at_offset_ms,
+        comment_ru=decision.comment_ru,
     )
 
 

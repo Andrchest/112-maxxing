@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "notification_id": "9a5471e7-a0b2-5c65-8b55-1c1201c603b1",
+      "incident_id": "dbbf45cc-9c95-4c21-83fb-2e293a1c51d2",
+      "audience_role": "DDS",
+      "severity": "CRITICAL",
+      "title_ru": "Повторное сообщение",
+      "body_ru": "Очевидцы сообщают о человеке на балконе 4-го этажа.",
+      "created_at_offset_ms": 208597,
+      "acknowledged_at_offset_ms": null
+    }
+  ],
+  "total": 1
+}

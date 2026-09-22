@@ -656,7 +656,7 @@ async def test_a_transport_that_cannot_be_built_is_logged_and_ends_the_call(
     committed: list[Any] = []
     deps = VoiceAgentDeps.build(settings(), clock, _collecting_uow_factory(committed, clock))
 
-    def explode(_session_id: Any, _call_id: Any, _room: str) -> Any:
+    def explode(_session_id: Any, _call_id: Any, _room: str, _started_at: Any = None) -> Any:
         raise ValueError("the LiveKit transport needs a backend-minted access token")
 
     agent = VoiceAgent(deps, FakeRedis(), transport_factory=explode)

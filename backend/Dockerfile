@@ -24,12 +24,22 @@ WORKDIR /workspace
 COPY pyproject.toml uv.lock ./
 COPY workers/voice_agent/pyproject.toml workers/voice_agent/pyproject.toml
 COPY benchmarks/pyproject.toml benchmarks/pyproject.toml
-COPY backend/ backend/
+COPY backend/pyproject.toml backend/pyproject.toml
 
 # `--frozen`: never re-resolves or edits uv.lock inside the image build (the lock is the gate's
 # lock). `--no-dev`: ruff/mypy/pytest stay out of the runtime image. `--package sim-backend`: only
 # this workspace member and its (non-extra) dependencies are installed.
-RUN uv sync --frozen --no-dev --package sim-backend
+# Layer order (E20, same as workers/voice_agent/Dockerfile): third-party dependencies first, from
+# the lock + manifests alone, so a source edit does not re-download them; the uv cache is a
+# BuildKit cache mount so a PyPI timeout mid-build resumes on the next build instead of restarting.
+ENV UV_LINK_MODE=copy \
+    UV_HTTP_TIMEOUT=300
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-workspace --package sim-backend
+
+COPY backend/ backend/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package sim-backend
 
 ENV PATH="/workspace/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \

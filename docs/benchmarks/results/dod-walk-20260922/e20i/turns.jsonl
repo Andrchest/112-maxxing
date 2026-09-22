@@ -1,0 +1,3 @@
+{"id": "greeting", "text": "Служба сто двенадцать что у вас случилось?", "path": "/home/andreipc/112-maxxing/benchmarks/data/e2e/wav/greeting.wav", "duration_ms": 3168, "source": "piper:ru_RU-irina-medium"}
+{"id": "address", "text": "Назовите улицу и номер дома", "path": "/home/andreipc/112-maxxing/benchmarks/data/e2e/wav/address.wav", "duration_ms": 3136, "source": "piper:ru_RU-irina-medium"}
+{"id": "what_is_burning", "text": "Что именно горит в квартире?", "path": "/home/andreipc/112-maxxing/benchmarks/data/e2e/wav/what_is_burning.wav", "duration_ms": 1824, "source": "piper:ru_RU-irina-medium"}
