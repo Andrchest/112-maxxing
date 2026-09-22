@@ -7,6 +7,7 @@ import { useAuthStore } from '@/entities/session';
 import { LogoutButton } from '@/features/auth/logout-button';
 import type { UserRole } from '@/shared/api';
 import { CreateSessionForm } from './create-session-form';
+import { InstructorSessionsList } from './instructor-sessions-list';
 
 const HEALTH_POLL_INTERVAL_MS = 5000;
 
@@ -16,8 +17,9 @@ const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   ADMIN: 'userRoleAdmin',
 };
 
-/** Route: /instructor. Minimal create+start session flow (E8-A); live overview and report
- * release land in E17. */
+/** Route: /instructor. Minimal create+start session flow (E8-A) plus the sessions list linking
+ * into the live overview (`/instructor/sessions/:sessionId`, E17-C) and, for a terminal session,
+ * the report. */
 export function InstructorPage() {
   const user = useAuthStore((state) => state.user);
   const readinessQuery = useQuery({
@@ -37,8 +39,9 @@ export function InstructorPage() {
         <h1 className="text-lg font-semibold tracking-tight">{t('instructorTitle')}</h1>
         <LogoutButton />
       </div>
-      <div className="mt-4">
+      <div className="mt-4 flex flex-col gap-4">
         <CreateSessionForm />
+        <InstructorSessionsList />
       </div>
     </AppShell>
   );

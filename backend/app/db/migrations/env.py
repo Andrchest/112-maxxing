@@ -23,7 +23,18 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` is load-bearing, not cosmetic. `fileConfig`'s default is
+    # `True`, which sets `disabled = True` on **every** logger that already exists and is not named
+    # in `alembic.ini` — including every `app.*` module logger, since importing the application is
+    # what got us here. Running a migration in-process therefore silenced the application's own
+    # logging for the rest of the process: the test suite migrates inside a pytest worker
+    # (`backend/tests/conftest.py`'s `migrated_engine`), so a `logger.warning` in `app.*` became a
+    # no-op for every test that happened to run after it in that worker, and a `caplog` assertion
+    # on one failed depending only on how `pytest-xdist` had distributed the files
+    # (`tests/unit/application/voice/test_voice_turn_config.py`, found by E17-B2). Alembic's own
+    # `[loggers]` section still configures the root, `alembic` and `sqlalchemy.engine` loggers as
+    # before, which is all `alembic.ini` was ever meant to do.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

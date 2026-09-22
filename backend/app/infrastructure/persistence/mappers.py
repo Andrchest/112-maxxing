@@ -365,6 +365,7 @@ def session_row_values(session: SimulationSession) -> dict[str, Any]:
         "created_by_user_id": UUID(str(session.created_by_user_id)),
         "started_at": session.started_at,
         "paused_total_ms": session.paused_total_ms,
+        "role_transition_started_offset_ms": session.role_transition_started_offset_ms,
         "completed_at": session.completed_at,
         "abort_reason": session.abort_reason,
     }
@@ -448,6 +449,11 @@ def session_from_rows(
         created_by_user_id=UserId(UUID(str(session_row["created_by_user_id"]))),
         started_at=session_row["started_at"],
         paused_total_ms=int(session_row["paused_total_ms"]),
+        role_transition_started_offset_ms=(
+            None
+            if session_row["role_transition_started_offset_ms"] is None
+            else int(session_row["role_transition_started_offset_ms"])
+        ),
         completed_at=session_row["completed_at"],
         abort_reason=session_row["abort_reason"],
         incident=incident_from_row(incident_row),

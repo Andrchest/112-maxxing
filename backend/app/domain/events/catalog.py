@@ -338,6 +338,12 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "service_type_by_resource": "object",
             "at_offset_ms": "int",
             "is_additional": "bool",
+            # Additive (E17 R2): the trainee's free-text dispatch note. `null`/absent when not
+            # given — DispatchRequest.note_ru was accepted and silently dropped before this;
+            # recording it here is the fix. Visible to DDS/INSTRUCTOR only, same as the rest of
+            # this row's payload (`visible_to` below); never reaches OPERATOR_112 because that
+            # role's `DataVisibilityPolicy` does not carry `RESOURCE_DISPATCHED` at all.
+            "note_ru": "str | null",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
@@ -532,6 +538,11 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "released_resource_ids": "list[uuid]",
             "at_offset_ms": "int",
             "actor_user_id": "uuid",
+            # Additive (E17 R2): the trainee's free-text closure comment. `null`/absent when not
+            # given — CloseIncidentRequest.comment_ru was accepted and silently dropped before
+            # this. Visible to DDS/INSTRUCTOR only (same row, `visible_to` below); OPERATOR_112
+            # never receives this event type at all.
+            "comment_ru": "str | null",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),

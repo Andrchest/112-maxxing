@@ -7,6 +7,7 @@ import { OperatorConsolePage } from '@/features/operator/console-page';
 import { DdsPage } from '@/features/dds/dds-page';
 import { DdsConsolePage } from '@/features/dds/console-page';
 import { InstructorPage } from '@/features/instructor/instructor-page';
+import { InstructorLiveOverviewPage } from '@/features/instructor/live-overview-page';
 import { ReportPage } from '@/features/report/report-page';
 import { ReportIndexPage } from '@/features/report/report-index-page';
 import { SessionsLandingPage } from '@/features/sessions/sessions-landing-page';
@@ -57,6 +58,9 @@ export function AppRoutes() {
           <Route path="/dds/*" element={<DdsPage />} />
         </Route>
         <Route element={<RequireRole roles={['INSTRUCTOR', 'ADMIN']} />}>
+          {/* E17-C: more specific than /instructor/*, so react-router ranks it first regardless
+              of declaration order (same pattern /operator/:sessionId, /dds/:sessionId use). */}
+          <Route path="/instructor/sessions/:sessionId" element={<InstructorLiveOverviewPage />} />
           <Route path="/instructor/*" element={<InstructorPage />} />
         </Route>
         {/* E16: the report is trainee-visible too (SPEC §29, D12 design decision #4) — the

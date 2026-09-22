@@ -84,10 +84,10 @@ class DispatchDdsResources:
     ) -> DispatchResultView:
         """Fire the stage trigger, then every selected unit; answer with `DispatchResultView`.
 
-        `note_ru` is accepted because `DispatchRequest` declares it, and it is deliberately not
-        recorded: neither `RESOURCE_DISPATCHED` nor any table has a field for it, and inventing
-        one would put a value in the audit log that §10.13 does not type. TODO(E17): the
-        instructor timeline is where a dispatch note would belong if the owner wants one.
+        `note_ru` is `DispatchRequest`'s optional free-text note (E17 R2). It rides in
+        `RESOURCE_DISPATCHED.note_ru`, additive and nullable in the §10.13 catalog — DDS/
+        INSTRUCTOR only, since `OPERATOR_112` never receives this event type at all (D3).
+        `score()` never reads it: no evaluator's evidence path touches `note_ru`.
         """
         async with self._gate.open(session_id, user, (ACTION_ID, ADDITIONAL_ACTION_ID)) as ctx:
             started_in = ctx.stage_state
@@ -115,6 +115,7 @@ class DispatchDdsResources:
                         ctx,
                         [resource for _leg_id, resource in moved],
                         is_additional=is_additional,
+                        note_ru=note_ru,
                     ),
                     *(
                         status_changed_event(
@@ -241,7 +242,11 @@ def _leg_of(ctx: DdsCommandContext, stored: StoredResource) -> DDSAssignment:
 
 
 def _dispatched(
-    ctx: DdsCommandContext, resources: Sequence[EmergencyResource], *, is_additional: bool
+    ctx: DdsCommandContext,
+    resources: Sequence[EmergencyResource],
+    *,
+    is_additional: bool,
+    note_ru: str | None,
 ) -> DomainEvent:
     """`RESOURCE_DISPATCHED` (TRAINEE) — one event for the whole click (R5)."""
     capabilities: set[str] = set()
@@ -264,5 +269,6 @@ def _dispatched(
             },
             "at_offset_ms": ctx.now_ms,
             "is_additional": is_additional,
+            "note_ru": note_ru,
         },
     )

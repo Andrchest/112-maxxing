@@ -31,11 +31,12 @@ from app.application.dialogue.interpreter import DialogueTurn
 from app.application.ports.clock import Clock
 from app.application.ports.dialogue_turn_repository import StoredDialogueTurn
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import sim_now_ms
 from app.domain.caller.emotion import EmotionState
 from app.domain.caller.profile import CallerProfile
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
+from app.domain.enums import RoleType
 from app.domain.events.types import EventType
 from app.domain.facts.definitions import FactCatalog, FactDefinition
 from app.domain.facts.gate import (
@@ -48,6 +49,13 @@ from app.domain.facts.revealed import fold_revealed
 from app.domain.layers.caller_belief import CallerBelief
 from app.domain.scenario.validation import build_fact_definitions
 from app.domain.scenario.version import ScenarioVersion
+from app.domain.session.session import SimulationSession
+from app.domain.world.conditions import (
+    ConditionContext,
+    EventIndex,
+    LoggedAction,
+    fact_payload,
+)
 
 __all__ = [
     "DialogueContextLoader",
@@ -177,6 +185,7 @@ class DialogueContextLoader:
             turns = await uow.dialogue_turns.list_for_session(session_id)
             transcripts = await uow.transcript_segments.list_for_session(session_id)
 
+        sim_now = sim_now_ms(session, self._clock.now())
         definitions = build_fact_definitions(version)
         window, operator_utterances = _window(turns, transcripts, self._window_turns)
         fired = frozenset(
@@ -199,16 +208,74 @@ class DialogueContextLoader:
             revealed_fact_ids=fold_revealed(events),
             previously_allowed=previously_allowed,
             fired_world_event_ids=fired,
-            # `conditions` stays `None`: a `ConditionContext` carries a `WorldTruth` (§10.11) and
-            # this loader must not return one (D3, R4). The gate is total — a condition-shaped
-            # `available_after` is then simply unmet (E13-A §3). TODO(E17): a world-truth-free
-            # projection of `ConditionContext` would let condition-gated facts open here too; no
-            # scenario in the repository uses one for a fact.
-            condition_ctx=GateConditionContext(fired_world_event_ids=fired, conditions=None),
+            # E17 R3: a `ConditionContext` built from the session event log, the session's own
+            # `RoleStage` rows and simulated time — and from **no** `WorldTruth`, which
+            # `ConditionContext` has made optional for exactly this caller (D3, R4). The four
+            # leaves it can answer (`sim_time`, `action`, `stage`, `fact` with `layer: CALLER`)
+            # are the ones scenario validation rule 31 allows in an `available_after`, so a fact
+            # gated on a condition now opens here instead of staying shut for ever.
+            condition_ctx=GateConditionContext(
+                fired_world_event_ids=fired,
+                conditions=_gate_conditions(session, belief, events, now_ms=sim_now),
+            ),
             window=window,
             operator_utterances=operator_utterances,
-            now_ms=session_offset_ms(self._clock.now(), session.started_at),
+            now_ms=sim_now,
         )
+
+
+_ROLE_VALUES: frozenset[str] = frozenset(role.value for role in RoleType)
+
+
+def _gate_conditions(
+    session: SimulationSession,
+    belief: CallerBelief,
+    events: Sequence[Any],
+    *,
+    now_ms: int,
+) -> ConditionContext:
+    """The world-truth-free `ConditionContext` a fact's `available_after` is evaluated in (R3).
+
+    Three projections, all of them from state this loader is already allowed to hold:
+
+    * `stage_states` / `reached_states` — the session's `RoleStage` rows, widened by every
+      `STAGE_STATE_CHANGED` the log carries, so a `{"stage": {..., "op": "REACHED"}}` leaf answers
+      about states the exercise has left behind as well as the one it is in;
+    * `event_index` — the log folded through the same `EventIndex.fold` the world engine uses, on
+      the same `LoggedAction` shape, so an `action` leaf means here exactly what it means there;
+    * `caller_belief` — the live caller layer, which is the caller's own state (§10.3) and the
+      only layer the dialogue slice may read.
+
+    `world_truth`, `resources` and `resource_keys` are deliberately left unset. That is not a
+    silent degradation: `evaluate_condition` answers `False` for a layer it was not given, and
+    §30.8 rule 31 refuses an `available_after` that would need one, so the two halves meet.
+
+    Offsets are scaled by `time_scale` for the same reason `world_state_loader` scales them — a
+    `sim_time` leaf and an `action` leaf's `within_ms` are both in *simulated* milliseconds.
+    """
+    stage_states = {stage.role_type: stage.state.value for stage in session.stages}
+    reached: dict[RoleType, set[str]] = {role: {state} for role, state in stage_states.items()}
+    actions: list[LoggedAction] = []
+    for event in events:
+        if event.event_type is EventType.STAGE_STATE_CHANGED:
+            role = event.payload.get("role_type")
+            new_state = event.payload.get("new_state")
+            if isinstance(role, str) and isinstance(new_state, str) and role in _ROLE_VALUES:
+                reached.setdefault(RoleType(role), set()).add(new_state)
+        actions.append(
+            LoggedAction(
+                event_type=event.event_type,
+                at_offset_ms=int(event.monotonic_offset_ms * session.time_scale),
+                payload=fact_payload(event.payload),
+            )
+        )
+    return ConditionContext(
+        caller_belief=belief,
+        stage_states=stage_states,
+        reached_states={role: frozenset(states) for role, states in reached.items()},
+        now_ms=now_ms,
+        event_index=EventIndex.fold(actions),
+    )
 
 
 async def _scenario_version(uow: UnitOfWork, scenario_version_id: Any) -> ScenarioVersion:

@@ -154,12 +154,56 @@ def test_a_broken_down_resource_stops_moving_until_it_is_repaired() -> None:
     assert repaired.resources[key].current_status is ResourceStatus.AVAILABLE
 
 
-def test_resources_are_walked_in_ascending_resource_id_order() -> None:
+def test_resources_are_walked_in_ascending_callsign_order() -> None:
     board, _keys = _board(
         ac1=ResourceStatus.DISPATCHED,
         ac2=ResourceStatus.DISPATCHED,
         al1=ResourceStatus.DISPATCHED,
     )
     _moved, events = advance_resources(board, 40_000, ETA, assignment_resolved=False)
-    ordered = [str(event.payload["resource_id"]) for event in events]
+    ordered = [str(event.payload["callsign"]) for event in events]
     assert ordered == sorted(ordered)
+
+
+def test_the_walk_order_does_not_depend_on_the_runtime_resource_ids() -> None:
+    """D7 determinism rule 5 / INV 7, at its source (E17-B2).
+
+    `emergency_resources.id` is `gen_random_uuid()` per session (`20-db-schema.md` §20.5), so two
+    runs of one scenario hold the same units under different keys. Walking the board by that key
+    made the two runs append the same transitions in a different sequence — a real INV 7 hole,
+    found by the E17-B hand-over determinism test. The walk is by `callsign`, which the scenario
+    owns and §30.8 rule 15 makes unique, so the sequence below is the same for any keying.
+    """
+    statuses = {
+        "ac1": ResourceStatus.DISPATCHED,
+        "ac2": ResourceStatus.DISPATCHED,
+        "al1": ResourceStatus.DISPATCHED,
+        "asa1": ResourceStatus.DISPATCHED,
+    }
+    version = demo_scenario()
+    board, _keys = resource_board(version, statuses=statuses)
+
+    # The same units under keys drawn in a different — here, deliberately reversed — id order.
+    rekeyed_ids = sorted((resource.resource_id for resource in board.values()), reverse=True)
+    rekeyed = {
+        new_key: resource.model_copy(update={"resource_id": new_key})
+        for new_key, resource in zip(
+            rekeyed_ids, [board[key] for key in sorted(board, key=str)], strict=True
+        )
+    }
+
+    _m1, first = advance_resources(board, 40_000, ETA, assignment_resolved=False)
+    _m2, second = advance_resources(rekeyed, 40_000, ETA, assignment_resolved=False)
+
+    def trail(events: list[DomainEvent]) -> list[tuple[str, str, int]]:
+        return [
+            (
+                str(event.payload["callsign"]),
+                str(event.payload["new_status"]),
+                event.monotonic_offset_ms,
+            )
+            for event in events
+        ]
+
+    assert trail(first) == trail(second)
+    assert [row[0] for row in trail(first)] == sorted(row[0] for row in trail(first))

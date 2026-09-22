@@ -55,8 +55,10 @@ dds_only_session = _handoff_fixtures.dds_only_session
 
 _remove_this_packages_scenarios = _handoff_fixtures._remove_this_packages_scenarios
 
-#: When `dds_active` hands the session over, in session-offset milliseconds. The chain advances
-#: the `FakeClock` by 11 s to let `MULTI_TRAINEE`'s ten-second transition pause elapse.
+#: When `dds_active` hands the session over, in session-offset milliseconds. The eleven seconds
+#: of wall clock the chain spends letting `MULTI_TRAINEE`'s ten-second transition pause elapse
+#: are **not** simulated time since E17 ruling R1 (they are banked into `paused_total_ms`), so
+#: `dds_active` spends a further 11 s of *running* time to put the DDS stage here.
 HANDOVER_MS = 11_000
 
 
@@ -202,14 +204,25 @@ async def assignment_rows(uow_factory: Any, session_id: UUID) -> list[dict[str, 
 
 
 async def state_change_rows(uow_factory: Any, session_id: UUID) -> list[dict[str, Any]]:
-    """`resource_state_changes` for this session, oldest first — including the two E9 columns."""
+    """`resource_state_changes` for this session, in the order they were recorded.
+
+    Ordered by the `seq_no` of the `session_events` row each change was written beside, not by
+    `(at_offset_ms, id)`. Both `resource_state_changes.id` and `session_events.id` are
+    `gen_random_uuid()`, so the old tie-break put two changes that share one session offset — a
+    `select` and the `dispatch` that follows it, or two units moved by one tick — in an order that
+    differed between two runs of the same scenario. `seq_no` is the log's own append order, which
+    E17-B2 made deterministic (`app.domain.world.resource_movement`), so it is the honest key here
+    and lets the determinism assertions name an exact sequence.
+    """
     async with uow_factory() as uow:
         assert isinstance(uow, SqlAlchemyUnitOfWork)
         result = await uow.session.execute(
             sa.text(
                 "SELECT c.*, r.callsign FROM resource_state_changes c"
                 " JOIN emergency_resources r ON r.id = c.resource_id"
-                " WHERE r.session_id = :session_id ORDER BY c.at_offset_ms, c.id"
+                " LEFT JOIN session_events e ON e.id = c.session_event_id"
+                " WHERE r.session_id = :session_id"
+                " ORDER BY c.at_offset_ms, e.seq_no NULLS LAST, c.id"
             ),
             {"session_id": session_id},
         )

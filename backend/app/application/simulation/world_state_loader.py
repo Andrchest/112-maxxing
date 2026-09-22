@@ -28,17 +28,15 @@ from typing import NamedTuple
 
 from app.application.ports.unit_of_work import UnitOfWork
 from app.application.ports.world_engine_state_repository import WorldEngineState
-from app.application.simulation.sim_time import sim_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import ResourceId
-from app.domain.common.values import FactValue
 from app.domain.dds.resources import EmergencyResource
 from app.domain.enums import RoleType
 from app.domain.events.session_event import SessionEvent
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession
-from app.domain.world.conditions import EventIndex
+from app.domain.world.conditions import EventIndex, fact_payload
 from app.domain.world.engine import PendingAction, WorldState
 
 __all__ = ["LoadedWorldState", "WorldStateNotInstantiatedError", "load_world_state"]
@@ -142,39 +140,24 @@ async def _scenario_version(uow: UnitOfWork, session: SimulationSession) -> Scen
 def _as_actions(events: Sequence[SessionEvent], session: SimulationSession) -> list[PendingAction]:
     """Turn persisted events into `PendingAction`s stamped in **simulated** time.
 
-    `monotonic_offset_ms` is wall-clock based (SPEC §39), so it goes through the same `sim_ms` the
-    tick's own `now_ms` does. TODO(E17): `paused_total_ms` is the session's *current* total, and a
-    per-event attribution needs the pause intervals a pause/resume use case will record.
+    `monotonic_offset_ms` is the session offset `app.application.simulation.sim_time.running_ms`
+    produced when the event was appended, so it already has every pause that preceded it taken
+    out (E17 R1) — an event stamped during a `ROLE_TRANSITION` carries the frozen offset, and the
+    first event of the next stage carries the same one. Turning it into simulated time is
+    therefore only the `time_scale` scaling, with **no** `paused_total_ms` subtraction: doing it
+    here would subtract pauses that happened *after* the event as well, which is exactly the
+    per-event attribution the marker E17 inherited here asked for. Making the offsets themselves
+    pause-free is what removes the need for it.
     """
     return [
         PendingAction(
             event_type=event.event_type,
-            at_offset_ms=sim_ms(
-                event.monotonic_offset_ms, session.paused_total_ms, session.time_scale
-            ),
-            payload=_fact_payload(event.payload),
+            at_offset_ms=int(event.monotonic_offset_ms * session.time_scale),
+            payload=fact_payload(event.payload),
             actor=ActorRef(actor_type=event.actor_type, actor_id=event.actor_id),
         )
         for event in events
     ]
-
-
-def _fact_payload(payload: Mapping[str, object]) -> dict[str, FactValue]:
-    """The `FactValue`-shaped subset of a persisted payload (§10.11 `payload_match`).
-
-    `session_events.payload` is free-form jsonb and several event types carry nested structures
-    (`WORLD_TRUTH_MUTATED.changes`, for instance), while a `payload_match` and an `action`
-    condition's `payload_equals` are `Mapping[str, FactValue]` — scalars and string lists. Keeping
-    only the entries a match could ever compare against is therefore lossless for the engine and
-    keeps `PendingAction` inside its declared type.
-    """
-    kept: dict[str, FactValue] = {}
-    for key, value in payload.items():
-        if value is None or isinstance(value, str | int | float | bool):
-            kept[key] = value
-        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-            kept[key] = list(value)
-    return kept
 
 
 def _stage_states(session: SimulationSession) -> dict[RoleType, str]:

@@ -39,6 +39,7 @@ from app.domain.enums import (
     WorldEventKind,
 )
 from app.domain.facts.definitions import AvailableAfter, FactDefinition
+from app.domain.facts.gate import unsupported_available_after_leaves
 from app.domain.layers.operator_card import CARD_FIELDS, CardFieldSpec
 from app.domain.roles import ROLE_MODULES
 from app.domain.roles.module import RoleModule
@@ -564,6 +565,27 @@ def _check_expected_response(version: ScenarioVersion, out: list[str]) -> None:
         )
 
 
+def _check_available_after_condition_kinds(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule 31 (E17 R3): a fact's `available_after.condition` uses only gate-evaluable leaves.
+
+    The fact gate runs inside one dialogue turn, and D3 gives that turn the caller-belief layer,
+    the session event log and simulated time — never a `WorldTruth`. `evaluate_condition` is
+    total, so a condition the gate cannot answer does not raise: it is simply never met, and the
+    fact silently never opens. That is precisely the kind of quiet failure §30.8 exists to catch,
+    so the clause is refused here instead. See
+    `app.domain.facts.gate.unsupported_available_after_leaves` for which leaves are which and why.
+    """
+    for owner_fact_id, clause in _available_after_clauses(version):
+        for leaf in unsupported_available_after_leaves(clause.condition):
+            out.append(
+                f"R31: disclosure_rules.facts['{owner_fact_id}'].available_after.condition uses "
+                f"'{leaf}', which the fact gate cannot evaluate — the gate sees the caller belief, "
+                f"the event log and simulated time, never world truth or the resource board (D3); "
+                f"use sim_time, action, stage or fact with layer CALLER "
+                f"(условие такого вида никогда не откроет факт)"
+            )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -593,6 +615,7 @@ def scenario_version_violations(
     _check_conditions_parse(version, out)
     _check_emotion_rules(version, out)
     _check_expected_response(version, out)
+    _check_available_after_condition_kinds(version, out)
     _check_seed(version, out)
     return sorted(out)
 

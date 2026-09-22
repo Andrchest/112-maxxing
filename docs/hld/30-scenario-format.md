@@ -72,7 +72,8 @@ disclosure_rules:
       available_after:              # optional; exactly one key
         sim_time_ms: <int>
         # or  world_event_id: <string>
-        # or  condition: <Condition, §30.6.1>
+        # or  condition: <Condition, §30.6.1> — sim_time / action / stage / fact(layer: CALLER)
+        #     only; a WORLD fact or a resource leaf is rejected by rule 31 (§30.8)
 ```
 
 `aliases_ru` and `categories` reach the interpreter LLM inside the fact catalog; **values never do**
@@ -456,6 +457,12 @@ A scenario that fails any of these cannot start a session; `validate_scenario_ve
 29. If `role_chain` is `[DDS]` (or otherwise starts at DDS), `expected_response.prefab_handoff` is
     present — otherwise `SINGLE_ROLE`/`ASSESSMENT` on that chain is rejected at session creation (D6).
 30. `deterministic_seed` is a non-empty string.
+31. A fact's `available_after.condition` uses only the leaves the fact gate can evaluate:
+    `sim_time`, `action`, `stage`, and `fact` with `layer: CALLER`. `fact` with `layer: WORLD` and
+    `resource` are refused — the gate runs inside a dialogue turn, which D3 gives the caller-belief
+    layer, the session event log and simulated time and **no `WorldTruth`** and no resource board
+    (§10.11, §10.12). `evaluate_condition` is total, so such a clause would not fail loudly: it
+    would simply never be met and the fact would silently never open.
 
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 

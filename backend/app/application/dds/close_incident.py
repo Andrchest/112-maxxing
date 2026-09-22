@@ -66,10 +66,10 @@ class CloseDdsIncident:
     ) -> SessionDetailView:
         """Close the incident, release the units, complete the session if this was the last stage.
 
-        `comment_ru` is accepted because `CloseIncidentRequest` declares it and is deliberately not
-        recorded: `DDS_INCIDENT_CLOSED` has no key for it in §10.13, and adding one here would put
-        an untyped value in the audit log. TODO(E17): the instructor timeline is where a closure
-        comment would belong if the owner wants one.
+        `comment_ru` is `CloseIncidentRequest`'s optional free-text closure comment (E17 R2). It
+        rides in `DDS_INCIDENT_CLOSED.comment_ru`, additive and nullable in the §10.13 catalog —
+        DDS/INSTRUCTOR only, since `OPERATOR_112` never receives this event type at all (D3).
+        `score()` never reads it: no evaluator's evidence path touches `comment_ru`.
         """
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
             released = _attached_units(ctx)
@@ -90,7 +90,7 @@ class CloseDdsIncident:
 
             await ctx.append(
                 [
-                    _closed(ctx, closure_reason, released),
+                    _closed(ctx, closure_reason, released, comment_ru),
                     *_in_contract_order(stage_events),
                 ]
             )
@@ -143,7 +143,10 @@ def _in_contract_order(stage_events: list[DomainEvent]) -> list[DomainEvent]:
 
 
 def _closed(
-    ctx: DdsCommandContext, closure_reason: ClosureReason, released: tuple[ResourceId, ...]
+    ctx: DdsCommandContext,
+    closure_reason: ClosureReason,
+    released: tuple[ResourceId, ...],
+    comment_ru: str | None,
 ) -> DomainEvent:
     """`DDS_INCIDENT_CLOSED` (TRAINEE) — one per trainee action, carrying the primary leg (R5)."""
     return DomainEvent(
@@ -156,5 +159,6 @@ def _closed(
             "released_resource_ids": [str(resource_id) for resource_id in released],
             "at_offset_ms": ctx.now_ms,
             "actor_user_id": UUID(str(ctx.actor.actor_id)),
+            "comment_ru": comment_ru,
         },
     )

@@ -650,6 +650,25 @@ by the creation use case before the machine exists. `start` emits `SESSION_START
 `SESSION_COMPLETED`, `abort` emits `SESSION_ABORTED`, `begin_role_transition` emits
 `ROLE_TRANSITION_STARTED`, `finish_role_transition` emits `ROLE_TRANSITION_COMPLETED`.
 
+**Simulated time does not run during a role transition** (E17 ruling R1). `begin_role_transition`
+records the offset it fired at on the session (`role_transition_started_offset_ms`,
+`20-db-schema.md` §20.3) and from that moment every reader of "sim now"
+(`app.application.simulation.sim_time`) is frozen at it: the world engine applies nothing, and
+any event appended meanwhile carries the frozen offset. `finish_role_transition` is the **one
+writer of `paused_total_ms`**: it adds the wall-clock length of the interval it is closing and
+clears the stamp, so the clock resumes from exactly the value it froze at — the next `RoleStage`'s
+`started_at_offset_ms`, `ROLE_TRANSITION_COMPLETED` and `ROLE_STAGE_STARTED` all carry that same
+offset rather than one hand-over later. Consequences: a `DEADLINE` scoring rule (§10.14) never
+measures a hand-over pause, a scenario ETA is not consumed by one, and two runs of one scenario
+whose pauses differ produce the same event offsets (D7 determinism rule 5).
+
+`guard_pause_elapsed_and_next_assigned` is the one place that must *not* see the frozen clock —
+a clock frozen at `transition_started_ms` could never reach `transition_started_ms + pause`. Its
+`now_ms`, and the `SessionDetail.monotonic_offset_ms` countdown that mirrors it, are the same
+subtraction without the freeze (`sim_time.transition_clock_ms`). There is no `pauseSession` /
+`resumeSession` operation and no pause table: the intervals are `ROLE_TRANSITION_STARTED` to
+`ROLE_TRANSITION_COMPLETED` in the log.
+
 ### Operator 112 stage machine — `OPERATOR_112_TRANSITIONS`
 
 | From | Trigger | To | Who may fire | Guard |
@@ -885,6 +904,15 @@ Condition ::=
 with the payload subset needed by `payload_equals`). `REACHED` is true if the stage is currently in
 that state or has ever been.
 
+`world_truth` and `caller_belief` are **optional** (E17 ruling R3). The world engine always
+supplies both; the fact gate (§10.12) is evaluated inside a dialogue turn, which D3 forbids from
+reaching a `WorldTruth` at all, so its context is assembled from the session event log, the
+`RoleStage` rows and simulated time — a `log-only` context. A `fact` leaf against a layer the
+context was not given is `False` for **every** operator, `IS_NULL` included: "I cannot see this
+layer" is not "this fact has no value". Scenario validation refuses an `available_after` that
+would depend on an absent layer (`30-scenario-format.md` §30.8 rule 31), so the `False` is never
+reached by a valid scenario.
+
 ### Effects — `backend/app/domain/world/effects.py`
 
 | Effect | Fields |
@@ -985,8 +1013,17 @@ scheduler D7 asks for: it fires every SIMULATION transition of §10.7's table th
 where a due time is `status_changed_at_offset_ms + <EtaModel duration>`, plus the
 availability-window `make_unavailable`/`make_available`. Several transitions may fire for one
 resource in one call when a long tick elapsed, each stamped with its own due time rather than with
-`now_ms`; resources are walked in ascending `resource_id` order and every firing emits
+`now_ms`; resources are walked in ascending **`callsign`** order and every firing emits
 `RESOURCE_STATUS_CHANGED`.
+
+The walk order *is* the order in which one tick's events are appended to `session_events`, so it is
+part of D7 determinism rule 5 / INV 7 and may not depend on anything that differs between two runs
+of one scenario: `emergency_resources.id` is `gen_random_uuid()` per session
+(`20-db-schema.md` §20.5), so walking by it made two identical runs emit the same transitions in a
+different sequence, while `callsign` is the scenario's own handle on a unit and is unique within a
+scenario (`30-scenario-format.md` §30.8 rule 15). For the same reason, any read-back that has to
+reproduce the append order — `resource_state_changes`, for instance, whose own `id` is random too —
+orders by the `seq_no` of the `session_events` row a change was recorded beside, never by a row id.
 
 ## 10.12 FactAccessGate (SPEC §21, D10)
 
@@ -1071,6 +1108,13 @@ scenario declaration order, up to `max_spontaneous_per_turn`. Their ids are list
 `{"world_event_id": E}` and `E` has fired at least once; or `{"condition": C}` and
 `evaluate_condition(C, condition_ctx)` is true.
 
+The `{"condition": C}` form is evaluated in a **log-only `ConditionContext`** (E17 ruling R3, §10.11):
+the folded session event log, the `RoleStage` states, simulated time and the live `CallerBelief`,
+and never a `WorldTruth` or the DDS resource board. `C` may therefore use only the `sim_time`,
+`action` and `stage` leaves and `fact` with `layer: CALLER`; `fact` with `layer: WORLD` and
+`resource` are refused at scenario load time (`30-scenario-format.md` §30.8 rule 31) rather than
+silently never opening the fact.
+
 Revelation is decided by code, not text (D10): the gate does **not** add to `revealed_fact_ids`. A
 fact becomes revealed only when its response finished playback uninterrupted — `CALLER_TTS_ENDED`
 with `completed = true` produces `FACTS_DELIVERED {fact_ids}`, and that event is the sole writer of
@@ -1140,7 +1184,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceType`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_ACKNOWLEDGED` | `TRAINEE` | `assignment_id: uuid`, `at_offset_ms: int`, `latency_from_handoff_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceType`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
-| `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `service_type_by_resource: object` (additive, E9), `at_offset_ms: int`, `is_additional: bool` | DDS, INSTRUCTOR |
+| `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `service_type_by_resource: object` (additive, E9), `at_offset_ms: int`, `is_additional: bool`, `note_ru: str \| null` (additive, E17 R2) | DDS, INSTRUCTOR |
 | `RESOURCE_STATUS_CHANGED` | `SIMULATION` | `resource_id: uuid`, `callsign: str`, `previous_status: ResourceStatus`, `new_status: ResourceStatus`, `trigger: str`, `assignment_id: uuid \| null`, `source_world_event_id: str \| null`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `WORLD_EVENT_TRIGGERED` | `SIMULATION` | `world_event_id: str`, `kind: WorldEventKind`, `occurrence: int`, `title_ru: str`, `caller_observable: bool`, `trigger_reason: str`, `effect_kinds: list[EffectKind]`, `at_offset_ms: int` | INSTRUCTOR |
 | `ROLE_STAGE_COMPLETED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `final_state: str`, `duration_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
@@ -1170,7 +1214,7 @@ property name, does remain `CallerProfile.identity_ru`.
 | `SERVICE_DESELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceType`, `selected_services: list[ServiceType]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `RESOURCE_DESELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_STATUS_UPDATE_SENT` | `TRAINEE` | `assignment_id: uuid`, `update_kind: StatusUpdateKind`, `text_ru: str`, `at_offset_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
-| `DDS_INCIDENT_CLOSED` | `TRAINEE` | `assignment_id: uuid`, `closure_reason: ClosureReason`, `released_resource_ids: list[uuid]`, `at_offset_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
+| `DDS_INCIDENT_CLOSED` | `TRAINEE` | `assignment_id: uuid`, `closure_reason: ClosureReason`, `released_resource_ids: list[uuid]`, `at_offset_ms: int`, `actor_user_id: uuid`, `comment_ru: str \| null` (additive, E17 R2) | DDS, INSTRUCTOR |
 | `NOTIFICATION_CREATED` | `SIMULATION` | `notification_id: uuid`, `audience_role: RoleType`, `severity: NotificationSeverity`, `title_ru: str`, `body_ru: str`, `source_world_event_id: str \| null`, `at_offset_ms: int` | the `audience_role`, INSTRUCTOR |
 | `NOTIFICATION_ACKNOWLEDGED` | `TRAINEE` | `notification_id: uuid`, `audience_role: RoleType` (additive, E9), `at_offset_ms: int`, `latency_ms: int`, `actor_user_id: uuid` | the notification's `audience_role`, INSTRUCTOR |
 | `RADIO_MESSAGE_CREATED` | `SIMULATION` | `radio_message_id: uuid`, `from_callsign: str`, `to_role: RoleType`, `text_ru: str`, `resource_id: uuid \| null`, `source_world_event_id: str \| null`, `at_offset_ms: int` | the `to_role`, INSTRUCTOR |

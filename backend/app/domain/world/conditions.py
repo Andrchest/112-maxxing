@@ -254,6 +254,41 @@ class EventIndex(BaseModel):
 # ---------------------------------------------------------------------------------------------
 
 
+class LoggedAction(BaseModel):
+    """An `IndexableAction` built straight from a persisted event (E17 R3).
+
+    The one shape both builders of an `EventIndex` produce: `world_state_loader`, which folds the
+    session's log for the world engine, and `dialogue_context`, which folds it for the fact gate.
+    Having it here rather than in either of them is what keeps the two from drifting — and what
+    lets the second one exist at all, since D3 forbids the dialogue slice from importing the
+    module that holds the world-truth repository.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_type: EventType
+    at_offset_ms: int
+    payload: Mapping[str, FactValue] = Field(default_factory=dict)
+
+
+def fact_payload(payload: Mapping[str, object]) -> dict[str, FactValue]:
+    """The `FactValue`-shaped subset of a persisted payload (§10.11 `payload_match`).
+
+    `session_events.payload` is free-form jsonb and several event types carry nested structures
+    (`WORLD_TRUTH_MUTATED.changes`, for instance), while a `payload_match` and an `action`
+    condition's `payload_equals` are `Mapping[str, FactValue]` — scalars and string lists. Keeping
+    only the entries a match could ever compare against is lossless for the engine and keeps the
+    action inside its declared type.
+    """
+    kept: dict[str, FactValue] = {}
+    for key, value in payload.items():
+        if value is None or isinstance(value, str | int | float | bool):
+            kept[key] = value
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            kept[key] = list(value)
+    return kept
+
+
 class ConditionContext(BaseModel):
     """Everything `evaluate_condition` may read (§10.11). Never carries a repository or a clock.
 
@@ -268,8 +303,18 @@ class ConditionContext(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
-    world_truth: WorldTruth
-    caller_belief: CallerBelief
+    world_truth: WorldTruth | None = None
+    caller_belief: CallerBelief | None = None
+    """The two information layers, **optional since E17 R3**.
+
+    A context assembled from the session event log alone — the one the fact gate's `available_after`
+    is evaluated in (`app.application.dialogue.dialogue_context`) — legitimately holds no
+    `WorldTruth`: D3 forbids the dialogue slice from reaching one at all. An absent layer makes
+    every `fact` condition against it `False`, for every operator including `IS_NULL`: "I cannot
+    see this layer" is not "this fact has no value", and a gate must not open a fact on a
+    layer it never read. Scenario validation (§30.8 rule 31) refuses an `available_after` that
+    would depend on a layer the gate cannot see, so no scenario can reach that `False` by
+    accident."""
     resources: Mapping[ResourceId, EmergencyResource] = Field(default_factory=dict)
     resource_keys: Mapping[str, ResourceId] = Field(default_factory=dict)
     stage_states: Mapping[RoleType, str] = Field(default_factory=dict)
@@ -293,9 +338,11 @@ def _as_number(value: object) -> float | None:
 
 
 def _evaluate_fact(cond: FactCondition, ctx: ConditionContext) -> bool:
-    facts: Mapping[str, FactValue] = (
-        ctx.world_truth.facts if cond.layer == "WORLD" else ctx.caller_belief.facts
-    )
+    layer = ctx.world_truth if cond.layer == "WORLD" else ctx.caller_belief
+    if layer is None:
+        # The context was not given this layer at all (E17 R3) — see `ConditionContext`.
+        return False
+    facts: Mapping[str, FactValue] = layer.facts
     present = cond.fact_id in facts
     actual = facts.get(cond.fact_id)
     if cond.op == "IS_NULL":

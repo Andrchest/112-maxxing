@@ -48,7 +48,7 @@ from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import IncidentId, SessionId
@@ -241,7 +241,7 @@ class OperatorCommandGate:
                 session=session,
                 stage=stage,
                 actor=ActorRef(actor_type=ActorType.TRAINEE, actor_id=user.user_id),
-                now_ms=session_offset_ms(self._clock.now(), session.started_at),
+                now_ms=running_ms(session, self._clock.now()),
                 transport_ready=await self._call_transport.transport_ready(session_id),
                 log=tuple(await uow.events.read(session_id)),
             )

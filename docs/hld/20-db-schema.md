@@ -173,6 +173,7 @@ R7).
 | `next_seq_no` | `bigint` | no | `1` |
 | `started_at` | `timestamptz` | yes | |
 | `paused_total_ms` | `integer` | no | `0` |
+| `role_transition_started_offset_ms` *(additive, E17)* | `integer` | yes | |
 | `completed_at` | `timestamptz` | yes | |
 | `abort_reason` | `text` | yes | |
 | `created_at` | `timestamptz` | no | `now()` |
@@ -186,7 +187,9 @@ Index `ix_sessions_state (state)`, `ix_sessions_scenario_version (scenario_versi
 `CHECK (session_mode IN ('SINGLE_ROLE','FULL_CYCLE_SINGLE_TRAINEE','MULTI_TRAINEE','ASSESSMENT'))`,
 `CHECK (state IN ('CREATED','READY','ACTIVE','ROLE_TRANSITION','COMPLETED','ABORTED'))`,
 `CHECK (time_scale >= 0.1 AND time_scale <= 10)` *(additive, E5)*,
-`CHECK ((report_released_at IS NULL) = (report_released_by_user_id IS NULL))` *(additive, E16)*.
+`CHECK ((report_released_at IS NULL) = (report_released_by_user_id IS NULL))` *(additive, E16)*,
+`CHECK (role_transition_started_offset_ms IS NULL OR role_transition_started_offset_ms >= 0)`
+*(additive, E17)*.
 
 The two release columns (migration `0006_report_release_explain`, epic E16) hold **whether an
 instructor has released this session's report to its trainees**. They are deliberately not the
@@ -205,6 +208,17 @@ It is `numeric`, not a float, because the API schema's `minimum: 0.1` / `maximum
 steps that must round-trip exactly (migration `0002_session_time_scale`).
 
 `started_at` + `paused_total_ms` is what sim time is recomputed from after a restart (D7, §42 test 13).
+
+`paused_total_ms` has exactly **one writer** (E17 ruling R1): `finish_role_transition`, which adds
+the wall-clock length of the `ROLE_TRANSITION` interval it closes. Simulated time does not run
+during a role transition (`10-domain-model.md`, session state machine), and
+`role_transition_started_offset_ms` (migration `0007_role_transition_offset`) is the offset the
+*currently open* transition began at — `NULL` outside one. It is the fact the freeze needs, held
+on the row so that a sim-time read costs no log scan; the same number is in the log, on
+`ROLE_TRANSITION_STARTED`, and the wall instant it stands for is
+`started_at + paused_total_ms + role_transition_started_offset_ms`. There is no pause table and no
+`pauseSession` operation: the intervals are derivable from `ROLE_TRANSITION_STARTED` /
+`ROLE_TRANSITION_COMPLETED`.
 
 ### `session_participants`
 | Column | PG type | Null | Default |

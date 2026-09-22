@@ -51,7 +51,7 @@ from app.application.sessions.queries import (
     assemble_session_detail,
 )
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import transition_clock_ms
 from app.domain.common.ids import SessionId
 from app.domain.session.session import RoleStage, SimulationSession
 
@@ -76,7 +76,7 @@ class ContinueToNextStage:
                 raise SessionNotFoundError(session_id)
             _authorise(session, user)
 
-            now_ms = session_offset_ms(self._clock.now(), session.started_at)
+            now_ms = transition_clock_ms(session, self._clock.now())
             runtime = build_guard_runtime(
                 await uow.events.read(session_id), scenario_valid=True, inference_ready=True
             )

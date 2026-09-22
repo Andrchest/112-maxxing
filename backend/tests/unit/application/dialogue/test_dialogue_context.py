@@ -23,10 +23,15 @@ from app.application.dialogue.dialogue_context import (
 from app.application.ports.transcript_segment_repository import StoredTranscriptSegment
 from app.application.testing.fakes import FakeClock
 from app.domain.common.ids import EventId, SessionId
-from app.domain.enums import ActorType
+from app.domain.enums import ActorType, GateReason
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
+from app.domain.facts.gate import FactRequest, evaluate_fact_access
+from app.domain.scenario.validation import build_fact_definitions, validate_scenario_document
+from app.domain.scenario.version import ScenarioVersion
+from app.domain.world.conditions import evaluate_condition
 
+from tests.fixtures.scenarios import CONDITION_GATED_FACT_ID, condition_gated_document
 from tests.unit.application.dialogue._support import gate_package
 from tests.unit.application.dialogue.conftest import (
     DialogueStore,
@@ -125,7 +130,11 @@ async def test_fired_world_events_come_from_the_event_log(
 
     assert inputs.fired_world_event_ids == frozenset({"gas_cylinder_hazard"})
     assert inputs.condition_ctx.fired_world_event_ids == inputs.fired_world_event_ids
-    assert inputs.condition_ctx.conditions is None
+    # E17 R3: the gate's condition context is built from the log — and from no `WorldTruth`.
+    conditions = inputs.condition_ctx.conditions
+    assert conditions is not None
+    assert conditions.world_truth is None
+    assert conditions.event_index.count(EventType.WORLD_EVENT_TRIGGERED) == 1
 
 
 async def test_previously_allowed_is_rebuilt_from_the_persisted_gate_output(
@@ -264,3 +273,71 @@ def test_an_unreadable_gate_output_yields_nothing_rather_than_raising() -> None:
     assert allowed_facts_from_gate_output("not json") == []
     assert allowed_facts_from_gate_output({"allowed": "nonsense"}) == []
     assert allowed_facts_from_gate_output({"allowed": [{"fact_id": "x"}]}) == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Condition-gated facts (E17 ruling R3)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_condition_gated_fact_opens_from_the_event_log_alone(
+    store: DialogueStore, clock: FakeClock, uow_factory: Callable[[], InMemoryDialogueUnitOfWork]
+) -> None:
+    """R3: `available_after: {condition: …}` is evaluated, and evaluated without any world truth.
+
+    Before E17 the loader passed `conditions=None`, so a condition-shaped `available_after` was
+    unmet for ever and the fact was unreachable however the exercise went (the old
+    E17 marker at this spot). The gating condition here is an `action` leaf — the folded session
+    event log — which is exactly the material D3 allows a dialogue turn to see.
+    """
+    store.document = condition_gated_document()
+    definitions = build_fact_definitions(ScenarioVersion(**store.document))
+    gated = definitions[CONDITION_GATED_FACT_ID].available_after
+    assert gated is not None and gated.condition is not None
+
+    before = await loader(uow_factory, clock).load(store.session.id)
+    assert before.condition_ctx.conditions is not None
+    assert evaluate_condition(gated.condition, before.condition_ctx.conditions) is False
+
+    _event(
+        store,
+        EventType.CARD_FIELD_CHANGED,
+        {
+            "card_id": str(uuid.uuid4()),
+            "field_path": "address.house",
+            "previous_value": None,
+            "new_value": "72",
+            "revision": 1,
+            "source": "MANUAL",
+        },
+    )
+
+    after = await loader(uow_factory, clock).load(store.session.id)
+    assert after.condition_ctx.conditions is not None
+    assert evaluate_condition(gated.condition, after.condition_ctx.conditions) is True
+
+    # …and the gate itself flips the fact from NOT_YET to released, which is the point of R3.
+    assert _gate_outcome(before) == (False, GateReason.NOT_YET_AVAILABLE)
+    assert _gate_outcome(after) == (True, GateReason.OK)
+
+
+def _gate_outcome(inputs: DialogueTurnInputs) -> tuple[bool, GateReason]:
+    """Ask the gate for the gated fact: `(is it allowed, what it said about it)`."""
+    package, decisions = evaluate_fact_access(
+        requests=[FactRequest(fact_id=CONDITION_GATED_FACT_ID, explicit=True)],
+        definitions=inputs.definitions,
+        caller_belief=inputs.caller_belief,
+        revealed_fact_ids=frozenset(),
+        now_ms=inputs.now_ms,
+        condition_ctx=inputs.condition_ctx,
+    )
+    allowed = any(fact.fact_id == CONDITION_GATED_FACT_ID for fact in package.allowed)
+    reason = next(
+        decision.reason for decision in decisions if decision.fact_id == CONDITION_GATED_FACT_ID
+    )
+    return allowed, reason
+
+
+def test_the_condition_gated_fixture_is_a_valid_scenario() -> None:
+    """§30.8 rule 31 accepts an `action` leaf: it is answerable from the log (E17 R3)."""
+    assert validate_scenario_document(condition_gated_document()) == []

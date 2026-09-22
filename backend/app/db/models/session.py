@@ -56,6 +56,11 @@ class SimulationSession(Base):
     next_seq_no = sa.Column(sa.BigInteger(), nullable=False, server_default=sa.text("1"))
     started_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
     paused_total_ms = sa.Column(sa.Integer(), nullable=False, server_default=sa.text("0"))
+    #: Additive in E17 (ruling R1, HLD §20.3): the session offset a currently open
+    #: `ROLE_TRANSITION` began at, `NULL` outside one. Simulated time is frozen at it while
+    #: the hand-over lasts, and `finish_role_transition` — the one writer of
+    #: `paused_total_ms` — banks the interval's length there and clears this column.
+    role_transition_started_offset_ms = sa.Column(sa.Integer(), nullable=True)
     completed_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
     abort_reason = sa.Column(sa.Text(), nullable=True)
     created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
@@ -78,6 +83,10 @@ class SimulationSession(Base):
         sa.CheckConstraint(
             "(report_released_at IS NULL) = (report_released_by_user_id IS NULL)",
             name="report_released_together",
+        ),
+        sa.CheckConstraint(
+            "role_transition_started_offset_ms IS NULL OR role_transition_started_offset_ms >= 0",
+            name="role_transition_offset_non_negative",
         ),
     )
 

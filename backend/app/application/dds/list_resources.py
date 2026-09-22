@@ -26,8 +26,7 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.sessions.authorisation import can_observe
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.simulation.sim_time import sim_ms
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import sim_now_ms
 from app.domain.common.ids import SessionId
 from app.domain.enums import DDSStageState, ResourceStatus, RoleType, ServiceType
 from app.domain.roles.registry import ROLE_MODULES
@@ -89,11 +88,7 @@ class ListDdsResources:
         views = resource_views(
             filtered,
             stage_state=_stage_state(session),
-            now_ms=sim_ms(
-                session_offset_ms(self._clock.now(), session.started_at),
-                session.paused_total_ms,
-                session.time_scale,
-            ),
+            now_ms=sim_now_ms(session, self._clock.now()),
         )
         return views, len(views)
 

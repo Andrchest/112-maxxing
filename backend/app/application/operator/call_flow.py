@@ -56,7 +56,7 @@ from app.application.ports.id_generator import IdGenerator
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
 from app.application.sessions.guard_context import build_guard_runtime
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import InvalidTransitionError
 from app.domain.common.ids import RoleStageId, SessionId
@@ -146,7 +146,7 @@ class AdvanceCallFlow:
                 return False
 
             log = await uow.events.read(session_id)
-            now_ms = session_offset_ms(self._clock.now(), session.started_at)
+            now_ms = running_ms(session, self._clock.now())
 
             if stage.state is Operator112StageState.RINGING:
                 # Nothing to fire — but §40.6's retry lives here: while the stage is RINGING the

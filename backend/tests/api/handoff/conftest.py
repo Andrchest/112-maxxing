@@ -187,11 +187,23 @@ async def in_transition(handed_off: OperatorFlow) -> OperatorFlow:
 
 @pytest.fixture
 async def dds_active(in_transition: OperatorFlow, clock: FakeClock) -> OperatorFlow:
-    """`in_transition`, with the pause elapsed and `continueToNextStage` fired — DDS is live."""
+    """`in_transition`, with the pause elapsed and `continueToNextStage` fired — DDS is live.
+
+    Two advances of eleven seconds, and they are different kinds of time. The first spends the
+    transition pause, which since E17 ruling R1 is **not** simulated time: `finish_role_transition`
+    banks it into `paused_total_ms`, so the DDS stage opens at exactly the session offset the 112
+    stage ended at (0 ms here) and no scenario ETA is shortened by a slow hand-over. The second is
+    ordinary running time, and it is what puts this fixture's DDS stage at the 11 s the whole DDS
+    suite's timeline is written around (`tests.api.dds.conftest.HANDOVER_MS`).
+    """
     clock.advance_ms(11_000)
     response = await in_transition.post("/stage/continue", token=in_transition.dds_token)
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "ACTIVE"
+    assert response.json()["monotonic_offset_ms"] == 0, (
+        "E17 R1: the hand-over pause is banked, so the DDS stage opens where the 112 stage ended"
+    )
+    clock.advance_ms(11_000)
     return in_transition
 
 

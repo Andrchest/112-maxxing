@@ -32,4 +32,8 @@ export const queryKeys = {
     explanation: (sessionId: string) => ['reports', sessionId, 'explanation'] as const,
     inferenceMetrics: (sessionId: string) => ['reports', sessionId, 'inference-metrics'] as const,
   },
+  // -- E17-C: instructor live overview (openapi `instructor` tag, R4) ------------------------
+  instructor: {
+    overview: (sessionId: string) => ['instructor', sessionId, 'overview'] as const,
+  },
 } as const;

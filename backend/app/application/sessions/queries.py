@@ -32,7 +32,7 @@ from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import StoredUser
 from app.application.sessions.authorisation import ParticipantNotAssignedError, can_observe
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import transition_clock_ms
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import RoleStageId, SessionId, UserId
 from app.domain.enums import RoleType, SessionState
@@ -132,7 +132,7 @@ async def assemble_session_detail(
         scenario_version=listing.scenario_version,
         created_at=listing.created_at,
         participants=participants,
-        monotonic_offset_ms=session_offset_ms(clock.now(), session.started_at),
+        monotonic_offset_ms=transition_clock_ms(session, clock.now()),
         last_seq_no=last_seq_no,
         transition_continue_available_at_offset_ms=_continue_available_at(
             session, transition_started_ms

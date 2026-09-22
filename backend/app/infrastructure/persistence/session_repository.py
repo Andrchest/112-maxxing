@@ -69,6 +69,7 @@ _MUTABLE_SESSION_COLUMNS: tuple[str, ...] = (
     "time_scale",
     "started_at",
     "paused_total_ms",
+    "role_transition_started_offset_ms",
     "completed_at",
     "abort_reason",
 )

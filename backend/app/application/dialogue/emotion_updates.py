@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import running_ms
 from app.domain.caller.emotion import EmotionRule, EmotionState, EmotionTrigger, apply_emotion_rules
 from app.domain.common.actors import ActorRef
 from app.domain.common.ids import SessionId
@@ -105,11 +105,7 @@ async def apply_dialogue_emotion_trigger(
             engine_state.model_copy(update={"emotion_applications": applied_counts})
         )
 
-        now_ms = (
-            offset_ms
-            if offset_ms is not None
-            else session_offset_ms(clock.now(), session.started_at)
-        )
+        now_ms = offset_ms if offset_ms is not None else running_ms(session, clock.now())
         payload = caller_emotion_changed_payload(
             previous, new_emotion, rule_id, trigger_kind, now_ms
         )

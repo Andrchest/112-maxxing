@@ -42,7 +42,7 @@ from app.domain.enums import DisclosurePolicy, GateOutcome, GateReason, Knowledg
 from app.domain.facts.definitions import AvailableAfter, FactDefinition
 from app.domain.facts.value_labels_ru import render_value_ru
 from app.domain.layers.caller_belief import CallerBelief
-from app.domain.world.conditions import ConditionContext, evaluate_condition
+from app.domain.world.conditions import Condition, ConditionContext, evaluate_condition
 
 __all__ = [
     "AllowedFact",
@@ -53,7 +53,53 @@ __all__ = [
     "GateMetadata",
     "UnavailableFact",
     "evaluate_fact_access",
+    "unsupported_available_after_leaves",
 ]
+
+
+# The `Condition` leaves a fact's `available_after` may use (E17 ruling R3).
+#
+# The gate is evaluated inside one dialogue turn, where D3 allows the caller-belief layer and the
+# session's own event log and nothing else — in particular **no `WorldTruth`** (SPEC §2/§3: the
+# operator's side of the simulation may not see the world's own values, not even indirectly
+# through a fact that opens because of one). The four leaves below are exactly those that the
+# log plus simulated time can answer:
+#
+# * `sim_time` — simulated now, which the loader has;
+# * `action` — the folded `EventIndex`, which *is* the log;
+# * `stage` — the `RoleStage` states, materialized from the log;
+# * `fact` with `layer: CALLER` — the live `CallerBelief`, which the dialogue loader legitimately
+#   holds (it is the caller's own state, §10.3).
+#
+# The two that are refused:
+#
+# * `fact` with `layer: WORLD` — a `WorldTruth` read, which D3 forbids here;
+# * `resource` — the DDS resource board, which is neither in the log in a form a selector by
+#   capability or service type could resolve, nor reachable from the 112 stage's dialogue.
+#
+# A refused leaf would not raise: `evaluate_condition` is total, so the condition would simply be
+# unmet for ever and the fact would silently never open. Refusing it at load time (§30.8 rule 31)
+# is what turns that silence into an error the scenario author sees.
+def unsupported_available_after_leaves(condition: Condition | None) -> list[str]:
+    """The leaf kinds in `condition` that a fact's `available_after` may not use, in order.
+
+    Combinators (`all` / `any` / `not`) are walked through; each offending leaf is reported once
+    per occurrence as `"fact(WORLD)"` or `"resource"`, which is the wording §30.8 rule 31's
+    message quotes.
+    """
+    found: list[str] = []
+    if condition is None:
+        return found
+    if condition.fact is not None and condition.fact.layer == "WORLD":
+        found.append("fact(WORLD)")
+    if condition.resource is not None:
+        found.append("resource")
+    for child in condition.all or ():
+        found.extend(unsupported_available_after_leaves(child))
+    for child in condition.any or ():
+        found.extend(unsupported_available_after_leaves(child))
+    found.extend(unsupported_available_after_leaves(condition.not_))
+    return found
 
 
 # ---------------------------------------------------------------------------------------------

@@ -51,6 +51,7 @@ from app.application.dds.stage_automation import DdsStageAutomation
 from app.application.handoff.complete_operator_stage import CompleteOperatorStage
 from app.application.handoff.continue_to_next_stage import ContinueToNextStage
 from app.application.handoff.create_handoff import CreateHandoff
+from app.application.instructor.get_overview import GetInstructorSessionOverview
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
 from app.application.operator.begin_handoff_preparation import BeginHandoffPreparation
@@ -355,6 +356,12 @@ class Container:
     def release_report_to_trainee(self) -> ReleaseReportToTrainee:
         """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""
         return ReleaseReportToTrainee(self.unit_of_work, self.clock)
+
+    # -- E17 R4: the live instructor overview (D3, D11) ------------------------------------------
+
+    def get_instructor_session_overview(self) -> GetInstructorSessionOverview:
+        """`getInstructorSessionOverview` — INSTRUCTOR/ADMIN only, a pure read (E17 R4)."""
+        return GetInstructorSessionOverview(self.unit_of_work, self.clock)
 
     def serve_audio_segment(self) -> ServeAudioSegment:
         """`getAudioSegment` — Range-served WAV bytes under `DATA_DIR/recordings` (D9, E16 R7)."""

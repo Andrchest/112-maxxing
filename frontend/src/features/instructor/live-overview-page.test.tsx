@@ -1,0 +1,145 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { InstructorLiveOverviewPage } from './live-overview-page';
+import { ru } from '@/shared/i18n/ru';
+import { useAuthStore } from '@/entities/session';
+import { makeInstructorSessionOverview, makeSessionDetail } from './test-fixtures';
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+function problemResponse(code: string, status: number): Response {
+  return new Response(JSON.stringify({ title: code, status, code }), { status, headers: { 'content-type': 'application/problem+json' } });
+}
+
+class InertSocket {
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  url: string;
+  constructor(url: string) {
+    this.url = url;
+  }
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+}
+
+function signIn(): void {
+  useAuthStore.setState({
+    token: 'jwt-token',
+    isAuthenticated: true,
+    user: { id: 'instr-1', username: 'instructor', display_name_ru: 'Instructor', user_role: 'INSTRUCTOR', created_at: '2026-09-21T00:00:00Z' },
+  });
+}
+
+function renderPage(sessionId = 'sess-1') {
+  const queryClient = new QueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[`/instructor/sessions/${sessionId}`]}>
+        <Routes>
+          <Route path="/instructor/sessions/:sessionId" element={<InstructorLiveOverviewPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('InstructorLiveOverviewPage — one getInstructorSessionOverview fetch, refetches on realtime frames', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+  });
+
+  it('renders the loading state before the fetch resolves', () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    renderPage();
+    expect(screen.getByText(ru.instructorOverviewLoading)).toBeInTheDocument();
+  });
+
+  it('renders every block once the overview loads', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(makeInstructorSessionOverview())));
+    renderPage();
+
+    expect(await screen.findByText(ru.instructorWorldTruthTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorCallerBeliefTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorGateTurnsTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorOperatorCardTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.reportHandoffTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorDdsWorkItemsTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorCallStateTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.instructorInferenceHealthTitle)).toBeInTheDocument();
+  });
+
+  it('renders a Russian 403 message for a non-instructor caller', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal('fetch', vi.fn(async () => problemResponse('FORBIDDEN_FOR_ROLE', 403)));
+    renderPage();
+    expect(await screen.findByText(ru.problemForbiddenForRole)).toBeInTheDocument();
+  });
+
+  it('links to the report when the session is COMPLETED', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'COMPLETED' }) });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    const link = await screen.findByRole('link', { name: ru.reportViewReportButton });
+    expect(link).toHaveAttribute('href', '/report/sess-1');
+  });
+
+  it('refetches the overview on any realtime event', async () => {
+    signIn();
+    const sockets: InertSocket[] = [];
+    class CapturingSocket extends InertSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal('WebSocket', CapturingSocket);
+    let overviewCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        overviewCalls += 1;
+        return jsonResponse(makeInstructorSessionOverview());
+      }),
+    );
+
+    renderPage();
+    await waitFor(() => expect(overviewCalls).toBe(1));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ type: 'resume_complete', replayed_count: 0, last_seq_no: 12, live: true }) });
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        seq_no: 13,
+        type: 'event',
+        event_type: 'FACT_GATE_EVALUATED',
+        timestamp_utc: '2026-09-21T10:00:05.000Z',
+        monotonic_offset_ms: 61000,
+        payload: {},
+        actor_type: 'SIMULATION',
+        correlation_id: null,
+        redacted_keys: [],
+      }),
+    });
+
+    await waitFor(() => expect(overviewCalls).toBeGreaterThan(1));
+  });
+});

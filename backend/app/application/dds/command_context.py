@@ -29,7 +29,7 @@ the context rather than issuing its own query, so no two commands can disagree a
 stage currently is.
 
 **Two clocks, deliberately.** `now_ms` is the session offset every *event* is stamped with
-(SPEC §39), exactly as on the 112 side. `sim_now_ms` is that offset put through `sim_ms`, i.e. the
+(SPEC §39), exactly as on the 112 side. `sim_now_ms` is that offset scaled by `time_scale`, i.e. the
 same simulated milliseconds the tick stamps `emergency_resources.status_changed_at_offset_ms` with
 and the same scale `ResourceAvailability` windows are written in (§30.5). Resource-machine guards
 and resource timestamps therefore use `sim_now_ms`; stage transitions and event payloads use
@@ -70,8 +70,7 @@ from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.simulation.sim_time import sim_ms
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import running_ms, sim_now_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, SessionId
@@ -396,14 +395,15 @@ class DdsCommandGate:
                 raise ActionNotAvailableError(wanted[0], stage_state)
 
             legs, snapshot = await load_legs(uow, session_id, stage)
-            now_ms = session_offset_ms(self._clock.now(), session.started_at)
+            wall_now = self._clock.now()
+            now_ms = running_ms(session, wall_now)
             context = DdsCommandContext(
                 uow=uow,
                 session=session,
                 stage=stage,
                 actor=ActorRef(actor_type=ActorType.TRAINEE, actor_id=user.user_id),
                 now_ms=now_ms,
-                sim_now_ms=sim_ms(now_ms, session.paused_total_ms, session.time_scale),
+                sim_now_ms=sim_now_ms(session, wall_now),
                 log=tuple(await uow.events.read(session_id)),
                 snapshot=snapshot,
                 legs=legs,

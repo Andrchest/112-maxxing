@@ -13,8 +13,16 @@ firing is stamped with **its own due time**, not with `now_ms`, so the result of
 equals the result of eight 500-ms ticks. The availability window is applied the same way, with the
 window boundary as the due time.
 
-Deterministic order: resources are walked by ascending `resource_id`, and every fired transition
+Deterministic order: resources are walked by ascending **`callsign`**, and every fired transition
 emits `RESOURCE_STATUS_CHANGED` (§10.7).
+
+The walk order is load-bearing for determinism rule 5 / INV 7 — it *is* the order the events of
+one tick are appended in — so it may not depend on anything that differs between two runs of the
+same scenario. The runtime `ResourceId` does: `emergency_resources.id` is `gen_random_uuid()` per
+session (`20-db-schema.md` §20.5), so walking by it made two identical runs emit the same
+transitions in a different sequence. `callsign` is the scenario's own handle on a unit and is
+unique within a scenario (`30-scenario-format.md` §30.8 rule 15), so it is stable across runs; the
+runtime id remains only as the tie-break that keeps the ordering total.
 """
 
 from __future__ import annotations
@@ -114,7 +122,9 @@ def advance_resources(
     """Fire every SIMULATION resource transition that is due at `now_ms` (§10.7, D7).
 
     Returns the new board and one `RESOURCE_STATUS_CHANGED` per fired transition, in ascending
-    `resource_id` order. Never raises: a transition the machine refuses simply does not fire.
+    `callsign` order (see the module docstring — the runtime `resource_id` is random per session
+    and cannot order a deterministic stream). Never raises: a transition the machine refuses
+    simply does not fire.
     """
     machine: StateMachine[ResourceStatus] = StateMachine(
         RESOURCE_STATUS_TRANSITIONS, build_resource_guards(eta_model)
@@ -122,7 +132,7 @@ def advance_resources(
     moved: dict[ResourceId, EmergencyResource] = dict(resources)
     events: list[DomainEvent] = []
 
-    for key in sorted(resources, key=str):
+    for key in sorted(resources, key=lambda key: (resources[key].callsign, str(key))):
         resource = moved[key]
         # The forward chain DISPATCHED -> ... -> AVAILABLE is five steps long, so this loop is
         # bounded by construction; the explicit cap only documents that.

@@ -4,8 +4,8 @@ The use case is the application-side shell around the three pure functions of `a
 
 1. take the `SELECT … FOR UPDATE` row lock on the session (§20.8) — a session that is not `ACTIVE`
    is a no-op, and the lock is what serialises two concurrent ticks of one session;
-2. derive simulated time from persisted state only: `session_offset_ms(clock.now(),
-   session.started_at)` scaled by `sim_ms`, never from a process-monotonic counter (SPEC §39, D7);
+2. derive simulated time from persisted state only: `app.application.simulation.sim_time.
+   sim_now_ms(session, clock.now())`, never from a process-monotonic counter (SPEC §39, D7);
 3. load the `WorldState` through `world_state_loader` and read the actions appended since the last
    tick (`seq_no > last_folded_seq_no`);
 4. `advance` → `apply_effects` → `advance_resources`;
@@ -56,9 +56,8 @@ from app.application.ports.notification_repository import StoredNotification
 from app.application.ports.resource_repository import ResourceStateChange
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.world_engine_state_repository import WorldEngineState
-from app.application.simulation.sim_time import sim_ms
+from app.application.simulation.sim_time import sim_now_ms
 from app.application.simulation.world_state_loader import LoadedWorldState, load_world_state
-from app.application.timebase import session_offset_ms
 from app.domain.common.ids import AssignmentId, ResourceId, SessionId
 from app.domain.dds.resources import EmergencyResource
 from app.domain.enums import (
@@ -201,9 +200,13 @@ class TickSession:
     # -- steps ---------------------------------------------------------------------------------
 
     def _now_ms(self, session: SimulationSession) -> int:
-        """Simulated milliseconds since `SESSION_STARTED`, from persisted state only (§39, D7)."""
-        real_elapsed_ms = session_offset_ms(self._clock.now(), session.started_at)
-        return sim_ms(real_elapsed_ms, session.paused_total_ms, session.time_scale)
+        """Simulated milliseconds since `SESSION_STARTED`, from persisted state only (§39, D7).
+
+        `sim_now_ms` is the one source of that number (E17 R1); it also freezes the clock while
+        the session sits in `ROLE_TRANSITION`, which this tick never observes because a session
+        that is not `ACTIVE` is a no-op two lines into `__call__`.
+        """
+        return sim_now_ms(session, self._clock.now())
 
     async def _persist(
         self,

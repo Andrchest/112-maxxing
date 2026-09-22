@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from app.application.voice.config import VoiceTurnConfig, voice_turn_config_from_settings
 from app.config.settings import Settings
@@ -85,14 +87,25 @@ def test_out_of_range_values_are_refused(field: str, value: float) -> None:
         VoiceTurnConfig(**{field: value})  # type: ignore[arg-type]
 
 
+#: The logger `VoiceTurnConfig`'s band warning comes out of (`app.application.voice.config`).
+_CONFIG_LOGGER = VoiceTurnConfig.__module__
+
+
 def test_endpoint_silence_outside_the_spec_target_band_still_loads(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """§4.1 calls 250–350 the *initial target*; the hard bound is 150–1500 (SPEC §17)."""
-    with caplog.at_level("WARNING"):
+    """§4.1 calls 250–350 the *initial target*; the hard bound is 150–1500 (SPEC §17).
+
+    The level is raised on the *emitting* logger rather than on the root, so the assertion says
+    exactly which logger has to warn and cannot be knocked out by anything another test did to
+    the root logger's level or handlers (E17-B2; the cause was Alembic's `fileConfig` disabling
+    every `app.*` logger in the worker — see `backend/app/db/migrations/env.py`).
+    """
+    with caplog.at_level(logging.WARNING, logger=_CONFIG_LOGGER):
         config = VoiceTurnConfig(endpoint_silence_ms=800)
     assert config.endpoint_silence_ms == 800
     assert "target band" in caplog.text
+    assert {record.name for record in caplog.records} == {_CONFIG_LOGGER}
 
 
 def test_settings_are_the_source_of_every_key(test_settings: Settings) -> None:

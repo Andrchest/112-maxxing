@@ -319,6 +319,32 @@ async def test_the_dispatch_result_view_reports_what_went_out(
     ), "the work item unions the legs, so every dispatched unit shows on it"
 
 
+async def test_the_dispatch_note_is_recorded_on_the_event(selecting: OperatorFlow) -> None:
+    """E17 R2: `note_ru` used to be accepted and silently dropped; it is now recorded verbatim
+    on `RESOURCE_DISPATCHED`, DDS/INSTRUCTOR-visible (`backend/tests/api/instructor` and the
+    redaction suite prove the OPERATOR_112 side of that; here only recording is asserted)."""
+    for callsign in DISPATCH_SET:
+        assert (await select(selecting, callsign)).status_code == 200
+
+    await dispatch(selecting, note_ru="Пожар на пятом этаже")
+
+    events = await events_of(selecting, "RESOURCE_DISPATCHED")
+    assert len(events) == 1
+    assert events[0]["payload"]["note_ru"] == "Пожар на пятом этаже"
+
+
+async def test_a_dispatch_with_no_note_records_it_as_null(selecting: OperatorFlow) -> None:
+    """`note_ru` is optional (`DispatchRequest`); absent means `null`, not a missing key."""
+    for callsign in DISPATCH_SET:
+        assert (await select(selecting, callsign)).status_code == 200
+
+    await dispatch(selecting)
+
+    events = await events_of(selecting, "RESOURCE_DISPATCHED")
+    assert len(events) == 1
+    assert events[0]["payload"]["note_ru"] is None
+
+
 async def test_dispatching_with_nothing_selected_is_refused(selecting: OperatorFlow) -> None:
     """`guard_at_least_one_selected_available`."""
     response = await dds_post(selecting, "/dds/resources/dispatch", {"note_ru": None})

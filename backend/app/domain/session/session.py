@@ -170,6 +170,18 @@ class SimulationSession(BaseModel):
     created_by_user_id: UserId
     started_at: datetime | None = None
     paused_total_ms: int = 0
+    role_transition_started_offset_ms: int | None = None
+    """The session offset a currently open `ROLE_TRANSITION` began at; `None` outside one (E17 R1).
+
+    Simulated time does not run during a role transition, so every reader of "sim now"
+    (`app.application.simulation.sim_time`) freezes at this value for as long as the transition
+    is open, and `finish_role_transition` banks the interval's wall-clock length into
+    `paused_total_ms`. Storing the offset rather than a `role_transition_started_at` wall stamp
+    keeps this aggregate clock-free: the two are the same instant, since
+    `started_at + paused_total_ms + role_transition_started_offset_ms` *is* that wall stamp.
+    The value is also in the log, on `ROLE_TRANSITION_STARTED`; the column exists so that a sim
+    time read needs the session row alone and never a log scan.
+    """
     completed_at: datetime | None = None
     abort_reason: str | None = None
     incident: Incident
@@ -470,7 +482,11 @@ class SimulationSession(BaseModel):
     ) -> tuple[SimulationSession, list[DomainEvent]]:
         """`ACTIVE --begin_role_transition--> ROLE_TRANSITION` (SYSTEM). Emits
         `ROLE_TRANSITION_STARTED`. The next stage is not started yet — `finish_role_transition`
-        does that after `policy.transition_pause_seconds`."""
+        does that after `policy.transition_pause_seconds`.
+
+        `now_ms` is the session offset (`app.application.simulation.sim_time.running_ms`), and it
+        is remembered on the aggregate as `role_transition_started_offset_ms`: from here until
+        `finish_role_transition` the simulated clock is frozen at it (E17 R1)."""
         from_stage = self.active_stage
         ctx = self._ctx(
             actor=actor, role_type=None, now_ms=now_ms, runtime=runtime, stage=from_stage
@@ -479,7 +495,9 @@ class SimulationSession(BaseModel):
         assert from_stage is not None  # the guard denies a session with no started stage
         to_stage = self.next_stage_after(from_stage)
         assert to_stage is not None  # `guard_stage_terminal_and_next_exists` checked this
-        updated = self.model_copy(update={"state": new_state})
+        updated = self.model_copy(
+            update={"state": new_state, "role_transition_started_offset_ms": now_ms}
+        )
         event = self._event(
             EventType.ROLE_TRANSITION_STARTED,
             actor=_SIMULATION,
@@ -503,8 +521,21 @@ class SimulationSession(BaseModel):
         runtime: GuardRuntime = NO_RUNTIME_FACTS,
     ) -> tuple[SimulationSession, list[DomainEvent]]:
         """`ROLE_TRANSITION --finish_role_transition--> ACTIVE` (SYSTEM). Starts the next stage
-        (`started_at_offset_ms = now_ms`) and emits `ROLE_TRANSITION_COMPLETED` then
-        `ROLE_STAGE_STARTED`."""
+        and emits `ROLE_TRANSITION_COMPLETED` then `ROLE_STAGE_STARTED`.
+
+        **This is the one writer of `paused_total_ms`** (E17 R1). `now_ms` here is the *unfrozen*
+        clock — `app.application.simulation.sim_time.transition_clock_ms`, wall elapsed minus the
+        pauses already banked — because that is the only basis in which
+        `guard_pause_elapsed_and_next_assigned` can observe the pause elapsing at all; a clock
+        frozen at `transition_started_ms` would never reach `transition_started_ms + pause`.
+
+        The pause interval is therefore `now_ms - role_transition_started_offset_ms`, it is added
+        to `paused_total_ms`, and the events this call emits — plus the next stage's
+        `started_at_offset_ms` — are stamped with the **frozen** offset, not with `now_ms`. That
+        is what makes the first DDS-stage event land at the offset the transition began at rather
+        than one hand-over later, and what keeps every later offset continuous with the frozen
+        value (after the write, `wall_elapsed - paused_total_ms` equals that same offset again).
+        """
         from_stage = self.active_stage
         ctx = self._ctx(
             actor=actor, role_type=None, now_ms=now_ms, runtime=runtime, stage=from_stage
@@ -513,21 +544,37 @@ class SimulationSession(BaseModel):
         assert from_stage is not None  # the guard denies a session with no started stage
         to_stage = self.next_stage_after(from_stage)
         assert to_stage is not None  # `guard_pause_elapsed_and_next_assigned` checked this
-        started = to_stage.model_copy(update={"started_at_offset_ms": now_ms})
-        updated = self.model_copy(update={"state": new_state, "stages": self._with_stage(started)})
+        # The log is the fallback for a session whose row predates the column (the stamp and
+        # `ROLE_TRANSITION_STARTED.monotonic_offset_ms` are the same number by construction), and
+        # `now_ms` the fallback for neither being there — a zero-length pause, never a negative one.
+        frozen_ms = self.role_transition_started_offset_ms
+        if frozen_ms is None:
+            frozen_ms = runtime.transition_started_ms
+        if frozen_ms is None:
+            frozen_ms = now_ms
+        paused_ms = self.paused_total_ms + max(0, now_ms - frozen_ms)
+        started = to_stage.model_copy(update={"started_at_offset_ms": frozen_ms})
+        updated = self.model_copy(
+            update={
+                "state": new_state,
+                "stages": self._with_stage(started),
+                "paused_total_ms": paused_ms,
+                "role_transition_started_offset_ms": None,
+            }
+        )
         events = [
             self._event(
                 EventType.ROLE_TRANSITION_COMPLETED,
                 actor=_SIMULATION,
-                now_ms=now_ms,
+                now_ms=frozen_ms,
                 payload={
                     "to_role_stage_id": str(started.role_stage_id),
                     "to_role_type": started.role_type.value,
                     "incident_id": str(self.incident.incident_id),
-                    "at_offset_ms": now_ms,
+                    "at_offset_ms": frozen_ms,
                 },
             ),
-            updated._role_stage_started(started, now_ms=now_ms),
+            updated._role_stage_started(started, now_ms=frozen_ms),
         ]
         return updated, events
 

@@ -31,6 +31,7 @@ export type SessionListItem = components['schemas']['SessionListItem'];
 export type SessionState = components['schemas']['SessionState'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type OperatorStageView = components['schemas']['OperatorStageView'];
+export type CallStateView = components['schemas']['CallStateView'];
 export type OperatorCardView = components['schemas']['OperatorCardView'];
 export type CardFieldSpec = components['schemas']['CardFieldSpec'];
 export type FactValue = components['schemas']['FactValue'];
@@ -355,6 +356,30 @@ export function listInferenceMetrics(
  * call returns the first release unchanged. Emits no event (openapi `x-emits: []`). */
 export function releaseReportToTrainee(sessionId: string): Promise<ReportReleaseView> {
   return apiFetch(`/instructor/sessions/${encodeURIComponent(sessionId)}/report/release`, { method: 'POST' });
+}
+
+// -- E17-C: instructor live overview (SPEC §7, §13; D6, HLD §10.8/§10.10/§10.13, R4) ----------
+// `InstructorSessionOverview` is "the union of the two trainee views plus the hidden layers" per
+// its own openapi description — `WorldTruthView`/`CallerBeliefView` are exposed ONLY here and in
+// the report's truth diff (D3, R4); no other file may import these two types
+// (`app/no-world-truth-guard.test.ts`).
+export type RoleStageView = components['schemas']['RoleStageView'];
+export type WorldTruthView = components['schemas']['WorldTruthView'];
+export type CallerBeliefView = components['schemas']['CallerBeliefView'];
+export type KnowledgeState = components['schemas']['KnowledgeState'];
+export type EmotionLabel = components['schemas']['EmotionLabel'];
+export type GateOutcome = components['schemas']['GateOutcome'];
+export type GateReason = components['schemas']['GateReason'];
+export type GateDecisionView = components['schemas']['GateDecisionView'];
+export type GateTurnView = components['schemas']['GateTurnView'];
+export type StageState = components['schemas']['StageState'];
+export type InstructorSessionOverview = components['schemas']['InstructorSessionOverview'];
+
+/** `getInstructorSessionOverview` (R4): a READ, emits and writes nothing. INSTRUCTOR/ADMIN only
+ * (`403 FORBIDDEN_FOR_ROLE` for anyone else); works in every session state after creation, incl.
+ * `COMPLETED`/`ABORTED` (openapi.yaml, R4). */
+export function getInstructorSessionOverview(sessionId: string): Promise<InstructorSessionOverview> {
+  return apiFetch(`/instructor/sessions/${encodeURIComponent(sessionId)}/overview`);
 }
 
 export function login(body: LoginRequest): Promise<TokenResponse> {

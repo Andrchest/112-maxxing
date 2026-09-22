@@ -9,10 +9,12 @@ SPEC §42 invariant 5 wants exactly one `incidents` row per session no matter ho
 Aborting a `COMPLETED` or already-`ABORTED` session raises `InvalidTransitionError` before
 anything is written, so nothing is saved and no event is appended.
 
-The events are stamped with `session_offset_ms(clock.now(), session.started_at)` — ms since the
-session's persisted `started_at`, never a process-monotonic counter — so an abort that follows a
-backend restart still lands at the right point on the session's timeline (SPEC §39, D7). A session
-aborted before it ever started has `started_at is None` and therefore offset `0`.
+The events are stamped with `app.application.simulation.sim_time.running_ms(session, now)` — ms
+since the session's persisted `started_at` less the hand-over pauses it has banked, never a
+process-monotonic counter — so an abort that follows a backend restart still lands at the right
+point on the session's timeline (SPEC §39, D7, E17 R1), and aborting a session parked in
+`ROLE_TRANSITION` lands on the frozen offset rather than after the pause. A session aborted before
+it ever started has `started_at is None` and therefore offset `0`.
 
 §40.6 lists `abortSession` as a publisher of `voice:cancel:{session_id}` with
 `reason: "ABORT"` (D9): an instructor who aborts a running session must not leave the voice-agent
@@ -30,7 +32,7 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.sessions.start_session import SessionNotFoundError
-from app.application.timebase import session_offset_ms
+from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.ids import SessionId
 from app.domain.session.session import SimulationSession
@@ -62,7 +64,7 @@ class AbortSession:
 
             log = await uow.events.read(session_id)
             runtime = build_guard_runtime(log, scenario_valid=True, inference_ready=False)
-            now_ms = session_offset_ms(self._clock.now(), session.started_at)
+            now_ms = running_ms(session, self._clock.now())
             aborted, events = session.abort(reason, actor=actor, now_ms=now_ms, runtime=runtime)
 
             await uow.sessions.save(aborted)

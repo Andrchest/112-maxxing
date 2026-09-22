@@ -1,4 +1,4 @@
-"""One failing fixture per §30.8 rule R01-R30 (`docs/hld/30-scenario-format.md`).
+"""One failing fixture per §30.8 rule R01-R31 (`docs/hld/30-scenario-format.md`).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
 document (`scenarios/examples/apartment-fire/v1.yaml`). The test asserts that the resulting
@@ -31,6 +31,10 @@ RULE_RE = re.compile(r"\bR(\d{2}):")
 
 GHOST_FACT = "ghost.fact"
 GHOST_CONDITION = {"fact": {"fact_id": GHOST_FACT, "layer": "WORLD", "op": "IS_NOT_NULL"}}
+#: The same unknown fact, on the CALLER layer. An `available_after` fixture has to use this one:
+#: a WORLD-layer leaf there is R31's own violation (E17 R3), which would stop R13's fixture being
+#: minimal.
+GHOST_CALLER_CONDITION = {"fact": {"fact_id": GHOST_FACT, "layer": "CALLER", "op": "IS_NOT_NULL"}}
 
 
 def _facts(document: Document, section: str) -> dict[str, Any]:
@@ -117,7 +121,7 @@ def _r12_world_event_unknown_fact_id(document: Document) -> None:
 
 def _r13_available_after_condition_unknown_fact_id(document: Document) -> None:
     _facts(document, "disclosure_rules")["hazards.gas_cylinder"]["available_after"] = {
-        "condition": GHOST_CONDITION
+        "condition": GHOST_CALLER_CONDITION
     }
 
 
@@ -197,6 +201,15 @@ def _r30_empty_deterministic_seed(document: Document) -> None:
     document["deterministic_seed"] = ""
 
 
+def _r31_available_after_condition_needs_world_truth(document: Document) -> None:
+    """E17 R3: the fact gate has no `WorldTruth`, so a WORLD-layer leaf never opens the fact."""
+    _facts(document, "disclosure_rules")["hazards.gas_cylinder"]["available_after"] = {
+        "condition": {
+            "fact": {"fact_id": "hazards.gas_cylinder", "layer": "WORLD", "op": "EQ", "value": True}
+        }
+    }
+
+
 MUTATIONS: dict[int, Mutation] = {
     1: _r01_unknown_top_level_key,
     2: _r02_caller_fact_without_world_fact,
@@ -228,6 +241,7 @@ MUTATIONS: dict[int, Mutation] = {
     28: _r28_missing_resolution_condition,
     29: _r29_dds_chain_without_prefab_handoff,
     30: _r30_empty_deterministic_seed,
+    31: _r31_available_after_condition_needs_world_truth,
 }
 
 # Rule numbers a fixture may additionally report because the second rule is logically implied by
@@ -261,8 +275,8 @@ def test_each_rule_has_a_failing_fixture(rule_no: int) -> None:
     assert not unexpected, f"R{rule_no:02d} fixture is not minimal, also reported {unexpected}"
 
 
-def test_mutation_table_covers_exactly_rules_1_to_30() -> None:
-    assert sorted(MUTATIONS) == list(range(1, 31))
+def test_mutation_table_covers_exactly_rules_1_to_31() -> None:
+    assert sorted(MUTATIONS) == list(range(1, 32))
 
 
 def test_demo_scenario_has_no_violations() -> None:

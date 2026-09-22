@@ -148,10 +148,11 @@ async def test_the_whole_incident_from_handoff_to_a_completed_session(
     ladder = [row for row in rows if row["callsign"] == "АЛ-1"]
     triggers = [row["trigger"] for row in ladder]
     # `select` and `dispatch` share one session offset (one click each, no simulated time between
-    # them), so `ORDER BY at_offset_ms, id` does not put them in a fixed order; the movement the
-    # engine drove afterwards does have an order, and that is what is asserted.
-    assert set(triggers[:2]) == {"select", "dispatch"}
-    assert triggers[2:5] == ["depart", "arrive", "start_work"]
+    # them). Until E17-B2 the helper's `ORDER BY at_offset_ms, id` could not tell them apart —
+    # both row ids are random — so only the set was assertable. It now orders by the `seq_no` of
+    # the `session_events` row each change was recorded beside, which is the log's append order,
+    # so the exact sequence is pinned here.
+    assert triggers[:5] == ["select", "dispatch", "depart", "arrive", "start_work"]
     assert all(row["assignment_id"] is not None for row in ladder)
     assert all(row["session_event_id"] is not None for row in ladder)
 
@@ -217,12 +218,26 @@ async def test_close_releases_every_attached_unit_and_names_them(
     response = await dds_post(resolved, "/dds/close", {"closure_reason": "RESOLVED"})
     assert response.status_code == 200, response.text
 
-    released = (await events_of(resolved, "DDS_INCIDENT_CLOSED"))[0]["payload"][
-        "released_resource_ids"
-    ]
+    closed_payload = (await events_of(resolved, "DDS_INCIDENT_CLOSED"))[0]["payload"]
+    released = closed_payload["released_resource_ids"]
     rows = await resource_rows(uow_factory, resolved.session_id)
     assert len(released) == len(attached_before)
     assert all(row["assignment_id"] is None for row in rows.values())
+    assert closed_payload["comment_ru"] is None, "no comment given, so it is recorded as null"
+
+
+async def test_the_closure_comment_is_recorded_on_the_event(resolved: OperatorFlow) -> None:
+    """E17 R2: `comment_ru` used to be accepted and silently dropped; it is now recorded
+    verbatim on `DDS_INCIDENT_CLOSED`, DDS/INSTRUCTOR-visible (`backend/tests/api/instructor` and
+    the redaction suite prove the OPERATOR_112 side of that; here only recording is asserted)."""
+    response = await dds_post(
+        resolved, "/dds/close", {"closure_reason": "RESOLVED", "comment_ru": "Пожар потушен"}
+    )
+    assert response.status_code == 200, response.text
+
+    events = await events_of(resolved, "DDS_INCIDENT_CLOSED")
+    assert len(events) == 1
+    assert events[0]["payload"]["comment_ru"] == "Пожар потушен"
 
 
 async def test_the_dispatch_history_survives_the_release(
@@ -296,8 +311,13 @@ async def _run_dds_only(
     clock: FakeClock,
     tokens: dict[str, str],
     session_id: UUID,
-) -> list[str]:
-    """Drive the DDS-only prefab session through one dispatch and 560 simulated seconds."""
+) -> list[tuple[str, int, str]]:
+    """Drive the DDS-only prefab session through one dispatch and 560 simulated seconds.
+
+    Returns `(event_type, monotonic_offset_ms, scenario-stable subject)` per event. The subject is
+    a `callsign` or a `world_event_id` — never a runtime `resource_id`, which is
+    `gen_random_uuid()` per session and therefore different in every run.
+    """
     base = f"/api/v1/sessions/{session_id}"
     headers = auth(tokens["trainee2"])
 
@@ -327,7 +347,19 @@ async def _run_dds_only(
             f"{base}/events", headers=auth(tokens["instructor1"]), params={"limit": 1000}
         )
     ).json()["items"]
-    return [item["event_type"] for item in events]
+    return [_stable_row(item) for item in events]
+
+
+#: Payload keys that name *what* an event is about in scenario terms, most specific first.
+_STABLE_KEYS: tuple[str, ...] = ("callsign", "world_event_id", "fact_id", "role_type")
+
+
+def _stable_row(item: dict[str, Any]) -> tuple[str, int, str]:
+    payload = item.get("payload") or {}
+    subject = next(
+        (str(payload[key]) for key in _STABLE_KEYS if isinstance(payload.get(key), str)), ""
+    )
+    return str(item["event_type"]), int(item["monotonic_offset_ms"]), subject
 
 
 async def test_two_runs_of_one_scenario_produce_the_same_event_stream(
@@ -344,7 +376,7 @@ async def test_two_runs_of_one_scenario_produce_the_same_event_stream(
     scenario's `deterministic_seed`), and the same actions at the same simulated offsets must
     therefore produce the same stream — world events, resource movement and all.
     """
-    streams: list[list[str]] = []
+    streams: list[list[tuple[str, int, str]]] = []
     for _ in range(2):
         detail = await create_demo_session(
             client,
@@ -360,6 +392,14 @@ async def test_two_runs_of_one_scenario_produce_the_same_event_stream(
         assert started.status_code == 200, started.text
         streams.append(await _run_dds_only(client, container, clock, tokens, session_id))
 
+    # The whole sequence, not just the multiset: since E17-B2 the order two events of one tick
+    # are appended in is derived from the scenario (`callsign`), never from a random runtime id,
+    # so two runs of one scenario are identical row for row — event type, simulated offset and
+    # the unit or world event it is about.
     assert streams[0] == streams[1]
-    assert "RESOURCE_DISPATCHED" in streams[0]
-    assert streams[0].count("RESOURCE_STATUS_CHANGED") >= 4
+    names = [name for name, _offset, _subject in streams[0]]
+    assert "RESOURCE_DISPATCHED" in names
+    assert names.count("RESOURCE_STATUS_CHANGED") >= 4
+    # The property the equality above rests on — that one tick appends its movements in the
+    # scenario's own `callsign` order rather than in runtime-id order — is pinned at its source by
+    # `tests/unit/domain/world/test_resource_movement.py`.

@@ -5,9 +5,9 @@ Eleven modules, one per group of `openapi.yaml` operations: `auth` and `users` (
 commands and reads), `snapshot` (`getSessionSnapshot`), `realtime` (`listSessionEvents` and the
 WebSocket), `reports` (the whole `reports` tag — `getSessionReport`, `rescoreSession`,
 `getAudioSegment`, `listInferenceMetrics` and the explanation pair) and `instructor`
-(`releaseReportToTrainee`; `getInstructorSessionOverview` is TODO(E17) there). Every one of them
-is included by `create_app`, and the contract test walks the registered routes, so an operation
-added to an existing module needs no change to `create_app` and is checked against the contract
+(`releaseReportToTrainee`, `getInstructorSessionOverview`). Every one of them is included by
+`create_app`, and the contract test walks the registered routes, so an operation added to an
+existing module needs no change to `create_app` and is checked against the contract
 automatically.
 
 `reports` exports two routers — `router` under `/api/v1/reports` and `audio_router` under

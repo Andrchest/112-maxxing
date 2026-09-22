@@ -201,16 +201,24 @@ def test_begin_and_finish_role_transition() -> None:
     _check_payloads(events)
     assert events[0].payload["pause_seconds"] == 10
     assert events[0].payload["to_role_type"] == "DDS"
+    # E17 R1: the offset the transition began at is remembered on the aggregate, because every
+    # reader of sim time freezes at it until the transition finishes.
+    assert in_transition.role_transition_started_offset_ms == 5_000
 
     resumed, resume_events = in_transition.finish_role_transition(
         actor=b.SYSTEM, now_ms=20_000, runtime=GuardRuntime(transition_started_ms=5_000)
     )
     assert resumed.state is SessionState.ACTIVE
-    assert resumed.stages[1].started_at_offset_ms == 20_000
+    # E17 R1: the 15 s of wall clock the hand-over took are banked, not simulated, so the DDS
+    # stage opens at the offset the 112 stage ended at and the stamp is cleared.
+    assert resumed.paused_total_ms == 15_000
+    assert resumed.role_transition_started_offset_ms is None
+    assert resumed.stages[1].started_at_offset_ms == 5_000
     assert [e.event_type for e in resume_events] == [
         EventType.ROLE_TRANSITION_COMPLETED,
         EventType.ROLE_STAGE_STARTED,
     ]
+    assert [e.monotonic_offset_ms for e in resume_events] == [5_000, 5_000]
     _check_payloads(resume_events)
     assert resume_events[0].payload["incident_id"] == str(b.INCIDENT_ID)
     # SPEC §13: the role change did not create a new incident.
