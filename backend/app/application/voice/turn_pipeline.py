@@ -54,7 +54,12 @@ from app.application.ports.call_transport import (
     TransportEventType,
 )
 from app.application.ports.clock import Clock
-from app.application.ports.vad import VADProvider
+from app.application.ports.inference_guard import (
+    STAGE_VAD,
+    InferenceGuard,
+    NoOpInferenceGuard,
+)
+from app.application.ports.vad import VadFrameResult, VADProvider
 from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.events import (
     VoiceEventAppender,
@@ -96,6 +101,22 @@ trip per audio frame would be in the worst possible place.
 
 _CALL_ENDED_TRANSPORT_CLOSED = "TRANSPORT_CLOSED"
 _CALL_ENDED_CANCELLED = "CANCELLED"
+#: `60-inference-ops.md` §6 row 5 / SPEC §39 item 5: a media-plane disconnect that outlasts
+#: `VoiceTurnConfig.reconnect_grace_s` ends the call. `CALL_ENDED.reason` is a free `str` in the
+#: §10.13 catalog, so this needs no catalog change — the value is the HLD's, literally.
+_CALL_ENDED_TRANSPORT_LOST = "TRANSPORT_LOST"
+
+SleepMs = Callable[[int], Awaitable[None]]
+"""How the reconnect-grace timer waits.
+
+Injected rather than called as `asyncio.sleep` directly so the grace period is testable without a
+test that actually waits thirty seconds: the fake transport drives a `FakeClock`, and a test
+injects a sleeper that returns immediately. Nothing else in the pipeline sleeps."""
+
+
+async def _real_sleep_ms(milliseconds: int) -> None:
+    """The production `SleepMs`."""
+    await asyncio.sleep(milliseconds / 1000)
 
 
 @runtime_checkable
@@ -296,6 +317,8 @@ class TurnPipeline:
         cancel_signals: AsyncIterator[str] | None = None,
         asr: ASRProvider | None = None,
         show_asr_partials: ShowAsrPartials | None = None,
+        guard: InferenceGuard | None = None,
+        sleep_ms: SleepMs | None = None,
     ) -> None:
         self._session_id = session_id
         self._call_id = call_id
@@ -311,6 +334,10 @@ class TurnPipeline:
         self._recorder = recorder
         self._responder: TurnResponder = responder or NullTurnResponder()
         self._cancel_signals = cancel_signals
+        #: §4.4's `guard_inference(stage)`. The default observes nothing, so a pipeline built
+        #: without one behaves exactly as it did before E18 (D13).
+        self._guard: InferenceGuard = guard if guard is not None else NoOpInferenceGuard()
+        self._sleep_ms: SleepMs = sleep_ms if sleep_ms is not None else _real_sleep_ms
         #: §4.5's partials are the pipeline's own stage; without a provider there are none.
         self._asr = asr
         self._show_asr_partials = show_asr_partials
@@ -329,6 +356,8 @@ class TurnPipeline:
         self._stopping = asyncio.Event()
         self._call_started_offset_ms: int | None = None
         self._disconnected_at_offset_ms: int | None = None
+        #: The live `reconnect_grace_s` timer, if the transport is currently disconnected (§6).
+        self._grace_task: asyncio.Task[None] | None = None
         self._ended_reason: str | None = None
         #: Every event this pipeline appended, in append order — what a test asserts on.
         self.appended: list[SessionEvent] = []
@@ -451,7 +480,11 @@ class TurnPipeline:
     async def _handle_frame(self, frame: AudioFrame) -> None:
         if self._recorder is not None:
             self._recorder.tee("TRAINEE", frame)
-        result = await self._vad.process(frame)
+        result = await self._guard.run(
+            STAGE_VAD,
+            lambda: self._vad.process(frame),
+            fallback=lambda: self._silent_frame_result(frame),
+        )
         step = self._detector.process(frame, result, playback_active=self.playback_active)
         if step.started is not None:
             if self._partials is not None:
@@ -622,19 +655,85 @@ class TurnPipeline:
         async for event in self._transport.events():
             await self._handle_transport_event(event)
 
+    async def _silent_frame_result(self, frame: AudioFrame) -> VadFrameResult:
+        """The VAD stage's deterministic fallback: "this frame is not speech" (§4.4 step 2).
+
+        VAD is the one guarded stage with no fallback ladder of its own — the detector cannot be
+        handed an exception — so the guard produces the answer here. Scoring the frame as silence
+        is the conservative choice: a turn is never *started* by a failed model, an open turn ends
+        on the configured endpoint silence, and the trainee's audio is still recorded and still
+        teed. A failing VAD therefore degrades to "nobody is speaking", never to a phantom turn.
+        """
+        return VadFrameResult(
+            speech_probability=0.0,
+            frame_start_ms=frame.capture_offset_ms,
+            frame_duration_ms=frame.duration_ms,
+        )
+
     async def _handle_transport_event(self, event: TransportEvent) -> None:
         downtime_ms = 0
         if event.type is TransportEventType.DISCONNECTED:
             self._disconnected_at_offset_ms = event.at_offset_ms
+            self._start_reconnect_grace()
         elif event.type is TransportEventType.RECONNECTED:
             if self._disconnected_at_offset_ms is not None:
                 downtime_ms = max(0, event.at_offset_ms - self._disconnected_at_offset_ms)
             self._disconnected_at_offset_ms = None
+            self._cancel_reconnect_grace()
         domain_event = transport_event_to_domain_event(
             event, offset_ms=self._appender.offset_ms(), downtime_ms=downtime_ms
         )
         if domain_event is not None:
             await self._append([domain_event])
+
+    # -- the reconnect grace period (§6 row 5, SPEC §39 item 5) -------------------------------
+
+    def _start_reconnect_grace(self) -> None:
+        """Arm the `reconnect_grace_s` timer on a DISCONNECTED (idempotent).
+
+        The timer lives **here**, in the application pipeline, and never in the LiveKit SDK
+        wrapper: the transport's job is to say what the media plane did, and "how long a
+        disconnect may last before the call is over" is a configured product rule (SPEC §17),
+        testable against the fake transport and a fake clock with no SDK in sight.
+        """
+        if self._grace_task is not None and not self._grace_task.done():
+            return
+        self._grace_task = asyncio.create_task(
+            self._reconnect_grace(), name="voice-reconnect-grace"
+        )
+
+    def _cancel_reconnect_grace(self) -> None:
+        """Disarm the timer: a RECONNECTED inside the grace period changes nothing else.
+
+        Session and domain state survive untouched — the pipeline keeps its detector, its open
+        turn bookkeeping and its appended events, and the only trace of the whole episode is the
+        `TRANSPORT_DISCONNECTED` / `TRANSPORT_RECONNECTED` pair (§6 row 5).
+        """
+        task = self._grace_task
+        self._grace_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _reconnect_grace(self) -> None:
+        """Wait out `reconnect_grace_s`; if still disconnected, end the call as TRANSPORT_LOST."""
+        grace_ms = self._config.reconnect_grace_s * 1000
+        try:
+            await self._sleep_ms(grace_ms)
+        except asyncio.CancelledError:
+            return
+        if self._stopping.is_set() or self._disconnected_at_offset_ms is None:
+            return
+        logger.info(
+            "transport gone for more than reconnect_grace_s=%d s; ending call %s as %s",
+            self._config.reconnect_grace_s,
+            self._call_id,
+            _CALL_ENDED_TRANSPORT_LOST,
+        )
+        # Through the ordinary call-end path: `stop()` sets the reason and `_close_call()` appends
+        # the one `CALL_ENDED`. Nothing here writes `simulation_sessions.state` — the session is
+        # left ACTIVE "for the instructor to decide" (§6 row 5), which is also SPEC §39's closing
+        # rule: never silently reset the simulation.
+        await self.stop(_CALL_ENDED_TRANSPORT_LOST)
 
     async def _cancellations(self) -> None:
         signals = self._cancel_signals
@@ -674,6 +773,7 @@ class TurnPipeline:
             self._recorder.close()
 
     async def _shutdown(self, *tasks: asyncio.Task[None]) -> None:
+        self._cancel_reconnect_grace()
         response = self._response_task
         if response is not None and not response.done():
             response.cancel()

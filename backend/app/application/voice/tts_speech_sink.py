@@ -50,6 +50,12 @@ from app.application.dialogue.speech_sink import PlannedCallerUtterance
 from app.application.ports.audio_segment_repository import StoredAudioSegment
 from app.application.ports.call_transport import AudioFrame, DeliveredAudio, PlaybackHandle
 from app.application.ports.clock import Clock
+from app.application.ports.inference_guard import (
+    STAGE_TTS,
+    InferenceGuard,
+    NoOpInferenceGuard,
+    is_out_of_memory,
+)
 from app.application.ports.metrics_recorder import (
     InferenceMetric,
     InferenceStage,
@@ -88,6 +94,8 @@ logger = logging.getLogger(__name__)
 TTS_COMPONENT = "TTS"
 #: `MODEL_ERROR.error_code` when the provider exceeded `tts_timeout_ms`.
 ERROR_CODE_TIMEOUT = "TIMEOUT"
+#: `60-inference-ops.md` §4.4: an allocation failure is `OOM` and is not recoverable.
+ERROR_CODE_OOM = "OOM"
 #: `MODEL_FALLBACK_USED.fallback_kind` when the whole utterance is retried on another provider.
 FALLBACK_KIND_PROVIDER = "TTS_FALLBACK_PROVIDER"
 #: `EmotionTrigger` kinds, as `CALLER_EMOTION_CHANGED.trigger_kind` records them (§10.5).
@@ -318,6 +326,7 @@ class TtsSpeechSink:
         timeout_ms: int = 8000,
         first_chunk_timeout_ms: int = 1500,
         max_unit_chars: int = DEFAULT_MAX_UNIT_CHARS,
+        guard: InferenceGuard | None = None,
     ) -> None:
         self._provider = provider
         self._fallback = fallback_provider
@@ -330,6 +339,11 @@ class TtsSpeechSink:
         self._timeout_ms = timeout_ms
         self._first_chunk_timeout_ms = first_chunk_timeout_ms
         self._max_unit_chars = max_unit_chars
+        #: §4.4's `guard_inference("TTS")`. The default observes nothing (D13). The guard wraps
+        #: the *playback* await, which is where a synthesis failure raised inside the frame
+        #: iterator actually surfaces (`_ActiveCallerUtterance.failure`), not the `stream()` call
+        #: that merely builds the iterator.
+        self._guard: InferenceGuard = guard if guard is not None else NoOpInferenceGuard()
         #: `session_id -> the scenario's caller voice`, read once per session (§10).
         self._voices: dict[SessionId, TtsVoiceSpec] = {}
 
@@ -409,11 +423,16 @@ class TtsSpeechSink:
             frames = self._frames(active, stream, provider, voice)
             playback = await context.transport.play(frames)
             active.set_playback(playback)
-            delivered = await asyncio.wait_for(
-                playback.wait_done(), timeout=self._timeout_ms / MS_PER_S
-            )
-            if active.failure is not None:
-                raise active.failure
+
+            async def _drain() -> DeliveredAudio:
+                drained: DeliveredAudio = await asyncio.wait_for(
+                    playback.wait_done(), timeout=self._timeout_ms / MS_PER_S
+                )
+                if active.failure is not None:
+                    raise active.failure
+                return drained
+
+            delivered = await self._guard.run(STAGE_TTS, _drain)
         except asyncio.CancelledError:
             # A barge-in, or a newer turn. §6.4 wants **one** cancelled metric per stage: when a
             # barge-in claimed this utterance the pipeline's `on_interrupted` already wrote it,
@@ -441,14 +460,20 @@ class TtsSpeechSink:
             )
             return None
         except Exception as exc:
+            # §4.4: on an OOM the guard has already taken `tts` to FATAL and latched
+            # `voice:health:fatal`. The *turn* still follows INV 14's ladder from here — the
+            # configured fallback provider gets its one go, and if there is none (or it also
+            # fails) the turn ends silent but complete. Health changed; the simulation did not.
+            oom = is_out_of_memory(exc)
             await self._fail(
                 active,
                 started_at=started_at,
                 started_ms=started_ms,
                 status="ERROR",
-                error_code=type(exc).__name__,
+                error_code=ERROR_CODE_OOM if oom else type(exc).__name__,
                 message=str(exc),
                 retry=retry,
+                recoverable=not oom,
             )
             return None
 
@@ -875,6 +900,7 @@ class TtsSpeechSink:
         error_code: str,
         message: str,
         retry: bool,
+        recoverable: bool = True,
     ) -> None:
         """`MODEL_ERROR{stage: "TTS"}` + a metric, and nothing else changes (INV 14)."""
         context = active.context
@@ -894,7 +920,7 @@ class TtsSpeechSink:
                     model=active.provider.model_version,
                     error_code=error_code,
                     message=message,
-                    recoverable=True,
+                    recoverable=recoverable,
                     turn_index=planned.turn_index,
                     turn_id=planned.turn_id,
                     stage=TTS_COMPONENT,

@@ -10,8 +10,13 @@ from __future__ import annotations
 import secrets
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: SPEC §41: "Secrets/configuration belong in environment/config files, not source code" —
+#: enforced here as a minimum length, not just presence, so a copy-pasted short placeholder
+#: (e.g. the pre-E18 `test-only-secret`) is refused at load rather than accepted as "a secret".
+_JWT_SECRET_MIN_BYTES = 32
 
 _PROCESS_INSTANCE_ID: str = secrets.token_hex(8)
 """This process's identity, drawn once at import.
@@ -31,6 +36,19 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     jwt_secret: str
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _jwt_secret_min_length(cls, value: str) -> str:
+        """SPEC §41 / E18-A R3: a short placeholder is refused at settings load, not accepted."""
+        byte_length = len(value.encode("utf-8"))
+        if byte_length < _JWT_SECRET_MIN_BYTES:
+            raise ValueError(
+                f"SIM_JWT_SECRET must be at least {_JWT_SECRET_MIN_BYTES} bytes "
+                f"(got {byte_length}); a short placeholder is not a secret (SPEC §41)"
+            )
+        return value
+
     #: Loopback by default (SPEC §41, "local operation"): the API is not exposed to the network
     #: unless a deployment says so. Ports 8000/8001 on the developer machine belong to another
     #: project, so the default is 8100 — see this repository's E7-A task report.
@@ -79,9 +97,11 @@ class Settings(BaseSettings):
     # SPEC §17: "Make this configuration, not a hard-coded magic value." Every key of §4.1's
     # table gets one `SIM_VOICE_*` variable; `app.application.voice.config.VoiceTurnConfig`
     # validates the ranges and the cross-field rules, and the `TurnDetector` reads nothing else.
-    # TODO(E18): the active model profile's `voice_turn.*` block overlays this env block.
-    # Profiles (`backend/app/config/profiles/*.yaml`, `60-inference-ops.md` §2) are E18's epic;
-    # until one is loaded the env block is the whole of the configuration.
+    # E18-A: the active model profile's `voice_turn.*` block now overlays this env block —
+    # `app.config.profile.apply_profile`, called once at process start-up (`app.api.container.
+    # build_container`, `voice_agent.wiring.VoiceAgentDeps.build`) before this env block is read.
+    # A `SIM_VOICE_*` var present in the environment/.env still wins over the profile (R3); this
+    # block stays the whole of the configuration for a process with no profile loaded.
     voice_speech_start_threshold: float = 0.55
     voice_speech_end_threshold: float = 0.35
     voice_speech_start_min_ms: int = 96
@@ -97,6 +117,11 @@ class Settings(BaseSettings):
     voice_partial_asr_enabled: bool = True
     voice_partial_interval_ms: int = 500
     voice_sample_rate: int = 16000
+    #: ADDITIVE (E18-A, R6/DO item 1): HLD 60 §6 row 5 / SPEC §39 item 5 — a LiveKit disconnect
+    #: longer than this ends the call (`CALL_ENDED{reason:"TRANSPORT_LOST"}`). The timer itself
+    #: lives in the application pipeline (E18-C); this field, `voice_turn.reconnect_grace_s` in a
+    #: profile, and `VoiceTurnConfig.reconnect_grace_s` are the same number carried through.
+    voice_reconnect_grace_s: int = 30
     #: `VOICE_JOIN_RETRY_MS` of §40.6: how often the backend re-publishes `voice:join` while a
     #: call is RINGING (D9, E11-B). The default is §40.6's, literally.
     voice_join_retry_ms: int = 2000
@@ -200,6 +225,10 @@ class Settings(BaseSettings):
     #: never the LiveKit/compose-internal network (SPEC §41,
     #: `app.inference.tts.qwen3_tts.validate_tts_qwen3_base_url`).
     tts_qwen3_base_url: str = "http://127.0.0.1:8112"
+    #: `SIM_VOICE_AGENT_HTTP_PORT` — the voice-agent's loopback-only preflight HTTP server
+    #: (`voice_agent.preflight_http`, E18-C; `GET /preflight/asr|tts`). Ours: never 8000/8001/
+    #: 8011/8012/8016 (another project on the developer machine).
+    voice_agent_http_port: int = 8113
     #: `SIM_TTS_QWEN3_MODEL_DIR` — the worker process (a separate venv/program, `workers/
     #: tts_qwen3`) reads this directly; the backend never opens the model file itself, only
     #: documents/validates the path exists when the profile requires it (E18).

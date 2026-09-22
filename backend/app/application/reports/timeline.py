@@ -190,7 +190,7 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.TRANSPORT_DISCONNECTED: SummaryTemplate("Потеряна голосовая связь", ("reason",)),
     EventType.TRANSPORT_RECONNECTED: SummaryTemplate("Голосовая связь восстановлена"),
     EventType.INFERENCE_HEALTH_CHANGED: SummaryTemplate(
-        "Изменилась готовность моделей", ("component", "status")
+        "Изменилась готовность моделей", ("component", "new_status")
     ),
 }
 

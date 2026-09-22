@@ -52,6 +52,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 __all__ = [
+    "DEFAULT_HOST",
     "DEFAULT_MODEL_VARIANT",
     "DEFAULT_PORT",
     "MODEL_REPO",
@@ -61,6 +62,8 @@ __all__ = [
     "TOKENIZER_REPO",
     "TOKENIZER_REVISION",
     "VENDOR_SPEAKERS",
+    "WARMUP_SPEAKER",
+    "WARMUP_TEXT_RU",
     "ModelFactory",
     "ModelHandle",
     "ModelVariant",
@@ -76,6 +79,9 @@ log = logging.getLogger("tts_qwen3")
 #: worker, PID 1082982 — never touched by anything in this repository). `SIM_TTS_QWEN3_PORT`
 #: overrides it.
 DEFAULT_PORT = 8112
+#: Loopback, and only a deployment that cannot work otherwise (a container whose port is not
+#: published) sets `SIM_TTS_QWEN3_HOST` to something else — see `tts_qwen3.__main__` (SPEC §41).
+DEFAULT_HOST = "127.0.0.1"
 #: The one output shape `Qwen3TTS.output_sample_rate` (`app.inference.tts.qwen3_tts`) is pinned
 #: to — measured by the owner (recon §1.1), not a guess.
 SAMPLE_RATE = 24000
@@ -154,6 +160,18 @@ _ERROR_BODY: dict[str, str] = {
     "error": "tts_qwen3_unavailable",
     "message": "Qwen3-TTS worker is unavailable; retry or use the configured TTS fallback.",
 }
+
+
+#: `/warm_up` generates this, once, and throws the audio away (E18-C, HLD 60 §4.2 step 4).
+#:
+#: E14-D measured 13.1 s for the *first* synthesis after a load-only warm-up: loading the weights
+#: leaves the CUDA graphs, the kernel autotuning and the tokenizer's first pass cold, so the first
+#: caller line paid for all of it. That cost belongs to warm-up, which is why this is a real
+#: generation of real Russian text and not a model load followed by an optimistic `{"status":"ok"}`.
+#: Short on purpose — it is thrown away, and a long warm-up is VRAM pressure for nothing.
+WARMUP_TEXT_RU = "Проверка."
+#: One of `VENDOR_SPEAKERS`; the warm-up path must be the same path a real request takes.
+WARMUP_SPEAKER = "Serena"
 
 
 class ModelHandle(Protocol):
@@ -345,12 +363,50 @@ def create_app(
 
     @app.post("/warm_up")
     async def warm_up() -> Response:
+        """Load the model **and** run one real generation, discarding the audio (HLD 60 §4.2).
+
+        Two steps, both of them warm-up cost rather than first-caller cost (see `WARMUP_TEXT_RU`).
+        The generation goes through the same `_inference_lock` and the same `_run_generate` a real
+        `/synthesize` uses, because a warm-up down a different path warms a different path.
+
+        The response reports `output_audio_ms` and `generate_ms` so the caller can tell a real
+        generation from a load-only warm-up without reading this source; `Qwen3TTS.warm_up` only
+        requires HTTP 200.
+        """
         try:
             await state.ensure_loaded()
         except Exception:
             log.exception("tts_qwen3: warm_up failed")
             return JSONResponse(status_code=503, content=_ERROR_BODY)
-        return JSONResponse(content={"status": "ok", "loaded": True})
+
+        payload = SynthesizeRequest(
+            text=WARMUP_TEXT_RU,
+            speaker=WARMUP_SPEAKER,
+            language="Russian",
+            instruct="",
+            request_id="warmup:tts",
+        )
+        async with state.inference_lock:
+            started = time.monotonic()
+            try:
+                assert state.model is not None  # ensure_loaded() above guarantees this
+                pcm, sample_rate = await asyncio.to_thread(_run_generate, state.model, payload)
+            except Exception:
+                log.exception("tts_qwen3: warm_up generation failed")
+                return JSONResponse(status_code=503, content=_ERROR_BODY)
+            generate_ms = int((time.monotonic() - started) * 1000)
+        audio_ms = _pcm_audio_ms(pcm, sample_rate)
+        # The audio is discarded here, deliberately: nobody ever hears a warm-up.
+        del pcm
+        log.info("tts_qwen3: warm_up generated %d ms of audio in %d ms", audio_ms, generate_ms)
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "loaded": True,
+                "output_audio_ms": audio_ms,
+                "generate_ms": generate_ms,
+            }
+        )
 
     @app.post("/synthesize")
     async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:

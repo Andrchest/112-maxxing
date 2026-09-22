@@ -8,10 +8,28 @@ COMPOSE_TEST := docker compose -f infra/docker-compose.test.yml -p sim112test
 # The local development stack (postgres, redis, livekit). Separate project name and separate
 # ports from COMPOSE_TEST, so the two can run side by side.
 COMPOSE_DEV := docker compose -f infra/docker-compose.yml
+# The FULL seven-service (+ profiled eighth) stack (SPEC §36, HLD 60 §9, E18-E). Needs a real
+# `.env` (`cp .env.example .env`) — unlike COMPOSE_DEV/COMPOSE_TEST above, `up`/`down` read secrets
+# and profile selection from it explicitly, so a missing `.env` fails loudly rather than silently
+# running a demo-shaped stack on fake dev placeholders.
+COMPOSE_FULL := docker compose -f infra/docker-compose.yml --env-file .env
+# `docker compose --profile qwen3-tts up` starts the additive eighth service too (HLD 60 §9); a
+# plain `make up` starts exactly the SPEC §36 seven. `TTS_COMPOSE_PROFILE=qwen3-tts make up` opts in.
+TTS_COMPOSE_PROFILE ?=
 export SIM_DATABASE_URL ?= postgresql+asyncpg://sim:sim@localhost:55432/sim_test
 export SIM_REDIS_URL ?= redis://localhost:56379/0
-export SIM_JWT_SECRET ?= test-only-secret
+export SIM_JWT_SECRET ?= test-only-secret-padded-32-bytes!
 export SIM_REQUIRE_INFERENCE_READY ?= false
+export SIM_MODEL_PROFILE ?= DEV_3060TI
+# Where `make profile-env` writes the active profile's llm.* block for llama-server's entrypoint
+# (infra/scripts/llama-server-entrypoint.sh) to read — gitignored, regenerated on every `make up` /
+# `make run-llama-server`, never hand-edited.
+PROFILE_ENV_FILE := infra/.env.profile
+# A host run of llama-server (`make run-llama-server`) must NOT be 8000/8001/8011/8012/8016 (the
+# owner's other work on this machine) and must not collide with anything else this project binds
+# (API 8100, Qwen3-TTS worker 8112, voice-agent preflight HTTP 8113, test/dev postgres/redis).
+LLAMA_SERVER_HOST ?= 127.0.0.1
+LLAMA_SERVER_PORT ?= 8180
 
 ALEMBIC := $(UV) run alembic -c backend/alembic.ini
 # Throwaway database used only by `db-check` (never by the test suite).
@@ -21,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper
+.PHONY: deps deps-models models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down
 deps:
 	$(UV) sync --all-packages --group dev
 	cd frontend && npm ci
@@ -190,9 +208,50 @@ seed-users:
 	$(UV) run python -m app.tools.seed_users
 test-backend: infra-up
 	$(UV) run pytest -q -n $(PYTEST_WORKERS) --dist loadfile
-gate-backend: lint typecheck boundaries scenarios db-check test-backend
+gate-backend: lint typecheck boundaries scenarios db-check compose-check test-backend
 gate-frontend:
 	cd frontend && npm run check:api && npm run lint && npm run typecheck && npm run test -- --run && npm run build
 gate: gate-backend gate-frontend
 	@echo "GATE GREEN"
 test: test-backend
+
+# --- E18-E: full compose (seven + one), llama-server, preflight (SPEC §36-§38, HLD 60 §8-§9) -----
+# Renders infra/docker-compose.yml against a throwaway env file (>= 32-byte placeholder secrets,
+# see infra/compose.check.env) — never a developer's real `.env`. Builds and pulls NOTHING: `config
+# -q` only parses/validates the YAML and its `${VAR}` interpolations. `--profile qwen3-tts` so the
+# additive eighth service's own definition is validated too, even though a plain `up` never starts it.
+compose-check:
+	docker compose -f infra/docker-compose.yml --env-file infra/compose.check.env --profile qwen3-tts config -q
+# Emits the active profile's llm.* block as SIM_LLAMA_* env lines (app.config.profile_env, E18-E)
+# for infra/scripts/llama-server-entrypoint.sh to read — see that script's own header comment.
+# Depends on E18-A's `app.config.profile.load_profile`; fails loudly (not silently) if that module
+# or the named profile YAML is not yet present, rather than inventing a flag value (SPEC §26/§27).
+profile-env:
+	$(UV) run python -m app.config.profile_env --profile $(SIM_MODEL_PROFILE) --emit-env > $(PROFILE_ENV_FILE)
+# Wraps `python -m app.cli preflight` (docs/hld/60-inference-ops.md §5, SPEC §38); pass flags
+# straight through, e.g. `make preflight ARGS='--profile DEV_3060TI --json'`.
+preflight:
+	infra/scripts/preflight.sh $(ARGS)
+# Runs llama-server on the HOST (not in a container) with the same flag line the compose service
+# computes (docs/hld/60-inference-ops.md §8) — useful when iterating on a profile without a GPU
+# passthrough container. SIM_LLAMA_SERVER_BIN must point at a real llama-server build (the owner's
+# own newer build is one example: SIM_LLAMA_SERVER_BIN=~/src/llama.cpp/build/bin/llama-server —
+# never hard-coded here, since that path is this machine's, not every developer's). Binds
+# loopback-only on LLAMA_SERVER_PORT (default 8180), never 8000/8001/8011/8012/8016.
+run-llama-server: profile-env
+	set -a && . $(PROFILE_ENV_FILE) && set +a && \
+	SIM_LLAMA_HOST=$(LLAMA_SERVER_HOST) SIM_LLAMA_PORT=$(LLAMA_SERVER_PORT) \
+	infra/scripts/llama-server-entrypoint.sh
+# Runs the voice-agent worker process on the HOST (`python -m voice_agent.main`), the same entry
+# point `workers/voice_agent/Dockerfile`'s CMD uses in the compose service.
+run-voice-agent:
+	$(UV) run python -m voice_agent.main
+# Brings up the full stack: the SPEC §36 seven, or all eight with
+# `TTS_COMPOSE_PROFILE=qwen3-tts make up` (HLD 60 §9). Regenerates infra/.env.profile first so
+# llama-server always launches with the currently-selected SIM_MODEL_PROFILE's flags. Named volumes
+# for postgres/recordings, so `down` deliberately does NOT take `-v` (same posture as
+# dev-infra-down above: a developer's local database and recordings survive a restart).
+up: profile-env
+	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
+down:
+	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down

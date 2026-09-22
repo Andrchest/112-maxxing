@@ -28,6 +28,7 @@ from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
+from app.application.ports.recording_purge_repository import RecordingPurgeRepository
 from app.application.ports.report_explanation_repository import ReportExplanationRepository
 from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
@@ -168,6 +169,16 @@ class UnitOfWork(Protocol):
 
         Never read by `score()` itself (D5, R1): only the persistence and re-score use cases
         (`app.application.scoring`) touch this property.
+        """
+        ...
+
+    @property
+    def recording_purge(self) -> RecordingPurgeRepository:
+        """The `recording_purge_audit` repository bound to this transaction (§9.2, D9, E18).
+
+        Only `app.application.recording.purge_recordings.PurgeRecordings` touches this property:
+        the retention purge never appends a `session_events` row (D9's own text: "the log is
+        closed for a completed session").
         """
         ...
 

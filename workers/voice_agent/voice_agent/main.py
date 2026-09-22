@@ -48,9 +48,23 @@ from app.application.ports.vad import VADProvider
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
 from app.config.settings import Settings, get_settings
 from app.domain.common.ids import SessionId
+from app.inference.errors import InferenceOutOfMemoryError, ModelNotAvailableError
 from app.infrastructure.clock import SystemClock
 from app.infrastructure.transport.redis_voice_signals import JOIN_CHANNEL, cancel_channel
 
+from voice_agent.health import (
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_REWARM_INTERVAL_S,
+    STATE_FATAL,
+    STATE_NOT_READY,
+    STATE_READY,
+    STATE_WARMING,
+    GuardedLLMClient,
+    HealthTransition,
+    InferenceHealth,
+    InferenceHealthGuard,
+)
+from voice_agent.preflight_http import PreflightHttpServer, resolve_preflight_port
 from voice_agent.providers import build_asr, build_vad
 from voice_agent.wiring import (
     VoiceAgentDeps,
@@ -60,7 +74,18 @@ from voice_agent.wiring import (
     build_tts,
 )
 
-__all__ = ["VoiceAgent", "main", "run", "synthetic_tone"]
+__all__ = [
+    "HEALTH_CHANNEL",
+    "HEALTH_FATAL_KEY",
+    "STATE_FATAL",
+    "STATE_NOT_READY",
+    "STATE_READY",
+    "STATE_WARMING",
+    "VoiceAgent",
+    "main",
+    "run",
+    "synthetic_tone",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +97,23 @@ LLM_SERVICE = "llm"
 TTS_SERVICE = "tts"
 #: The components this process warms up and heartbeats, in §4.2's warm-up order.
 HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_SERVICE)
+#: §4.3: every transition is announced here, and the backend turns each message into an
+#: `INFERENCE_HEALTH_CHANGED` on every ACTIVE session. Same literal as the reader's
+#: `app.infrastructure.health.voice_health.VOICE_HEALTH_CHANNEL`.
+HEALTH_CHANNEL = "voice:health"
+#: §4.3: FATAL is additionally mirrored here **without an expiry**, so that a restart loop cannot
+#: make a fatal condition look transient. Cleared only by `clearInferenceFatal` (ADMIN) or by a
+#: clean warm-up after a manual restart.
+HEALTH_FATAL_KEY = "voice:health:fatal"
 #: `60-inference-ops.md` §4.2 step 4: the text the TTS warm-up synthesises and drains to the end.
 WARMUP_TTS_TEXT_RU = "Алло, я вас слушаю."
-#: `HealthStatus` (§4.1). `FATAL` is E18's admin-clearable state and is not published here.
-STATE_READY = "READY"
-STATE_WARMING = "WARMING"
-STATE_NOT_READY = "NOT_READY"
+#: §4.1's unrecoverable warm-up failures: a missing model file and a GPU allocation failure both go
+#: straight to FATAL rather than being retried every `rewarm_interval_s` seconds forever. Every
+#: other exception (a timeout, a connection refused, a worker that is not up yet) is recoverable.
+UNRECOVERABLE_WARMUP_ERRORS: tuple[type[BaseException], ...] = (
+    InferenceOutOfMemoryError,
+    ModelNotAvailableError,
+)
 
 #: The ASR warm-up transcribes `SIM_ASR_WARMUP_SAMPLE_PATH` when it is set; with no sample it
 #: synthesises one second of a tone, which warms the graph without shipping an audio file.
@@ -91,9 +127,15 @@ _INT16_MAX = 32767
 
 @dataclass(frozen=True, slots=True)
 class _ComponentHealth:
-    """One `voice:health:{service}` payload's variable part (§4.3)."""
+    """One `voice:health:{service}` payload's variable part (§4.3).
 
-    state: str
+    The `state` field is **not** here any more (E18-C): §4.1's state is owned by
+    `voice_agent.health.ServiceHealth`, the pure state machine, and this record carries only the
+    descriptive half of the frame — which provider answered, which model version it reported, how
+    long the warm-up took. Two sources of truth for one state is how a FATAL service ends up
+    heartbeating READY.
+    """
+
     provider: str | None = None
     model_version: str | None = None
     detail: str | None = None
@@ -128,6 +170,9 @@ class VoiceAgent:
         redis: Any,
         *,
         transport_factory: Any = None,
+        failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
+        rewarm_interval_s: int = DEFAULT_REWARM_INTERVAL_S,
+        preflight_http: bool = False,
     ) -> None:
         self._deps = deps
         self._redis = redis
@@ -140,11 +185,35 @@ class VoiceAgent:
         self._asr: ASRProvider | None = None
         self._llm: LLMClient | None = None
         self._tts: TTSProvider | None = None
-        #: `service -> (state, provider, model_version, warmup_ms, detail)`, what the heartbeat
-        #: republishes every `voice_health_heartbeat_s` seconds (§4.3).
+        #: §4.1's four state machines. `health.failure_threshold` / `health.rewarm_interval_s`
+        #: come from the active profile's `health` block (`app.config.profile.HealthProfile`).
+        self._states = InferenceHealth(
+            services=HEALTH_SERVICES,
+            failure_threshold=failure_threshold,
+            rewarm_interval_s=rewarm_interval_s,
+        )
+        #: §4.4's `guard_inference(stage)`, one per process, handed to every call's pipeline.
+        self._guard = InferenceHealthGuard(
+            self._states,
+            self._apply_transition,
+            monotonic_s=lambda: self._deps.clock.monotonic_ms() / MS_PER_S,
+        )
+        #: `service -> (provider, model_version, warmup_ms, detail)`, the descriptive half of the
+        #: frame the heartbeat republishes every `voice_health_heartbeat_s` seconds (§4.3).
         self._health: dict[str, _ComponentHealth] = {
-            service: _ComponentHealth(state=STATE_NOT_READY) for service in HEALTH_SERVICES
+            service: _ComponentHealth() for service in HEALTH_SERVICES
         }
+        #: `GET /preflight/asr` and `GET /preflight/tts` (§5 checks 5-6). Off by default so a test
+        #: never binds a socket; `run()`'s real process turns it on.
+        self._preflight: PreflightHttpServer | None = (
+            PreflightHttpServer(
+                asr_probe=self._probe_asr,
+                tts_probe=self._probe_tts,
+                port=resolve_preflight_port(deps.settings),
+            )
+            if preflight_http
+            else None
+        )
 
     @property
     def active_sessions(self) -> tuple[SessionId, ...]:
@@ -161,8 +230,18 @@ class VoiceAgent:
         return f"{HEALTH_KEY_PREFIX}{service}"
 
     def health_state(self, service: str) -> str:
-        """The last published state of one component (§4.1's `HealthStatus`)."""
-        return self._health[service].state
+        """The current state of one component (§4.1's `HealthStatus`)."""
+        return self._states.state(service)
+
+    @property
+    def guard(self) -> InferenceHealthGuard:
+        """§4.4's guard, shared by every call's pipeline — what the OOM tests assert against."""
+        return self._guard
+
+    @property
+    def states(self) -> InferenceHealth:
+        """The four §4.1 state machines, read-only for a caller."""
+        return self._states
 
     async def publish_health(self, state: str | None = None) -> None:
         """`SET voice:health:{service} {...} EX voice_health_ttl_s` for every component (§4.3).
@@ -176,24 +255,82 @@ class VoiceAgent:
     async def _publish_component(self, service: str, state: str | None = None) -> None:
         settings = self._deps.settings
         health = self._health[service]
+        machine_state = self._states.state(service)
         payload = json.dumps(
             {
-                "state": state or health.state,
+                "state": state or machine_state,
                 "profile": settings.model_profile,
                 "provider": health.provider,
                 "model_version": health.model_version,
                 "updated_at": self._deps.clock.now().isoformat(),
-                "detail": health.detail,
+                "detail": health.detail or self._states[service].detail,
                 "warmup_ms": health.warmup_ms,
             }
         )
         await self._redis.set(self.health_key(service), payload, ex=settings.voice_health_ttl_s)
 
+    async def _apply_transition(self, transition: HealthTransition) -> None:
+        """§4.3: refresh the service's key, announce the transition, latch FATAL.
+
+        The order matters. The key is written first so that a backend reading `voice:health:{s}`
+        the instant it hears the announcement already sees the new state; the announcement is what
+        becomes `INFERENCE_HEALTH_CHANGED` on every ACTIVE session; and the un-expiring
+        `voice:health:fatal` mirror is last, because it is the one write that outlives this process.
+
+        Every step is individually suppressed: health bookkeeping must never take a call down, and
+        a Redis that has gone away is exactly the condition the TTL already covers.
+        """
+        with contextlib.suppress(Exception):
+            await self._publish_component(transition.service)
+        with contextlib.suppress(Exception):
+            await self._redis.publish(
+                HEALTH_CHANNEL,
+                json.dumps(
+                    {
+                        "service": transition.service,
+                        "from": transition.from_state,
+                        "to": transition.to_state,
+                        "detail": transition.detail,
+                        "at": self._deps.clock.now().isoformat(),
+                    }
+                ),
+            )
+        if transition.is_fatal:
+            with contextlib.suppress(Exception):
+                # No `ex=`: §4.3's mirror has no expiry by design.
+                await self._redis.set(
+                    HEALTH_FATAL_KEY,
+                    json.dumps(
+                        {
+                            "service": transition.service,
+                            "state": STATE_FATAL,
+                            "detail": transition.detail,
+                            "at": self._deps.clock.now().isoformat(),
+                        }
+                    ),
+                )
+
     async def clear_health(self) -> None:
-        """Delete every heartbeat key so the backend sees NOT_READY at once, not after the TTL."""
+        """Delete every heartbeat key so the backend sees NOT_READY at once, not after the TTL.
+
+        `voice:health:fatal` is **not** deleted here: a fatal condition that vanished because the
+        process shut down is exactly the "restart loop makes a fatal look transient" failure §4.3
+        latched the key to prevent. Only `clearInferenceFatal` or a clean warm-up clears it.
+        """
         for service in HEALTH_SERVICES:
             with contextlib.suppress(Exception):
                 await self._redis.delete(self.health_key(service))
+
+    async def _clear_fatal_after_clean_warmup(self) -> None:
+        """§4.3's other clearer: "a clean warm-up after a manual restart".
+
+        A process restart is the manual part. If every service came up READY, no fatal condition
+        survives and the latch is stale — leaving it would refuse every session for ever.
+        """
+        if self._states.any_fatal or not self._states.all_ready:
+            return
+        with contextlib.suppress(Exception):
+            await self._redis.delete(HEALTH_FATAL_KEY)
 
     async def _heartbeat(self) -> None:
         interval = self._deps.settings.voice_health_heartbeat_s
@@ -202,6 +339,11 @@ class VoiceAgent:
                 await self.publish_health()
             except Exception:
                 logger.exception("voice:health heartbeat failed")
+            try:
+                # §4.1's periodic re-warm rides the heartbeat: one periodic task, not five.
+                await self._rewarm()
+            except Exception:
+                logger.exception("the periodic re-warm failed")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stopping.wait(), timeout=interval)
 
@@ -220,36 +362,79 @@ class VoiceAgent:
         heartbeating, and `REQUIRE_INFERENCE_READY` is what decides whether a session may start.
         Crashing here would take the working components down with the broken one.
         """
-        await self._warm_component(VAD_SERVICE, self._warm_vad)
-        await self._warm_component(ASR_SERVICE, self._warm_asr)
-        await self._warm_component(LLM_SERVICE, self._warm_llm)
-        await self._warm_component(TTS_SERVICE, self._warm_tts)
+        for service, warm in self._warm_steps().items():
+            await self._warm_component(service, warm)
+        await self._clear_fatal_after_clean_warmup()
+
+    def _warm_steps(self) -> dict[str, Callable[[], Awaitable[tuple[str, str | None]]]]:
+        """§4.2's four steps, in order — also what the periodic re-warm loop looks a step up in."""
+        return {
+            VAD_SERVICE: self._warm_vad,
+            ASR_SERVICE: self._warm_asr,
+            LLM_SERVICE: self._warm_llm,
+            TTS_SERVICE: self._warm_tts,
+        }
 
     async def _warm_component(
         self, service: str, warm: Callable[[], Awaitable[tuple[str, str | None]]]
     ) -> None:
-        self._health[service] = _ComponentHealth(state=STATE_WARMING)
-        with contextlib.suppress(Exception):
-            await self._publish_component(service)
+        """One §4.2 step, driven through §4.1's state machine.
+
+        A FATAL service is skipped outright: `warm_started()` answers `None` for it, which is
+        §4.1's "only a process restart leaves FATAL" as one branch rather than a flag.
+        """
+        started = self._states[service].warm_started()
+        if started is None and self._states.state(service) == STATE_FATAL:
+            logger.warning("%s is FATAL; §4.1 forbids re-warming it in this process", service)
+            return
+        self._health[service] = _ComponentHealth()
+        if started is not None:
+            await self._apply_transition(started)
         started_ms = self._deps.clock.monotonic_ms()
         try:
             provider, model_version = await warm()
         except Exception as exc:
-            logger.exception("warming %s up failed; it stays NOT_READY", service)
+            recoverable = not isinstance(exc, UNRECOVERABLE_WARMUP_ERRORS)
+            logger.exception(
+                "warming %s up failed; it becomes %s",
+                service,
+                STATE_NOT_READY if recoverable else STATE_FATAL,
+            )
             self._health[service] = _ComponentHealth(
-                state=STATE_NOT_READY,
                 detail=f"{type(exc).__name__}: {exc}",
                 warmup_ms=max(0, self._deps.clock.monotonic_ms() - started_ms),
             )
+            transition = self._states[service].warm_failed(
+                recoverable=recoverable,
+                detail=f"{type(exc).__name__}: {exc}",
+                now_s=self._deps.clock.monotonic_ms() / MS_PER_S,
+            )
         else:
             self._health[service] = _ComponentHealth(
-                state=STATE_READY,
                 provider=provider,
                 model_version=model_version,
                 warmup_ms=max(0, self._deps.clock.monotonic_ms() - started_ms),
             )
-        with contextlib.suppress(Exception):
-            await self._publish_component(service)
+            transition = self._states[service].warm_succeeded()
+        if transition is not None:
+            await self._apply_transition(transition)
+        else:  # the state did not change, but the frame's descriptive half did
+            with contextlib.suppress(Exception):
+                await self._publish_component(service)
+
+    async def _rewarm(self) -> None:
+        """§4.1's periodic re-warm: NOT_READY → WARMING every `health.rewarm_interval_s`.
+
+        Polled on the heartbeat's cadence rather than on a timer per service — the heartbeat is
+        already the process's one periodic task, and `ServiceHealth.due_for_rewarm` is what decides
+        whether enough time has passed. FATAL is never due, so it is never retried.
+        """
+        steps = self._warm_steps()
+        for service in self._states.due_for_rewarm(self._deps.clock.monotonic_ms() / MS_PER_S):
+            if self._stopping.is_set():
+                return
+            logger.info("re-warming %s (§4.1 periodic re-warm)", service)
+            await self._warm_component(service, steps[service])
 
     async def _warm_vad(self) -> tuple[str, str | None]:
         """§4.2 step 1: load the model, `reset()`, score one zero frame."""
@@ -277,8 +462,11 @@ class VoiceAgent:
         start, and crashing here would take the working components down with the broken one.
         """
         llm = build_dialogue_llm(self._deps)
-        self._llm = llm
         await llm.warm_up()
+        # §4.4: the interpreter and the generator both reach the LLM through this one client, and
+        # neither `app.application.dialogue` stage may know a health guard exists (D2/D3). Wrapping
+        # the port object here is what puts both call sites behind `guard_inference("LLM")`.
+        self._llm = GuardedLLMClient(llm, self._guard)
         return self._deps.settings.llm_provider, llm.model_name
 
     async def _warm_tts(self) -> tuple[str, str | None]:
@@ -321,6 +509,53 @@ class VoiceAgent:
                 return source.readframes(source.getnframes())
             logger.warning("could not read %s; warming ASR on a synthetic tone instead", path)
         return synthetic_tone(sample_rate)
+
+    # -- the preflight endpoints (`60-inference-ops.md` §5, checks 5 and 6) --------------------
+
+    async def _probe_asr(self) -> dict[str, Any]:
+        """`GET /preflight/asr`: transcribe the warm-up sample with the **already loaded** ASR.
+
+        Never loads: a provider that has not been warmed raises, which the HTTP layer turns into
+        the 503 preflight reads as "ASR does not respond" — the truthful answer, and far better
+        than a preflight that itself loads a model onto a card it is checking has room.
+        """
+        asr = self._asr
+        if asr is None:
+            raise RuntimeError("no ASR provider is loaded in this process (it was never warmed)")
+        audio = self._warmup_audio(asr.required_sample_rate)
+        started_ms = self._deps.clock.monotonic_ms()
+        result = await asr.transcribe(
+            audio, asr.required_sample_rate, request_id=f"preflight:{ASR_SERVICE}"
+        )
+        return {
+            "text": result.text,
+            "latency_ms": max(0, self._deps.clock.monotonic_ms() - started_ms),
+            "provider": asr.provider_name,
+            "model_version": asr.model_version,
+        }
+
+    async def _probe_tts(self) -> dict[str, Any]:
+        """`GET /preflight/tts`: synthesise `warmup.tts_text` and report the audio it produced."""
+        tts = self._tts
+        if tts is None:
+            raise RuntimeError("no TTS provider is loaded in this process (it was never warmed)")
+        settings = self._deps.settings
+        started_ms = self._deps.clock.monotonic_ms()
+        output_audio_ms = 0
+        stream = tts.stream(
+            WARMUP_TTS_TEXT_RU,
+            TtsVoiceSpec(voice_id=settings.tts_voice_id, speaking_rate=settings.tts_speaking_rate),
+            request_id=f"preflight:{TTS_SERVICE}",
+            max_chunk_ms=self._deps.config.tts_chunk_ms,
+        )
+        async for chunk in stream:
+            output_audio_ms += chunk.audio_ms
+        return {
+            "output_audio_ms": output_audio_ms,
+            "latency_ms": max(0, self._deps.clock.monotonic_ms() - started_ms),
+            "provider": tts.provider_name,
+            "model_version": tts.model_version,
+        }
 
     # -- the join subscription ----------------------------------------------------------------
 
@@ -389,6 +624,7 @@ class VoiceAgent:
             asr=self._asr,
             llm=self._llm,
             tts=self._tts,
+            guard=self._guard,
         )
         try:
             await transport.connect(call_id)
@@ -407,6 +643,10 @@ class VoiceAgent:
     async def run(self) -> None:
         """Serve until `stop()`."""
         await self.warm_up()
+        if self._preflight is not None:
+            # After the warm-up, deliberately: both endpoints probe the **loaded** providers and a
+            # socket that answered 503 for the whole warm-up would be noise, not information.
+            await self._preflight.start()
         heartbeat = asyncio.create_task(self._heartbeat(), name="voice-heartbeat")
         joins = asyncio.create_task(self._join_subscription(), name="voice-join")
         try:
@@ -416,6 +656,8 @@ class VoiceAgent:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            if self._preflight is not None:
+                await self._preflight.stop()
             await self._drain_calls()
             await self.clear_health()
 
@@ -434,8 +676,17 @@ class VoiceAgent:
 
 
 async def run(settings: Settings | None = None) -> None:
-    """Build the process dependencies and serve (the `python -m voice_agent.main` body)."""
+    """Build the process dependencies and serve (the `python -m voice_agent.main` body).
+
+    **The profile is validated first, before a socket or an engine exists** (HLD 60 §2.5, R1):
+    `active_profile` + `validate_vram_margin` run inside `VoiceAgentDeps.build_for_startup`, and a
+    `ProfileRefused` propagates out of `main()` uncaught, which is what gives this process its
+    non-zero exit. No env var downgrades it to a warning. Because it happens before `Redis.from_url`
+    and `create_async_engine`, a refused profile also never writes a single `voice:health:*` key —
+    a process that will not run must not first advertise itself as warming up.
+    """
     from app.application.ports.event_publisher import EventPublisher
+    from app.config.profile import active_profile, validate_vram_margin
     from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
     from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
     from redis.asyncio import Redis
@@ -443,14 +694,27 @@ async def run(settings: Settings | None = None) -> None:
 
     resolved = settings or get_settings()
     clock = SystemClock()
+    # Fail fast, before a socket or an engine exists: `ProfileRefused` here exits the process.
+    # (`build_for_startup` below runs both of these again — it is the one profile-aware entry
+    # point, E18-A — but the refusal must land before any I/O, so it is also checked here.)
+    profile = active_profile(resolved)
+    validate_vram_margin(profile)
+    #: `redis_url` / `database_url` are required env fields that no profile carries, so they are
+    #: read off `resolved`; every model knob comes from `deps.settings` after the overlay.
     redis: Any = Redis.from_url(resolved.redis_url)
     engine = create_async_engine(resolved.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     publisher: EventPublisher = RedisEventPublisher(redis, resolved.session_cache_ttl_s)
-    deps = VoiceAgentDeps.build(
+    deps = VoiceAgentDeps.build_for_startup(
         resolved, clock, unit_of_work_factory(session_factory, clock, publisher)
     )
-    agent = VoiceAgent(deps, redis)
+    agent = VoiceAgent(
+        deps,
+        redis,
+        failure_threshold=profile.health.failure_threshold,
+        rewarm_interval_s=profile.health.rewarm_interval_s,
+        preflight_http=True,
+    )
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

@@ -1,23 +1,23 @@
-# The local development stack (SPEC §36, §41, D1, HLD 60 §6).
+# The local development stack (SPEC §36, §41, D1, HLD 60 §9).
 #
-# Three services today — `postgres`, `redis`, `livekit` — because E11 is the slice that needs a
-# media plane and nothing more. The remaining services D1 names are deliberately absent rather
-# than half-written:
+# The SPEC §36 seven, named exactly: `postgres`, `redis`, `livekit`, `backend`, `frontend`,
+# `llama-server`, `voice-agent`. A plain `docker compose -f infra/docker-compose.yml up` starts
+# exactly those seven and nothing else — `tts-qwen3` is an ADDITIVE eighth service (not in SPEC §36;
+# HLD 60 §9/§10.4 and E14-B's OWNER DECISION moved Qwen3-TTS into its own worker process/venv,
+# reached over loopback HTTP, never imported by `backend`/`voice-agent`), gated behind
+# `profiles: ["qwen3-tts"]` so it only starts with `docker compose --profile qwen3-tts up`.
 #
-#   * `backend`        — TODO(E18)
-#   * `frontend`       — TODO(E18)
-#   * `llama-server`   — TODO(E18) (pinned ggml-org/llama.cpp CUDA tag, `nvidia` runtime,
-#                        `${MODELS_DIR}:/models:ro`, no published port — HLD 60 §6)
-#   * `voice-agent`    — TODO(E18) (built from `workers/voice_agent/Dockerfile`, depends on
-#                        redis/postgres/livekit/llama-server, publishes no port — HLD 60 §6)
-#
-# This file is for `make dev-infra-up`. It is **not** the test stack: `infra/docker-compose.test.yml`
-# owns that, uses tmpfs storage and different ports, and the two are meant to be able to run side
-# by side. No port here is 8000 or 8001 — those belong to another project on the developer machine.
+# This file is for `make dev-infra-up` (three infra services only, unchanged behaviour) and the new
+# `make up` (the seven, or all eight with `TTS_COMPOSE_PROFILE=qwen3-tts make up` — see the
+# Makefile). It is **not** the test stack: `infra/docker-compose.test.yml` owns that, uses tmpfs
+# storage and different ports,
+# and the two are meant to be able to run side by side. No port here is 8000, 8001, 8011, 8012 or
+# 8016 — those belong to another project on the developer machine.
 #
 # Every secret comes from the environment (`.env`, see `.env.example`); SPEC §41 forbids a real
 # credential in source, and the defaults below are the same fake dev placeholders `.env.example`
-# documents.
+# documents. `make compose-check` renders this file against `infra/compose.check.env`'s throwaway
+# (>= 32-byte) placeholders so the gate can validate the compose YAML with no real `.env` present.
 
 name: sim112dev
 
@@ -75,6 +75,211 @@ services:
       timeout: 3s
       retries: 20
 
+  llama-server:
+    # Pinned ggml-org/llama.cpp CUDA server tag — never `:latest` (HLD 60 §8/§9: a flag change
+    # upstream would silently alter the launch line). `server-cuda-b11065` was confirmed to exist
+    # via `docker manifest inspect` (read-only, no pull) on 2026-09-22; the exact FLAG SPELLING for
+    # this tag remains UNVERIFIED until it is actually run (E19) — see docs/hld/60-inference-ops.md
+    # §8/§10 item 3. Override with LLAMA_CPP_IMAGE if a newer/verified tag is chosen later.
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11065}
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      # SIM_LLAMA_SERVER_BIN defaults to whatever this pinned image puts on PATH (UNVERIFIED without
+      # a real pull — flagged above); override if the image's binary lives elsewhere.
+      SIM_LLAMA_SERVER_BIN: ${SIM_LLAMA_SERVER_BIN:-llama-server}
+    # `infra/.env.profile` is written by `make profile-env` (`app.config.profile_env --emit-env`,
+    # E18-E) from the active profile's `llm.*` block — the SIM_LLAMA_* flags this entrypoint reads.
+    # It is gitignored; `make up`/`make run-llama-server` regenerate it before starting.
+    # `required: false` so `make compose-check` (no `.env`/`.env.profile` present) still renders.
+    env_file:
+      - path: .env.profile
+        required: false
+    volumes:
+      - ${MODELS_DIR:-../models}:/models:ro
+      - ./scripts/llama-server-entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    # No `ports:` mapping (SPEC §41, HLD 60 §9): reachable only as `http://llama-server:8080`
+    # inside the compose network, matching `LlamaCppClient`'s loopback/compose-internal validation.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 300s
+      retries: 30
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    # `required: false` so `make compose-check` (no `.env` present) still renders (R10 of the E18
+    # brief); a real run needs a real `.env` (`cp .env.example .env`) regardless.
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Compose-internal service hostnames override `.env`'s host-oriented defaults (which target
+      # the published dev ports 15432/16379/7880 for a bare `make run-api` on the host).
+      SIM_DATABASE_URL: postgresql+asyncpg://${SIM_POSTGRES_USER:-sim}:${SIM_POSTGRES_PASSWORD:-sim}@postgres:5432/${SIM_POSTGRES_DB:-sim}
+      SIM_REDIS_URL: redis://redis:6379/0
+      SIM_LIVEKIT_URL: ws://livekit:7880
+      SIM_LIVEKIT_PUBLIC_URL: ${SIM_LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
+      SIM_API_HOST: 0.0.0.0
+      SIM_API_PORT: "8100"
+      SIM_MODEL_PROFILE: ${SIM_MODEL_PROFILE:-DEV_3060TI}
+      SIM_DATA_DIR: /data
+      SIM_LLM_BASE_URL: http://llama-server:8080/v1
+    volumes:
+      - recordings-data:/data
+    ports:
+      - "${SIM_API_PORT:-8100}:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8100/api/v1/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8100
+    ports:
+      # 5173 is the repo's existing Vite dev port (already referenced by `.env.example`'s
+      # SIM_CORS_ALLOW_ORIGINS) — not 8000/8001, which belong to another project on this machine.
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5173/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+
+  voice-agent:
+    build:
+      context: ..
+      dockerfile: workers/voice_agent/Dockerfile
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      SIM_DATABASE_URL: postgresql+asyncpg://${SIM_POSTGRES_USER:-sim}:${SIM_POSTGRES_PASSWORD:-sim}@postgres:5432/${SIM_POSTGRES_DB:-sim}
+      SIM_REDIS_URL: redis://redis:6379/0
+      SIM_LIVEKIT_URL: ws://livekit:7880
+      SIM_MODEL_PROFILE: ${SIM_MODEL_PROFILE:-DEV_3060TI}
+      SIM_DATA_DIR: /data
+      SIM_LLM_BASE_URL: http://llama-server:8080/v1
+      SIM_TTS_QWEN3_BASE_URL: http://tts-qwen3:8112
+      # loopback only, INSIDE this container (R7 of the E18 brief) — never published to the host.
+      SIM_VOICE_AGENT_HTTP_PORT: ${SIM_VOICE_AGENT_HTTP_PORT:-8113}
+    volumes:
+      - ${MODELS_DIR:-../models}:/models:ro
+      - recordings-data:/data
+    # Publishes NO port (HLD 60 §9). Does not hard-depend on `tts-qwen3`: that service is the
+    # profiled eighth and a plain `up` (the SPEC's seven) never starts it — `Qwen3TTS`'s httpx
+    # client fails its own calls if unreachable, exactly like any other TTS-provider failure
+    # (SPEC §39 #2, TTS failure -> configured fallback).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+      llama-server:
+        condition: service_healthy
+    # HLD 60 §9's documented healthcheck (`python -m voice_agent.cli health`) is not built yet as
+    # of this task (owned by a different E18 slice) — see workers/voice_agent/Dockerfile's own
+    # comment. Written to match the HLD; will start passing once that CLI lands.
+    healthcheck:
+      test: ["CMD-SHELL", "python -m voice_agent.cli health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+
+  tts-qwen3:
+    # ADDITIVE eighth service (E14-B, HLD 60 §9/§10.4) — Qwen3-TTS lives in its own worker
+    # process/venv (`workers/tts_qwen3/`), never imported by `backend`/`voice-agent`
+    # (`backend/tools/check_imports.py`). Only started with `docker compose --profile qwen3-tts up`
+    # (or `TTS_COMPOSE_PROFILE=qwen3-tts make up`); a plain `up` is the SPEC §36 seven.
+    profiles: ["qwen3-tts"]
+    build:
+      context: ../workers/tts_qwen3
+      dockerfile: Dockerfile
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]
+    environment:
+      SIM_TTS_QWEN3_MODEL: ${QWEN3_TTS_VARIANT:-1.7B}
+      SIM_TTS_QWEN3_MODEL_DIR: /models/qwen3-tts
+      SIM_TTS_QWEN3_PORT: "8112"
+    volumes:
+      - ${MODELS_DIR:-../models}:/models:ro
+      - recordings-data:/data
+    # KNOWN GAP (this task's report, "HLD gaps"): `workers/tts_qwen3/tts_qwen3/__main__.py` hard-
+    # codes `uvicorn.run(..., host="127.0.0.1", ...)`, so inside this container the worker is only
+    # reachable from ITSELF, not from `voice-agent` at `http://tts-qwen3:8112` as HLD 60 §9 promises
+    # — fixing that bind is outside this task's file ownership (`__main__.py` belongs to E14-B's
+    # slice). No host port is published either way (HLD 60 §9).
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+      llama-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8112/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:
+  # Recordings (R10 of the E18 brief: "named volumes for postgres and recordings"), shared by
+  # `backend` (report UI reads WAVs) and `voice-agent`/`tts-qwen3` (write them). A named volume,
+  # not a host bind mount, for the containerized stack — purge/retention runs inside the container
+  # that holds it (`docker compose exec backend python -m app.cli purge_recordings`).
+  recordings-data:

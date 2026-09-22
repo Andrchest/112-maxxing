@@ -114,7 +114,7 @@ def settings(**overrides: Any) -> Settings:
     base = {
         "database_url": "postgresql+asyncpg://sim:sim@localhost:55432/sim_test",
         "redis_url": "redis://localhost:56379/0",
-        "jwt_secret": "test-only-secret",
+        "jwt_secret": "test-only-secret-padded-32-bytes!",
         "livekit_url": "ws://localhost:7880",
         "livekit_api_key": "devkey",
         "livekit_api_secret": "devsecret1234567890",

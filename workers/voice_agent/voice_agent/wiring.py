@@ -44,6 +44,7 @@ from app.application.dialogue.validator import ResponseValidator, validator_conf
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
 from app.application.ports.clock import Clock
+from app.application.ports.inference_guard import InferenceGuard
 from app.application.ports.llm import (
     ChatMessage,
     JsonSchemaSpec,
@@ -71,6 +72,7 @@ from app.application.voice.turn_pipeline import (
     TurnPipeline,
     TurnResponder,
 )
+from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings
 from app.domain.common.ids import SessionId
 from app.domain.session.policy import SESSION_POLICIES
@@ -125,13 +127,41 @@ class VoiceAgentDeps:
 
     @staticmethod
     def build(settings: Settings, clock: Clock, uow_factory: UnitOfWorkFactory) -> VoiceAgentDeps:
-        """Load the turn config from `Settings` and freeze the process dependencies."""
+        """Load the turn config from `Settings` and freeze the process dependencies.
+
+        Deliberately profile-agnostic: `settings` is used exactly as given, with no model-profile
+        overlay. Every existing test in this package (and `voice_agent.providers`'s own gate
+        selection, D13) builds `Settings` by hand and calls this directly, relying on the class
+        defaults already being the gate's fake providers (`energy`/`fake`) — overlaying a profile
+        here would silently swap those for `DEV_3060TI`'s real ones underneath every such test.
+        `build_for_startup` below is the profile-aware counterpart for the real process.
+        """
         return VoiceAgentDeps(
             settings=settings,
             clock=clock,
             uow_factory=uow_factory,
             config=voice_turn_config_from_settings(settings),
         )
+
+    @staticmethod
+    def build_for_startup(
+        settings: Settings, clock: Clock, uow_factory: UnitOfWorkFactory
+    ) -> VoiceAgentDeps:
+        """The real process's entry point (E18-A, HLD 60 §2/§2.5): overlay the active model
+        profile onto `settings` (`app.config.profile.apply_profile`), validate its VRAM margin,
+        then delegate to `build`.
+
+        `ProfileRefused` is left to propagate — an uncaught exception here, before any model is
+        loaded, is what gives the voice-agent process its non-zero exit code at start-up, exactly
+        like `app.api.container.build_container` does for the API. `voice_agent.main.run` is the
+        intended caller; `main.py` is outside this task's file ownership (E18-A brief, FILES), so
+        wiring this in there is left for whichever task owns that module's start-up sequence — see
+        the E18-A task report's "HLD gaps".
+        """
+        profile = active_profile(settings)
+        validate_vram_margin(profile)
+        overlaid = apply_profile(settings, profile)
+        return VoiceAgentDeps.build(overlaid, clock, uow_factory)
 
 
 def build_transport(
@@ -201,6 +231,7 @@ def build_responder(
     asr: ASRProvider,
     metrics: MetricsRecorder | None = None,
     next_stage: TranscribedTurnResponder | None = None,
+    guard: InferenceGuard | None = None,
 ) -> AsrTurnResponder:
     """The head of the responder chain: ASR (§3.7, §4.5).
 
@@ -216,6 +247,7 @@ def build_responder(
         stage_resolver=UnitOfWorkSessionStageResolver(deps.uow_factory),
         timeout_ms=deps.settings.asr_timeout_ms,
         next_stage=next_stage,
+        guard=guard,
     )
 
 
@@ -347,6 +379,7 @@ def build_speech_sink(
     *,
     tts: TTSProvider | None = None,
     metrics: MetricsRecorder | None = None,
+    guard: InferenceGuard | None = None,
 ) -> TtsSpeechSink:
     """E14's `CallerSpeechSink`: `TTSProvider` → playback → events → recording (§3.7, §6, §9.1).
 
@@ -368,6 +401,7 @@ def build_speech_sink(
         timeout_ms=settings.tts_timeout_ms,
         first_chunk_timeout_ms=settings.tts_first_chunk_timeout_ms,
         max_unit_chars=settings.tts_max_unit_chars,
+        guard=guard,
     )
 
 
@@ -378,6 +412,7 @@ def build_dialogue_responder(
     metrics: MetricsRecorder | None = None,
     sink: CallerSpeechSink | None = None,
     tts: TTSProvider | None = None,
+    guard: InferenceGuard | None = None,
 ) -> DialogueResponder:
     """The whole E13 chain: interpreter → Fact Access Gate → generator → validator → §7.8 (R10).
 
@@ -407,7 +442,11 @@ def build_dialogue_responder(
         fallbacks=FallbackTemplates(),
         # E14: the real sink speaks the utterance. `NullCallerSpeechSink` stays importable —
         # a dialogue test that is about the *words* still wires it deliberately.
-        sink=sink if sink is not None else build_speech_sink(deps, tts=tts, metrics=recorder),
+        sink=(
+            sink
+            if sink is not None
+            else build_speech_sink(deps, tts=tts, metrics=recorder, guard=guard)
+        ),
         uow_factory=deps.uow_factory,
     )
 
@@ -443,6 +482,7 @@ def build_pipeline(
     llm: LLMClient | None = None,
     tts: TTSProvider | None = None,
     record: bool = True,
+    guard: InferenceGuard | None = None,
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
 
@@ -476,9 +516,11 @@ def build_pipeline(
             else build_responder(
                 deps,
                 asr=provider,
-                next_stage=build_dialogue_responder(deps, llm=llm, tts=tts),
+                next_stage=build_dialogue_responder(deps, llm=llm, tts=tts, guard=guard),
+                guard=guard,
             )
         ),
         asr=provider,
         show_asr_partials=show_asr_partials(deps),
+        guard=guard,
     )

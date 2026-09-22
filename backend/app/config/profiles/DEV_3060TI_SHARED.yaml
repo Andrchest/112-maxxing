@@ -1,0 +1,95 @@
+profile_name: DEV_3060TI_SHARED
+description: >
+  ADDITIVE profile (E18-A, R2) — NOT one of SPEC §26's three named profiles. For an RTX 3060 Ti 8
+  GB whose card is already shared with another process the owner runs (this machine's actual
+  state: nvidia-smi shows ~4.6 GB held by the owner's unrelated work, recon §9). LLM stays on GPU
+  (Qwen3.5-2B Q4_K_M, the same measured choice as DEV_3060TI); ASR and TTS move to CPU so the
+  whole profile fits comfortably inside the small remaining GPU budget without a fallback.
+
+hardware:
+  gpu_name_contains: "3060 Ti"
+  gpu_total_vram_mb: 8192
+  reserved_by_others_mb: 4700   # OWNER DECISION 2026-09-21: this machine's measured owner-process
+                                 # residency (recon §9: nvidia-smi 4646 MiB used at recon time).
+
+vram_budget_mb: 3000
+min_vram_margin_mb: 512
+# MEASURED (task report e13-b4): Qwen3.5-2B Q4_K_M, GPU_FULL(999), --parallel 2 — the ONLY GPU
+# resident on this profile (ASR and TTS both run on CPU below), so this is a true combined peak,
+# not an assumption like DEV_3060TI's unmeasured sum.
+measured_peak_vram_mb: 1558
+measured_at: 2026-09-21
+
+llm:
+  provider: llama_cpp
+  model_name: Qwen3.5-2B
+  model_path: /models/llm/Qwen3.5-2B-Q4_K_M.gguf
+  quantization: Q4_K_M
+  base_url: http://llama-server:8080/v1
+  n_ctx: 4096
+  n_gpu_layers: -1
+  n_batch: 512
+  n_ubatch: 256
+  parallel_slots: 2
+  flash_attention: "on"
+  kv_cache_type: q8_0
+  # Same measured constants as DEV_3060TI (task reports e13-b3/e13-b4) — the LLM choice and its
+  # token budgets do not depend on where ASR/TTS run.
+  max_response_tokens: 80
+  interpreter_max_tokens: 138
+  request_timeout_ms: 3000
+  thinking_enabled: false
+
+asr:
+  provider: gigaam
+  model_version: v3_e2e_ctc
+  model_path: /models/asr/gigaam-v3-e2e-ctc
+  device: cpu                    # OWNER DECISION 2026-09-21: MEASURED RTF 0.036 on CPU
+  compute_type: float32          # GigaAMProvider forces float32 off-CUDA (float16 is CUDA-only)
+  sample_rate: 16000
+
+tts:
+  provider: piper                 # OWNER DECISION 2026-09-21: CPU, MEASURED RTF 0.023-0.052
+  model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  voice_id: ru_RU-irina-medium
+  device: cpu
+  output_sample_rate: 22050
+  max_chunk_ms: 20
+  fallback_provider: none         # OWNER DECISION 2026-09-21: no TTS fallback on this profile
+  model_variant: null             # not applicable — this profile's TTS is not Qwen3-TTS
+
+vad:
+  provider: silero
+  model_path: /models/vad/silero_vad.onnx
+  device: cpu
+
+voice_turn:
+  speech_start_threshold: 0.55
+  speech_end_threshold: 0.35
+  speech_start_min_ms: 96
+  endpoint_silence_ms: 300
+  pre_roll_ms: 300
+  barge_in_min_speech_ms: 120
+  max_turn_ms: 30000
+  min_turn_ms: 200
+  vad_frame_ms: 32
+  outbound_queue_ms: 200
+  tts_chunk_ms: 20
+  partial_asr_enabled: true
+  partial_interval_ms: 500
+  reconnect_grace_s: 30
+
+warmup:
+  enabled: true
+  asr_sample_path: /models/warmup/warmup_ru.wav
+  llm_prompt: "Скажи одно слово."
+  tts_text: "Проверка."
+  timeout_ms: 60000
+
+latency_targets:
+  p50_ms: 1500
+  p95_ms: 2500
+
+health:
+  failure_threshold: 3
+  rewarm_interval_s: 30

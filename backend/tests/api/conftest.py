@@ -13,7 +13,9 @@ The container is the production one with three overrides, each for a stated reas
 * `FakePasswordHasher` — argon2 is ~100 ms per hash by design; a suite that logs in fifty times
   would spend five seconds proving nothing about the KDF. `test_argon2_hasher` covers the real
   one;
-* `FakeInferenceReadiness` — TODO(E18) owes the real adapter (D8).
+* `FakeInferenceReadiness` — the real `RedisInferenceReadiness` (D8, E18-B) would need a live
+  `voice:health:{service}` heartbeat in Redis for every test that starts a session;
+  `backend/tests/integration/health/` drives the real adapter instead.
 
 Everything else is real: the engine is the migrated throwaway database, Redis is the compose
 instance, and the Unit of Work, the repositories and the event store are the production ones.
@@ -132,7 +134,7 @@ def hasher() -> FakePasswordHasher:
 
 @pytest.fixture
 def inference() -> FakeInferenceReadiness:
-    """TODO(E18) owes the real adapter; E7 exercises the flag through this fake."""
+    """See the module docstring: the real adapter has its own suite; this exercises the flag."""
     return FakeInferenceReadiness(ready=True)
 
 

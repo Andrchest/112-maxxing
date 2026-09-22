@@ -1,0 +1,32 @@
+# Build-context ignore for the repo-root context used by backend/Dockerfile and
+# workers/voice_agent/Dockerfile (both need the workspace root pyproject.toml/uv.lock plus
+# backend/ and workers/voice_agent/ — see those Dockerfiles' comments). SPEC §41: models and
+# recordings are local data, never baked into an image.
+.git
+.gitignore
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+backend/tests
+workers/voice_agent/tests
+workers/tts_qwen3
+benchmarks/results
+benchmarks/data
+models
+data
+frontend/node_modules
+frontend/dist
+frontend/.vite
+scenarios/.cache
+docs
+READ_AFTER_COMPACT.md
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+infra/.env.profile

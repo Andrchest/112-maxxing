@@ -5,7 +5,7 @@ because that is what makes the whole API testable without patching: a test build
 `FakeClock`, an `InMemoryEventPublisher` or a not-ready `FakeInferenceReadiness`, calls
 `create_app(container)` and drives it through `httpx.ASGITransport` — binding no port at all.
 
-The lifespan owns exactly three things, in this order on the way up and the reverse on the way
+The lifespan owns exactly four things, in this order on the way up and the reverse on the way
 down:
 
 1. the container goes on `app.state`, where `app.api.deps.get_container` finds it;
@@ -13,7 +13,11 @@ down:
    which is what makes a backend restart resume every running session (SPEC §39). Skipped when
    `SIM_RUNNER_ENABLED=false`, which is how the API tests guarantee no background task outlives
    them;
-3. on shutdown: `runner.stop()` (every task cancelled *and awaited*, every held lock released),
+3. `inference_health.start()` — the `voice:health` subscriber that turns a voice-agent readiness
+   transition into an `INFERENCE_HEALTH_CHANGED` on every ACTIVE session (E18-B, HLD 60 §4.3).
+   Gated on the same `SIM_RUNNER_ENABLED` flag, for the same reason;
+4. on shutdown: `inference_health.stop()`, then `runner.stop()` (every task cancelled *and
+   awaited*, every held lock released),
    then `container.aclose()` (the engine disposed, the Redis client closed).
 
 `uvicorn app.api.main:create_app --factory` is what `make run-api` runs, on
@@ -32,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.container import Container, build_container
 from app.api.errors import install_exception_handlers
 from app.api.routers import (
+    admin,
     auth,
     dds,
     health,
@@ -88,6 +93,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     install_exception_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(admin.router)
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(scenarios.router)
@@ -111,6 +117,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if runner_enabled:
         adopted = await container.runner.start()
         logger.info("simulation runner started; adopted %d active session(s)", len(adopted))
+        # E18-B: the `voice:health` tail, started next to the runner and gated on the same flag.
+        # Both are long-lived background tasks over the same sessions, and an API test that wants
+        # neither turns off one switch (`app.infrastructure.health.voice_health_subscriber`).
+        await container.inference_health.start()
+        logger.info("voice:health subscriber started")
     else:
         logger.info("simulation runner disabled (SIM_RUNNER_ENABLED=false)")
     try:
@@ -119,5 +130,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # `stop()` cancels *and awaits* every task and releases every lock this instance holds, so
         # `asyncio.all_tasks()` is back where it started by the time this returns.
         if runner_enabled:
+            await container.inference_health.stop()
             await container.runner.stop()
         await container.aclose()

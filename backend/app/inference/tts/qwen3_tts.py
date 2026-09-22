@@ -247,6 +247,9 @@ class Qwen3TTS:
         self._timeout_ms = timeout_ms
         self._client = client if client is not None else httpx.AsyncClient()
         self._owns_client = client is None
+        #: What the worker's `/health` said it actually serves (`{"model", "revision"}`), once it
+        #: has been asked. `None` until then — see `model_version`.
+        self._served_version: str | None = None
         #: `request_id -> the open streaming response`, so `cancel()` can abort it out of band
         #: (mirrors `LlamaCppClient._streams`).
         self._pending: dict[str, httpx.Response] = {}
@@ -255,7 +258,40 @@ class Qwen3TTS:
 
     @property
     def model_version(self) -> str:
-        return f"{MODEL_REPO}@{MODEL_REVISION}"
+        """What the worker **actually serves**, once `/health` has answered (E18-C).
+
+        `SIM_TTS_QWEN3_MODEL` picks the variant (`MODEL_VARIANTS` in `tts_qwen3.server`, 1.7B or
+        0.6B) in the *worker's* process, and this adapter's own module constants are the 1.7B
+        checkpoint's identity. Reporting those constants therefore meant every `CALLER_TTS_STARTED`
+        and every `inference_metrics` row claimed 1.7B even on a machine serving 0.6B — a
+        configured guess written into the audit record, which SPEC §27 does not allow.
+
+        `warm_up()` reads `GET /health` and caches `"{model}@{revision}"` from the answer. Before
+        that (and if `/health` cannot be reached, which is not worth failing a synthesis over) the
+        pinned constants remain the answer: the port's `model_version` is a synchronous property
+        and an adapter must not do I/O inside one.
+        """
+        return self._served_version or f"{MODEL_REPO}@{MODEL_REVISION}"
+
+    async def refresh_model_version(self) -> str:
+        """Ask the worker's `/health` what it serves and cache it. Never raises."""
+        try:
+            response = await self._client.get(
+                f"{self._base_url}/health", timeout=self._timeout_ms / 1000
+            )
+            if response.status_code != 200:
+                return self.model_version
+            body = response.json()
+        except Exception:
+            # A worker that cannot answer `/health` still gets to synthesise; the pinned constants
+            # stay the answer and the next warm-up tries again.
+            return self.model_version
+        model = body.get("model") if isinstance(body, dict) else None
+        if not isinstance(model, str) or not model:
+            return self.model_version
+        revision = body.get("revision") if isinstance(body, dict) else None
+        self._served_version = f"{model}@{revision}" if isinstance(revision, str) else model
+        return self._served_version
 
     @property
     def output_sample_rate(self) -> int:
@@ -276,6 +312,9 @@ class Qwen3TTS:
             raise ModelNotAvailableError(f"tts_qwen3 worker unreachable: {exc}") from exc
         if response.status_code != 200:
             self._raise_for_status(response.status_code, response.text)
+        # After the warm-up, not before: the worker answers `/health` either way, but asking after
+        # it has loaded means `loaded: true` and the variant are both settled.
+        await self.refresh_model_version()
 
     def stream(
         self,

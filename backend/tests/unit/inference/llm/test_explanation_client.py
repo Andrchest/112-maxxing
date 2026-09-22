@@ -22,7 +22,7 @@ def _settings(**overrides: object) -> Settings:
     base = {
         "database_url": "postgresql+asyncpg://x/y",
         "redis_url": "redis://localhost",
-        "jwt_secret": "s",
+        "jwt_secret": "test-only-secret-padded-32-bytes!",
         "livekit_url": "ws://localhost:7880",
         "livekit_api_key": "k",
         "livekit_api_secret": "s",

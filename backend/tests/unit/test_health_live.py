@@ -23,7 +23,7 @@ UNREACHABLE = Settings(
     # Deliberately unreachable: nothing must connect while serving liveness.
     database_url="postgresql+asyncpg://nobody:nobody@127.0.0.1:1/nothing",
     redis_url="redis://127.0.0.1:1/0",
-    jwt_secret="unit-test-secret",
+    jwt_secret="unit-test-secret-padded-to-32-by",
     livekit_url="ws://127.0.0.1:1",
     livekit_api_key="k",
     livekit_api_secret="s" * 20,

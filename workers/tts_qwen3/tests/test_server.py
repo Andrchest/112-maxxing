@@ -18,10 +18,13 @@ from pathlib import Path
 import httpx
 import pytest
 from tts_qwen3.server import (
+    DEFAULT_HOST,
     DEFAULT_MODEL_VARIANT,
     MODEL_VARIANTS,
     SAMPLE_RATE,
     VENDOR_SPEAKERS,
+    WARMUP_SPEAKER,
+    WARMUP_TEXT_RU,
     UnknownModelVariantError,
     WorkerState,
     create_app,
@@ -270,3 +273,62 @@ async def _client_for_variant(variant: str) -> httpx.AsyncClient:
     app = create_app(model_factory=lambda _model_dir: _FakeModel(), variant=variant)
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+
+
+# ---------------------------------------------------------------------------------------------
+# E18-C: `/warm_up` runs one real generation and discards the audio (HLD 60 §4.2 step 4)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_warm_up_actually_generates_and_discards_the_audio() -> None:
+    """E14-D measured 13.1 s for the *first* synthesis after a load-only warm-up: loading the
+    weights leaves the CUDA graphs and the kernel autotuning cold, so the first caller line paid
+    for all of it. That cost belongs to warm-up (E18-C), which is why this is a real generation."""
+    model = _FakeModel()
+    app = create_app(model_factory=lambda _model_dir: model)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/warm_up")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["loaded"] is True
+    assert body["output_audio_ms"] > 0
+    assert body["generate_ms"] >= 0
+    # Exactly one generation, through the same path a real request takes: Russian text, a vendor
+    # speaker, and the audio never leaves the worker.
+    assert len(model.calls) == 1
+    assert model.calls[0]["text"] == WARMUP_TEXT_RU
+    assert model.calls[0]["language"] == "Russian"
+    assert model.calls[0]["speaker"] in VENDOR_SPEAKERS
+    assert WARMUP_SPEAKER in VENDOR_SPEAKERS
+    assert "audio" not in body and "pcm" not in body
+
+
+async def test_a_warm_up_whose_generation_fails_is_the_stable_503_body() -> None:
+    """A warm-up that loaded but could not generate is not warm, and says so the usual way."""
+    async with await _client_for(_FailingModel) as client:
+        response = await client.post("/warm_up")
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "tts_qwen3_unavailable",
+        "message": "Qwen3-TTS worker is unavailable; retry or use the configured TTS fallback.",
+    }
+    assert "boom" not in response.text
+
+
+def test_the_bind_host_defaults_to_loopback_and_is_overridable() -> None:
+    """E18-E: inside its own container the worker must accept connections from `voice-agent` at
+    the compose-internal hostname, which a loopback bind makes impossible. The default stays
+    loopback for a host run (SPEC §41), and the container publishes no host port."""
+    import os
+
+    from tts_qwen3.__main__ import _is_loopback
+
+    assert DEFAULT_HOST == "127.0.0.1"
+    assert _is_loopback(DEFAULT_HOST) is True
+    assert _is_loopback("localhost") is True
+    assert _is_loopback("0.0.0.0") is False
+    assert _is_loopback("10.1.2.3") is False
+    # The resolution rule itself, without starting uvicorn.
+    assert os.environ.get("SIM_TTS_QWEN3_HOST", DEFAULT_HOST) == DEFAULT_HOST

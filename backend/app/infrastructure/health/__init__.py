@@ -1,60 +1,49 @@
 """Readiness probes (D8, SPEC §37, `openapi.yaml` `getHealthReady`).
 
-`openapi.yaml` names seven components. Three are probed for real here — `postgres`, `redis` and
-`livekit` (E11) — and four are not yet probeable at all:
+`openapi.yaml` names seven components and all seven are now probed for real:
 
-* `llm`, `asr`, `tts`, `vad` — TODO(E18): §40.6 reads them from `voice:health:{service}`, whose
-  **writer is the voice-agent process** ("a missing key is `NOT_READY`, never `READY`"). Until the
-  agent exists there is no key to read, and a probe that invented `READY` would let a demo session
-  start against an inference stack that is not there — the precise failure SPEC §37 exists to
-  prevent.
+* `postgres`, `redis` and `livekit` (E11) answer from their own adapters here;
+* `llm`, `asr`, `tts` and `vad` answer from `voice:health:{service}`, the heartbeat the
+  voice-agent process writes (`60-inference-ops.md` §4.3) — `voice_health.py`. A **missing key is
+  `NOT_READY`**, never `READY`: a probe that invented `READY` would let a demo session start
+  against an inference stack that is not there, the precise failure SPEC §37 exists to prevent.
 
-`PlaceholderHealthProbe` is therefore not a stub that pretends: it reports `NOT_READY` with the
-reason and the owing epic in `detail`, which is both the honest reading and the documented
-behaviour of a missing heartbeat key.
+The same four readings answer `InferenceReadiness` for `startSession`
+(`RedisInferenceReadiness`), and `voice:health:fatal` — the latch a restart loop must not be able
+to hide — is read by every probe and cleared only through `RedisInferenceFatalLatch`.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from app.application.ports.health_probe import ComponentReading
-from app.domain.enums import HealthStatus
 from app.infrastructure.health.livekit_probe import LiveKitHealthProbe
 from app.infrastructure.health.postgres_probe import PROBE_TIMEOUT_S, PostgresHealthProbe
 from app.infrastructure.health.redis_probe import RedisHealthProbe
+from app.infrastructure.health.voice_health import (
+    INFERENCE_SERVICES,
+    VOICE_HEALTH_CHANNEL,
+    VOICE_HEALTH_FATAL_KEY,
+    VOICE_HEALTH_PREFIX,
+    RedisInferenceFatalLatch,
+    RedisInferenceReadiness,
+    VoiceHealthFrame,
+    VoiceHealthProbe,
+    voice_health_key,
+)
+from app.infrastructure.health.voice_health_subscriber import VoiceHealthSubscriber
 
 __all__ = [
+    "INFERENCE_SERVICES",
     "PROBE_TIMEOUT_S",
+    "VOICE_HEALTH_CHANNEL",
+    "VOICE_HEALTH_FATAL_KEY",
+    "VOICE_HEALTH_PREFIX",
     "LiveKitHealthProbe",
-    "PlaceholderHealthProbe",
     "PostgresHealthProbe",
     "RedisHealthProbe",
+    "RedisInferenceFatalLatch",
+    "RedisInferenceReadiness",
+    "VoiceHealthFrame",
+    "VoiceHealthProbe",
+    "VoiceHealthSubscriber",
+    "voice_health_key",
 ]
-
-
-class PlaceholderHealthProbe:
-    """A `HealthProbe` for a component nothing can measure yet — always `NOT_READY`.
-
-    See this package's docstring for why `NOT_READY` is the correct reading rather than a
-    placeholder `READY`.
-    """
-
-    def __init__(self, component: str, owing_epic: str) -> None:
-        self._component = component
-        #: The epic that owes the real probe, echoed into `detail` so the UI says who owes it.
-        self._owing_epic = owing_epic
-
-    @property
-    def component(self) -> str:
-        """The `ComponentHealth.component` member this placeholder answers for."""
-        return self._component
-
-    async def check(self) -> ComponentReading:
-        """`NOT_READY`, with the owing epic as the reason."""
-        return ComponentReading(
-            component=self._component,
-            status=HealthStatus.NOT_READY,
-            detail=f"no heartbeat from voice-agent (TODO({self._owing_epic}))",
-            checked_at=datetime.now(UTC),
-        )

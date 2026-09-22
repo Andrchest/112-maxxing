@@ -4,7 +4,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreateSessionForm } from './create-session-form';
 import { ru } from '@/shared/i18n/ru';
-import type { SessionDetail } from '@/shared/api';
+import type { HealthReadyResponse, SessionDetail } from '@/shared/api';
+
+const HEALTH_READY_RESPONSE: HealthReadyResponse = {
+  overall: 'READY',
+  components: [
+    { component: 'llm', status: 'READY', detail: null, checked_at: '2026-09-21T00:00:00Z' },
+  ],
+  required_components: ['llm'],
+  require_inference_ready: true,
+  model_profile: 'DEV_3060TI',
+};
 
 const SCENARIOS_RESPONSE = {
   items: [{ scenario_id: 's1', slug: 'apartment-fire', title_ru: 'Fire test scenario', version_count: 1, latest_version: 1 }],
@@ -113,6 +123,9 @@ describe('CreateSessionForm', () => {
       if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') {
         return jsonResponse(TRAINEES_RESPONSE);
       }
+      if (url === '/api/v1/health/ready' && method === 'GET') {
+        return jsonResponse(HEALTH_READY_RESPONSE);
+      }
       if (url === '/api/v1/sessions' && method === 'POST') {
         return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
       }
@@ -144,6 +157,7 @@ describe('CreateSessionForm', () => {
     });
 
     await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+    await waitFor(() => expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled());
 
     await user.click(screen.getByRole('button', { name: ru.instructorStartButton }));
 
@@ -173,6 +187,9 @@ describe('CreateSessionForm', () => {
       if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') {
         return jsonResponse(TRAINEES_RESPONSE);
       }
+      if (url === '/api/v1/health/ready' && method === 'GET') {
+        return jsonResponse(HEALTH_READY_RESPONSE);
+      }
       if (url === '/api/v1/sessions' && method === 'POST') {
         return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
       }
@@ -191,9 +208,92 @@ describe('CreateSessionForm', () => {
     await fillInScenarioVersionAndParticipant(user);
     await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
     await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+    await waitFor(() => expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled());
 
     await user.click(screen.getByRole('button', { name: ru.instructorStartButton }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(ru.problemInferenceNotReady);
+  });
+
+  // -- R9 (SPEC §37): Start button gated on inference readiness -------------------------------
+
+  function fetchMockWithHealth(health: HealthReadyResponse) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios' && method === 'GET') {
+        return jsonResponse(SCENARIOS_RESPONSE);
+      }
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') {
+        return jsonResponse(VERSIONS_RESPONSE);
+      }
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') {
+        return jsonResponse(TRAINEES_RESPONSE);
+      }
+      if (url === '/api/v1/health/ready' && method === 'GET') {
+        return jsonResponse(health);
+      }
+      if (url === '/api/v1/sessions' && method === 'POST') {
+        return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+  }
+
+  async function createUpToReadySession(user: ReturnType<typeof userEvent.setup>) {
+    await fillInScenarioVersionAndParticipant(user);
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+    await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+  }
+
+  it.each(['NOT_READY', 'WARMING', 'FATAL'] as const)(
+    'disables Start with the Russian reason when overall is %s',
+    async (overall) => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'fetch',
+        fetchMockWithHealth({
+          ...HEALTH_READY_RESPONSE,
+          overall,
+          components: [{ component: 'llm', status: overall, detail: null, checked_at: '2026-09-21T00:00:00Z' }],
+        }),
+      );
+
+      renderForm();
+      await createUpToReadySession(user);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeDisabled();
+      });
+      expect(await screen.findByText(ru.instructorStartNotReadyReason, { exact: false })).toBeInTheDocument();
+    },
+  );
+
+  it('enables Start when overall is READY', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', fetchMockWithHealth(HEALTH_READY_RESPONSE));
+
+    renderForm();
+    await createUpToReadySession(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled();
+    });
+    expect(screen.queryByText(ru.instructorStartNotReadyReason, { exact: false })).not.toBeInTheDocument();
+  });
+
+  it('enables Start when readiness is not required even though overall is not READY', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      fetchMockWithHealth({ ...HEALTH_READY_RESPONSE, overall: 'NOT_READY', require_inference_ready: false }),
+    );
+
+    renderForm();
+    await createUpToReadySession(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled();
+    });
   });
 });

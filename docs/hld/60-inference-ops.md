@@ -14,24 +14,34 @@ number is ever written down before it has been measured.
 
 ## 1. The dev machine constraint
 
-The development machine is an **RTX 3060 Ti with 8 GB** of VRAM, of which roughly **5 GB is already
-occupied by the owner's unrelated processes**. Those processes must never be killed, restarted or
-paged out by anything this project does. The usable budget on the dev machine is therefore around
-**3 GB**, not 8 GB, and it is not stable: the owner's usage moves.
+The development machine is an **RTX 3060 Ti with 8 GB** of VRAM. Whether that card is free or
+already shared with the owner's other work is not a constant — this document now ships **two**
+DEV profiles for the two states (E18-A, OWNER DECISIONS 2026-09-21):
+
+* **`DEV_3060TI`** assumes a **dedicated** card (nothing else resident) and budgets close to the
+  full 8 GB (`vram_budget_mb: 7168`).
+* **`DEV_3060TI_SHARED`** (ADDITIVE, not one of SPEC §26's three named profiles) assumes the card
+  is already shared with the owner's other work — this machine's actual state as measured on
+  2026-09-21 (`nvidia-smi`: ~4.6 GB held by an unrelated process, PID 1082982) — and budgets a much
+  smaller, conservative `vram_budget_mb: 3000` with ASR and TTS moved to CPU so the whole profile
+  fits without contending for the shared GPU at all.
+
+Either way, the owner's other resident processes must never be killed, restarted or paged out by
+anything this project does — `hardware.reserved_by_others_mb` (§2.1) is what each profile declares
+it assumes is unavailable, and it is not stable: the owner's usage moves.
 
 Consequences, stated as rules rather than as measurements:
 
-1. **`DEV_3060TI` does not attempt full GPU residency.** It runs the LLM with **partial GPU offload**
-   (`--n-gpu-layers` set to a value that fits the measured free VRAM, not `-1`), and VAD on **CPU**
-   (`SileroVAD` via onnxruntime CPU EP). **TTS is GPU by default, not CPU** (OWNER DECISION, E14,
-   `docs/hld/90-tbd-epics.md` row E14: "use qwen3tts as tts on gpu, I already checked it and it is
-   very good") — `Qwen3TTS` (Qwen3-TTS 1.7B CustomVoice, ≈ 4.3 GB bf16 residency, measured; a
-   separate worker process/venv, `workers/tts_qwen3/`) is `DEV_3060TI`'s TTS provider too, with
-   `PiperTTS` (CPU) as the configured fallback — this supersedes the older "TTS on CPU" rule this
-   paragraph used to state. The LLM, the ASR model and now TTS may all hold GPU memory
-   simultaneously on this profile; the VRAM-budget consequence is §2.2's superseded-budget note
-   below, and ASR may still be moved to CPU by profile key if a measurement says it must be.
-2. **The budget is declared, not inferred.** `DEV_3060TI` declares
+1. **Neither DEV profile attempts full GPU residency by construction — it depends on what else is
+   resident.** `DEV_3060TI` runs the LLM (Qwen3.5-2B Q4_K_M, GPU, full offload — OWNER DECISION
+   2026-09-21, task reports e13-b3/e13-b4) and, via the separate `tts_qwen3` worker process,
+   Qwen3-TTS (**TTS is GPU by default, not CPU** — OWNER DECISION, E14, `docs/hld/90-tbd-epics.md`
+   row E14: "use qwen3tts as tts on gpu, I already checked it and it is very good"), with
+   `PiperTTS` (CPU) as the configured fallback; ASR (GigaAM) also runs on GPU. `DEV_3060TI_SHARED`
+   keeps the LLM on GPU but moves ASR and TTS (`PiperTTS`, no fallback) to CPU, trading model
+   quality/latency for fitting a much smaller VRAM budget. VAD runs on **CPU** in both
+   (`SileroVAD` via onnxruntime CPU EP) — nothing in this document moves it to GPU.
+2. **The budget is declared, not inferred.** Each DEV profile declares
    `vram_budget_mb` as the amount this project is allowed to use, and the preflight (§5) refuses to
    proceed if *measured free* VRAM is below `vram_budget_mb + min_vram_margin_mb`. The project never
    frees memory it did not allocate.
@@ -52,11 +62,37 @@ Consequences, stated as rules rather than as measurements:
 
 ## 2. Model profiles
 
-Target files: `backend/app/config/profiles/DEV_3060TI.yaml`,
+Target files (BUILT — E18-A): `backend/app/config/profiles/DEV_3060TI.yaml`,
+`backend/app/config/profiles/DEV_3060TI_SHARED.yaml` (ADDITIVE, §1),
 `backend/app/config/profiles/FINAL_3080TI_12GB.yaml`,
 `backend/app/config/profiles/FINAL_3080TI_16GB.yaml`.
-Selected by the env var `MODEL_PROFILE`; loaded and validated by
-`backend/app/config/profile.py` into the Pydantic model `ModelProfile` (`extra="forbid"`).
+Selected by the repo's existing env var **`SIM_MODEL_PROFILE`** (`Settings.model_profile`,
+default `DEV_3060TI`) — this document previously said `MODEL_PROFILE`; corrected here (E18-A).
+Loaded and validated by `backend/app/config/profile.py` into the Pydantic model `ModelProfile`
+(`extra="forbid"` on every block, so an unknown key anywhere in a profile file is a load-time
+refusal, never a silently ignored one).
+
+### 2.0 Precedence: defaults < profile < an explicitly-set env var (R3, E18-A)
+
+`app.config.profile.apply_profile(settings, profile) -> Settings` is the ONE function that
+overlays a `ModelProfile`'s `llm`/`asr`/`tts`/`vad`/`voice_turn` blocks onto the matching
+`SIM_*` `Settings` fields — used identically by the API (`app.api.container.build_container`) and
+the voice-agent (`voice_agent.wiring.VoiceAgentDeps.build_for_startup`), so the two processes can
+never overlay a profile two different ways. Precedence is decided **per field**, using
+`pydantic-settings`' own `model_fields_set`: a `SIM_*` var that is present in the
+environment/`.env` (or an explicit constructor kwarg) is in that set and is left untouched; a
+field resting on its class default is not, and is free for the profile to overlay. This is what
+keeps the gate's fake-provider selection (`SIM_*_PROVIDER=fake`, D13) working unchanged no matter
+which profile `SIM_MODEL_PROFILE` names, and lets an operator override one knob without forking a
+whole profile file. Not every profile key has a `Settings` counterpart — launch-flag fields
+(`llm.n_gpu_layers`, `n_batch`, `n_ubatch`, `flash_attention`, `kv_cache_type`, `quantization`),
+`hardware.*`, `warmup.*`, `latency_targets.*`, and the additive `tts.model_variant`/`health.*`
+(below) are read straight off the loaded `ModelProfile` by whichever process needs them (the
+llama-server entrypoint, the warm-up sequence, preflight), never through `Settings`.
+
+`ProfileRefused` (§2.5) is fatal at start-up in both processes: it is left to propagate as an
+uncaught exception before any port/model is built, which is what gives the process its non-zero
+exit code. Never caught and downgraded to a warning; no env var disables it.
 
 ### 2.1 Key reference
 
@@ -85,8 +121,8 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `llm.parallel_slots` | int | `--parallel`; total KV budget is `n_ctx`, split across slots |
 | `llm.flash_attention` | str | `on` \| `off` \| `auto` |
 | `llm.kv_cache_type` | str | e.g. `f16`, `q8_0` |
-| `llm.max_response_tokens` | int | 80 (SPEC §22) |
-| `llm.interpreter_max_tokens` | int | 200 |
+| `llm.max_response_tokens` | int | 80 (SPEC §22, E13-B4 measured — see `Settings.llm_generator_max_tokens`) |
+| `llm.interpreter_max_tokens` | int | 138 (E13-B3 measured p99 + 25%, not the illustrative 200 an earlier revision of this table used) |
 | `llm.request_timeout_ms` | int | per-call timeout |
 | `llm.thinking_enabled` | bool | must be `false` (SPEC §22); validation rejects `true` |
 | `asr.provider` | str | `gigaam` \| `faster_whisper` \| `fake` |
@@ -102,10 +138,12 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `tts.output_sample_rate` | int | provider native rate |
 | `tts.max_chunk_ms` | int | 20 (D9, E14 close-out: 40 -> 20 so §6.2's barge-in budget lands under SPEC §18's 250 ms) |
 | `tts.fallback_provider` | str | provider used when the primary fails (SPEC §39) |
+| `tts.model_variant` | str \| null, optional | ADDITIVE (E18-A, R2): `"0.6B"` \| `"1.7B"` \| `null`; maps to `SIM_TTS_QWEN3_MODEL`, read directly by the separate `tts_qwen3` worker process — `apply_profile` does not overlay it (no `Settings` counterpart) |
 | `vad.provider` | str | `silero` \| `energy` |
 | `vad.model_path` | str | onnx path (silero) |
 | `vad.device` | str | `cpu` |
-| `voice_turn.*` | — | the full `VoiceTurnConfig` of `50-voice-pipeline.md` §4.1 |
+| `voice_turn.*` | — | the full `VoiceTurnConfig` of `50-voice-pipeline.md` §4.1, overlaid onto the matching `SIM_VOICE_*` fields by `apply_profile` (§2.0) |
+| `voice_turn.reconnect_grace_s` | int, optional (default 30) | ADDITIVE (E18-A, R6): §6 row 5 / SPEC §39 item 5's LiveKit-reconnect timeout |
 | `warmup.enabled` | bool | true in every real profile |
 | `warmup.asr_sample_path` | str | short WAV used for the dummy ASR call |
 | `warmup.llm_prompt` | str | tiny prompt for the dummy generation |
@@ -113,49 +151,62 @@ Every key is required unless marked optional. Types are the Pydantic types.
 | `warmup.timeout_ms` | int | per-service warm-up timeout |
 | `latency_targets.p50_ms` | int | SPEC §27 target for this profile |
 | `latency_targets.p95_ms` | int | SPEC §27 target for this profile |
+| `health.failure_threshold` | int, optional (default 3) | ADDITIVE (E18-A, R1): §4.1's READY -> NOT_READY threshold; read by `workers/voice_agent/voice_agent/health.py` (E18-C) |
+| `health.rewarm_interval_s` | int, optional (default 30) | ADDITIVE (E18-A, R1): §4.1's periodic re-warm interval; same reader as above |
 
-### 2.2 `DEV_3060TI.yaml`
+### 2.2 `DEV_3060TI.yaml` (BUILT — E18-A; a dedicated card)
+
+OWNER DECISIONS 2026-09-21 (task reports e13-b3/e13-b4, e14-d) replaced the earlier partial-offload
+Qwen3-4B illustration below with the measured Qwen3.5-2B choice, and the stale, never-measured
+`vram_budget_mb: 2800`/`n_gpu_layers: 20` this section used to show (SUPERSEDED, E14-B) is removed
+— see §2.0's precedence paragraph and §10 open item 2 for the history. Full file:
 
 ```yaml
 profile_name: DEV_3060TI
 description: >
-  Development profile for an RTX 3060 Ti 8 GB whose memory is mostly occupied by unrelated
-  processes that must never be killed. LLM runs with partial GPU offload; TTS runs on GPU too
-  (Qwen3-TTS 1.7B CustomVoice, OWNER DECISION E14, a separate worker process/venv); VAD runs on
-  CPU.
+  Development profile for a DEDICATED RTX 3060 Ti 8 GB (nothing else resident on the card).
+  LLM: Qwen3.5-2B Q4_K_M on GPU, one llama-server serving both the interpreter (slot 0) and the
+  generator (slot 1) via --parallel 2 (OWNER DECISION 2026-09-21, task reports e13-b3/e13-b4).
+  ASR: GigaAM v3_e2e_ctc on GPU. TTS: Qwen3-TTS on GPU (OWNER DECISION, E14), PiperTTS (CPU) as
+  the configured fallback. For a card another process already occupies — this machine's actual
+  state today, ~4.6 GB held by the owner — use DEV_3060TI_SHARED instead (§2.2a).
 
 hardware:
   gpu_name_contains: "3060 Ti"
   gpu_total_vram_mb: 8192
-  reserved_by_others_mb: 5120
+  reserved_by_others_mb: 512      # dedicated-card assumption; DEV_3060TI_SHARED is the ~4.6 GB one
 
-# SUPERSEDED (E14-B): this figure predates the OWNER DECISION that puts Qwen3-TTS (≈ 4.3 GB bf16
-# measured residency) on this profile's GPU alongside the LLM's partial offload — 2800 no longer
-# reflects what DEV_3060TI actually needs to budget for. Re-measuring the correct DEV VRAM budget
-# with TTS included is E18's job (profiles, warm-up, preflight — `90-tbd-epics.md` row E18); this
-# task does not invent a replacement number (SPEC §27: no benchmark number before it is measured).
-vram_budget_mb: 2800
+vram_budget_mb: 7168
 min_vram_margin_mb: 512
-measured_peak_vram_mb: null      # UNVERIFIED — set by benchmarks/benchmark_vram.py
+# UNMEASURED as a COMBINED peak — DEV-only warning branch of validate_vram_margin (§2.5), never
+# the FINAL_* refusal branch. LLM (1558 MB, task report e13-b4), GigaAM ASR (~1336 MiB, task
+# report e14-d) and Qwen3-TTS 0.6B (~2746 MiB, task report e14-d) were each measured SEPARATELY
+# and sum to ~5640 MiB, but nobody has run all three loaded simultaneously — that assumption is
+# not written here as measured_peak_vram_mb (SPEC §27). TODO(E19): measure the real combined peak.
+measured_peak_vram_mb: null
 measured_at: null
 
 llm:
   provider: llama_cpp
-  model_name: Qwen3-4B
-  model_path: /models/llm/Qwen3-4B-Q4_K_M.gguf
+  model_name: Qwen3.5-2B          # ran GPU_FULL(999) in both measurements below, hence n_gpu_layers: -1
+  model_path: /models/llm/Qwen3.5-2B-Q4_K_M.gguf
   quantization: Q4_K_M
   base_url: http://llama-server:8080/v1
   n_ctx: 4096
-  n_gpu_layers: 20               # partial offload; raise only after a VRAM measurement
+  n_gpu_layers: -1
   n_batch: 512
   n_ubatch: 256
-  parallel_slots: 2              # one interpreter call and one generation call in flight
+  parallel_slots: 2               # one interpreter call and one generation call in flight
   flash_attention: "on"
   kv_cache_type: q8_0
-  max_response_tokens: 80
-  interpreter_max_tokens: 200
+  max_response_tokens: 80         # E13-B4 measured (Settings.llm_generator_max_tokens)
+  interpreter_max_tokens: 138     # E13-B3 measured p99 + 25% (Settings.llm_interpreter_max_tokens)
   request_timeout_ms: 3000
   thinking_enabled: false
+  # SPEC §26's "local Qwen3-4B quantized" stays a SUPPORTED choice (commented alternative,
+  # measured interpret-only p50 1174 ms / p95 3718 ms, task report e13-b3; its generator call
+  # OOM'd under --parallel 2, task report e13-b4, so it is not this profile's default):
+  #   model_name: Qwen3-4B, model_path: /models/llm/Qwen3-4B-Q4_K_M.gguf, n_gpu_layers: 32
 
 asr:
   provider: gigaam
@@ -166,25 +217,22 @@ asr:
   sample_rate: 16000
 
 tts:
-  provider: qwen3_tts             # OWNER DECISION (E14): GPU default for every profile, DEV incl.
-  # model_path (below) is the BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the worker itself appends
-  # MODEL_VARIANTS[SIM_TTS_QWEN3_MODEL].subdirectory (E14-D — `Qwen3-TTS-12Hz-1.7B-CustomVoice` for
-  # the default variant, `-0.6B-` for the measured alternative below; no profile loader reads a
-  # variant key yet, E18). Default variant stays 1.7B, the owner's evaluated model, unchanged by
-  # this task. 0.6B is a real, measured alternative (§10 open item 6, this task): loads in ~10.7 s
-  # and synthesizes correctly, worker peak VRAM ~2.7 GB sampled (vs. the 1.7B's ~4.3 GB, E14-B) —
-  # switching this profile's default from those numbers is a manager decision, not made here.
-  model_path: /models/tts/qwen3-tts          # SIM_TTS_QWEN3_MODEL_DIR; a separate worker process
-                                              # (own venv, workers/tts_qwen3/) loads this, not the
-                                              # backend/voice-agent process itself — see §2.6 below
-  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
+  provider: qwen3_tts              # OWNER DECISION (E14): GPU default for every profile, DEV incl.
+  model_path: /models/tts/qwen3-tts           # BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the tts_qwen3
+                                               # worker appends the variant's own subdirectory (E14-D)
+  voice_id: Serena                 # vendor CustomVoice speaker (recon §1.1) — not a free voice id
   device: cuda
   output_sample_rate: 24000
   max_chunk_ms: 20
-  fallback_provider: piper        # PiperTTS, CPU — the configured fallback (D9), not the DEV default
+  fallback_provider: piper         # PiperTTS, CPU — the configured fallback (D9)
   fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
   fallback_voice_id: ru_RU-irina-medium
   fallback_output_sample_rate: 22050
+  # ADDITIVE (E18-A, §2.1), maps to SIM_TTS_QWEN3_MODEL (read directly by the tts_qwen3 worker
+  # process): "0.6B" MEASURED peak ~2746 MiB, RTF mean 0.831 (task report e14-d); "1.7B" is the
+  # owner's evaluated checkpoint but is still NOT_RUN on this machine (§10 open item 6). null =
+  # the worker's own default (1.7B) until a combined-load measurement (E19) sets one explicitly.
+  model_variant: null
 
 vad:
   provider: silero
@@ -205,6 +253,7 @@ voice_turn:
   tts_chunk_ms: 20
   partial_asr_enabled: true
   partial_interval_ms: 500
+  reconnect_grace_s: 30            # ADDITIVE (E18-A, R6): §6 row 5 / SPEC §39 item 5 default
 
 warmup:
   enabled: true
@@ -216,9 +265,40 @@ warmup:
 latency_targets:
   p50_ms: 1500
   p95_ms: 2500
+
+health:                            # ADDITIVE (E18-A, R1) — both are the schema defaults
+  failure_threshold: 3
+  rewarm_interval_s: 30
 ```
 
-### 2.3 `FINAL_3080TI_12GB.yaml`
+### 2.2a `DEV_3060TI_SHARED.yaml` (BUILT — E18-A; ADDITIVE, not one of SPEC §26's three)
+
+For a card another process already occupies — this machine's actual, measured state (§1). LLM
+stays on GPU (same measured Qwen3.5-2B choice as `DEV_3060TI`); ASR and TTS move to CPU so the
+whole profile fits the much smaller remaining budget without a fallback:
+
+```yaml
+profile_name: DEV_3060TI_SHARED
+hardware:
+  reserved_by_others_mb: 4700      # OWNER DECISION 2026-09-21: this machine's measured owner-
+                                    # process residency (nvidia-smi 4646 MiB used)
+vram_budget_mb: 3000
+min_vram_margin_mb: 512
+measured_peak_vram_mb: 1558        # MEASURED (task report e13-b4): the LLM is the ONLY GPU
+measured_at: 2026-09-21            # resident on this profile, so this is a true combined peak
+
+llm: { model_name: Qwen3.5-2B, n_gpu_layers: -1, parallel_slots: 2 }   # same as DEV_3060TI
+asr: { provider: gigaam, device: cpu, compute_type: float32 }          # MEASURED RTF 0.036 (CPU)
+tts: { provider: piper, device: cpu, fallback_provider: none }         # MEASURED RTF 0.023-0.052
+```
+
+(Full file: `backend/app/config/profiles/DEV_3060TI_SHARED.yaml`; the excerpt above shows only what
+differs in kind from `DEV_3060TI`, not every key — every key `ModelProfile`/`extra="forbid"`
+requires is present in the real file.) Margin: `3000 - 1558 = 1442 >= 512` — passes
+`validate_vram_margin` outright, no DEV-only warning needed, since this profile's peak actually is
+measured.
+
+### 2.3 `FINAL_3080TI_12GB.yaml` (BUILT — E18-A; refused today, §2.5: no measurement exists yet)
 
 ```yaml
 profile_name: FINAL_3080TI_12GB
@@ -249,8 +329,9 @@ llm:
   parallel_slots: 2
   flash_attention: "on"
   kv_cache_type: f16
-  max_response_tokens: 80
-  interpreter_max_tokens: 200
+  max_response_tokens: 80          # E13-B4 measured (Settings.llm_generator_max_tokens)
+  interpreter_max_tokens: 138      # E13-B3 measured p99 + 25%, reused rather than an illustrative
+                                    # 200 not itself measured on this model (Settings docstring)
   request_timeout_ms: 3000
   thinking_enabled: false
 
@@ -274,6 +355,7 @@ tts:
   output_sample_rate: 24000
   max_chunk_ms: 20
   fallback_provider: piper
+  model_variant: null              # ADDITIVE (E18-A) — UNVERIFIED on a 3080 Ti, not this task's to invent
 
 vad:
   provider: silero
@@ -294,6 +376,7 @@ voice_turn:
   tts_chunk_ms: 20
   partial_asr_enabled: true
   partial_interval_ms: 500
+  reconnect_grace_s: 30            # ADDITIVE (E18-A, R6) default
 
 warmup:
   enabled: true
@@ -305,6 +388,10 @@ warmup:
 latency_targets:
   p50_ms: 1200
   p95_ms: 2000
+
+health:                            # ADDITIVE (E18-A, R1) — both are the schema defaults
+  failure_threshold: 3
+  rewarm_interval_s: 30
 ```
 
 ### 2.4 `FINAL_3080TI_16GB.yaml`
@@ -435,6 +522,26 @@ Transitions:
 One state per service: `llm`, `asr`, `tts`, `vad`, plus the infrastructure checks `postgres`,
 `redis`, `livekit` which the backend owns (D8).
 
+**Where it lives (E18-C).** The table above is `voice_agent.health.ServiceHealth`, one instance per
+service, collected in `InferenceHealth`. It is a **pure** state machine: no Redis, no clock, no I/O
+at all. Every method returns a `HealthTransition` (`{service, from_state, to_state, detail}`) or
+`None` when the event changed nothing, and the caller — `voice_agent.main.VoiceAgent` — is what
+turns a transition into the three Redis writes of §4.3. That split is what makes every row of the
+table a unit test with no process (`workers/voice_agent/tests/test_health_state_machine.py`).
+
+`health.failure_threshold` and `health.rewarm_interval_s` come from the active profile's `health`
+block (`app.config.profile.HealthProfile`, E18-A); they have no `SIM_*` counterpart, so
+`apply_profile` does not touch `Settings` for them and the state machine reads the profile directly.
+
+The **periodic re-warm** (row 7) rides the heartbeat rather than owning a timer of its own: the
+heartbeat is already this process's one periodic task, and `ServiceHealth.due_for_rewarm(now_s)` is
+what decides whether `rewarm_interval_s` has elapsed. A FATAL service is never due, which is row 8
+expressed as a branch rather than as a flag somebody has to remember to check. A service that has
+never been warmed is due immediately, so a first attempt never waits out the interval.
+
+Cancellation is **not** a failure: `asyncio.CancelledError` is how a barge-in stops an in-flight
+stage (§6.1 of `50-voice-pipeline.md`), and it never counts toward `failure_threshold`.
+
 ### 4.2 Warm-up sequence
 
 Run by the voice-agent at start-up, sequentially (not concurrently — concurrent loads on a
@@ -449,11 +556,49 @@ memory-tight GPU is exactly how the dev machine OOMs):
    elapses. A second call is made **with** a trivial `json_schema` response format so that the
    grammar path is warm too — the interpreter's first real call must not be the first grammar
    compile.
-4. **TTS** — `stream(warmup.tts_text, default voice)` drained to completion.
+4. **TTS** — `stream(warmup.tts_text, default voice)` drained to completion. For the out-of-process
+   Qwen3-TTS worker this means `POST /warm_up` on `workers/tts_qwen3`, which **loads the model and
+   then runs one real generation of a short Russian text, discarding the audio** (E18-C). Loading
+   the weights leaves the CUDA graphs, the kernel autotuning and the tokenizer's first pass cold:
+   E14-D measured **13.1 s** for the first synthesis after a load-only warm-up, and that cost
+   belongs to the warm-up rather than to the first caller line. The response reports
+   `output_audio_ms` and `generate_ms` so a caller can tell a real warm-up from a load-only one.
 
 Each step records an `InferenceMetric` with `turn_id = NULL` and `request_id = "warmup:{stage}"`, so
 warm-up cost is visible in the same table as everything else. Each step publishes its state
 transition as it happens, so the UI shows progress rather than a single long NOT_READY.
+
+A warm-up failure is classified, not merely logged (§4.1 rows 3 and 4): `InferenceOutOfMemoryError`
+and `ModelNotAvailableError` are **unrecoverable** and go straight to FATAL, because no amount of
+re-warming every 30 seconds fixes a missing file or a full card. Everything else — a timeout, a
+connection refused, a worker that is not up yet — is recoverable and becomes NOT_READY with a
+re-warm clock running.
+
+**Model identity is read, never assumed.** `Qwen3TTS.model_version` reports what the worker's
+`/health` says it actually serves (`SIM_TTS_QWEN3_MODEL` picks 1.7B or 0.6B **in the worker's
+process**), cached at warm-up. Before the first `/health`, and if it cannot be reached, the adapter's
+pinned constants remain the answer — the port's `model_version` is a synchronous property and an
+adapter must not do I/O inside one. Writing a configured guess into `CALLER_TTS_STARTED.tts_model`
+and `inference_metrics.model_version` is what SPEC §27 does not allow.
+
+**The warmed providers are reachable for §5's checks 5 and 6.** After the warm-up sequence
+completes, the voice-agent binds a tiny loopback HTTP server —
+`voice_agent.preflight_http.PreflightHttpServer`, `SIM_VOICE_AGENT_HTTP_PORT` (default **8113**),
+stdlib `asyncio` only — serving exactly two routes:
+
+| route | does | answers |
+|:--|:--|:--|
+| `GET /preflight/asr` | transcribes the warm-up sample with the **already loaded** provider | `{"text", "latency_ms", "provider", "model_version"}` |
+| `GET /preflight/tts` | synthesises `warmup.tts_text` | `{"output_audio_ms", "latency_ms", "provider", "model_version"}` |
+
+Neither route loads anything: a component that has not been warmed answers **503** with an RFC
+7807-shaped problem document, which is the truthful "ASR does not respond" rather than a lazy load
+that would make the preflight the slowest thing in the stack and could OOM the very card it exists
+to protect. It binds **after** the warm-up for the same reason — a socket that answered 503 for the
+whole warm-up is noise, not information. A non-loopback `bind_host` raises at construction
+(`NonLoopbackBindError`), the compose service publishes no host port (R10), and the container's
+`healthcheck:` asks the same port through `python -m voice_agent.cli health`, which checks that the
+endpoint is listening and exits 0/1 without spending GPU time on every tick.
 
 ### 4.3 How the voice-agent publishes readiness
 
@@ -483,8 +628,25 @@ Redis, written by the voice-agent, read by the backend (D8's `/api/v1/health/rea
   over the session WebSocket so the instructor sees it live.
 - The FATAL state is additionally mirrored to `voice:health:fatal` (no expiry) so that a restart loop
   cannot make a fatal condition look transient; the key is deleted only by an explicit
-  `POST /api/v1/admin/inference/clear-fatal` (instructor/admin) or by a clean warm-up after a manual
-  restart.
+  `POST /api/v1/admin/inference/clear-fatal` (**ADMIN**, manager ruling R4 of E18 — `openapi.yaml`'s
+  summary line still reads "INSTRUCTOR / ADMIN"; its machine-readable part defines only `401`/`403`,
+  so the narrower gate satisfies the contract) or by a clean warm-up after a manual restart.
+  Its value is a JSON object carrying at least `{"service": "...", "detail": "..."}` — the service
+  the fatal condition belongs to, so the other three keep reporting their own heartbeat.
+
+**The backend side (E18-B), `backend/app/infrastructure/health/voice_health.py`:**
+
+| reader | what it is | rule |
+|--|--|--|
+| `VoiceHealthProbe(client, service)` | the `HealthProbe` for one of `llm`/`asr`/`tts`/`vad` | `voice:health:fatal` covering this service ⇒ `FATAL`; else the frame's `state`; a **missing key, an unparsable value or an unknown `state` ⇒ `NOT_READY`**, never `READY`; an unreachable Redis ⇒ `NOT_READY` with the reason (a probe never raises) |
+| `RedisInferenceReadiness` | the `InferenceReadiness` port `startSession` consults (D8) | `True` only when all four services read `READY` |
+| `RedisInferenceFatalLatch` | what `clearInferenceFatal` calls | deletes `voice:health:fatal` and publishes `{"service", "from": "FATAL", "to": "NOT_READY", "detail", "at"}` on `voice:health`, so an admin's click reaches the session log through the same path a voice-agent transition does (`openapi.yaml`'s `x-emits`). Clearing never makes anything `READY`: the next heartbeat decides that |
+| `VoiceHealthSubscriber` + `app.application.inference_health.AppendInferenceHealthChanged` | the `voice:health` tail, started and stopped by the API lifespan next to the `SimulationRunner` and gated on the same `SIM_RUNNER_ENABLED` | one `INFERENCE_HEALTH_CHANGED` (`SYSTEM` actor, §10.13's payload) per **ACTIVE** session, in its own Unit of Work; no ACTIVE session ⇒ no write; a malformed message is logged and dropped; `simulation_sessions.state` is never written (SPEC §39) |
+
+A `voice:health:fatal` value the backend cannot parse, or one that names no `service`, latches
+**every** service: a latch that cannot be read is exactly the condition that must not be hidden.
+`HealthReadyResponse.model_profile` is the active profile's name — `load_profile` refuses a file
+whose `profile_name` differs from its filename, so it equals `SIM_MODEL_PROFILE` by construction.
 
 `POST /api/v1/sessions/{id}/start` returns 503 `INFERENCE_NOT_READY` while any required service is
 not READY and `REQUIRE_INFERENCE_READY=true` (default true; tests set it false explicitly) — D8.
@@ -494,24 +656,55 @@ allow a final demo session to begin while a required inference service reports n
 ### 4.4 GPU OOM → FATAL without touching session state (SPEC §39)
 
 The rule: **an OOM changes health, never simulation state.** Concretely, in
-`workers/voice_agent/health.py`:
+`workers/voice_agent/voice_agent/health.py`:
 
-1. Every model call is wrapped by `guard_inference(stage)`, which catches
-   `torch.cuda.OutOfMemoryError`, `RuntimeError` whose message contains `out of memory`, and the
-   llama-server HTTP responses that report an allocation failure.
-2. On catch it: records the `InferenceMetric` with `status = "ERROR"`, `error_kind = "OOM"`;
-   transitions that service to **FATAL** and publishes it (§4.3); emits
-   `MODEL_ERROR {session_id, turn_id, stage, error_kind: "OOM", recoverable: false}` into
-   `session_events`; and **returns the deterministic fallback for that stage** — the interpreter
-   fallback (`UNINTELLIGIBLE`) or the validator fallback template
-   (`50-voice-pipeline.md` §5.1, §7.8) — so the turn finishes with a spoken caller line where it can.
+1. Every model call is wrapped by `guard_inference(stage)` — as shipped (E18-C),
+   `voice_agent.health.InferenceHealthGuard`, reached from the pipeline through the application
+   port `app.application.ports.inference_guard.InferenceGuard`
+   (`async def run(stage, call, *, fallback)`). The adapters already normalise the platform's many
+   spellings of an allocation failure — `torch.cuda.OutOfMemoryError`, a `RuntimeError` whose
+   message contains `out of memory`, and the llama-server / Qwen3-TTS HTTP responses that report
+   one — into the single `app.inference.errors.InferenceOutOfMemoryError`, which is what the guard
+   keys off.
+2. On catch, the **health** half is the guard's: it transitions that service to **FATAL** and
+   publishes it (§4.3). The **turn** half stays where it already was, in the stage: the
+   `InferenceMetric` with `status = "ERROR"`, `error_kind = "OOM"`, the
+   `MODEL_ERROR {session_id, turn_id, stage, error_kind: "OOM", recoverable: false}` append, and
+   the stage's deterministic fallback — the interpreter's `UNINTELLIGIBLE`, the validator's
+   template (`50-voice-pipeline.md` §5.1, §7.8), `TtsSpeechSink`'s configured fallback provider and
+   then its silent-but-complete ending — so the turn finishes with a spoken caller line where it
+   can. The guard therefore **re-raises** by default and the stage's existing ladder runs unchanged;
+   its `fallback` argument exists for the one stage with no ladder of its own, VAD, whose
+   deterministic answer is "this frame is not speech" (a failing VAD degrades to "nobody is
+   speaking", never to a phantom turn).
 3. It does **not** call any session use case, does not abort the session, does not roll back the
    incident, does not clear the card, and does not touch `simulation_sessions.state`. The session
    stays ACTIVE; the trainee can keep filling the card; every event already written stays written
    (SPEC §42 test 14).
 4. `torch.cuda.empty_cache()` is called once after the transition to FATAL, and no model is reloaded.
-   Reloading into a fragmented, contended 8 GB card is how one OOM becomes a loop.
+   Reloading into a fragmented, contended 8 GB card is how one OOM becomes a loop. It is called
+   **only if `torch` is importable**: the gate runs entirely on fake providers in a venv with no
+   torch (D13), where this must be a no-op rather than an `ImportError`. A second OOM on an
+   already-FATAL service publishes nothing and empties nothing — FATAL is terminal.
 5. The instructor UI shows the FATAL banner; starting a **new** session is refused while FATAL holds.
+
+**Which call sites are guarded, and how.** VAD at `TurnPipeline`, ASR at `AsrTurnResponder`, TTS at
+`TtsSpeechSink` — each takes an `InferenceGuard` whose default is `NoOpInferenceGuard`, so a process
+with no health registry (every existing unit test, the backend container) behaves exactly as it did
+before. The **LLM** is the exception: its two call sites, `DialogueInterpreter` and
+`CallerResponseGenerator`, live in `app.application.dialogue`, which knows nothing about health and
+must keep knowing nothing (D2/D3). Both share one `LLMClient`, so the voice-agent wraps that one
+object in `voice_agent.health.GuardedLLMClient` — both stages are behind the guard without a line of
+dialogue code changing. A streaming call is guarded at its **first** delta, which is where
+llama-server's allocation failure actually arrives.
+
+`app.application` may not import `app.inference` (D2, enforced by `backend/tools/check_imports.py`),
+yet the stages must still tell an allocation failure from an ordinary provider error to choose
+`error_code`/`recoverable`. `app.application.ports.inference_guard.is_out_of_memory(exc)` is that
+bridge: it recognises `InferenceOutOfMemoryError` by class name over the whole MRO, the same
+boundary problem `app.application.ports.tts` solved by defining `TtsTimeoutError` in the port.
+`MODEL_ERROR` carries **both** spellings — `error_code` (the §10.13 catalogued key) and `error_kind`
+(this document's) — exactly as it already carries both `component` and `stage`.
 
 The same guard converts a non-OOM CUDA error into `NOT_READY` (recoverable) with
 `MODEL_ERROR {..., recoverable: true}`, which the failure-threshold rule of §4.1 then escalates if it
@@ -537,7 +730,18 @@ probes services and files, so it is fast and can run in CI against fakes.
 | 8 | Redis responds | `PING`, then `SET`/`GET`/`DEL` of `preflight:probe` | both succeed |
 | 9 | LiveKit responds | `GET {LIVEKIT_URL}/` health path, plus a `livekit-api` `ListRooms` with the configured key/secret | HTTP 200 and the API call authenticates |
 | 10 | scenario validation passes | runs the same loader the gate uses over `scenarios/examples/**/v*.yaml` | every file validates; count reported |
-| 11 | audio devices accessible | only when `--skip-audio-devices` is absent and `AUDIO_DEVICE_CHECK=true`: enumerate input devices via `sounddevice.query_devices()` and open the configured device at 16 kHz mono for 100 ms | the device opens; otherwise the row is `SKIP` |
+| 11 | audio devices accessible | only when `--skip-audio-devices` is absent and `AUDIO_DEVICE_CHECK=true`: enumerate input devices via `sounddevice.query_devices()` and open the configured device at 16 kHz mono for 100 ms | the device opens; otherwise the row is `SKIP` (never `FAIL` — a headless demo box with no configured microphone is not a preflight failure) |
+| 12 | `llama_server_binary` (additive, R7, E18-D) | when `SIM_LLAMA_SERVER_BIN` is set: the file exists, is executable, and `--version` exits 0 | those three, in order; unset is `SKIP` — the Qwen3.5 GGUFs this profile uses need a newer llama.cpp than the one already on `~/.local/share/llama.cpp`, so this cannot assume a pinned binary is configured yet. Check 4's "model id contains `llm.model_name`" is the real proof the binary can load *this* GGUF, once the server is actually up |
+
+Implemented (E18-D): `backend/app/cli/preflight.py`, unit-tested with a `PASS` and a `FAIL` per
+check against fakes (`backend/tests/unit/cli/test_preflight.py`) — every check is a pure decision
+over an injected probe callable, so none of the twelve ever touches a real GPU, model server,
+database or LiveKit instance in the test run. The real, network-touching probes live in that same
+module's `build_real_checks`. The row/field names below (`id`, `measured`, dotted check ids like
+`gpu.available`) are this design sketch's own shorthand; the shipped CLI's actual shape is
+`{number, name, status, detail}` per check (`name` matching this table's row, e.g.
+`cuda_gpu_available`, `expected_gpu_detected`) — see `render_table`/`render_json` in that module for
+the literal output.
 
 Output format (human, one line per check, fixed 4-character status column):
 
@@ -588,8 +792,8 @@ compose stack and is what a demo operator runs.
 | TTS failure: log and use configured fallback | `guard_inference("TTS")` catches the failure, records the metric with `status = "ERROR"`, emits `MODEL_ERROR {stage: "TTS"}`, sets that provider NOT_READY, and re-synthesises the same validated text through `tts.fallback_provider`. The turn continues; the trainee hears the line in the fallback voice. If the fallback also fails, the turn ends with `CALLER_UTTERANCE_INTERRUPTED`-shaped bookkeeping (`delivered_audio_ms = 0`) and no `FACTS_DELIVERED`. | `TurnPipeline`, `workers/voice_agent/health.py` |
 | Invalid LLM structured output: one repair retry, then safe fallback | Interpreter: schema validation → one repair prompt → `speech_act = UNINTELLIGIBLE` + `MODEL_FALLBACK_USED`. Generator: `ResponseValidator` → one regeneration → deterministic template from the gate-outcome table + `MODEL_FALLBACK_USED`. Exactly one retry in both places. | `50-voice-pipeline.md` §5.1, §7.7, §7.8 |
 | ASR failure: do not corrupt state | ASR runs before any state write. On failure the pipeline emits `MODEL_ERROR {stage: "ASR"}`, writes **no** `ASR_FINAL`, writes **no** `transcript_segments` row, and the caller speaks the "please repeat" fallback. The audio segment is still written (the recording is evidence regardless). No card field, no fact, no state machine trigger depends on ASR (SPEC §9, §42 test 4). | `TurnPipeline` |
-| LiveKit temporary reconnect: session/domain state survives | `LiveKitCallTransport` surfaces `RECONNECTING`/`RECONNECTED` as `TransportEvent`s; `TurnPipeline` emits `TRANSPORT_DISCONNECTED` / `TRANSPORT_RECONNECTED`, cancels any in-flight playback as a non-barge-in cancellation (no `CALLER_UTTERANCE_INTERRUPTED`, since nobody interrupted), resets the `TurnDetector`, and resumes. The session stays ACTIVE; PostgreSQL state is untouched; the runner keeps ticking. A disconnect longer than `transport.reconnect_grace_s` (default 30) emits `CALL_ENDED {reason: "TRANSPORT_LOST"}` and leaves the session for the instructor to decide. | `TurnPipeline`, `LiveKitCallTransport` |
-| GPU OOM: fatal inference health error, preserve session state | §4.4 above. | `workers/voice_agent/health.py` |
+| LiveKit temporary reconnect: session/domain state survives | `LiveKitCallTransport` surfaces `RECONNECTING`/`RECONNECTED` as `TransportEvent`s; `TurnPipeline` emits `TRANSPORT_DISCONNECTED` / `TRANSPORT_RECONNECTED`, cancels any in-flight playback as a non-barge-in cancellation (no `CALLER_UTTERANCE_INTERRUPTED`, since nobody interrupted), resets the `TurnDetector`, and resumes. The session stays ACTIVE; PostgreSQL state is untouched; the runner keeps ticking. A disconnect longer than `transport.reconnect_grace_s` (default 30) emits `CALL_ENDED {reason: "TRANSPORT_LOST"}` and leaves the session for the instructor to decide. **The timer lives in `TurnPipeline`, never in the SDK wrapper** (E18-C): the transport's job is to report what the media plane did, and "how long a disconnect may last before the call is over" is configured product rule (SPEC §17), armed on `TRANSPORT_DISCONNECTED` and disarmed on `TRANSPORT_RECONNECTED`. A reconnect inside the grace period leaves exactly the two transport events behind and nothing else; beyond it, the call ends through the ordinary call-end path (`stop(reason)` → `_close_call()` → one `CALL_ENDED`), which is why no second code path can write session state. `CALL_ENDED.reason` is a free `str` in §10.13, so `TRANSPORT_LOST` needed no catalog change. | `TurnPipeline`, `LiveKitCallTransport` |
+| GPU OOM: fatal inference health error, preserve session state | §4.4 above. | `workers/voice_agent/voice_agent/health.py`, `app.application.ports.inference_guard` |
 | Never silently reset the simulation | There is no code path that writes `simulation_sessions.state` from the voice-agent: the worker has no session-state use case injected, in the same structural way the DDS services have no WorldTruth repository (D3). Session state changes only through backend use cases fired by a trainee, an instructor, or the world engine. Every abort is an explicit `SESSION_ABORTED` event with an actor. | D2/D3 wiring, enforced by `check_imports.py` |
 
 ---
@@ -726,11 +930,20 @@ itself** — a measurement entering configuration is a human decision.
 
 ## 8. llama-server launch flags
 
-Run inside the `llama-server` compose service; `$MODEL_PROFILE` selects which line is used. Flags are
-llama.cpp server flags; the exact set available depends on the build, so any flag that a given build
-rejects is reported at start-up rather than silently dropped. **UNVERIFIED:** the precise flag
-spelling for the pinned llama.cpp tag — pin a tag in `infra/docker-compose.yml` and confirm against
-`llama-server --help` of that tag before first run.
+Run inside the `llama-server` compose service; `SIM_MODEL_PROFILE` selects which line is used
+(computed, not stored: `infra/scripts/llama-server-entrypoint.sh`, E18-E, reads the
+`SIM_LLAMA_*` env vars `make profile-env`/`app.config.profile_env --emit-env` derive from the
+active profile's `llm.*` block, and builds the flag line below itself — no profile YAML restates
+it). Flags are llama.cpp server flags; the exact set available depends on the build, so any flag
+that a given build rejects is reported at start-up rather than silently dropped.
+
+**Image pin (E18-E, 2026-09-22):** `infra/docker-compose.yml`'s `llama-server` service pins
+`ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (override with `LLAMA_CPP_IMAGE`) — confirmed to
+exist via `docker manifest inspect ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (read-only, no
+pull; resolved to a two-platform, amd64+arm64, OCI image index). **UNVERIFIED still:** the precise
+flag spelling this specific tag accepts — no pull was done (E18 forbids GPU work/model downloads;
+`TODO(E19)`: run `llama-server --help` against the pinned tag for real and reconcile any flag this
+document gets wrong before the first real launch).
 
 **DEV — Qwen3-4B on the 3060 Ti (partial offload, CPU-heavy):**
 
@@ -792,49 +1005,87 @@ Notes that matter for this project:
 
 ---
 
-## 9. Docker compose service notes
+## 9. Docker compose service notes (BUILT — E18-E)
 
-`infra/docker-compose.yml`, services named exactly as SPEC §36 / D1: `postgres`, `redis`, `livekit`,
-`backend`, `frontend`, `llama-server`, `voice-agent`.
+`infra/docker-compose.yml` now has all eight: the SPEC §36 seven, named exactly — `postgres`,
+`redis`, `livekit`, `backend`, `frontend`, `llama-server`, `voice-agent` — plus the additive eighth,
+`tts-qwen3`, gated behind `profiles: ["qwen3-tts"]` so a plain `docker compose up` (or `make up`)
+starts exactly the SPEC seven; `TTS_COMPOSE_PROFILE=qwen3-tts make up` (or
+`docker compose --profile qwen3-tts up`) opts into the eighth. `make compose-check` (wired into
+`gate-backend`) renders the whole file — all eight service definitions, via
+`--profile qwen3-tts config -q` — against `infra/compose.check.env`'s throwaway (>= 32-byte)
+placeholder secrets, building and pulling nothing, so the gate catches a YAML/interpolation mistake
+without a real `.env` or Docker Hub/GHCR access.
 
 ### `llama-server`
 
-- Image: a pinned `ggml-org/llama.cpp` CUDA server tag — **pinned**, never `:latest`, because a flag
-  change upstream silently alters the launch line of §8.
+- Image: **pinned** `ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (override via
+  `LLAMA_CPP_IMAGE`), never `:latest`. Confirmed to exist with `docker manifest inspect` (read-only,
+  no pull) on 2026-09-22 — resolves to an amd64+arm64 OCI image index. The exact **flag spelling**
+  this tag's binary accepts is still **UNVERIFIED** (no pull was done; `TODO(E19)`, see §8).
 - `runtime: nvidia` / `deploy.resources.reservations.devices` with `capabilities: [gpu]`;
   `NVIDIA_VISIBLE_DEVICES` from `.env` so the dev machine can pin a device.
-- Volumes: `${MODELS_DIR}:/models:ro`. Models are never baked into an image and never downloaded at
-  start-up (SPEC §41: everything local).
-- `command:` is `infra/scripts/llama-server-entrypoint.sh`, which reads `MODEL_PROFILE` and emits the
-  §8 line. Keeping the flags in a script, not in compose YAML, is what lets the profile own them.
-- Healthcheck: `curl -fsS http://localhost:8080/health`; `start_period` generous (model load on a
-  partially offloaded 4B is minutes on a busy card), `retries` high, `interval: 10s`.
+- Volumes: `${MODELS_DIR}:/models:ro`, plus `infra/scripts/llama-server-entrypoint.sh` bind-mounted
+  in (the pinned image has no Python to read a profile YAML itself). Models are never baked into an
+  image and never downloaded at start-up (SPEC §41: everything local).
+- `entrypoint:` is `infra/scripts/llama-server-entrypoint.sh` (E18-E, built), which reads the
+  `SIM_LLAMA_*` env vars `env_file: infra/.env.profile` supplies and computes the §8 flag line,
+  including `--ctx-size = n_ctx * parallel_slots`. That file is generated by `make profile-env`
+  (new `backend/app/config/profile_env.py --emit-env`, E18-E) from the active profile's `llm.*`
+  block — gitignored, regenerated on every `make up` / `make run-llama-server`, never hand-edited.
+  `make run-llama-server` runs the identical script on the **host** (loopback, `LLAMA_SERVER_PORT`
+  default 8180 — never 8000/8001/8011/8012/8016) with `SIM_LLAMA_SERVER_BIN` pointed at a real
+  `llama-server` build.
+- Healthcheck: `curl -fsS http://localhost:8080/health`; `start_period: 300s` (model load can be
+  minutes on a busy card), `retries: 30`, `interval: 10s`.
 - No `ports:` mapping. Reachable only as `http://llama-server:8080` inside the network, which is
   exactly what `LlamaCppClient`'s loopback/compose-internal `base_url` validation expects.
 - `restart: unless-stopped`.
 
-### `voice-agent`
+### `backend`, `frontend` (BUILT — E18-E; `docker compose build backend frontend` proved both, see
+this task's report for the timed result)
+
+- `backend`: `backend/Dockerfile`, repo-root build context (uv workspace — `sim-backend` needs every
+  member's `pyproject.toml` to resolve against the shared `uv.lock`), no ML extras (the API process
+  never loads a model itself). Healthcheck: `GET /api/v1/health/live`. Publishes `8100`.
+- `frontend`: `frontend/Dockerfile`, runs the Vite **dev** server (`--host 0.0.0.0`), not a
+  production build — this is the local dev/demo stack. `VITE_API_PROXY_TARGET=http://backend:8100`
+  overrides the host-oriented default so the in-container proxy reaches the compose-internal
+  backend. Publishes `5173` (the repo's existing dev port).
+- Both `env_file: ../.env` with `required: false`, so `make compose-check` renders with no `.env`
+  present; a real `up` still needs one (`cp .env.example .env`).
+
+### `voice-agent` (Dockerfile written, UNVERIFIED-BUILD — no GPU work in E18, E19 builds/runs it)
 
 - Built from `workers/voice_agent/Dockerfile`; installs the uv workspace with the extras the profile
-  needs (`asr-gigaam`, `vad-silero`, `tts-piper`, …) — heavy extras are image build args so the DEV
-  image does not carry the GPU TTS stacks it will not use (D1). **`tts-qwen3` is never one of these
-  extras** (E14-B): Qwen3-TTS lives in the separate `tts_qwen3` worker process/venv below, never
-  imported by `voice-agent` itself (`backend/tools/check_imports.py`).
+  needs (`asr-gigaam`, `vad-silero`, `tts-piper`, …) as a comma-separated `VOICE_AGENT_EXTRAS` build
+  arg — heavy extras stay a build-time choice so the DEV image does not carry GPU TTS stacks it will
+  not use (D1). **`tts-qwen3` is never one of these extras** (E14-B): Qwen3-TTS lives in the
+  separate `tts_qwen3` worker process/venv below, never imported by `voice-agent` itself
+  (`backend/tools/check_imports.py`).
 - `runtime: nvidia` with the same device pinning; on DEV the GPU is used for the ASR model and, via
   the separate `tts_qwen3` worker process (not this container's own process), TTS — OWNER DECISION,
-  E14, supersedes the older "TTS runs on CPU" claim this bullet used to make. VAD still runs on CPU
-  (§1). `voice-agent` itself holds no TTS GPU memory; `cpus`/`mem_limit` on this container matter as
-  much as the GPU reservation, same as before.
+  E14. VAD still runs on CPU (§1). Does **not** hard-depend on `tts-qwen3` in compose (that service
+  is the profiled eighth; a plain `up` never starts it) — `Qwen3TTS`'s httpx client simply fails its
+  calls if unreachable, the same as any other TTS-provider failure (SPEC §39 #2).
+- Publishes no port; `SIM_VOICE_AGENT_HTTP_PORT` (default 8113, R7 of the E18 brief) is reachable
+  only from other containers on the compose network, never published to the host.
+- Healthcheck: `python -m voice_agent.cli health`, per this document's own long-standing spec —
+  **not built yet** as of E18-E (`workers/voice_agent/voice_agent/cli.py` does not exist; owned by
+  a different E18 slice). The compose healthcheck is written to match this document exactly and
+  will start passing once that CLI lands; until then the container correctly shows "unhealthy"
+  rather than silently green.
+- `restart: unless-stopped`, but **no** automatic restart loop around a FATAL state: the health key
+  `voice:health:fatal` survives a container restart (§4.3), so a restarted agent comes back FATAL
+  until a human clears it.
 
-### `tts_qwen3` worker (E14-B; not yet its own compose service — E18 adds the full seven-service
-compose, `90-tbd-epics.md` row E18)
+### `tts-qwen3` worker (E14-B; now its own compose service, E18-E — additive eighth, `profiles:
+["qwen3-tts"]`; Dockerfile written, UNVERIFIED-BUILD, same posture as `voice-agent` above)
 
 - Standalone package `workers/tts_qwen3/` (own `pyproject.toml`, own venv — `qwen-tts==0.1.1` pins
   `torch==2.14.0`, outside the `asr-gigaam` extra's `torch<2.9` ceiling, so it cannot share a venv
-  with `backend`/`voice-agent`; see `workers/tts_qwen3/README.md`). Launched with
-  `python -m tts_qwen3` (`make run-tts-qwen3`), which binds **loopback only**
-  (`--host 127.0.0.1`, hard-coded, not a flag) on `SIM_TTS_QWEN3_PORT` (default **8112** — never
-  8012/8016, the owner's other processes on this machine).
+  with `backend`/`voice-agent`; see `workers/tts_qwen3/README.md`). `workers/tts_qwen3/Dockerfile`
+  builds it self-contained (own build context, not the uv workspace).
 - `Qwen3TTS` (`backend/app/inference/tts/qwen3_tts.py`) is the only caller: an `httpx` client whose
   `base_url` is validated loopback/compose-internal at construction (SPEC §41), mirroring
   `LlamaCppClient`'s `validate_llm_base_url`.
@@ -844,33 +1095,27 @@ compose, `90-tbd-epics.md` row E18)
   (§4.2 step 4), not by this worker** — `voice-agent` polls this worker's `/health` (and drives
   `POST /warm_up`) the way it drives every other provider's `warm_up()`, then publishes
   `voice:health:tts` itself, same as every other service in §4.3's table.
-- Once E18 adds the full compose, this becomes its own service (no published host port, reachable
-  only as `http://tts-qwen3:8112` inside the network — the same "no `ports:` mapping" shape as
-  `llama-server` above); until then it is started out-of-band by whoever runs the profile
-  (`make deps-tts-qwen3 && make models-tts-qwen3 && make run-tts-qwen3`).
+- **KNOWN GAP (E18-E's report, "HLD gaps"):** `workers/tts_qwen3/tts_qwen3/__main__.py` hard-codes
+  `uvicorn.run(..., host="127.0.0.1", ...)`. Inside its own container that binds the worker to its
+  OWN loopback interface only — `voice-agent` (a different container) cannot actually reach it at
+  `http://tts-qwen3:8112` as this section promises, even though no host port is published either
+  way. Fixing the bind (e.g. an env-overridable host, defaulting to loopback for the bare-metal
+  `make run-tts-qwen3` path) is outside E18-E's file ownership (`__main__.py` belongs to E14-B's
+  slice) — flagged here rather than worked around.
 - `depends_on`: `redis` (service_started), `postgres` (service_healthy), `livekit`
   (service_started), `llama-server` (service_healthy). It tolerates llama-server being slow anyway —
   the warm-up polls (§4.2) — but the ordering keeps the logs readable.
-- Volumes: `${MODELS_DIR}:/models:ro` and `${DATA_DIR}:/data` (recordings are written here and read
-  by `backend` over the same mount, which is why both services mount it).
-- Env: `MODEL_PROFILE`, `DATABASE_URL`, `REDIS_URL`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
-  `LIVEKIT_API_SECRET`, `DATA_DIR`, `RECORDING_RETENTION_DAYS`, `REQUIRE_INFERENCE_READY`.
-  All from `.env`; none in source (SPEC §41).
-- `LIVEKIT_URL` is the URL a *server process* dials (compose-internal, e.g. `ws://livekit:7880`).
-  `LIVEKIT_PUBLIC_URL` (E11) is the URL a *browser* dials, e.g. `ws://localhost:7880`; it is what
-  `VoiceTokenResponse.livekit_url` carries, and it defaults to `LIVEKIT_URL` when unset. The
-  readiness probe and the voice-agent always use `LIVEKIT_URL`.
-- Healthcheck: `python -m voice_agent.cli health`, which returns 0 only when every
-  `voice:health:{service}` key it owns is READY or WARMING — a FATAL service makes the container
-  unhealthy and visible, without restarting it into the same OOM.
-- `restart: unless-stopped`, but **no** automatic restart loop around a FATAL state: the health key
-  `voice:health:fatal` survives a container restart (§4.3), so a restarted agent comes back FATAL
-  until a human clears it.
-- It publishes no port; it is a pure client of livekit, redis, postgres and llama-server.
+- Volumes: `${MODELS_DIR}:/models:ro` and `${DATA_DIR}:/data`.
+- Env: `SIM_TTS_QWEN3_MODEL` (variant, default `1.7B`), `SIM_TTS_QWEN3_MODEL_DIR`,
+  `SIM_TTS_QWEN3_PORT`. No secret; nothing in source (SPEC §41).
+- It publishes no port; it is a pure client of nothing (no outbound dependency besides its own
+  model files) and is itself dialled by `voice-agent`, subject to the KNOWN GAP above.
 
-Shared: every service gets `.env` via `env_file`, GPU services use the NVIDIA runtime, and the test
-stack (`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains only `postgres` and
-`redis` because the gate runs entirely on fake providers (D1, D13).
+Shared: `backend`/`voice-agent` get `.env` via `env_file` (`required: false`, so `make compose-check`
+needs no real `.env`), GPU services use the NVIDIA runtime, `${DATA_DIR}`/`${MODELS_DIR}` default to
+the repo-root `data/`/`models/` directories and are never baked into an image, and the test stack
+(`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains only `postgres` and `redis`
+because the gate runs entirely on fake providers (D1, D13).
 
 ---
 
@@ -879,11 +1124,18 @@ stack (`infra/docker-compose.test.yml`, ports 55432 / 56379, tmpfs) contains onl
 1. Every VRAM number in every profile is `null` and every profile is therefore **unmeasured**; the
    FINAL profiles are refused by `validate_vram_margin` until `benchmark_vram.py` has been run. That
    is the intended state, not an omission.
-2. `DEV_3060TI.llm.n_gpu_layers: 20` and `vram_budget_mb: 2800` are **starting points chosen to be
-   conservative on a card with ~3 GB free**, not measurements. They must be re-set from a
-   `benchmark_vram.py` run before the demo.
-3. The llama.cpp tag and the exact spelling of `--chat-template-kwargs` / `--flash-attn on` are
-   UNVERIFIED against a pinned build (§8).
+2. **Resolved, E18-A:** `DEV_3060TI.llm.n_gpu_layers: 20` and `vram_budget_mb: 2800` (both
+   never-measured starting points) are gone — OWNER DECISIONS 2026-09-21 replaced the LLM with the
+   measured Qwen3.5-2B choice (`n_gpu_layers: -1`, task reports e13-b3/e13-b4) and
+   `vram_budget_mb: 7168` assumes a dedicated card (§1, §2.2); `DEV_3060TI_SHARED` (§2.2a) is the
+   additive profile for this machine's actual shared-card state. `measured_peak_vram_mb` is still
+   `null` on `DEV_3060TI` itself (a COMBINED three-model peak has never been run) — `TODO(E19)`.
+3. **Partially resolved, E18-E:** the llama.cpp tag is now pinned
+   (`ghcr.io/ggml-org/llama.cpp:server-cuda-b11065`, confirmed to exist via `docker manifest
+   inspect`, read-only, no pull) and `infra/scripts/llama-server-entrypoint.sh` computes the §8 flag
+   line from the active profile. The exact spelling of `--chat-template-kwargs` / `--flash-attn on`
+   this specific tag's binary accepts is still UNVERIFIED — no pull was done (E18 forbids GPU work);
+   `TODO(E19)`: run it for real and reconcile.
 4. Voice ids: Piper's is now pinned and measured (`ru_RU-irina-medium`, `make models-piper`, §11's
    model table — no longer a placeholder). Qwen3-TTS's is a real vendor CustomVoice speaker name
    (`Serena`, one of the closed four `Serena`/`Ryan`/`Vivian`/`Aiden` — E14-B recon §1.1), not a

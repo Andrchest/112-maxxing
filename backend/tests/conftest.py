@@ -56,7 +56,7 @@ def test_settings() -> Settings:
         redis_url=_redis_url_for_worker(
             os.environ.get("SIM_REDIS_URL", "redis://localhost:56379/0")
         ),
-        jwt_secret=os.environ.get("SIM_JWT_SECRET", "test-only-secret"),
+        jwt_secret=os.environ.get("SIM_JWT_SECRET", "test-only-secret-padded-32-bytes!"),
         require_inference_ready=False,
         livekit_url=os.environ.get("SIM_LIVEKIT_URL", "ws://localhost:7880"),
         livekit_api_key=os.environ.get("SIM_LIVEKIT_API_KEY", "devkey"),

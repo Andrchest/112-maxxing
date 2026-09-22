@@ -1,0 +1,130 @@
+profile_name: DEV_3060TI
+description: >
+  Development profile for a DEDICATED RTX 3060 Ti 8 GB (nothing else resident on the card).
+  LLM: Qwen3.5-2B Q4_K_M on GPU, one llama-server serving both the interpreter (slot 0) and the
+  generator (slot 1) via --parallel 2 (OWNER DECISION 2026-09-21, task reports e13-b3/e13-b4).
+  ASR: GigaAM v3_e2e_ctc on GPU. TTS: Qwen3-TTS on GPU (OWNER DECISION, E14), PiperTTS (CPU) as
+  the configured fallback. For a card another process already occupies — this machine's actual
+  state today, ~4.6 GB held by the owner — use DEV_3060TI_SHARED instead (additive, not in SPEC
+  §26; see that file).
+
+hardware:
+  gpu_name_contains: "3060 Ti"
+  gpu_total_vram_mb: 8192
+  # OWNER DECISION 2026-09-21: this profile assumes a DEDICATED card (nothing else resident).
+  # DEV_3060TI_SHARED is the profile for the ~4.6 GB shared-card case this machine actually
+  # measures today (see that file's hardware.reserved_by_others_mb: 4700).
+  reserved_by_others_mb: 512
+
+vram_budget_mb: 7168
+min_vram_margin_mb: 512
+# UNMEASURED as a COMBINED peak — the DEV-only warning branch of validate_vram_margin (HLD 60
+# §2.5) applies, never the FINAL_* refusal branch. The LLM (1558 MB, --parallel 2, task report
+# e13-b4), GigaAM ASR (~1336 MiB, task report e14-d item 4) and Qwen3-TTS 0.6B (~2746 MiB, task
+# report e14-d) were each measured SEPARATELY; nobody has run all three loaded simultaneously on
+# this card. Naively summed they are ~5640 MiB, but that is an assumption, not a measurement, so
+# it is not written here as measured_peak_vram_mb (SPEC §27: no benchmark number before it is
+# measured). TODO(E19): measure the real combined peak with benchmarks/benchmark_vram.py and set
+# this field for real.
+measured_peak_vram_mb: null
+measured_at: null
+
+llm:
+  provider: llama_cpp
+  # OWNER DECISION 2026-09-21: Qwen3.5-2B Q4_K_M for BOTH the interpreter and the generator, one
+  # llama-server --parallel 2 (task report e13-b3, interpreter: p50 221 ms / p95 279 ms, 1490 MB
+  # single-slot; task report e13-b4, generator: p50 178 ms / p95 349 ms, 1558 MB with both slots
+  # loaded — the combined 2-slot figure this profile budgets against above). Ran GPU_FULL(999) in
+  # both measurements, hence n_gpu_layers: -1 below.
+  # SPEC §26's "local Qwen3-4B quantized" stays a SUPPORTED choice (commented alternative):
+  #   model_name: Qwen3-4B
+  #   model_path: /models/llm/Qwen3-4B-Q4_K_M.gguf
+  #   n_gpu_layers: 32   # partial offload — MEASURED interpret-only p50 1174 ms / p95 3718 ms,
+  #                      # task report e13-b3; its generator call OOM'd under --parallel 2 (task
+  #                      # report e13-b4), so it is not this profile's default.
+  model_name: Qwen3.5-2B
+  model_path: /models/llm/Qwen3.5-2B-Q4_K_M.gguf
+  quantization: Q4_K_M
+  base_url: http://llama-server:8080/v1
+  n_ctx: 4096
+  n_gpu_layers: -1
+  n_batch: 512
+  n_ubatch: 256
+  parallel_slots: 2
+  flash_attention: "on"
+  kv_cache_type: q8_0
+  # 138 / 80 — E13-B3 / E13-B4 measured p99 completion-token counts + 25% headroom, across the
+  # eval set's 4-model run (see backend/app/config/settings.py's llm_interpreter_max_tokens /
+  # llm_generator_max_tokens comments for the exact arithmetic); reused here rather than the
+  # illustrative 200 of docs/hld/60-inference-ops.md §2.1's summary table, which predates the
+  # measurement and is not itself a measured number.
+  max_response_tokens: 80
+  interpreter_max_tokens: 138
+  request_timeout_ms: 3000
+  thinking_enabled: false
+
+asr:
+  provider: gigaam
+  model_version: v3_e2e_ctc
+  model_path: /models/asr/gigaam-v3-e2e-ctc
+  device: cuda
+  compute_type: float16
+  sample_rate: 16000
+
+tts:
+  provider: qwen3_tts             # OWNER DECISION (E14): GPU default for every profile, DEV incl.
+  # BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the separate tts_qwen3 worker process (own venv) appends
+  # the configured variant's own subdirectory (E14-D) — never opened by the backend/voice-agent.
+  model_path: /models/tts/qwen3-tts
+  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
+  device: cuda
+  output_sample_rate: 24000
+  max_chunk_ms: 20
+  fallback_provider: piper        # PiperTTS, CPU — the configured fallback (D9)
+  fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  fallback_voice_id: ru_RU-irina-medium
+  fallback_output_sample_rate: 22050
+  # ADDITIVE (E18-A, R2), maps to SIM_TTS_QWEN3_MODEL (read directly by the separate tts_qwen3
+  # worker process, not through this repo's Settings — see app.config.profile.TtsProfile's
+  # docstring): "0.6B" MEASURED peak ~2746 MiB, RTF mean 0.831 on this shared card (task report
+  # e14-d); "1.7B" is the owner's evaluated checkpoint but is still NOT_RUN on this machine (task
+  # report e14-d §10 open item 6, docs/hld/60-inference-ops.md §10). null = the worker's own
+  # default (DEFAULT_MODEL_VARIANT = "1.7B", workers/tts_qwen3/tts_qwen3/server.py) until a real
+  # combined-load measurement (E19) or a later owner decision sets one explicitly.
+  model_variant: null
+
+vad:
+  provider: silero
+  model_path: /models/vad/silero_vad.onnx
+  device: cpu
+
+voice_turn:
+  speech_start_threshold: 0.55
+  speech_end_threshold: 0.35
+  speech_start_min_ms: 96
+  endpoint_silence_ms: 300
+  pre_roll_ms: 300
+  barge_in_min_speech_ms: 120
+  max_turn_ms: 30000
+  min_turn_ms: 200
+  vad_frame_ms: 32
+  outbound_queue_ms: 200
+  tts_chunk_ms: 20
+  partial_asr_enabled: true
+  partial_interval_ms: 500
+  reconnect_grace_s: 30   # ADDITIVE (E18-A, R6): HLD 60 §6 row 5 / SPEC §39 item 5 default
+
+warmup:
+  enabled: true
+  asr_sample_path: /models/warmup/warmup_ru.wav
+  llm_prompt: "Скажи одно слово."
+  tts_text: "Проверка."
+  timeout_ms: 60000
+
+latency_targets:
+  p50_ms: 1500
+  p95_ms: 2500
+
+health:
+  failure_threshold: 3
+  rewarm_interval_s: 30

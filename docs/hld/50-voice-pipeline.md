@@ -1632,6 +1632,29 @@ The backend serves `/api/v1/sessions/{id}/audio/{audio_segment_id}` with HTTP Ra
 - Nothing leaves the machine: recordings, transcripts, cards, scoring and models stay local
   (SPEC §41).
 
+Implemented (E18-D): one use case, `app.application.recording.purge_recordings.PurgeRecordings`,
+behind both front doors named above — the CLI (`app.cli.purge_recordings`) and `purgeRecordings`
+(`POST /api/v1/admin/recordings/purge`, ADMIN only, `routers/admin.py`) — so the retention rule is
+written once. Notes the design sketch above leaves implicit:
+
+- a retention window of `0` **or negative** never purges (an explicit `--older-than-days` override
+  generalises the same "0 = never" reading `RECORDING_RETENTION_DAYS` already has);
+- `openapi.yaml`'s `PurgeRecordingsRequest.session_id` documents itself as restricting the purge to
+  one session with `reason = MANUAL_REQUEST`; a request with no `session_id` is the routine sweep,
+  `reason = RETENTION_WINDOW`. Both still apply the retention-window filter — naming a session does
+  not bypass it. `ADMIN_DELETE` (`20-db-schema.md` §20.6's third `CHECK` member) is a future,
+  no-retention-check deletion flow this slice does not implement;
+- one physical WAV can carry more than one segment's slice (§9.1's `byte_offset`/`byte_length`
+  packing); whichever candidate is processed first deletes it and every later one that names the
+  same path is recorded with `bytes = 0` — still a purged, audited row, never a skipped one;
+- `recording_purge_audit.actor_type` is `ActorType` (`TRAINEE|INSTRUCTOR|SIMULATION|MODEL|SYSTEM`,
+  no `ADMIN` member) even though the API route is ADMIN-only; the use case records `INSTRUCTOR` for
+  any authenticated caller and `SYSTEM` for the CLI (see that module's own docstring, "HLD gaps");
+- tests: `backend/tests/integration/recording/test_purge_recordings.py` (dry-run, idempotency, the
+  missing-file case, `RECORDING_RETENTION_DAYS=0`, no `session_events` row, and a `rescoreSession`
+  checksum identical before/after) and `backend/tests/api/admin/test_purge_recordings.py` (roles,
+  the default body, the deleted file).
+
 ---
 
 ## 10. Profile bindings for the voice path

@@ -8,6 +8,7 @@ import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import {
   createSession,
+  getHealthReady,
   listScenarios,
   listScenarioVersions,
   listUsers,
@@ -110,6 +111,25 @@ export function CreateSessionForm() {
     queryFn: () => listUsers({ role: 'TRAINEE' }),
   });
 
+  // R9 (SPEC §37): the Start button is disabled unless inference readiness is either satisfied
+  // (`overall === 'READY'`) or not required at all. `HealthReadyResponse.require_inference_ready`
+  // (openapi/schema.d.ts) is the direct signal for "not required" — no HLD gap here, contrary to
+  // the brief's contingency reading, which only applies if that field were absent. The backend 503
+  // `INFERENCE_NOT_READY` stays the real enforcement; this is only the UI affordance SPEC §37
+  // separately demands.
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health.ready(),
+    queryFn: getHealthReady,
+    refetchInterval: 5000,
+  });
+  const readinessSatisfied =
+    healthQuery.data !== undefined &&
+    (healthQuery.data.require_inference_ready === false || healthQuery.data.overall === 'READY');
+  const notReadyComponents = (healthQuery.data?.components ?? [])
+    .filter((component) => healthQuery.data!.required_components.includes(component.component))
+    .filter((component) => component.status !== 'READY')
+    .map((component) => component.component);
+
   const createMutation = useMutation({
     mutationFn: createSession,
     onSuccess: (detail) => setSession(detail),
@@ -175,7 +195,8 @@ export function CreateSessionForm() {
     participants.length > 0 &&
     participants.every((row) => row.userId.trim() !== '') &&
     !createMutation.isPending;
-  const canStart = session !== null && session.state === 'READY' && !startMutation.isPending;
+  const canStart =
+    session !== null && session.state === 'READY' && !startMutation.isPending && readinessSatisfied;
 
   return (
     <Card className="max-w-xl">
@@ -289,6 +310,12 @@ export function CreateSessionForm() {
         {session ? (
           <p className="text-xs text-muted-foreground" data-slot="session-state">
             {t('instructorSessionStateLabel')}: {session.state}
+          </p>
+        ) : null}
+        {session && session.state === 'READY' && !readinessSatisfied ? (
+          <p role="alert" className="text-sm text-destructive" data-slot="start-not-ready-reason">
+            {t('instructorStartNotReadyReason')}
+            {notReadyComponents.length > 0 ? `: ${notReadyComponents.join(', ')}` : null}
           </p>
         ) : null}
       </CardContent>

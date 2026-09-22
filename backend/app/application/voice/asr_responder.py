@@ -39,6 +39,12 @@ from datetime import datetime
 from app.application.ports.asr import ASRProvider, AsrResult
 from app.application.ports.clock import Clock
 from app.application.ports.dialogue_turn_repository import DialogueTurnUpsert
+from app.application.ports.inference_guard import (
+    STAGE_ASR,
+    InferenceGuard,
+    NoOpInferenceGuard,
+    is_out_of_memory,
+)
 from app.application.ports.metrics_recorder import (
     InferenceMetric,
     InferenceStage,
@@ -70,6 +76,9 @@ logger = logging.getLogger(__name__)
 ASR_COMPONENT = "ASR"
 #: `MODEL_ERROR.error_code` when the provider exceeded `asr_timeout_ms`.
 ERROR_CODE_TIMEOUT = "TIMEOUT"
+#: `60-inference-ops.md` §4.4: an allocation failure is reported as `OOM` and is **not**
+#: recoverable — the service is FATAL and will not be re-warmed in this process.
+ERROR_CODE_OOM = "OOM"
 
 SessionStageResolver = Callable[[SessionId], Awaitable[RoleStageId | None]]
 """Which `role_stages` row a turn belongs to — `dialogue_turns.role_stage_id` is `NOT NULL`."""
@@ -124,6 +133,7 @@ class AsrTurnResponder:
         stage_resolver: SessionStageResolver,
         timeout_ms: int,
         next_stage: TranscribedTurnResponder | None = None,
+        guard: InferenceGuard | None = None,
     ) -> None:
         self._asr = asr
         self._metrics = metrics
@@ -131,6 +141,9 @@ class AsrTurnResponder:
         self._config = config
         self._stage_resolver = stage_resolver
         self._timeout_ms = timeout_ms
+        #: §4.4's `guard_inference("ASR")`. The default observes nothing (D13), so this class
+        #: behaves exactly as it did before E18 in every process without a health registry.
+        self._guard: InferenceGuard = guard if guard is not None else NoOpInferenceGuard()
         # E13's `DialogueResponder` (interpreter → Fact Access Gate → generator → validator) is
         # what goes here; with `None` the turn stops after `ASR_FINAL`. SPEC §16 fixes the stage
         # order, and a responder that invented a caller answer would be exactly the "LLM is the
@@ -152,9 +165,14 @@ class AsrTurnResponder:
         started_at = self._clock.now()
         started_ms = self._clock.monotonic_ms()
         try:
-            result = await asyncio.wait_for(
-                self._asr.transcribe(turn.audio, self._config.sample_rate, request_id=request_id),
-                timeout=self._timeout_ms / MS_PER_S,
+            result = await self._guard.run(
+                STAGE_ASR,
+                lambda: asyncio.wait_for(
+                    self._asr.transcribe(
+                        turn.audio, self._config.sample_rate, request_id=request_id
+                    ),
+                    timeout=self._timeout_ms / MS_PER_S,
+                ),
             )
         except asyncio.CancelledError:
             # A newer turn arrived: the trainee is talking again (§3.7). Record it and stop.
@@ -184,6 +202,11 @@ class AsrTurnResponder:
             )
             return
         except Exception as exc:
+            # §4.4: on an OOM the guard has already taken `asr` to FATAL and latched
+            # `voice:health:fatal`. Here the *turn* ends exactly as any other ASR failure ends —
+            # no `ASR_FINAL`, no `transcript_segments` row, no state change — and only the
+            # `MODEL_ERROR` differs: `OOM`, and not recoverable.
+            oom = is_out_of_memory(exc)
             await self._fail(
                 context,
                 turn,
@@ -192,9 +215,9 @@ class AsrTurnResponder:
                 started_ms=started_ms,
                 duration_ms=duration_ms,
                 status="ERROR",
-                error_code=type(exc).__name__,
+                error_code=ERROR_CODE_OOM if oom else type(exc).__name__,
                 message=str(exc),
-                recoverable=True,
+                recoverable=not oom,
             )
             return
 

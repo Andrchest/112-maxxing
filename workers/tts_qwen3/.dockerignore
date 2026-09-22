@@ -1,0 +1,7 @@
+# Build-context ignore for workers/tts_qwen3/Dockerfile (context: workers/tts_qwen3/ itself — this
+# package is deliberately NOT a workspace member, see its README.md).
+.venv
+__pycache__
+.pytest_cache
+tests
+*.pyc

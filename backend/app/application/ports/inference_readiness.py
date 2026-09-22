@@ -8,8 +8,10 @@ asking the inference health registry, which is technology, so it is a port.
 is the calling use case's decision, and the use case receives the flag as a constructor argument —
 the application layer never imports `app.config`.
 
-TODO(E18): the real adapter over the inference health registry. E5 ships only
-`app.application.testing.fakes.FakeInferenceReadiness`.
+The real adapter is `app.infrastructure.health.RedisInferenceReadiness` (E18-B): every one of
+`llm`, `asr`, `tts`, `vad` must report `READY` in its `voice:health:{service}` heartbeat
+(`60-inference-ops.md` §4.3). `app.application.testing.fakes.FakeInferenceReadiness` stays as the
+test fake that flips the verdict without a voice-agent.
 """
 
 from __future__ import annotations

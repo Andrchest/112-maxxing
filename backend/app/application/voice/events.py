@@ -276,6 +276,12 @@ def model_error_event(
             "message": message,
             "recoverable": recoverable,
             "turn_index": turn_index,
+            # E18-C: `60-inference-ops.md` §4.4 spells the same field `error_kind`
+            # (`MODEL_ERROR {..., error_kind: "OOM", recoverable: false}`) while §10.13's
+            # catalogued key is `error_code`. Both are carried, the catalogued one authoritative —
+            # the same resolution this module already made for `component` vs `stage`, so a reader
+            # of either document finds the key it was promised. See "HLD gaps" in E18-C's report.
+            "error_kind": error_code,
             "turn_id": None if turn_id is None else str(turn_id),
             # E14: `50-voice-pipeline.md` §6/§19 name the failing step a *stage*, while §10.13's
             # catalogued key is `component`. Both are carried, the catalogued one authoritative —

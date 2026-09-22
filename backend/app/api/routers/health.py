@@ -25,7 +25,7 @@ from collections.abc import Sequence
 
 from fastapi import APIRouter, Response
 
-from app.api.container import HEALTH_COMPONENTS, REQUIRED_HEALTH_COMPONENTS
+from app.api.container import HEALTH_COMPONENTS, REQUIRED_HEALTH_COMPONENTS, Container
 from app.api.deps import ContainerDep
 from app.api.schemas.health import (
     ComponentHealthSchema,
@@ -79,12 +79,28 @@ async def get_health_ready(
     (`app.application.ports.health_probe`), so a component that is down makes this endpoint report
     it — it never makes this endpoint fail.
     """
-    readings = await asyncio.gather(*(probe.check() for probe in container.health_probes))
-    overall = overall_status(readings, required=REQUIRED_HEALTH_COMPONENTS)
-    if overall is not HealthStatus.READY:
+    snapshot = await readiness_snapshot(container)
+    if snapshot.overall is not HealthStatus.READY:
         response.status_code = 503
+    return snapshot
+
+
+async def readiness_snapshot(container: Container) -> HealthReadyResponseSchema:
+    """Probe every component and fold the readings into `HealthReadyResponse` (no status code).
+
+    Lives here and is reused by `clearInferenceFatal`, whose contract response *is* "the readiness
+    snapshot after clearing" — one fold, one precedence rule, one answer, so the admin operation
+    and `/health/ready` can never disagree about what `overall` means (E18-B).
+
+    `model_profile` is the **active profile's name**: `app.config.profile.load_profile` refuses a
+    file whose `profile_name` differs from its filename, so `settings.model_profile` and
+    `active_profile(settings).profile_name` are the same string by construction — and reading it
+    off `Settings` keeps a YAML read out of a health endpoint that must answer while the box is
+    degraded.
+    """
+    readings = await asyncio.gather(*(probe.check() for probe in container.health_probes))
     return HealthReadyResponseSchema(
-        overall=overall,
+        overall=overall_status(readings, required=REQUIRED_HEALTH_COMPONENTS),
         components=_ordered(readings),
         required_components=list(REQUIRED_HEALTH_COMPONENTS),
         require_inference_ready=container.settings.require_inference_ready,

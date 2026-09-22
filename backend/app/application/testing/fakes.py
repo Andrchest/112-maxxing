@@ -133,7 +133,7 @@ class InMemoryEventPublisher:
 class FakeInferenceReadiness:
     """An `InferenceReadiness` whose verdict a test sets.
 
-    TODO(E18): the real adapter over the inference health registry (D8). E5 ships this fake only,
+    The real adapter is `app.infrastructure.health.RedisInferenceReadiness` (E18-B, D8); this fake
     so `require_inference_ready=True` is exercisable without an inference stack.
     """
 

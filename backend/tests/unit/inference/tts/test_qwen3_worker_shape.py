@@ -102,3 +102,27 @@ async def test_default_port_and_vendor_speakers_match_the_brief() -> None:
     assert server.DEFAULT_PORT == 8112
     assert server.DEFAULT_PORT not in (8000, 8001, 8012, 8016)
     assert server.VENDOR_SPEAKERS == ("Serena", "Ryan", "Vivian", "Aiden")
+
+
+async def test_warm_up_generates_once_and_reports_the_audio_it_threw_away() -> None:
+    """E18-C, HLD 60 §4.2 step 4: `/warm_up` runs one **real** generation and discards the audio.
+
+    The gate's copy of the assertion (the fuller one, with call-argument inspection, is in
+    `workers/tts_qwen3/tests/test_server.py`): what matters here is that the shape `Qwen3TTS.
+    warm_up` relies on — HTTP 200 — now also carries proof that synthesis actually ran, so a
+    regression to a load-only warm-up fails under plain `make gate`.
+    """
+    async with await _client() as client:
+        response = await client.post("/warm_up")
+        health = (await client.get("/health")).json()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["loaded"] is True
+    assert body["output_audio_ms"] > 0
+    assert health["loaded"] is True
+    assert server.WARMUP_TEXT_RU and server.WARMUP_SPEAKER in server.VENDOR_SPEAKERS
+
+
+def test_the_bind_host_default_is_loopback() -> None:
+    """SPEC §41: the host run stays loopback; only a container (no published port) overrides it."""
+    assert server.DEFAULT_HOST == "127.0.0.1"

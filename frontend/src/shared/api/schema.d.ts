@@ -1181,7 +1181,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Clear a latched FATAL inference state (INSTRUCTOR / ADMIN).
+         * Clear a latched FATAL inference state (ADMIN).
          * @description Deletes the Redis key `voice:health:fatal`, which is otherwise never expired so that a
          *     restart loop cannot make a fatal condition look transient
          *     (`docs/hld/60-inference-ops.md` §4.3). Touches no session state.
@@ -2287,7 +2287,7 @@ export interface components {
             /** @description `REQUIRE_INFERENCE_READY` (default true; tests set it false explicitly). */
             require_inference_ready: boolean;
             /** @enum {string} */
-            model_profile: "DEV_3060TI" | "FINAL_3080TI_12GB" | "FINAL_3080TI_16GB";
+            model_profile: "DEV_3060TI" | "DEV_3060TI_SHARED" | "FINAL_3080TI_12GB" | "FINAL_3080TI_16GB";
         };
         PurgeRecordingsRequest: {
             /**

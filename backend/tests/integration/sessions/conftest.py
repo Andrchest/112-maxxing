@@ -87,7 +87,8 @@ def ids() -> SequentialIdGenerator:
 
 @pytest.fixture
 def inference() -> FakeInferenceReadiness:
-    """TODO(E18) ships the real adapter; E5 exercises the flag through this fake."""
+    """The real adapter is `RedisInferenceReadiness`; this suite exercises the flag through the
+    fake, so it needs no voice-agent heartbeat in Redis."""
     return FakeInferenceReadiness(ready=True)
 
 

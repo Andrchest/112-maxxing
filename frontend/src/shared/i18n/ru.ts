@@ -69,6 +69,8 @@ export const ru = {
   instructorSessionModeMultiTrainee: 'Несколько стажёров',
   instructorSessionModeAssessment: 'Аттестация',
   instructorSessionStateLabel: 'Состояние',
+  // -- instructor: Start-button readiness gate (E18-D, SPEC §37/R9) ---------
+  instructorStartNotReadyReason: 'Начало занятия недоступно: не готовы модельные сервисы',
 
   // -- instructor: trainee picker (E8-B, resolves TODO(E8-B)) ---------------
   instructorSelectTraineePlaceholder: 'Выберите стажёра',

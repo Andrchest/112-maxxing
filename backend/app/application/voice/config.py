@@ -2,10 +2,10 @@
 
 SPEC §17 is explicit: "Make this configuration, not a hard-coded magic value." So the thresholds,
 the sustain windows, the endpoint silence, the pre-roll and the queue depths all live here, are
-loaded from `Settings` (and, from E12, overlaid by the active model profile's `voice_turn.*`
-block, HLD `60-inference-ops.md` §2), and the `TurnDetector` reads them off this object. A unit
-test enforces the other half of that sentence: `turn_detector.py` contains no numeric literal
-other than `0` and `1`.
+loaded from `Settings` — overlaid by the active model profile's `voice_turn.*` block before this
+function ever sees it (`app.config.profile.apply_profile`, E18-A, HLD `60-inference-ops.md` §2) —
+and the `TurnDetector` reads them off this object. A unit test enforces the other half of that
+sentence: `turn_detector.py` contains no numeric literal other than `0` and `1`.
 
 Validation at load is §4.1's list, verbatim:
 
@@ -113,6 +113,11 @@ class VoiceTurnConfig(BaseModel):
     sample_rate: int = Field(default=16_000, ge=8_000, le=48_000)
     """The rate the `Resampler` produces and every downstream stage assumes (§3.1, §9.1)."""
 
+    reconnect_grace_s: int = Field(default=30, ge=0, le=600)
+    """ADDITIVE (E18-A, R6): HLD 60 §6 row 5 / SPEC §39 item 5. A LiveKit disconnect longer than
+    this ends the call (`CALL_ENDED{reason:"TRANSPORT_LOST"}`); the timer that reads it lives in
+    the application pipeline (E18-C), not here — this object only carries the configured number."""
+
     @model_validator(mode="before")
     @classmethod
     def _round_sustain_windows_up(cls, data: Any) -> Any:
@@ -187,9 +192,11 @@ class VoiceTurnConfig(BaseModel):
 def voice_turn_config_from_settings(settings: Settings) -> VoiceTurnConfig:
     """Build the config from the `SIM_VOICE_*` environment block (§4.1, D9).
 
-    TODO(E18): the active model profile's `voice_turn.*` block (HLD `60-inference-ops.md` §2)
-    overlays these values once `app.config.profile.ModelProfile` exists — profiles are E18's
-    epic. The env block is the base layer and stays the source for a process without a profile.
+    The active model profile's `voice_turn.*` block (HLD `60-inference-ops.md` §2) has already
+    overlaid these `Settings` fields by the time a caller reaches this function
+    (`app.config.profile.apply_profile`, called once at process start-up, E18-A) — this function
+    itself needs no profile awareness; the env block stays the source for a process with no
+    profile loaded (e.g. a unit test building `Settings` directly).
     """
     return VoiceTurnConfig(
         speech_start_threshold=settings.voice_speech_start_threshold,
@@ -207,4 +214,5 @@ def voice_turn_config_from_settings(settings: Settings) -> VoiceTurnConfig:
         partial_asr_enabled=settings.voice_partial_asr_enabled,
         partial_interval_ms=settings.voice_partial_interval_ms,
         sample_rate=settings.voice_sample_rate,
+        reconnect_grace_s=settings.voice_reconnect_grace_s,
     )

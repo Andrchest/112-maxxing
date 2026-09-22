@@ -1,0 +1,9 @@
+# Build-context ignore for frontend/Dockerfile (context: frontend/ itself).
+node_modules
+dist
+.vite
+coverage
+**/*.log
+.env
+.env.*
+!.env.example

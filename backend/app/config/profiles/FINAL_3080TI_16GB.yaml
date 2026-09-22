@@ -1,0 +1,92 @@
+profile_name: FINAL_3080TI_16GB
+description: >
+  Demo profile for an RTX 3080 Ti 16 GB. Identical to FINAL_3080TI_12GB except for the larger VRAM
+  budget/margin, more parallel slots, and a TTS provider still open per docs/hld/60-inference-ops.md
+  §2.4 ("or qwen3_tts; whichever the TTS benchmark prefers" — chatterbox has no provider
+  implementation in workers/voice_agent/voice_agent/providers.py today; see this task's report,
+  "HLD gaps"). No number in this file has been measured on a 3080 Ti; that measurement is E19's job.
+
+hardware:
+  gpu_name_contains: "3080 Ti"
+  gpu_total_vram_mb: 16384
+  reserved_by_others_mb: 0
+
+vram_budget_mb: 15000
+min_vram_margin_mb: 1536
+measured_peak_vram_mb: null      # must be measured; null is REFUSED for FINAL_* profiles (HLD 60 §2.5)
+measured_at: null
+
+llm:
+  provider: llama_cpp
+  model_name: Qwen3-8B
+  model_path: /models/llm/Qwen3-8B-Q4_K_M.gguf
+  quantization: Q4_K_M
+  base_url: http://llama-server:8080/v1
+  n_ctx: 4096
+  n_gpu_layers: -1
+  n_batch: 1024
+  n_ubatch: 512
+  parallel_slots: 4
+  flash_attention: "on"
+  kv_cache_type: f16
+  max_response_tokens: 80
+  interpreter_max_tokens: 138
+  request_timeout_ms: 3000
+  thinking_enabled: false
+
+asr:
+  provider: gigaam
+  model_version: v3_e2e_ctc
+  model_path: /models/asr/gigaam-v3-e2e-ctc
+  device: cuda
+  compute_type: float16
+  sample_rate: 16000
+
+tts:
+  provider: chatterbox            # or qwen3_tts; whichever the TTS benchmark prefers (HLD 60 §2.4)
+  model_path: /models/tts/chatterbox-multilingual
+  voice_id: ru_female_calm        # UNVERIFIED (HLD 60 §2.4)
+  device: cuda
+  output_sample_rate: 24000
+  max_chunk_ms: 20
+  fallback_provider: piper
+  fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  fallback_voice_id: ru_RU-irina-medium
+  fallback_output_sample_rate: 22050
+  model_variant: null
+
+vad:
+  provider: silero
+  model_path: /models/vad/silero_vad.onnx
+  device: cpu
+
+voice_turn:
+  speech_start_threshold: 0.55
+  speech_end_threshold: 0.35
+  speech_start_min_ms: 96
+  endpoint_silence_ms: 300
+  pre_roll_ms: 300
+  barge_in_min_speech_ms: 120
+  max_turn_ms: 30000
+  min_turn_ms: 200
+  vad_frame_ms: 32
+  outbound_queue_ms: 200
+  tts_chunk_ms: 20
+  partial_asr_enabled: true
+  partial_interval_ms: 500
+  reconnect_grace_s: 30
+
+warmup:
+  enabled: true
+  asr_sample_path: /models/warmup/warmup_ru.wav
+  llm_prompt: "Скажи одно слово."
+  tts_text: "Проверка."
+  timeout_ms: 60000
+
+latency_targets:
+  p50_ms: 1200
+  p95_ms: 2000
+
+health:
+  failure_threshold: 3
+  rewarm_interval_s: 30

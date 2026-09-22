@@ -51,6 +51,8 @@ from app.application.dds.stage_automation import DdsStageAutomation
 from app.application.handoff.complete_operator_stage import CompleteOperatorStage
 from app.application.handoff.continue_to_next_stage import ContinueToNextStage
 from app.application.handoff.create_handoff import CreateHandoff
+from app.application.inference_health.health_changed import AppendInferenceHealthChanged
+from app.application.inference_health.ports import InferenceFatalLatch
 from app.application.instructor.get_overview import GetInstructorSessionOverview
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
@@ -82,6 +84,7 @@ from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
 from app.application.ports.voice_token_service import VoiceTokenService
 from app.application.realtime.event_stream import SessionEventStream
 from app.application.realtime.list_events import ListSessionEvents
+from app.application.recording.purge_recordings import PurgeRecordings
 from app.application.reports.assemble_report import GetSessionReport
 from app.application.reports.explanation.generate_explanation import GenerateExplanation
 from app.application.reports.explanation.get_explanation import GetExplanation
@@ -106,6 +109,7 @@ from app.application.sessions.start_session import StartSession
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
 from app.application.voice_token.create_voice_token import CreateVoiceToken
+from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
@@ -115,10 +119,14 @@ from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
 from app.infrastructure.auth.jwt_token_service import JwtTokenService
 from app.infrastructure.clock import SystemClock
 from app.infrastructure.health import (
+    INFERENCE_SERVICES,
     LiveKitHealthProbe,
-    PlaceholderHealthProbe,
     PostgresHealthProbe,
     RedisHealthProbe,
+    RedisInferenceFatalLatch,
+    RedisInferenceReadiness,
+    VoiceHealthProbe,
+    VoiceHealthSubscriber,
 )
 from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
@@ -172,6 +180,7 @@ class Container:
         publisher: EventPublisher | None = None,
         unit_of_work: UnitOfWorkFactory | None = None,
         inference: InferenceReadiness | None = None,
+        inference_fatal: InferenceFatalLatch | None = None,
         runner_lock: RunnerLock | None = None,
         runner: SimulationRunner | None = None,
         hasher: PasswordHasher | None = None,
@@ -213,7 +222,7 @@ class Container:
             else unit_of_work_factory(self.session_factory, self.clock, self.publisher)
         )
         self.inference: InferenceReadiness = (
-            inference if inference is not None else _PlaceholderInferenceReadiness()
+            inference if inference is not None else RedisInferenceReadiness(self.redis)
         )
         self.runner_lock: RunnerLock = (
             runner_lock if runner_lock is not None else RedisRunnerLock(self.redis)
@@ -279,6 +288,26 @@ class Container:
             else RedisCallStateCache(self.redis, settings.session_cache_ttl_s)
         )
         # -- end E11-B -------------------------------------------------------------------------
+        #
+        # -- E18-B: the inference-health surface (D8, HLD 60 §4.3, SPEC §37, §39) ---------------
+        #
+        # Two more ports, appended at the end of `__init__` so nothing above them moves:
+        #
+        # * the `voice:health:fatal` latch `clearInferenceFatal` deletes. Clearing it publishes a
+        #   transition on `voice:health`, which is how the operation's `x-emits`
+        #   (`INFERENCE_HEALTH_CHANGED`) is honoured — the subscriber below does the appending;
+        # * the `voice:health` subscriber itself. The lifespan starts and stops it next to the
+        #   `SimulationRunner` and skips it wherever the runner is skipped, so an API test never
+        #   leaves a pub/sub task behind.
+        self.inference_fatal: InferenceFatalLatch = (
+            inference_fatal if inference_fatal is not None else RedisInferenceFatalLatch(self.redis)
+        )
+        self.append_inference_health_changed = AppendInferenceHealthChanged(
+            self.unit_of_work, self.clock
+        )
+        self.inference_health: VoiceHealthSubscriber = VoiceHealthSubscriber(
+            self.redis, self.append_inference_health_changed.from_message
+        )
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -375,6 +404,17 @@ class Container:
     def recordings_dir(self) -> Path:
         """`DATA_DIR/recordings` (D9) — the one directory `getAudioSegment` may read from."""
         return Path(self.settings.data_dir) / "recordings"
+
+    # -- E18-D: retention purge (§9.2, D9, R8) ---------------------------------------------------
+
+    def purge_recordings(self) -> PurgeRecordings:
+        """`purgeRecordings` — the same use case `python -m app.cli purge_recordings` calls."""
+        return PurgeRecordings(
+            self.unit_of_work,
+            self.clock,
+            recordings_dir=self.recordings_dir,
+            default_retention_days=self.settings.recording_retention_days,
+        )
 
     # -- E7-C: the realtime read path (§40.1-§40.6) ---------------------------------------------
     #
@@ -682,19 +722,17 @@ class Container:
     # -- internals -----------------------------------------------------------------------------
 
     def _default_probes(self) -> list[HealthProbe]:
-        """One probe per `ComponentHealth.component`, in report order.
+        """One probe per `ComponentHealth.component`, in report order — all seven real (E18-B).
 
-        `postgres` and `redis` are real; the other five report `NOT_READY` with the owing epic —
-        see `app.infrastructure.health` for why that is the honest reading and not a stub.
+        `llm`, `asr`, `tts` and `vad` read the `voice:health:{service}` heartbeat the voice-agent
+        writes (HLD 60 §4.3); a missing key is `NOT_READY`, never `READY`, so a box with no
+        voice-agent still reports the truth and `startSession` still refuses.
         """
         return [
             PostgresHealthProbe(self.engine),
             RedisHealthProbe(self.redis),
             LiveKitHealthProbe(self.settings.livekit_url),
-            PlaceholderHealthProbe("llm", "E18"),
-            PlaceholderHealthProbe("asr", "E18"),
-            PlaceholderHealthProbe("tts", "E18"),
-            PlaceholderHealthProbe("vad", "E18"),
+            *(VoiceHealthProbe(self.redis, service) for service in INFERENCE_SERVICES),
         ]
 
 
@@ -719,21 +757,6 @@ class _UowScoreReportReader:
             return report
 
 
-class _PlaceholderInferenceReadiness:
-    """`InferenceReadiness` while no inference stack exists (D8).
-
-    It answers `False`, which is what makes `REQUIRE_INFERENCE_READY=true` refuse `startSession`
-    with `503 INFERENCE_NOT_READY` on a box that has no voice-agent — the documented behaviour.
-    `REQUIRE_INFERENCE_READY=false` never consults it at all (`StartSession._inference_ready`).
-
-    TODO(E18): the real adapter over the `voice:health:{service}` keys of §40.6.
-    """
-
-    async def is_ready(self) -> bool:
-        """`False`: nothing can report `READY` until the voice-agent exists."""
-        return False
-
-
 def _call_transport_status(settings: Settings, redis: Redis) -> CallTransportStatus:
     """The `CallTransportStatus` adapter `SIM_CALL_TRANSPORT` names (D9)."""
     transport = settings.call_transport.lower()
@@ -748,8 +771,18 @@ def _call_transport_status(settings: Settings, redis: Redis) -> CallTransportSta
 
 
 def build_container(settings: Settings | None = None) -> Container:
-    """The production container: every port on its real adapter."""
-    return Container(settings if settings is not None else get_settings())
+    """The production container: every port on its real adapter.
+
+    Overlays the active model profile onto `settings` first (`app.config.profile.apply_profile`,
+    HLD 60 §2, E18-A) and validates its VRAM margin. `ProfileRefused` (HLD 60 §2.5, SPEC §26) is
+    left to propagate: an uncaught exception here, at process start-up before any port is built,
+    is what gives `make run-api`/`uvicorn ... --factory` its non-zero exit code — it is never
+    caught and downgraded to a warning, and no env var disables it.
+    """
+    resolved_settings = settings if settings is not None else get_settings()
+    profile = active_profile(resolved_settings)
+    validate_vram_margin(profile)
+    return Container(apply_profile(resolved_settings, profile))
 
 
 #: Kept so `Callable[[], Container]` reads as a named thing where a factory is passed around.
