@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "benchmark": "e2e",
+  "status": "OK",
+  "profile": "DEV_3060TI_SHARED",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T10:00:43.532+00:00",
+  "finished_at": "2026-09-22T10:14:45.123+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI_SHARED",
+    "asr": {
+      "provider": "gigaam",
+      "model_version": "v3_e2e_ctc",
+      "model_path": "/models/asr/gigaam-v3-e2e-ctc",
+      "device": "cpu",
+      "compute_type": "float32",
+      "sample_rate": 16000
+    },
+    "tts": {
+      "provider": "piper",
+      "model_path": "/models/tts/piper/ru_RU-irina-medium.onnx",
+      "voice_id": "ru_RU-irina-medium",
+      "device": "cpu",
+      "output_sample_rate": 22050,
+      "max_chunk_ms": 20,
+      "fallback_provider": "none",
+      "fallback_model_path": null,
+      "fallback_voice_id": null,
+      "fallback_output_sample_rate": null,
+      "model_variant": null
+    },
+    "voice_turn": {
+      "speech_start_threshold": 0.55,
+      "speech_end_threshold": 0.35,
+      "speech_start_min_ms": 96,
+      "endpoint_silence_ms": 300,
+      "pre_roll_ms": 300,
+      "barge_in_min_speech_ms": 120,
+      "max_turn_ms": 30000,
+      "min_turn_ms": 200,
+      "vad_frame_ms": 32,
+      "outbound_queue_ms": 200,
+      "tts_chunk_ms": 20,
+      "partial_asr_enabled": true,
+      "partial_interval_ms": 500,
+      "reconnect_grace_s": 30
+    },
+    "latency_targets": {
+      "p50_ms": 1500,
+      "p95_ms": 2500
+    },
+    "provider_mode": "real",
+    "transport": "livekit",
+    "scenario": "apartment-fire",
+    "turns_file": "benchmarks/data/e2e/turns.jsonl",
+    "dialogue_chain": "full (whatever the running voice-agent is wired with)",
+    "clock": "auto",
+    "llm_base_url": "http://127.0.0.1:8101/v1",
+    "settle_ms": 2500,
+    "runs": 4,
+    "seed": 0,
+    "tag": "e19-e3-livekit"
+  },
+  "samples": [
+    {
+      "id": "greeting:bed1032c",
+      "turn_file": "wav/greeting.wav",
+      "run_index": 0,
+      "turn_index": 0,
+      "suite": "barge_in",
+      "transport": "livekit",
+      "speech_end_to_first_audio_ms": -29586,
+      "asr_ms": null,
+      "interpret_ms": null,
+      "generate_ms": null,
+      "tts_first_chunk_ms": null,
+      "tts_ms": null,
+      "cutoff_latency_ms": 0,
+      "interrupt_after_ms": null,
+      "first_audio_wall_ms_crosscheck": 2.775247037410736
+    },
+    {
+      "id": "address:ef3db077",
+      "turn_file": "wav/address.wav",
+      "run_index": 0,
+      "turn_index": 1,
+      "suite": "turn",
+      "transport": "livekit",
+      "speech_end_to_first_audio_ms": null,
+      "asr_ms": 1676,
+      "interpret_ms": null,
+      "generate_ms": null,
+      "tts_first_chunk_ms": null,
+      "tts_ms": null,
+      "cutoff_latency_ms": null,
+      "interrupt_after_ms": null,
+      "first_audio_wall_ms_crosscheck": 2.753841996192932
+    }
+  ],
+  "aggregates": {
+    "overall": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "mean": null,
+      "max": null
+    },
+    "followup_turn_count": 0,
+    "discarded_nonpositive_count": 1,
+    "per_stage_p50_ms": {
+      "asr_ms": 1676.0,
+      "interpret_ms": null,
+      "generate_ms": null,
+      "tts_first_chunk_ms": null,
+      "tts_ms": null
+    },
+    "latency_targets": {
+      "p50_ms": 1500,
+      "p95_ms": 2500
+    },
+    "meets_target": false,
+    "barge_in": {
+      "n": 1,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "mean": 0.0,
+      "max": 0.0,
+      "over_250ms_count": 0
+    },
+    "unscripted_cutoff_count": 0
+  },
+  "notes": [
+    "speech_end_to_first_audio_ms is read from the session event log (USER_SPEECH_ENDED -> CALLER_TTS_STARTED.first_audio_offset_ms), not timed here",
+    "livekit: published 36 turn(s) into room 'session-8e82c9bd-3836-4d30-8c57-6ee8390172ba'; the reported number is the session event log's, and a row is attributed to a detected turn by publish order (a VAD-split WAV shifts that attribution; sample count vs published count says whether it happened: 2 detected vs 36 published)"
+  ]
+}

@@ -4,7 +4,10 @@ description: >
   budget/margin, more parallel slots, and a TTS provider still open per docs/hld/60-inference-ops.md
   §2.4 ("or qwen3_tts; whichever the TTS benchmark prefers" — chatterbox has no provider
   implementation in workers/voice_agent/voice_agent/providers.py today; see this task's report,
-  "HLD gaps"). No number in this file has been measured on a 3080 Ti; that measurement is E19's job.
+  "HLD gaps"). No number in this file has been measured on a 3080 Ti. NOT_RUN 2026-09-22: no RTX
+  3080 Ti and no Qwen3-8B GGUF on the dev machine; on the target card run `make models-llm-qwen3-8b
+  && make bench-vram PROFILE=FINAL_3080TI_16GB` and paste its `project_peak_mb` here with
+  `measured_at` (E19-F; the download target itself is defined at Makefile `models-llm-qwen3-8b`).
 
 hardware:
   gpu_name_contains: "3080 Ti"

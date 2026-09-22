@@ -66,7 +66,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["backend/tests", "workers/voice_agent/tests"]
+# `benchmarks/tests` (E19-A) is gate-side by construction: it runs every SPEC §35 benchmark
+# script's `main()` with `--provider fake` and asserts the HLD 60 §7.0 envelope's shape. It needs
+# no GPU, no model file and no network, so it belongs in the ordinary gate run — the real runs are
+# the `make bench-*` targets, which are never part of `gate` (D13).
+testpaths = ["backend/tests", "workers/voice_agent/tests", "benchmarks/tests"]
 markers = [
     "integration: requires live PostgreSQL/Redis test infra (make infra-up)",
     "requires_models: requires real ML model weights/extras to be installed",

@@ -1,0 +1,1 @@
+{"id": "addr_twice", "category": "known_facts", "turns": [{"utterance": "Назовите улицу.", "fact_ids": ["address.street"]}, {"utterance": "Какой номер дома?", "fact_ids": ["address.house"]}, {"utterance": "Повторите улицу, пожалуйста.", "fact_ids": ["address.street"]}]}

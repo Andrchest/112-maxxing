@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all
 deps:
 	$(UV) sync --all-packages --group dev
 	cd frontend && npm ci
@@ -58,6 +58,13 @@ deps-models:
 # NEVER a bare `uv sync`.
 deps-tts-piper:
 	$(UV) sync --all-packages --group dev --inexact --extra vad-silero --extra asr-gigaam --extra tts-piper
+# E19-E2: the `livekit` rtc SDK (`sim-voice-agent`'s `transport-livekit` extra), needed by
+# `voice_agent.transport.livekit_transport` / `headless_client` at RUN time — `make gate` never
+# needs it (D13) and `benchmark_e2e.py --transport livekit` answers NOT_RUN without it. Same
+# `--inexact` discipline as the two targets above: NEVER a bare `uv sync`, which would strip
+# torch/onnxruntime/piper out of the shared venv.
+deps-livekit:
+	$(UV) sync --all-packages --group dev --inexact --extra transport-livekit
 # Fetches the Silero VAD v5 onnx graph from a PINNED release tag (MIT licence) and verifies its
 # sha256 before it is trusted — see docs/hld/60-inference-ops.md's model table / models/README.md
 # for the URL and hash this checks against. GigaAM's checkpoints are not fetched here: the owner
@@ -69,6 +76,7 @@ models-silero:
 	mkdir -p models/silero-vad
 	curl -sL -o models/silero-vad/silero_vad.onnx $(SILERO_VAD_URL)
 	echo "$(SILERO_VAD_SHA256)  models/silero-vad/silero_vad.onnx" | sha256sum -c -
+	$(MAKE) models-layout
 # Fetches the DEV_3060TI profile's LLM (SPEC §22, `60-inference-ops.md` §1) from the official
 # Qwen/Qwen3-4B-GGUF Hugging Face repo (owner-approved, E13-B1). `hf download`'s own resume plus
 # the `curl -C -` fallback both survive an interrupted fetch. Size and sha256 are measured here,
@@ -82,6 +90,52 @@ models-llm:
 		curl -L -C - -o models/$(QWEN3_4B_FILE) \
 			https://huggingface.co/$(QWEN3_4B_HF_REPO)/resolve/main/$(QWEN3_4B_FILE)
 	sha256sum models/$(QWEN3_4B_FILE)
+	$(MAKE) models-layout
+# -- E19-F: DEV_3060TI*'s actual LLM (Qwen3.5-{0.8B,2B,4B} Q4_K_M, OWNER DECISION 2026-09-21,
+# e13-b3/e13-b4) has no OFFICIAL Qwen HF GGUF repo — `Qwen/Qwen3.5-<size>-GGUF` all 401 (HF API,
+# checked 2026-09-22: same response a nonexistent repo gets; Qwen only ships Qwen3.5 as safetensors,
+# `pipeline_tag: image-text-to-text`). `unsloth/Qwen3.5-<size>-GGUF`'s `Q4_K_M` file is
+# byte-for-byte (size AND sha256, this task's report) the owner's already-downloaded
+# `~/models/Qwen3.5-<size>/Qwen3.5-<size>-Q4_K_M.gguf` copy for all three sizes — that identity is
+# the provenance evidence, not a guess — so these are PINNED to the exact commit `unsloth/Qwen3.5-
+# <size>-GGUF` was at when this task resolved it (HF API `sha` field, 2026-09-22), not "main".
+# Default target fetches only the profile-default 2B (~1.3 GB); QWEN35_LLM_SIZE overrides.
+QWEN35_LLM_SIZE ?= 2B
+QWEN35_LLM_REPO_0.8B := unsloth/Qwen3.5-0.8B-GGUF
+QWEN35_LLM_REVISION_0.8B := 6ab461498e2023f6e3c1baea90a8f0fe38ab64d0
+QWEN35_LLM_FILE_0.8B := Qwen3.5-0.8B-Q4_K_M.gguf
+QWEN35_LLM_REPO_2B := unsloth/Qwen3.5-2B-GGUF
+QWEN35_LLM_REVISION_2B := f6d5376be1edb4d416d56da11e5397a961aca8ae
+QWEN35_LLM_FILE_2B := Qwen3.5-2B-Q4_K_M.gguf
+QWEN35_LLM_REPO_4B := unsloth/Qwen3.5-4B-GGUF
+QWEN35_LLM_REVISION_4B := e87f176479d0855a907a41277aca2f8ee7a09523
+QWEN35_LLM_FILE_4B := Qwen3.5-4B-Q4_K_M.gguf
+models-llm-qwen35:
+	@repo="$(QWEN35_LLM_REPO_$(QWEN35_LLM_SIZE))"; rev="$(QWEN35_LLM_REVISION_$(QWEN35_LLM_SIZE))"; \
+	file="$(QWEN35_LLM_FILE_$(QWEN35_LLM_SIZE))"; \
+	if [ -z "$$repo" ]; then \
+		echo "NOT_RUN: unknown QWEN35_LLM_SIZE=$(QWEN35_LLM_SIZE) (must be 0.8B, 2B or 4B)"; exit 1; \
+	fi; \
+	mkdir -p models/llm; \
+	uvx --from huggingface_hub hf download "$$repo" "$$file" --revision "$$rev" --local-dir models/llm || \
+		curl -L -C - -o models/llm/"$$file" "https://huggingface.co/$$repo/resolve/$$rev/$$file"; \
+	sha256sum models/llm/"$$file"
+	$(MAKE) models-layout
+# Qwen3-8B Q4_K_M for the FINAL_3080TI_* profiles (SPEC §22/§26) — defined and pinned (HF API,
+# 2026-09-22: `Qwen/Qwen3-8B-GGUF`, official Qwen repo), NOT executed by this task (R4/R9 of this
+# task's brief): no Qwen3-8B GGUF and no 3080 Ti exist on this machine; running this would only
+# leave an untested 4.7 GB file behind. Run it for real on the target 3080 Ti card.
+QWEN3_8B_HF_REPO := Qwen/Qwen3-8B-GGUF
+QWEN3_8B_REVISION := 7c41481f57cb95916b40956ab2f0b139b296d974
+QWEN3_8B_FILE := Qwen3-8B-Q4_K_M.gguf
+models-llm-qwen3-8b:
+	mkdir -p models/llm
+	uvx --from huggingface_hub hf download $(QWEN3_8B_HF_REPO) $(QWEN3_8B_FILE) \
+		--revision $(QWEN3_8B_REVISION) --local-dir models/llm || \
+		curl -L -C - -o models/llm/$(QWEN3_8B_FILE) \
+			https://huggingface.co/$(QWEN3_8B_HF_REPO)/resolve/$(QWEN3_8B_REVISION)/$(QWEN3_8B_FILE)
+	sha256sum models/llm/$(QWEN3_8B_FILE)
+	$(MAKE) models-layout
 # -- E14-B: the standalone Qwen3-TTS GPU worker (own venv — `workers/tts_qwen3/README.md`) -----
 # Creates workers/tts_qwen3/.venv with `uv` and installs the pinned deps (qwen-tts==0.1.1,
 # torch==2.14.0) into it — never into the main workspace venv (`scripts/setup_tts_qwen3.sh`
@@ -137,6 +191,7 @@ models-tts-qwen3:
 			--revision $(QWEN3_TTS_TOKENIZER_REVISION) \
 			--local-dir $(QWEN3_TTS_MODEL_DIR)/Qwen3-TTS-Tokenizer-12Hz; \
 	fi
+	$(MAKE) models-layout
 # Loopback only (`tts_qwen3/__main__.py` hard-codes `--host 127.0.0.1`); port from
 # SIM_TTS_QWEN3_PORT, default 8112 (never 8012/8016 — those belong to the owner's other work).
 # E14-D: `QWEN3_TTS_VARIANT` (default `1.7B`, same as `models-tts-qwen3`) is passed through as
@@ -161,6 +216,66 @@ models-piper:
 	curl -sL --retry 5 --retry-all-errors -C - -o models/piper/$(PIPER_VOICE_FILE).onnx $(PIPER_VOICE_URL)
 	curl -sL --retry 5 --retry-all-errors -C - -o models/piper/$(PIPER_VOICE_FILE).onnx.json $(PIPER_VOICE_URL).json
 	sha256sum models/piper/$(PIPER_VOICE_FILE).onnx models/piper/$(PIPER_VOICE_FILE).onnx.json
+	$(MAKE) models-layout
+# The warm-up sample every profile's `warmup.asr_sample_path` names
+# (`/models/warmup/warmup_ru.wav`, SPEC §37, HLD 60 §4.2) — absent on this machine until this task
+# (E19-F recon: no `make` target and no file existed anywhere). Built by the real `piper-tts`
+# package (benchmarks/data/warmup/build_warmup.py) against the already-fetched `models/piper`
+# voice — NOT byte-for-byte reproducible run to run (that script's own docstring measures why:
+# Piper/VITS's noise input is generated inside the ONNX graph itself, unseedable through the public
+# API), so re-running this target replaces the committed WAV with a new (still valid, still <= 3 s)
+# synthesis rather than reproducing the old one exactly. The WAV itself is COMMITTED under
+# `benchmarks/data/` (small, <= 3 s) per this task's brief, then a real `cp` (not a symlink, unlike
+# `models-layout` below) puts a copy at the profile path `models/warmup/warmup_ru.wav`.
+models-warmup:
+	$(UV) run python benchmarks/data/warmup/build_warmup.py
+	mkdir -p models/warmup
+	cp benchmarks/data/warmup/warmup_ru.wav models/warmup/warmup_ru.wav
+# RULING (this task's brief + the E19-A/E19-F concurrency note): the compose mount stays
+# `../models:/models` (`infra/docker-compose.yml`, unchanged) — this target reconciles the HOST
+# layout to MATCH what the profile YAMLs' `/models/<rest>` paths (and `resolve_model_path`'s
+# primary mapping, owned by E19-A's `benchmarks/_common.py`) expect, entirely with symlinks INSIDE
+# the gitignored `models/` directory. It never moves, renames or deletes a file already on disk —
+# every link is `ln -sfn` and every step is guarded by "does the source exist", so re-running this
+# after a partial `make models` (e.g. before `models-llm-qwen35` has run) just leaves the
+# not-yet-fetched links missing rather than failing the whole target. `models-silero`,
+# `models-llm`, `models-llm-qwen35`, `models-piper` and `models-tts-qwen3` each call this as their
+# last step; `models-warmup` handles its own `/models/warmup/` path itself (a real `cp`, R9).
+#
+# Final host layout (documented in docs/benchmarks/models.md):
+#   models/llm/Qwen3-4B-Q4_K_M.gguf        -> ../Qwen3-4B-Q4_K_M.gguf          (symlink)
+#   models/llm/Qwen3.5-<size>-Q4_K_M.gguf  -> fetched directly here by models-llm-qwen35 (real file)
+#   models/asr/gigaam-v3-e2e-ctc           -> ../gigaam-v3-e2e_ctc             (symlink, hyphenated
+#                                              to match the profile path; the owner's dir keeps its
+#                                              underscore name, never renamed)
+#   models/asr/gigaam-v3-ctc               -> ../gigaam-v3-ctc                (symlink)
+#   models/tts/piper                       -> ../piper                        (symlink)
+#   models/tts/qwen3-tts                   -> ../qwen3-tts                    (symlink)
+#   models/vad/silero_vad.onnx             -> ../silero-vad/silero_vad.onnx   (symlink)
+#   models/warmup/warmup_ru.wav            -> real file, cp'd by models-warmup (not a symlink)
+models-layout:
+	@mkdir -p models/llm models/asr models/tts models/vad
+	@if [ -f models/Qwen3-4B-Q4_K_M.gguf ]; then ln -sfn ../Qwen3-4B-Q4_K_M.gguf models/llm/Qwen3-4B-Q4_K_M.gguf; fi
+	@if [ -d models/gigaam-v3-e2e_ctc ]; then ln -sfn ../gigaam-v3-e2e_ctc models/asr/gigaam-v3-e2e-ctc; fi
+	@if [ -d models/gigaam-v3-ctc ]; then ln -sfn ../gigaam-v3-ctc models/asr/gigaam-v3-ctc; fi
+	@if [ -d models/piper ]; then ln -sfn ../piper models/tts/piper; fi
+	@if [ -d models/qwen3-tts ]; then ln -sfn ../qwen3-tts models/tts/qwen3-tts; fi
+	@if [ -f models/silero-vad/silero_vad.onnx ]; then ln -sfn ../silero-vad/silero_vad.onnx models/vad/silero_vad.onnx; fi
+	@echo "models/ layout reconciled against the profile paths (docs/benchmarks/models.md)"
+# One entry point (R9 of this task's brief): every download target except `models-llm-qwen3-8b`
+# (FINAL_* only, no 3080 Ti here) and the 1.7B Qwen3-TTS variant (needs ~4.6 GB, this machine has
+# ~3.2 GB free beside the owner's process — `models-tts-qwen3`'s own NOT_RUN guard would just print
+# and skip it anyway, but the 0.6B variant is what this task actually measured, so that is the
+# default this aggregate target fetches). `models-layout` runs last, once, after everything above
+# has already called it individually — idempotent, so the repeat is free.
+models:
+	$(MAKE) models-silero
+	$(MAKE) models-llm
+	$(MAKE) models-llm-qwen35
+	$(MAKE) models-piper
+	$(MAKE) models-tts-qwen3 QWEN3_TTS_VARIANT=0.6B
+	$(MAKE) models-warmup
+	$(MAKE) models-layout
 # Real-model contract tests (marker `requires_models`): never part of `make gate` (ruling 1). Skips
 # per-test when the extra/model/env is missing (see backend/tests/models/_skip.py).
 test-models:
@@ -255,3 +370,29 @@ up: profile-env
 	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
 down:
 	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down
+
+# --- E19-A: the SPEC §35/§40 benchmark scripts (HLD 60 §7) ---------------------------------------
+# NEVER part of `gate*`: a benchmark loads real models on a real card, and the gate must stay
+# GPU-free (D13). What the gate does run is `benchmarks/tests/`, which drives the same five
+# `main()`s with `--provider fake` and asserts the envelope's SHAPE only — it is in the root
+# pyproject's `testpaths`, so plain `make test-backend` picks it up.
+#
+# PROFILE selects the model profile (default: the SIM_MODEL_PROFILE exported above);
+# BENCH_ARGS is passed through verbatim, e.g.
+#   make bench-asr BENCH_ARGS="--model-version v3_ctc --device cpu --runs 3"
+#   make bench-llm PROFILE=DEV_3060TI_SHARED BENCH_ARGS="--suite interpreter --parallel 1"
+# Results land in benchmarks/results/ (gitignored scratch); whatever a doc or profile ends up
+# citing is copied into docs/benchmarks/results/ by hand, per docs/benchmarks/README.md.
+PROFILE ?= $(SIM_MODEL_PROFILE)
+BENCH_ARGS ?=
+bench-asr:
+	$(UV) run python benchmarks/benchmark_asr.py --profile $(PROFILE) $(BENCH_ARGS)
+bench-llm:
+	$(UV) run python benchmarks/benchmark_llm.py --profile $(PROFILE) $(BENCH_ARGS)
+bench-tts:
+	$(UV) run python benchmarks/benchmark_tts.py --profile $(PROFILE) $(BENCH_ARGS)
+bench-e2e:
+	$(UV) run python benchmarks/benchmark_e2e.py --profile $(PROFILE) $(BENCH_ARGS)
+bench-vram:
+	$(UV) run python benchmarks/benchmark_vram.py --profile $(PROFILE) $(BENCH_ARGS)
+bench-all: bench-asr bench-llm bench-tts bench-e2e bench-vram

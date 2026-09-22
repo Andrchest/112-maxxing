@@ -8,6 +8,21 @@ dependencies = [
     "numpy",
 ]
 
+[project.optional-dependencies]
+# `LiveKitCallTransport` and `HeadlessTraineeClient` (voice_agent/transport/): the plain `livekit`
+# rtc SDK, **not** the `livekit-agents` framework — D9 forbids the latter even inside this package
+# because it brings its own session/turn-detection/pipeline abstractions that would compete with
+# `50-voice-pipeline.md`'s `TurnPipeline`. Both modules import it *inside* their methods (D1), so
+# `import voice_agent.transport.livekit_transport` works in a venv without this extra and
+# `make gate` stays green with no SDK anywhere (D13).
+#
+# Added by E19-E2. Until then both modules' docstrings called the SDK "an optional extra (D1)" and
+# no extra existed anywhere in the workspace — so `--transport livekit` and
+# `tests/test_livekit_contract.py` were unrunnable by construction (E19-E report §2).
+# Major 1 is the only major on PyPI (1.1.19 today); the floor is the 1.0 API this transport was
+# written against (`rtc.Room`, `rtc.AudioSource`, `rtc.AudioStream.from_track`).
+transport-livekit = ["livekit>=1.0,<2"]
+
 [tool.uv.sources]
 sim-backend = { workspace = true }
 

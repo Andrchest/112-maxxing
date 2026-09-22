@@ -1,11 +1,17 @@
 [project]
 name = "sim-benchmarks"
 version = "0.1.0"
-description = "System-112/DDS training simulator — benchmark scripts (no package code yet; see E19)."
+description = "System-112/DDS training simulator — the SPEC §35/§40 benchmark scripts (E19)."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "sim-backend",
     "sim-voice-agent",
+    # `benchmarks/_common.py`'s `NvmlSampler` prefers NVML over shelling out to `nvidia-smi`
+    # (the same order `backend/app/cli/preflight.py` uses). `nvidia-ml-py` is the distribution
+    # that provides the `pynvml` module; it is a thin ctypes binding over the driver's own
+    # library, installs without a GPU, and imports to a clean failure on a machine with no
+    # driver — which the sampler turns into `available=False`, never a zero.
+    "nvidia-ml-py",
 ]
 
 [tool.uv]

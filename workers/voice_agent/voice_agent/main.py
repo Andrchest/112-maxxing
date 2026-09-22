@@ -46,6 +46,7 @@ from app.application.ports.llm import LLMClient
 from app.application.ports.tts import TTSProvider, TtsVoiceSpec
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
+from app.application.voice.events import VoiceEventAppender, call_ended_event
 from app.config.settings import Settings, get_settings
 from app.domain.common.ids import SessionId
 from app.inference.errors import InferenceOutOfMemoryError, ModelNotAvailableError
@@ -67,7 +68,9 @@ from voice_agent.health import (
 from voice_agent.preflight_http import PreflightHttpServer, resolve_preflight_port
 from voice_agent.providers import build_asr, build_vad
 from voice_agent.wiring import (
+    TRANSPORT_LIVEKIT,
     VoiceAgentDeps,
+    build_agent_token,
     build_dialogue_llm,
     build_pipeline,
     build_transport,
@@ -97,6 +100,11 @@ LLM_SERVICE = "llm"
 TTS_SERVICE = "tts"
 #: The components this process warms up and heartbeats, in §4.2's warm-up order.
 HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_SERVICE)
+
+#: `CALL_ENDED.reason` when the call's transport could not be built at all (E19-E3). A free `str`
+#: like the pipeline's own `TRANSPORT_CLOSED` / `TRANSPORT_LOST` / `CANCELLED`, and deliberately
+#: distinct from them: those three mean a media plane that existed and then did not.
+CALL_ENDED_TRANSPORT_UNAVAILABLE = "TRANSPORT_UNAVAILABLE"
 #: §4.3: every transition is announced here, and the backend turns each message into an
 #: `INFERENCE_HEALTH_CHANGED` on every ACTIVE session. Same literal as the reader's
 #: `app.infrastructure.health.voice_health.VOICE_HEALTH_CHANNEL`.
@@ -221,7 +229,22 @@ class VoiceAgent:
         return tuple(self._calls)
 
     def _default_transport(self, session_id: SessionId, call_id: uuid.UUID, room: str) -> Any:
-        return build_transport(self._deps.settings, self._deps.config)
+        """The call's `CallTransport`, with the agent's OWN access token when it needs one.
+
+        `SIM_CALL_TRANSPORT=livekit` needs a token, and until E19-E3 nothing supplied one: this
+        factory called `build_transport` with none, which raises, on the first line of `_run_call`
+        and therefore outside its `try` — the task's exception was never retrieved and the agent
+        silently never joined any room. The token is minted here, locally, per call, from the
+        `{session_id, room, call_id}` the `voice:join` payload already carries (no token has ever
+        travelled over Redis and none does now — HLD 40 §40.6).
+        """
+        if self._deps.settings.call_transport != TRANSPORT_LIVEKIT:
+            return build_transport(self._deps.settings, self._deps.config)
+        return build_transport(
+            self._deps.settings,
+            self._deps.config,
+            token=build_agent_token(self._deps.settings, room=room, call_id=call_id),
+        )
 
     # -- health -------------------------------------------------------------------------------
 
@@ -615,28 +638,76 @@ class VoiceAgent:
                 await pubsub.aclose()
 
     async def _run_call(self, session_id: SessionId, call_id: uuid.UUID, room: str) -> None:
-        transport: CallTransport = self._transport_factory(session_id, call_id, room)
-        pipeline = build_pipeline(
-            self._deps,
-            session_id=session_id,
-            call_id=call_id,
-            transport=transport,
-            asr=self._asr,
-            llm=self._llm,
-            tts=self._tts,
-            guard=self._guard,
-        )
+        """One call: build the transport, build the pipeline, run until the media plane goes away.
+
+        **Everything that can fail is inside the `try`** (E19-E3). Building the transport used to
+        sit on the line above it, so a failure there — the missing access token, a bad
+        `SIM_CALL_TRANSPORT`, an unreachable LiveKit URL — raised inside a task created by
+        `_on_join` whose exception nobody retrieves: no log line, no event, no call, and an agent
+        that looked healthy while joining nothing. A failure now ends the call the way any other
+        media-plane failure ends it, with `CALL_ENDED` carrying an explicit reason.
+        """
+        transport: CallTransport | None = None
         try:
+            transport = self._transport_factory(session_id, call_id, room)
+            pipeline = build_pipeline(
+                self._deps,
+                session_id=session_id,
+                call_id=call_id,
+                transport=transport,
+                # Every one of these four is the instance `warm_up()` warmed at start-up (§4.2).
+                # The VAD was missing here until E19-E2, so `build_pipeline` built an unwarmed one
+                # per call and `SileroVAD.process()` refused the first frame of the first real call.
+                vad=self._vad,
+                asr=self._asr,
+                llm=self._llm,
+                tts=self._tts,
+                guard=self._guard,
+            )
             await transport.connect(call_id)
             await pipeline.run()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("voice pipeline failed for session %s", session_id)
+            if transport is None:
+                # The pipeline never existed, so nothing else will ever write `CALL_ENDED` for this
+                # call and the trainee-facing timeline would simply stop. Say why (SPEC §39, "never
+                # silently reset the simulation").
+                await self._end_call_unavailable(session_id, call_id)
         finally:
-            with contextlib.suppress(Exception):
-                await transport.disconnect()
+            if transport is not None:
+                with contextlib.suppress(Exception):
+                    await transport.disconnect()
             self._calls.pop(session_id, None)
+
+    async def _end_call_unavailable(self, session_id: SessionId, call_id: uuid.UUID) -> None:
+        """`CALL_ENDED{reason: TRANSPORT_UNAVAILABLE}` for a call whose transport never existed.
+
+        Best-effort and never raising: this runs on a path that is already failing, and an append
+        that fails here must not replace one logged failure with a different one.
+        """
+        try:
+            appender = VoiceEventAppender(
+                session_id=session_id, uow_factory=self._deps.uow_factory, clock=self._deps.clock
+            )
+            offset_ms = appender.offset_ms()
+            await appender.append(
+                [
+                    call_ended_event(
+                        call_id=call_id,
+                        offset_ms=offset_ms,
+                        at_offset_ms=offset_ms,
+                        duration_ms=0,
+                        reason=CALL_ENDED_TRANSPORT_UNAVAILABLE,
+                    )
+                ]
+            )
+        except Exception:
+            logger.exception(
+                "could not append CALL_ENDED for the unavailable transport of session %s",
+                session_id,
+            )
 
     # -- lifecycle ----------------------------------------------------------------------------
 

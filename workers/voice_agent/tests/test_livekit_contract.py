@@ -38,9 +38,19 @@ from voice_agent.transport.livekit_transport import LiveKitCallTransport
 
 pytestmark = pytest.mark.requires_livekit
 
+# The dev stack's own credentials, so `make dev-infra-up` + this file need no extra environment.
+# They are `infra/docker-compose.yml`'s `livekit` service defaults verbatim
+# (`LIVEKIT_KEYS: "${SIM_LIVEKIT_API_KEY:-devkey}: ${SIM_LIVEKIT_API_SECRET:-devsecret1234567890}"`)
+# and are read from `SIM_LIVEKIT_*` first, so a real deployment's credentials always win.
+#
+# **Dev-only, and deliberately worthless.** These are the placeholders the local compose file ships
+# with; nothing outside a developer's own machine accepts them, no real secret is ever written here
+# (SPEC §41), and a deployment that left them in place would be signing tokens with a value printed
+# in this repository. Until E19-E3 the secret here was `"secret"`, which matched nothing: this test
+# failed against the project's own dev stack with `401 ... token signature is invalid`.
 DEFAULT_URL = "ws://127.0.0.1:7880"
 DEFAULT_API_KEY = "devkey"
-DEFAULT_API_SECRET = "secret"
+DEFAULT_API_SECRET = "devsecret1234567890"
 TOKEN_TTL_S = 600
 
 

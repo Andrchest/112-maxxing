@@ -26,6 +26,7 @@ prompt to request.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from enum import Enum as _Enum
 from typing import Any, get_args, get_origin
 
@@ -33,13 +34,37 @@ from annotated_types import Ge, Le, MaxLen
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-__all__ = ["build_caller_response_grammar", "build_interpretation_grammar"]
+__all__ = ["SpokenText", "build_caller_response_grammar", "build_interpretation_grammar"]
+
+
+@dataclass(frozen=True, slots=True)
+class SpokenText:
+    """Marks a `str` field as text a human will HEAR, not a machine-readable string (E19-C2).
+
+    `Annotated[str, SpokenText()]` makes this generator emit `speech-string` instead of
+    `jsonstring` for that field: a JSON string that must contain **at least one Cyrillic letter**.
+    Without it the caller's GBNF grammar happily accepts `""`, `"}"` or `"..."` as a valid
+    utterance, which E19-C measured the Qwen3.5 family producing on 13-27 of 46 dialogue turns —
+    a caller that "says" `}` is nonsense in a trainee's ear.
+
+    The constraint lives on the **model** (`validator.CallerUtterance`), not in a caller-specific
+    branch of this module, so the module's own promise holds: one source (the pydantic model), two
+    renderings (JSON schema and GBNF), and `build_caller_response_grammar` stays a thin wrapper
+    that forks nothing. pydantic ignores the marker for validation and for
+    `model_json_schema()`, so `CALLER_JSON_SCHEMA` — the non-grammar fallback — is unchanged by it.
+    """
+
 
 #: Standard JSON string content (escapes + the same excluded-control-char class as llama.cpp's own
-#: `grammars/json.gbnf`), with no trailing `ws` — this grammar never allows insignificant space.
-_JSONSTRING_RULE = (
-    r'jsonstring ::= "\"" ( [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}) )* "\""'
-)
+#: `grammars/json.gbnf`). Shared by `jsonstring` and `speech-char` so the two can never drift.
+_JSON_CHAR = r'[^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})'
+#: With no trailing `ws` — this grammar never allows insignificant space.
+_JSONSTRING_RULE = f'jsonstring ::= "\\"" ( {_JSON_CHAR} )* "\\""'
+#: Russian letters, including `ё`/`Ё`, which are outside the `а-я`/`А-Я` ranges.
+_CYRILLIC_LETTER = "[а-яА-ЯёЁ]"
+_SPEECH_CHAR_RULE = f"speech-char ::= {_JSON_CHAR}"
+#: A JSON string with at least one Cyrillic letter somewhere in it — see `SpokenText`.
+_SPEECH_STRING_RULE = f'speech-string ::= "\\"" speech-char* {_CYRILLIC_LETTER} speech-char* "\\""'
 _BOOLEAN_RULE = 'boolean ::= "true" | "false"'
 #: `semantic_confidence`'s `ge=0.0, le=1.0` (§20/§10) — a decimal literally between 0 and 1.
 _UNIT_FLOAT_RULE = r'unit-float ::= ("0" | "1") ("." [0-9]{1,4})?'
@@ -86,6 +111,7 @@ class _GrammarBuilder:
     def __init__(self) -> None:
         self._rule_bodies: dict[str, str] = {}
         self.needs_jsonstring = False
+        self.needs_speech_string = False
         self.needs_boolean = False
         self.needs_unit_float = False
         self.needs_number = False
@@ -135,6 +161,11 @@ class _GrammarBuilder:
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             return self.object_rule_name(annotation)
         if annotation is str:
+            if field is not None and any(
+                isinstance(marker, SpokenText) for marker in field.metadata
+            ):
+                self.needs_speech_string = True
+                return "speech-string"
             self.needs_jsonstring = True
             return "jsonstring"
         if annotation is bool:
@@ -155,6 +186,9 @@ class _GrammarBuilder:
         lines.extend(body for body in self._rule_bodies.values() if body)
         if self.needs_jsonstring:
             lines.append(_JSONSTRING_RULE)
+        if self.needs_speech_string:
+            lines.append(_SPEECH_STRING_RULE)
+            lines.append(_SPEECH_CHAR_RULE)
         if self.needs_boolean:
             lines.append(_BOOLEAN_RULE)
         if self.needs_unit_float:

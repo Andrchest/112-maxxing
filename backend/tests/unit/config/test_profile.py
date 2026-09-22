@@ -88,7 +88,12 @@ def _dump_yaml(data: dict) -> str:
 
 
 def test_dev_profile_with_no_measurement_only_warns(caplog: pytest.LogCaptureFixture) -> None:
-    profile = load_profile("DEV_3060TI")
+    """The DEV-only warn branch of `validate_vram_margin` (HLD 60 §2.5) — exercised on a
+    synthetic unmeasured profile, independent of whether any *particular* shipped DEV profile
+    currently has a measurement. `DEV_3060TI` itself got a real one (E19-D3,
+    `docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json`) — see
+    `test_dev_3060ti_passes_with_a_measured_margin` below."""
+    profile = load_profile("DEV_3060TI_SHARED").model_copy(update={"measured_peak_vram_mb": None})
     assert profile.measured_peak_vram_mb is None
 
     with caplog.at_level(logging.WARNING):
@@ -97,10 +102,23 @@ def test_dev_profile_with_no_measurement_only_warns(caplog: pytest.LogCaptureFix
     assert any("unmeasured" in record.message for record in caplog.records)
 
 
+def test_dev_3060ti_passes_with_a_measured_margin() -> None:
+    """R2: measured 5560 MB (E19-D3, real `benchmark_vram.py --profile DEV_3060TI --turns 20`,
+    the owner's GPU process stopped for this run, all three GPU components loaded and 20 turns
+    completed — docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json), budget
+    7168 MB, min margin 512 MB -> margin 1608 MB, passes."""
+    profile = load_profile("DEV_3060TI")
+    assert profile.measured_peak_vram_mb == 5560
+
+    validate_vram_margin(profile)  # must not raise
+
+
 def test_dev_3060ti_shared_passes_with_a_positive_margin() -> None:
-    """R2: measured 1558 MB, budget 3000 MB, min margin 512 MB -> margin 1442 MB, passes."""
+    """R2: measured 1559 MB (E19-D, benchmark_vram.py on 2026-09-22 —
+    docs/benchmarks/results/vram-DEV_3060TI_SHARED-20260922T050401Z.json), budget 3000 MB,
+    min margin 512 MB -> margin 1441 MB, passes."""
     profile = load_profile("DEV_3060TI_SHARED")
-    assert profile.measured_peak_vram_mb == 1558
+    assert profile.measured_peak_vram_mb == 1559
 
     validate_vram_margin(profile)  # must not raise
 

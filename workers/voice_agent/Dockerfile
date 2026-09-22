@@ -5,10 +5,11 @@
 # lives in the separate `workers/tts_qwen3/Dockerfile` worker, reached over loopback HTTP —
 # `backend/tools/check_imports.py` enforces that `voice_agent` never imports it.
 #
-# UNVERIFIED-BUILD (this task's report): this image was written carefully against
-# `workers/voice_agent/pyproject.toml` and the `asr-gigaam`/`vad-silero`/`tts-piper` extras'
-# dependency floors, but NOT built here — the brief forbids building a CUDA image in this task
-# (no GPU work in E18; E19 builds and runs it for real).
+# BUILT 2026-09-22 (E19-F): `docker build -f workers/voice_agent/Dockerfile -t
+# sim112/voice-agent:e19 .` succeeded (image 7.23 GB) after fixing a real bug the first attempt
+# surfaced (see the `RUN uv sync` line below); smoke-tested with `docker run --rm --gpus all
+# sim112/voice-agent:e19 python -c "import torch; print(torch.cuda.is_available(),
+# torch.version.cuda)"` (no model load) → `True 12.8`.
 #
 # Build context is the REPO ROOT (`infra/docker-compose.yml`'s `voice-agent.build.context: ..`):
 # `sim-voice-agent` depends on `sim-backend` as a uv workspace source (`[tool.uv.sources]`), so both
@@ -17,11 +18,12 @@ FROM python:3.12-slim AS base
 
 # `torch`/`torchaudio` (asr-gigaam extra) and `onnxruntime` (vad-silero) both need the CUDA runtime
 # libraries the NVIDIA base normally provides; `nvidia/cuda:*-runtime` is deliberately NOT used here
-# because the exact CUDA minor version this project's pinned torch floor (`torch>=2.6,<2.9`, per
-# `backend/pyproject.toml`) needs was not verified in this task (no GPU work allowed) — pip-installed
-# torch wheels bundle their own CUDA runtime libraries for the common case, so a plain `python:3.12
-# -slim` base plus `runtime: nvidia` (driver passthrough only) is the documented starting point;
-# flag any CUDA-version mismatch found at first real build as an E19 finding.
+# — pip-installed torch wheels bundle their own CUDA runtime libraries, so a plain `python:3.12-slim`
+# base plus `runtime: nvidia` (driver passthrough only) is enough. VERIFIED (E19-F, 2026-09-22): the
+# real build resolves `torch==2.8.0` with `cu12`-suffixed CUDA wheels (`torch.version.cuda` reports
+# `12.8` at runtime, matching the main workspace venv's own `torch==2.8.0+cu128`, backend/pyproject.
+# toml's `torch>=2.6,<2.9` floor) — no base-image change was needed; the smoke test above confirms
+# the driver (595.84) accepts it.
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -39,6 +41,15 @@ COPY benchmarks/pyproject.toml benchmarks/pyproject.toml
 COPY backend/ backend/
 COPY workers/voice_agent/ workers/voice_agent/
 
+# E19-F, first real build (2026-09-22): `--package sim-voice-agent` alone FAILED —
+# `error: Extra 'asr-gigaam' is not defined in the project's optional-dependencies table`. The
+# `asr-gigaam`/`vad-silero`/`tts-piper` extras are defined on `sim-backend`'s own
+# `[project.optional-dependencies]` (backend/pyproject.toml), not on `sim-voice-agent`'s (which has
+# none at all, workers/voice_agent/pyproject.toml) — `uv sync --package X --extra Y` requires Y
+# defined on X itself, not on a workspace dependency of X. Fix verified with `--dry-run` against the
+# real lock file before use here: pass BOTH `--package sim-backend --package sim-voice-agent` so the
+# extras resolve against the package that actually declares them while still syncing (installing)
+# `sim-voice-agent` itself into the same venv.
 RUN set -eu; \
     extra_flags=""; \
     old_ifs="$IFS"; IFS=","; \
@@ -46,7 +57,7 @@ RUN set -eu; \
         [ -n "$e" ] && extra_flags="$extra_flags --extra $e"; \
     done; \
     IFS="$old_ifs"; \
-    uv sync --frozen --no-dev --package sim-voice-agent $extra_flags
+    uv sync --frozen --no-dev --package sim-backend --package sim-voice-agent $extra_flags
 
 ENV PATH="/workspace/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \

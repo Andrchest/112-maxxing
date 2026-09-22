@@ -1,0 +1,9 @@
+{"id": "greeting", "text": "Служба сто двенадцать что у вас случилось?", "path": "wav/greeting.wav", "duration_ms": 3168, "source": "piper:ru_RU-irina-medium"}
+{"id": "address", "text": "Назовите улицу и номер дома", "path": "wav/address.wav", "duration_ms": 3136, "source": "piper:ru_RU-irina-medium"}
+{"id": "what_is_burning", "text": "Что именно горит в квартире?", "path": "wav/what_is_burning.wav", "duration_ms": 1824, "source": "piper:ru_RU-irina-medium"}
+{"id": "victims", "text": "В квартире остались люди?", "path": "wav/victims.wav", "duration_ms": 1632, "source": "piper:ru_RU-irina-medium"}
+{"id": "floor", "text": "На каком этаже квартира?", "path": "wav/floor.wav", "duration_ms": 1792, "source": "piper:ru_RU-irina-medium", "interrupt_after_ms": 400}
+{"id": "apartment", "text": "Назовите номер квартиры", "path": "wav/apartment.wav", "duration_ms": 1920, "source": "piper:ru_RU-irina-medium"}
+{"id": "phone_confirm", "text": "Подтвердите ваш номер телефона", "path": "wav/phone_confirm.wav", "duration_ms": 2016, "source": "piper:ru_RU-irina-medium"}
+{"id": "reassurance", "text": "Пожарные уже выехали оставайтесь на связи", "path": "wav/reassurance.wav", "duration_ms": 2656, "source": "piper:ru_RU-irina-medium", "interrupt_after_ms": 700}
+{"id": "closing", "text": "Информация принята в квартиру не заходите", "path": "wav/closing.wav", "duration_ms": 3232, "source": "piper:ru_RU-irina-medium"}

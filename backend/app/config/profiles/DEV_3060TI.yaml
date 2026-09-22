@@ -18,16 +18,17 @@ hardware:
 
 vram_budget_mb: 7168
 min_vram_margin_mb: 512
-# UNMEASURED as a COMBINED peak — the DEV-only warning branch of validate_vram_margin (HLD 60
-# §2.5) applies, never the FINAL_* refusal branch. The LLM (1558 MB, --parallel 2, task report
-# e13-b4), GigaAM ASR (~1336 MiB, task report e14-d item 4) and Qwen3-TTS 0.6B (~2746 MiB, task
-# report e14-d) were each measured SEPARATELY; nobody has run all three loaded simultaneously on
-# this card. Naively summed they are ~5640 MiB, but that is an assumption, not a measurement, so
-# it is not written here as measured_peak_vram_mb (SPEC §27: no benchmark number before it is
-# measured). TODO(E19): measure the real combined peak with benchmarks/benchmark_vram.py and set
-# this field for real.
-measured_peak_vram_mb: null
-measured_at: null
+# MEASURED for real (task report E19-D3, 2026-09-22): benchmarks/benchmark_vram.py --profile
+# DEV_3060TI --provider real --turns 20, the owner's GPU process (PID 1082982) stopped for this
+# run, freeing the card. VAD -> ASR (GigaAM, 1530 MB) -> TTS (Qwen3-TTS 0.6B worker, 2373 MB) ->
+# LLM (Qwen3.5-2B --parallel 2, 1559 MB) -> 20 sequential turns, all completed: status OK,
+# project_peak_mb 5560 (peak_mb 5910 - baseline_used_mb 350), free_min_mb 2281. Margin:
+# 7168 - 5560 = 1608 >= 512, passes outright. History: two earlier attempts on the SHARED card
+# (owner's process still resident, ~3.2 GB free) came back PARTIAL — the TTS step OOM'd/timed out
+# before this one ever reached the LLM step; superseded, not this profile's story any more.
+# docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json, docs/benchmarks/vram.md.
+measured_peak_vram_mb: 5560
+measured_at: 2026-09-22
 
 llm:
   provider: llama_cpp

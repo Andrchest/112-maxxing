@@ -405,7 +405,13 @@ synthesised sentence into `max_chunk_ms` frames as they are produced, and set
 - `PiperTTS` — CPU, onnxruntime, Russian voice models; the configured fallback for every profile
   (D9) — no longer the DEV default (see §10: OWNER DECISION makes `Qwen3TTS` the DEV_3060TI
   default too). Voice: `ru_RU-irina-medium` (`make models-piper`, `60-inference-ops.md`'s model
-  table).
+  table). **MEASURED (E19-D), a real contradiction with this port's "never buffer the whole
+  utterance" contract above:** `PiperTTS` buffers the whole sentence before its first `TtsChunk`
+  (`piper_tts.py`'s own documented gap; `first_audio_latency_ms == total_synthesis_latency_ms` on
+  every real cancellation sample, `docs/benchmarks/tts.md`) — first-audio latency is fast in
+  absolute terms (overall p50 136 ms) precisely because Piper's sentences are short, not because it
+  streams; `cancel_latency_ms` is sub-millisecond because there is nothing in flight left to cut off
+  by the time `cancel()` is called, the same gap `Qwen3TTS` below has.
 - `Qwen3TTS` — Qwen3-TTS **1.7B** CustomVoice, GPU (OWNER DECISION, E14; corrects the earlier "0.6B"
   placeholder — the owner's evaluated/verified checkpoint is `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`,
   measured VRAM residency ≈ 4.3 GB bf16). GPU default for every profile including `DEV_3060TI`, not

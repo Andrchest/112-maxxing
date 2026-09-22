@@ -159,4 +159,72 @@ def test_build_caller_response_grammar_matches_callerutterance() -> None:
 
     assert build_caller_response_grammar(CallerUtterance) == CALLER_GRAMMAR
     assert CALLER_GRAMMAR.splitlines()[0] == "root ::= caller-utterance"
-    assert 'caller-utterance ::= "{" "\\"utterance\\":" jsonstring "}"' in CALLER_GRAMMAR
+    # E19-C2: the caller's utterance is `speech-string`, not `jsonstring` — a JSON string the
+    # grammar forces to carry at least one Cyrillic letter, so `{"utterance":"}"}` cannot be
+    # generated at all (`grammar.SpokenText` on `CallerUtterance.utterance`).
+    assert 'caller-utterance ::= "{" "\\"utterance\\":" speech-string "}"' in CALLER_GRAMMAR
+    assert "speech-string ::= " in CALLER_GRAMMAR
+    assert "jsonstring" not in CALLER_GRAMMAR
+
+
+# ---------------------------------------------------------------------------------------------
+# E19-C2: `SpokenText` — the caller's utterance must carry at least one Cyrillic letter
+# ---------------------------------------------------------------------------------------------
+
+
+def test_spoken_text_is_what_switches_jsonstring_for_speech_string() -> None:
+    """The constraint lives on the MODEL, not in a caller-specific branch of the generator.
+
+    Two toy models differing only in the marker: one gets `jsonstring`, the other `speech-string`.
+    That is what keeps `build_caller_response_grammar` a thin wrapper rather than a fork.
+    """
+    from typing import Annotated
+
+    from app.application.dialogue.grammar import SpokenText
+
+    class _Plain(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        text: str
+
+    class _Spoken(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        text: Annotated[str, SpokenText()]
+
+    plain = build_interpretation_grammar(_Plain)
+    spoken = build_interpretation_grammar(_Spoken)
+    assert '"\\"text\\":" jsonstring' in plain
+    assert "speech-string" not in plain
+    assert '"\\"text\\":" speech-string' in spoken
+    assert "jsonstring" not in spoken
+
+
+def test_the_speech_string_rule_requires_a_cyrillic_letter() -> None:
+    """The rule is `"\\"" speech-char* <cyrillic> speech-char* "\\""` — a string with no letter
+    (`""`, `"}"`, `"..."`) has no derivation, which is what stops the model emitting it at all
+    (E19-C measured the Qwen3.5 family emitting a bare `}` on 13-27 of 46 real dialogue turns)."""
+    from app.application.dialogue.generator import CALLER_GRAMMAR
+
+    rule = next(
+        line for line in CALLER_GRAMMAR.splitlines() if line.startswith("speech-string ::=")
+    )
+    assert rule == 'speech-string ::= "\\"" speech-char* [а-яА-ЯёЁ] speech-char* "\\""'
+    #: `ё`/`Ё` are outside the `а-я`/`А-Я` ranges and have to be listed separately.
+    assert "ёЁ" in rule
+    #: `speech-char` is the same JSON-string character class `jsonstring` uses — one definition.
+    speech_char = next(
+        line for line in CALLER_GRAMMAR.splitlines() if line.startswith("speech-char ::=")
+    )
+    assert speech_char == (
+        r'speech-char ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})'
+    )
+
+
+def test_the_caller_json_schema_is_unchanged_by_the_marker() -> None:
+    """`SpokenText` is a grammar-only marker: the `response_format=json_schema` fallback path
+    (`GeneratorConfig.use_grammar=False`) must see exactly the string field it always saw."""
+    from app.application.dialogue.generator import CALLER_JSON_SCHEMA
+
+    assert CALLER_JSON_SCHEMA["properties"]["utterance"]["type"] == "string"
+    assert "pattern" not in CALLER_JSON_SCHEMA["properties"]["utterance"]

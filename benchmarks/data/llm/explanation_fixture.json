@@ -1,0 +1,110 @@
+{
+  "_comment": [
+    "Fixture input for `benchmark_llm.py --suite explanation` (E19, ruling R6): one demo-shaped",
+    "GOOD run of `scenarios/examples/apartment-fire/v1` — four rules passed, one non-critical rule",
+    "missed, no critical error — plus the Russian rule titles the E16 prompt renders. It exists so",
+    "the explanation latency (docs/hld/60-inference-ops.md §12) is measured over a realistic,",
+    "committed, deterministic input instead of whatever a test happened to build in memory.",
+    "`report` is validated by `app.domain.scoring.results.ScoreReport` (pydantic, extra=forbid), so",
+    "a field that drifts out of the domain shape fails the benchmark instead of silently changing",
+    "the prompt. No number here is a measurement; the measurement is the latency of the call."
+  ],
+  "report": {
+    "scenario_version_id": "66666666-7777-4888-8999-aaaaaaaaaaaa",
+    "session_id": "11111111-2222-4333-8444-555555555555",
+    "total_points": 43.0,
+    "total_max_points": 50.0,
+    "by_category": [
+      {"category": "INFORMATION_GATHERING", "points_awarded": 20.0, "max_points": 20.0},
+      {"category": "CARD_QUALITY", "points_awarded": 10.0, "max_points": 10.0},
+      {"category": "SERVICE_ROUTING", "points_awarded": 8.0, "max_points": 8.0},
+      {"category": "TIMELINESS", "points_awarded": 5.0, "max_points": 12.0}
+    ],
+    "critical_errors": [],
+    "results": [
+      {
+        "rule_id": "rule.address_obtained",
+        "evaluator_type": "FACT_OBTAINED",
+        "category": "INFORMATION_GATHERING",
+        "points_awarded": 12.0,
+        "max_points": 12.0,
+        "passed": true,
+        "critical_failure": false,
+        "evidence": [
+          {
+            "event_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffff01",
+            "note_ru": "Адрес (улица и дом) получен на 42-й секунде разговора"
+          }
+        ]
+      },
+      {
+        "rule_id": "rule.victims_asked",
+        "evaluator_type": "FACT_OBTAINED",
+        "category": "INFORMATION_GATHERING",
+        "points_awarded": 8.0,
+        "max_points": 8.0,
+        "passed": true,
+        "critical_failure": false,
+        "evidence": [
+          {
+            "event_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffff02",
+            "note_ru": "Вопрос о пострадавших задан на 68-й секунде"
+          }
+        ]
+      },
+      {
+        "rule_id": "rule.card_address_correct",
+        "evaluator_type": "CARD_FIELD_CORRECT",
+        "category": "CARD_QUALITY",
+        "points_awarded": 10.0,
+        "max_points": 10.0,
+        "passed": true,
+        "critical_failure": false,
+        "evidence": [
+          {
+            "card_revision_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffff03",
+            "note_ru": "В карточке указан адрес «Смоленск, улица Николаева, 27, кв. 45»"
+          }
+        ]
+      },
+      {
+        "rule_id": "rule.fire_service_dispatched",
+        "evaluator_type": "SERVICE_SELECTION",
+        "category": "SERVICE_ROUTING",
+        "points_awarded": 8.0,
+        "max_points": 8.0,
+        "passed": true,
+        "critical_failure": false,
+        "evidence": [
+          {
+            "event_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffff04",
+            "note_ru": "Пожарная служба назначена на 95-й секунде"
+          }
+        ]
+      },
+      {
+        "rule_id": "rule.dispatch_within_120s",
+        "evaluator_type": "DEADLINE",
+        "category": "TIMELINESS",
+        "points_awarded": 5.0,
+        "max_points": 12.0,
+        "passed": false,
+        "critical_failure": false,
+        "evidence": [
+          {
+            "event_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffff05",
+            "note_ru": "Назначение службы выполнено на 95-й секунде вместо целевых 60 секунд"
+          }
+        ]
+      }
+    ],
+    "computed_from_event_count": 128
+  },
+  "rule_titles": {
+    "rule.address_obtained": "Адрес происшествия получен",
+    "rule.victims_asked": "Вопрос о пострадавших задан",
+    "rule.card_address_correct": "Адрес в карточке указан верно",
+    "rule.fire_service_dispatched": "Пожарная служба назначена",
+    "rule.dispatch_within_120s": "Служба назначена в пределах целевого времени"
+  }
+}

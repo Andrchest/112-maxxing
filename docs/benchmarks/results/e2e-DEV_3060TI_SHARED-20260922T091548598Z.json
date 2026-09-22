@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "benchmark": "e2e",
+  "status": "NOT_RUN",
+  "profile": "DEV_3060TI_SHARED",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T09:01:06.376+00:00",
+  "finished_at": "2026-09-22T09:15:48.598+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI_SHARED",
+    "asr": {
+      "provider": "gigaam",
+      "model_version": "v3_e2e_ctc",
+      "model_path": "/models/asr/gigaam-v3-e2e-ctc",
+      "device": "cpu",
+      "compute_type": "float32",
+      "sample_rate": 16000
+    },
+    "tts": {
+      "provider": "piper",
+      "model_path": "/models/tts/piper/ru_RU-irina-medium.onnx",
+      "voice_id": "ru_RU-irina-medium",
+      "device": "cpu",
+      "output_sample_rate": 22050,
+      "max_chunk_ms": 20,
+      "fallback_provider": "none",
+      "fallback_model_path": null,
+      "fallback_voice_id": null,
+      "fallback_output_sample_rate": null,
+      "model_variant": null
+    },
+    "voice_turn": {
+      "speech_start_threshold": 0.55,
+      "speech_end_threshold": 0.35,
+      "speech_start_min_ms": 96,
+      "endpoint_silence_ms": 300,
+      "pre_roll_ms": 300,
+      "barge_in_min_speech_ms": 120,
+      "max_turn_ms": 30000,
+      "min_turn_ms": 200,
+      "vad_frame_ms": 32,
+      "outbound_queue_ms": 200,
+      "tts_chunk_ms": 20,
+      "partial_asr_enabled": true,
+      "partial_interval_ms": 500,
+      "reconnect_grace_s": 30
+    },
+    "latency_targets": {
+      "p50_ms": 1500,
+      "p95_ms": 2500
+    },
+    "provider_mode": "real",
+    "transport": "livekit",
+    "scenario": "apartment-fire",
+    "turns_file": "benchmarks/data/e2e/turns.jsonl",
+    "dialogue_chain": "full (whatever the running voice-agent is wired with)",
+    "clock": "auto",
+    "llm_base_url": "http://127.0.0.1:8101/v1",
+    "settle_ms": 2500,
+    "runs": 4,
+    "seed": 0,
+    "tag": "e19-e2-livekit"
+  },
+  "samples": [],
+  "aggregates": {},
+  "notes": [
+    "speech_end_to_first_audio_ms is read from the session event log (USER_SPEECH_ENDED -> CALLER_TTS_STARTED.first_audio_offset_ms), not timed here",
+    "livekit: published 36 turn(s) into room 'session-9b70e21a-5b00-4ee5-b911-af9a10e6565a'; the reported number is the session event log's, and a row is attributed to a detected turn by publish order (a VAD-split WAV shifts that attribution; sample count vs published count says whether it happened: 0 detected vs 36 published)"
+  ],
+  "reason": "the pipeline produced no completed turn"
+}

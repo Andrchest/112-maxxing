@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "benchmark": "e2e",
+  "status": "NOT_RUN",
+  "profile": "DEV_3060TI_SHARED",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T04:58:57.247+00:00",
+  "finished_at": "2026-09-22T04:58:57.248+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI_SHARED",
+    "asr": {
+      "provider": "gigaam",
+      "model_version": "v3_e2e_ctc",
+      "model_path": "/models/asr/gigaam-v3-e2e-ctc",
+      "device": "cpu",
+      "compute_type": "float32",
+      "sample_rate": 16000
+    },
+    "tts": {
+      "provider": "piper",
+      "model_path": "/models/tts/piper/ru_RU-irina-medium.onnx",
+      "voice_id": "ru_RU-irina-medium",
+      "device": "cpu",
+      "output_sample_rate": 22050,
+      "max_chunk_ms": 20,
+      "fallback_provider": "none",
+      "fallback_model_path": null,
+      "fallback_voice_id": null,
+      "fallback_output_sample_rate": null,
+      "model_variant": null
+    },
+    "voice_turn": {
+      "speech_start_threshold": 0.55,
+      "speech_end_threshold": 0.35,
+      "speech_start_min_ms": 96,
+      "endpoint_silence_ms": 300,
+      "pre_roll_ms": 300,
+      "barge_in_min_speech_ms": 120,
+      "max_turn_ms": 30000,
+      "min_turn_ms": 200,
+      "vad_frame_ms": 32,
+      "outbound_queue_ms": 200,
+      "tts_chunk_ms": 20,
+      "partial_asr_enabled": true,
+      "partial_interval_ms": 500,
+      "reconnect_grace_s": 30
+    },
+    "latency_targets": {
+      "p50_ms": 1500,
+      "p95_ms": 2500
+    },
+    "provider_mode": "real",
+    "transport": "livekit",
+    "scenario": "apartment-fire",
+    "turns_file": "benchmarks/data/e2e/turns.jsonl",
+    "dialogue_chain": "full",
+    "clock": "auto",
+    "llm_base_url": "http://127.0.0.1:8101/v1",
+    "settle_ms": 1500,
+    "runs": 1,
+    "seed": 0,
+    "tag": "e19-e-livekit"
+  },
+  "samples": [],
+  "aggregates": {},
+  "notes": [],
+  "reason": "the livekit SDK is not installed in this workspace: no pyproject.toml declares it (not even as an optional extra), so --transport livekit cannot run here. Declare the extra and `make deps` first, or use --transport inprocess."
+}

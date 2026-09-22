@@ -24,6 +24,7 @@ from app.config.settings import Settings
 from app.domain.common.ids import SessionId
 from voice_agent.main import (
     ASR_SERVICE,
+    CALL_ENDED_TRANSPORT_UNAVAILABLE,
     STATE_NOT_READY,
     STATE_READY,
     VAD_SERVICE,
@@ -31,7 +32,15 @@ from voice_agent.main import (
     synthetic_tone,
 )
 from voice_agent.transport.sip_transport import SIP_STUB_MESSAGE, SipCallTransport
-from voice_agent.wiring import VoiceAgentDeps, build_pipeline, build_transport, build_vad
+from voice_agent.wiring import (
+    AGENT_TOKEN_TTL_MINUTES,
+    VoiceAgentDeps,
+    agent_participant_identity,
+    build_agent_token,
+    build_pipeline,
+    build_transport,
+    build_vad,
+)
 
 CALL_ID = uuid.UUID("66666666-6666-4666-8666-666666666666")
 
@@ -419,3 +428,245 @@ def test_the_fake_transport_is_reachable_from_the_worker_package() -> None:
     from voice_agent.transport.fake import FakeCallTransport as Reexported
 
     assert Reexported is FakeCallTransport
+
+
+# -- E19-E2: the VAD the pipeline uses is the one that was warmed -------------------------------
+
+
+class _WarmOnceVad:
+    """A `VADProvider` that refuses to run unwarmed — `SileroVAD`'s real precondition.
+
+    `EnergyVAD` (the gate's, D13) needs no warm-up at all, which is exactly why the bug this
+    double reproduces survived every fake-provider test: it only bites a profile that selects
+    `silero`, i.e. all four of them.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.warm_ups = 0
+        self.resets = 0
+        self.frames = 0
+
+    @property
+    def frame_samples(self) -> int:
+        return self._inner.frame_samples
+
+    @property
+    def required_sample_rate(self) -> int:
+        return self._inner.required_sample_rate
+
+    @property
+    def provider_name(self) -> str:
+        return "warm-once"
+
+    async def warm_up(self) -> None:
+        self.warm_ups += 1
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    async def process(self, frame: Any) -> Any:
+        if self.warm_ups == 0:
+            raise RuntimeError("SileroVAD.warm_up() must be called before process()")
+        self.frames += 1
+        return await self._inner.process(frame)
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+
+def _one_turn_frames(config: VoiceTurnConfig) -> list[Any]:
+    return [
+        *silence_frames(
+            duration_ms=400, frame_samples=config.frame_samples, sample_rate=config.sample_rate
+        ),
+        *sine_burst_frames(
+            duration_ms=900,
+            frame_samples=config.frame_samples,
+            sample_rate=config.sample_rate,
+            start_offset_ms=400,
+        ),
+        *silence_frames(
+            duration_ms=900,
+            frame_samples=config.frame_samples,
+            sample_rate=config.sample_rate,
+            start_offset_ms=1300,
+        ),
+    ]
+
+
+async def test_build_pipeline_uses_the_vad_it_is_given_and_resets_it() -> None:
+    """A long-lived VAD is passed in, like `asr`/`llm`/`tts`, and reset at the start of the call."""
+    config = VoiceTurnConfig()
+    clock = FakeClock()
+    committed: list[Any] = []
+    deps = VoiceAgentDeps.build(settings(), clock, _collecting_uow_factory(committed, clock))
+    vad = _WarmOnceVad(build_vad(deps.settings, deps.config))
+    await vad.warm_up()
+    transport = FakeCallTransport(
+        clock=clock, inbound=_one_turn_frames(config), outbound_queue_ms=config.outbound_queue_ms
+    )
+
+    await transport.connect(CALL_ID)
+    pipeline = build_pipeline(
+        deps,
+        session_id=SessionId(uuid.uuid4()),
+        call_id=CALL_ID,
+        transport=transport,
+        started_at=clock.now(),
+        vad=vad,
+        record=False,
+    )
+    await asyncio.wait_for(pipeline.run(), timeout=10)
+
+    assert vad.frames > 0, "build_pipeline ignored the VAD it was given"
+    assert vad.resets == 1, "TurnPipeline.run() must reset a reused VAD before the first frame"
+
+
+async def test_the_pipeline_runs_the_vad_that_warm_up_warmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The E19-E2 regression: an unwarmed per-call VAD killed the first frame of the first call.
+
+    `VoiceAgent._warm_vad` builds and warms one VAD and keeps it in `self._vad` ("built once per
+    process, warmed once, shared by every call", §4.2). Until this was fixed, `build_pipeline`
+    quietly built its own, unwarmed one, and `SileroVAD.process()` raised on the very first frame
+    of the very first real call — invisible to every gate test, because the gate's `EnergyVAD`
+    needs no warm-up.
+
+    `build_vad` is patched only in `voice_agent.main`'s namespace, so if the pipeline ever goes
+    back to building its own it gets a real `EnergyVAD` instead and this double sees **zero**
+    frames — which is the assertion.
+    """
+    import voice_agent.main as main_module
+
+    clock = FakeClock()
+    committed: list[Any] = []
+    deps = VoiceAgentDeps.build(settings(), clock, _collecting_uow_factory(committed, clock))
+    doubles: list[_WarmOnceVad] = []
+
+    def build_double(settings_arg: Any, config_arg: Any = None) -> Any:
+        doubles.append(_WarmOnceVad(build_vad(settings_arg, config_arg or deps.config)))
+        return doubles[-1]
+
+    monkeypatch.setattr(main_module, "build_vad", build_double)
+
+    transport = FakeCallTransport(
+        clock=clock,
+        inbound=_one_turn_frames(deps.config),
+        outbound_queue_ms=deps.config.outbound_queue_ms,
+    )
+    agent = VoiceAgent(deps, FakeRedis(), transport_factory=lambda *_args: transport)
+
+    await agent.warm_up()
+    assert len(doubles) == 1 and doubles[0].warm_ups == 1
+
+    await asyncio.wait_for(agent._run_call(SessionId(uuid.uuid4()), CALL_ID, "room-1"), timeout=10)
+
+    assert len(doubles) == 1, "a second VAD was built for the call"
+    assert doubles[0].frames > 0, "the call ran a VAD that warm_up() never warmed"
+    assert [event.event_type.value for event in committed] == [
+        "USER_SPEECH_STARTED",
+        "USER_SPEECH_ENDED",
+        "ASR_FINAL",
+        "CALL_ENDED",
+    ]
+
+
+# -- E19-E3: the agent mints its own LiveKit token, and a transport failure is never silent ------
+
+
+def _decode(token: str) -> dict[str, Any]:
+    """The claims, verified against the same secret `settings()` gives the agent."""
+    import jwt
+
+    return jwt.decode(
+        token,
+        "devsecret1234567890",
+        algorithms=["HS256"],
+        options={"verify_aud": False},
+    )
+
+
+def test_the_agent_mints_a_token_for_exactly_this_room_with_the_two_grants_a_call_needs() -> None:
+    """E19-E3: `roomJoin` on this room, publish + subscribe, and nothing else (D9, SPEC §41)."""
+    call_id = uuid.uuid4()
+    token = build_agent_token(settings(), room="session-abc", call_id=call_id)
+    claims = _decode(token)
+
+    assert claims["iss"] == "devkey"
+    assert claims["sub"] == f"voice-agent:{call_id}"
+    assert claims["video"] == {
+        "roomJoin": True,
+        "room": "session-abc",
+        "canPublish": True,
+        "canSubscribe": True,
+    }
+    # The grants a call must NOT have: nothing that lets the agent touch another room or the server.
+    for forbidden in (
+        "roomCreate",
+        "roomAdmin",
+        "roomList",
+        "canPublishData",
+        "recorder",
+        "hidden",
+    ):
+        assert forbidden not in claims["video"], forbidden
+
+
+def test_the_agent_token_ttl_is_the_calls_ceiling_not_the_browsers_ten_minutes() -> None:
+    """`Settings.livekit_token_ttl_minutes` (10) is the TRAINEE's browser token — short because a
+    browser can ask the API for another one. The agent cannot, so its own TTL is the call's."""
+    claims = _decode(build_agent_token(settings(), room="r", call_id=uuid.uuid4()))
+    ttl_minutes = (claims["exp"] - claims["iat"]) / 60
+
+    assert ttl_minutes == AGENT_TOKEN_TTL_MINUTES == 120
+    assert claims["nbf"] == claims["iat"], "the token is valid from the moment it is minted"
+
+
+def test_one_identity_per_call_not_per_session() -> None:
+    """LiveKit refuses a duplicate identity, so a re-dial must not collide with a stale join."""
+    room = "session-abc"
+    first, second = uuid.uuid4(), uuid.uuid4()
+
+    assert agent_participant_identity(first) != agent_participant_identity(second)
+    assert (
+        _decode(build_agent_token(settings(), room=room, call_id=first))["sub"]
+        != _decode(build_agent_token(settings(), room=room, call_id=second))["sub"]
+    )
+
+
+def test_the_livekit_transport_factory_supplies_the_token_it_used_to_omit() -> None:
+    """The E19-E3 regression: `_default_transport` built a LiveKit transport with NO token, which
+    raised on the first line of `_run_call` — outside its `try` — inside a task nobody awaited."""
+    agent = make_agent(FakeClock(), FakeRedis(), call_transport="livekit")
+    call_id = uuid.uuid4()
+
+    transport = agent._default_transport(SessionId(uuid.uuid4()), call_id, "session-abc")
+
+    assert type(transport).__name__ == "LiveKitCallTransport"
+    assert _decode(transport._token)["sub"] == f"voice-agent:{call_id}"
+
+
+async def test_a_transport_that_cannot_be_built_is_logged_and_ends_the_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Never silent: the failure reaches the log AND the event log, and the call is released."""
+    clock = FakeClock()
+    committed: list[Any] = []
+    deps = VoiceAgentDeps.build(settings(), clock, _collecting_uow_factory(committed, clock))
+
+    def explode(_session_id: Any, _call_id: Any, _room: str) -> Any:
+        raise ValueError("the LiveKit transport needs a backend-minted access token")
+
+    agent = VoiceAgent(deps, FakeRedis(), transport_factory=explode)
+    session_id = SessionId(uuid.uuid4())
+
+    with caplog.at_level("ERROR"):
+        await agent._run_call(session_id, CALL_ID, "session-abc")
+
+    assert "voice pipeline failed" in caplog.text
+    assert "needs a backend-minted access token" in caplog.text
+    assert [event.event_type.value for event in committed] == ["CALL_ENDED"]
+    assert committed[0].payload["reason"] == CALL_ENDED_TRANSPORT_UNAVAILABLE
+    assert session_id not in agent.active_sessions, "the failed call must not stay registered"

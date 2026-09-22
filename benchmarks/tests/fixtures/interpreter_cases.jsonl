@@ -1,0 +1,2 @@
+{"id": "greeting_open", "scenario": "scenarios/examples/apartment-fire/v1.yaml", "utterance": "Служба сто двенадцать, слушаю вас.", "expected": {"speech_act": "GREETING", "requested_facts": [], "operator_assertions": [], "confirmation_targets": []}}
+{"id": "ask_street", "utterance": "Назовите улицу.", "uncertain": true, "expected": {"speech_act": "QUESTION", "requested_facts": [{"fact_id": "address.street", "explicit": true}], "operator_assertions": [], "confirmation_targets": []}}

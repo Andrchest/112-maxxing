@@ -319,7 +319,7 @@ def empty_cuda_cache() -> bool:
     no-op there rather than an ImportError. Returns whether the cache was actually emptied, which
     is what a unit test asserts instead of monkey-patching a module that may not exist.
     """
-    try:  # pragma: no cover - the gate venv has no torch; the real path is E19's
+    try:  # pragma: no cover - the gate venv has no torch; only a real GPU run exercises this
         import torch
     except Exception:
         return False

@@ -117,6 +117,26 @@ def test_an_empty_utterance_is_empty_not_schema_invalid() -> None:
     assert check(answer("   ")) == (ValidationFailureCode.EMPTY,)
 
 
+@pytest.mark.parametrize("text", ["}", "{", "}{", "...", ":", "—", "3, 45", " ) "])
+def test_an_utterance_with_no_letter_is_empty_speech(text: str) -> None:
+    """E19-C2: §7.1's `EMPTY` rule is "no letter after strip", not "no characters after strip".
+
+    E19-C measured the Qwen3.5 family filling the caller grammar's `utterance` string with a bare
+    `}` on 13-27 of 46 real dialogue turns (`docs/benchmarks/llm.md` §3) — and this validator
+    passed every one of them through, because `"}".strip()` is truthy. A caller that "says" `}`
+    is nonsense in a trainee's ear, so an answer carrying no letter at all is empty *speech*.
+    `"3, 45"` is in this list on purpose: a bare numeric answer is no longer accepted either, and
+    the caller must speak a word («Подъезд 3, квартира 45»).
+    """
+    assert check(answer(text)) == (ValidationFailureCode.EMPTY,)
+
+
+@pytest.mark.parametrize("text", ["Да.", "улица Николаева, 27.", "Подъезд 3, квартира 45."])
+def test_an_utterance_with_a_letter_is_not_empty(text: str) -> None:
+    """The counterpart: one letter anywhere is enough for `EMPTY` not to fire (other checks may)."""
+    assert ValidationFailureCode.EMPTY not in check(answer(text))
+
+
 # ---------------------------------------------------------------------------------------------
 # §7.3 — forbidden identifiers
 # ---------------------------------------------------------------------------------------------

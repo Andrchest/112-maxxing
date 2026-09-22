@@ -4,10 +4,13 @@
 # `torch<2.9` ceiling — see `workers/tts_qwen3/README.md`) — this image never touches the
 # `sim112-workspace` uv workspace at all.
 #
-# UNVERIFIED-BUILD (this task's report): written carefully against
-# `workers/tts_qwen3/pyproject.toml`'s pinned versions, but NOT built here — no GPU work in E18;
-# E19 builds and runs it for real. The exact CUDA runtime version `torch==2.14.0` needs was not
-# verified (same caveat as `workers/voice_agent/Dockerfile`).
+# BUILT 2026-09-22 (E19-F): `docker build -f workers/tts_qwen3/Dockerfile -t sim112/tts-qwen3:e19
+# workers/tts_qwen3` succeeded, no fix needed (image 6.5 GB); smoke-tested with
+# `docker run --rm --gpus all sim112/tts-qwen3:e19 python -c "import torch;
+# print(torch.cuda.is_available(), torch.version.cuda)"` (no model load) → `True 13.0`.
+# `torch==2.14.0` resolves `cu13`-suffixed wheels (different from `workers/voice_agent`'s
+# `torch==2.8.0`/`cu12` — expected, the two images pin different torch versions on purpose, see
+# above) — the driver (595.84) accepts both; no base-image change was needed either way.
 #
 # Build context is `workers/tts_qwen3/` itself (self-contained, not a uv workspace member).
 FROM python:3.12-slim AS base

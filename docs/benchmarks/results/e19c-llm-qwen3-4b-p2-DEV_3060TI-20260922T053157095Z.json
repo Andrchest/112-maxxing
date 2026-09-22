@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "benchmark": "llm",
+  "status": "FAILED",
+  "profile": "DEV_3060TI",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T05:31:57.090+00:00",
+  "finished_at": "2026-09-22T05:31:57.095+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI",
+    "llm": {
+      "provider": "llama_cpp",
+      "model_name": "Qwen3.5-2B",
+      "model_path": "/models/llm/Qwen3.5-2B-Q4_K_M.gguf",
+      "quantization": "Q4_K_M",
+      "base_url": "http://llama-server:8080/v1",
+      "n_ctx": 4096,
+      "n_gpu_layers": -1,
+      "n_batch": 512,
+      "n_ubatch": 256,
+      "parallel_slots": 2,
+      "flash_attention": "on",
+      "kv_cache_type": "q8_0",
+      "max_response_tokens": 80,
+      "interpreter_max_tokens": 138,
+      "request_timeout_ms": 3000,
+      "thinking_enabled": false
+    },
+    "provider_mode": "real",
+    "suites": [
+      "interpreter",
+      "dialogue",
+      "explanation"
+    ],
+    "runs": 1,
+    "seed": 0,
+    "tag": "qwen3-4b-p2",
+    "parallel_slots": 2,
+    "warmup_requests": 2,
+    "model_path": "models/llm/Qwen3-4B-Q4_K_M.gguf"
+  },
+  "samples": [],
+  "aggregates": {},
+  "notes": [],
+  "reason": "llama-server: no llama-server binary could load models/llm/Qwen3-4B-Q4_K_M.gguf:\n/home/andreipc/src/llama.cpp/build/bin/llama-server: llama-server exited early (code 1)\n--- log tail ---\n0.00.014.299 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)\n0.00.082.684 W srv  llama_server: -----------------\n0.00.082.686 W srv  llama_server: CORS is set to allow all origins ('*') and no API key is set\n0.00.082.686 W srv  llama_server: this can be a security risk (cross-origin attacks)\n0.00.082.686 W srv  llama_server: more info: https://github.com/ggml-org/llama.cpp/pull/25655\n0.00.082.686 W srv  llama_server: -----------------\n0.00.083.854 I srv    load_model: loading model 'models/llm/Qwen3-4B-Q4_K_M.gguf'\n0.00.387.731 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden\n0.01.097.019 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 992.00 MiB on device 0: cudaMalloc failed: out of memory\n0.01.097.022 E alloc_tensor_range: failed to allocate CUDA0 buffer of size 1040187392\n0.01.103.436 E llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache\n0.01.103.444 E cmn  common_init_: failed to create context with model 'models/llm/Qwen3-4B-Q4_K_M.gguf'\n0.01.103.445 E cmn  common_init_: failed to create context with model 'models/llm/Qwen3-4B-Q4_K_M.gguf'\n0.01.103.446 E srv    load_model: failed to create_context with model 'models/llm/Qwen3-4B-Q4_K_M.gguf'\n0.01.103.447 I srv    operator(): operator(): cleaning up before exit...\n0.01.103.703 E srv  llama_server: exiting due to model loading error\n"
+}

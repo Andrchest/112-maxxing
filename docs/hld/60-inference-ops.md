@@ -72,6 +72,28 @@ Loaded and validated by `backend/app/config/profile.py` into the Pydantic model 
 (`extra="forbid"` on every block, so an unknown key anywhere in a profile file is a load-time
 refusal, never a silently ignored one).
 
+**MEASURED (E19-C/E19-C2/E19-D2, 2026-09-22) — the DEV default LLM and TTS, consolidated.**
+
+* **LLM.** The DEV default stays **Qwen3.5-2B**: fastest by more than 2x (combined
+  interpret+generate p50 **462.5 ms**, vs 990.4 ms for Qwen3.5-0.8B and ≥ 2113 ms for either 4B)
+  and clears 3 of E19's 4 quality-bar criteria (`explicit_acc` 1.000, `structured_output_validity_
+  rate` 0.953, `forbidden_fact_leak_rate` 0.0); `dialogue_consistency_rate` **0.538 fails** the
+  ≥ 0.90 bar. SPEC §22's own "Qwen3-4B quantized" reaches `dialogue_consistency_rate` **0.929** but
+  at combined p50 **3496.9 ms (~3.5 s)** — not viable against SPEC §27's development target
+  (p50 < 1500 ms). No model passes the full bar, so the default is unchanged (R6: the default is
+  the fastest model that passes; none does). `docs/benchmarks/llm.md`,
+  `docs/benchmarks/results/e19c-llm-qwen35-2b-p2-DEV_3060TI-20260922T052828858Z.json`.
+* **TTS.** The DEV default stays **Qwen3-TTS** (OWNER DECISION, E14) — measured: first-audio
+  latency is whole-utterance (the installed `qwen_tts==0.1.1` package has no chunked/streaming
+  generation entry point at all, verified against its source, not just its docstring), mean RTF
+  **0.848**, e.g. p50 **4130 ms** on a NUMERIC-category sentence, p50 **9674 ms** on LONG — the
+  mandatory mitigation is the sentence chunker (§2.4 of `50-voice-pipeline.md`) keeping every
+  provider call to one short clause, never a per-adapter workaround. **Piper meets SPEC §27's
+  target trivially** (overall first-audio p50 **136 ms**) but stays the configured fallback, not
+  the default (D9, E14). `docs/benchmarks/tts.md`,
+  `docs/benchmarks/results/tts-DEV_3060TI-20260922T045733Z.json` (Qwen3-TTS),
+  `docs/benchmarks/results/tts-DEV_3060TI-20260922T043831Z.json` (Piper).
+
 ### 2.0 Precedence: defaults < profile < an explicitly-set env var (R3, E18-A)
 
 `app.config.profile.apply_profile(settings, profile) -> Settings` is the ONE function that
@@ -178,13 +200,17 @@ hardware:
 
 vram_budget_mb: 7168
 min_vram_margin_mb: 512
-# UNMEASURED as a COMBINED peak — DEV-only warning branch of validate_vram_margin (§2.5), never
-# the FINAL_* refusal branch. LLM (1558 MB, task report e13-b4), GigaAM ASR (~1336 MiB, task
-# report e14-d) and Qwen3-TTS 0.6B (~2746 MiB, task report e14-d) were each measured SEPARATELY
-# and sum to ~5640 MiB, but nobody has run all three loaded simultaneously — that assumption is
-# not written here as measured_peak_vram_mb (SPEC §27). TODO(E19): measure the real combined peak.
-measured_peak_vram_mb: null
-measured_at: null
+# MEASURED for real (task report E19-D3, 2026-09-22): benchmarks/benchmark_vram.py --profile
+# DEV_3060TI --provider real --turns 20, the owner's GPU process (PID 1082982) stopped for this
+# run, freeing the card. VAD -> ASR (GigaAM, 1530 MB) -> TTS (Qwen3-TTS 0.6B worker, 2373 MB) ->
+# LLM (Qwen3.5-2B --parallel 2, 1559 MB) -> 20 sequential turns, all completed: status OK,
+# project_peak_mb 5560 (peak_mb 5910 - baseline_used_mb 350), free_min_mb 2281. Margin:
+# 7168 - 5560 = 1608 >= 512, passes outright. History: two earlier attempts on the SHARED card
+# (owner's process still resident, ~3.2 GB free) came back PARTIAL — the TTS step OOM'd/timed out
+# before this one ever reached the LLM step; superseded, not this profile's story any more.
+# docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json, docs/benchmarks/vram.md.
+measured_peak_vram_mb: 5560
+measured_at: 2026-09-22
 
 llm:
   provider: llama_cpp
@@ -284,8 +310,12 @@ hardware:
                                     # process residency (nvidia-smi 4646 MiB used)
 vram_budget_mb: 3000
 min_vram_margin_mb: 512
-measured_peak_vram_mb: 1558        # MEASURED (task report e13-b4): the LLM is the ONLY GPU
-measured_at: 2026-09-21            # resident on this profile, so this is a true combined peak
+measured_peak_vram_mb: 1559        # MEASURED (task report E19-D/D2, a real 20-turn
+measured_at: 2026-09-22            # benchmark_vram.py sequence): the LLM is the ONLY GPU
+                                    # resident on this profile, so this is a true combined peak —
+                                    # supersedes the earlier single-call figure of 1558 (e13-b4),
+                                    # within 1 MB of sampling noise.
+                                    # docs/benchmarks/results/vram-DEV_3060TI_SHARED-20260922T050401Z.json
 
 llm: { model_name: Qwen3.5-2B, n_gpu_layers: -1, parallel_slots: 2 }   # same as DEV_3060TI
 asr: { provider: gigaam, device: cpu, compute_type: float32 }          # MEASURED RTF 0.036 (CPU)
@@ -294,9 +324,10 @@ tts: { provider: piper, device: cpu, fallback_provider: none }         # MEASURE
 
 (Full file: `backend/app/config/profiles/DEV_3060TI_SHARED.yaml`; the excerpt above shows only what
 differs in kind from `DEV_3060TI`, not every key — every key `ModelProfile`/`extra="forbid"`
-requires is present in the real file.) Margin: `3000 - 1558 = 1442 >= 512` — passes
+requires is present in the real file.) Margin: `3000 - 1559 = 1441 >= 512` — passes
 `validate_vram_margin` outright, no DEV-only warning needed, since this profile's peak actually is
-measured.
+measured. Per-component deltas from the real run: `vad`/`asr`/`tts_delta_mb` all 0 (CPU in this
+profile), `llm_delta_mb` 1559.
 
 ### 2.3 `FINAL_3080TI_12GB.yaml` (BUILT — E18-A; refused today, §2.5: no measurement exists yet)
 
@@ -418,6 +449,15 @@ tts:
 
 `n_ctx` stays 4096 initially in both FINAL profiles (SPEC §26).
 
+**NOT_RUN 2026-09-22 (E19-F, both FINAL profiles):** no RTX 3080 Ti and no Qwen3-8B GGUF exist on
+the dev machine (an RTX 3060 Ti 8 GB, shared with the owner's other ~4.6 GB resident process) — the
+measurement SPEC §26 requires for either profile cannot be produced here. On the target card: run
+`make models-llm-qwen3-8b && make bench-vram PROFILE=FINAL_3080TI_12GB` (and again for
+`FINAL_3080TI_16GB`), then paste the printed `project_peak_mb` and today's date into that profile
+YAML's `measured_peak_vram_mb`/`measured_at` fields (a human decision, HLD §7.5, never the script).
+Both profiles stay `ProfileRefused` (§2.5) until then, which is the intended state, not a bug — see
+`docs/benchmarks/README.md`'s "Not measured on the dev machine" section for the same note.
+
 ### 2.5 The VRAM-margin refusal rule (D9)
 
 `backend/app/config/profile.py::validate_vram_margin(profile)` runs at process start, in the backend
@@ -451,19 +491,29 @@ VRAM reported by the driver at that moment, which is what catches the dev machin
 ## 3. `InferenceMetric` — SPEC §27 field to column mapping
 
 Table `inference_metrics` (SPEC §30). The dataclass is defined in `50-voice-pipeline.md` §2.6; this
-is the persistence contract. ORM class `backend/app/db/models/inference_metric.py::InferenceMetricRow`.
+is the persistence contract. ORM class `backend/app/db/models/events.py::InferenceMetric`.
+
+**CORRECTED (E19-A, this epic's ruling R3).** This table previously named the *dataclass's* field
+names (`stage`, `input_audio_ms`, `gpu_memory_used_mb`, a `turn_id` column, a `created_at` column)
+rather than the columns that actually persist. `docs/hld/20-db-schema.md` §20.6, the baseline
+migration (`0001_baseline.py`) and the ORM class all agree on the names below, and they are what a
+benchmark reading `inference_metrics` must query — so **the schema is ground truth and this table
+is corrected to it**, not the other way round. The port dataclass keeps its own names; the whole
+of the difference is `app.infrastructure.metrics.pg_metrics_recorder`'s `_COMPONENT_OF_STAGE` and
+`to_row()`, which `benchmarks/benchmark_e2e.py` reuses rather than re-deriving.
 
 | SPEC §27 field | Column | Type | Null | Note |
 |:--|:--|:--|:--|:--|
 | — | `id` | `UUID` PK | no | uuid4 |
-| — | `session_id` | `UUID` FK → `simulation_sessions.id` | no | indexed |
-| — | `turn_id` | `UUID` | yes | null for warm-up and benchmark calls |
+| — | `session_id` | `UUID` FK → `simulation_sessions.id` | yes | indexed |
+| — | `turn_index` | `INTEGER` | yes | the turn's index, not its uuid: the recorder maps `turn_id → turn_index` (`register_turn`) |
 | request id | `request_id` | `TEXT` | no | unique per call; `{turn_id}:{stage}:{attempt}` |
-| — | `stage` | `TEXT` | no | `ASR` \| `LLM_INTERPRET` \| `LLM_GENERATE` \| `TTS` |
+| — | `component` | `TEXT` | no | `ASR` \| `LLM_INTERPRETER` \| `LLM_GENERATOR` \| `TTS` \| `VAD` (CHECK) |
 | model/provider | `provider` | `TEXT` | no | `gigaam`, `llama_cpp`, `piper`, … |
-| model version | `model_version` | `TEXT` | no | `v3_e2e_ctc`, `Qwen3-8B-Q4_K_M`, … |
+| model | `model` | `TEXT` | no | the weights' name; §20.6 splits the port's one `model_version` into `model` + `model_version` |
+| model version | `model_version` | `TEXT` | yes | `v3_e2e_ctc`, `Qwen3-8B-Q4_K_M`, … |
 | input tokens | `input_tokens` | `INTEGER` | yes | LLM stages |
-| input duration | `input_audio_ms` | `INTEGER` | yes | ASR stage |
+| input duration | `input_duration_ms` | `INTEGER` | yes | ASR stage |
 | output tokens | `output_tokens` | `INTEGER` | yes | LLM stages |
 | output audio duration | `output_audio_ms` | `INTEGER` | yes | TTS stage |
 | start timestamp | `started_at` | `TIMESTAMPTZ` | no | |
@@ -471,16 +521,24 @@ is the persistence contract. ORM class `backend/app/db/models/inference_metric.p
 | finish timestamp | `finished_at` | `TIMESTAMPTZ` | yes | null if cancelled before completion |
 | TTFT | `ttft_ms` | `INTEGER` | yes | `first_output_at - started_at` |
 | total latency | `total_latency_ms` | `INTEGER` | yes | `finished_at - started_at` |
-| tokens per second | `tokens_per_second` | `DOUBLE PRECISION` | yes | `output_tokens / (finished-first)` |
-| realtime factor | `realtime_factor` | `DOUBLE PRECISION` | yes | ASR: `total_latency_ms / input_audio_ms`; TTS: `total_latency_ms / output_audio_ms` |
-| GPU memory measurement | `gpu_memory_used_mb` | `INTEGER` | yes | sampled at `finished_at` when NVML is available |
-| fallback count | `fallback_count` | `INTEGER` | no | default 0 |
-| retry count | `retry_count` | `INTEGER` | no | default 0 |
-| — | `status` | `TEXT` | no | `OK` \| `TIMEOUT` \| `ERROR` \| `CANCELLED` |
+| tokens per second | `tokens_per_second` | `REAL` | yes | `output_tokens / (finished-first)` |
+| realtime factor | `realtime_factor` | `REAL` | yes | ASR: `total_latency_ms / input_duration_ms`; TTS: `total_latency_ms / output_audio_ms` |
+| GPU memory measurement | `gpu_memory_mb` | `INTEGER` | yes | sampled at `finished_at` when NVML is available |
+| fallback count | `fallback_count` | `SMALLINT` | no | default 0 |
+| retry count | `retry_count` | `SMALLINT` | no | default 0 |
+| — | `status` | `TEXT` | no | `OK` \| `TIMEOUT` \| `ERROR` \| `CANCELLED` (CHECK), default `OK` |
 | — | `error_kind` | `TEXT` | yes | exception class name, never a stack trace |
-| — | `created_at` | `TIMESTAMPTZ` | no | |
 
-Indexes: `(session_id, started_at)`, `(stage, started_at)`, `UNIQUE(request_id)`.
+Indexes: `(session_id, component, started_at)`, `UNIQUE(request_id)`. There is no `created_at`
+column and no `turn_id` column — `started_at` and `turn_index` are what the table actually carries.
+
+**MEASURED (E19-C2) — `ttft_ms` on the two LLM components.** `inference_metrics.ttft_ms` is empty
+for both LLM components by construction, not by omission: the product's LLM calls are
+**non-streaming**, because the GBNF grammar and `ResponseValidator` both need the whole completion
+before a single character may be spoken (a token streamed to the trainee before the validator saw
+it is exactly the boundary SPEC §24 forbids crossing). For this chain **TTFT == total latency**,
+and `total_latency_ms` is the field to read. The only genuine first-output time in the turn is
+TTS's, recorded as `CALLER_TTS_STARTED.first_audio_offset_ms`. `docs/benchmarks/llm.md` §2.
 
 The SPEC §27 **critical product metric** is not a row here: `speech_end_to_first_audio_ms` is stored
 on the turn record (column `dialogue_turns.speech_end_to_first_audio_ms`, `INTEGER`, null when the
@@ -926,6 +984,95 @@ owner's ~5 GB), `idle_after_load_mb`, `peak_mb`, `project_peak_mb` (= `peak_mb -
 with `measured_at`; the script prints that line ready to paste but **never edits the profile file
 itself** — a measurement entering configuration is a human decision.
 
+### 7.6 As built (E19-A)
+
+§7.0-§7.5 above are the design and stay as written; this section records what the shipped scripts
+add to it, and why. The scripts are `benchmarks/benchmark_{asr,llm,tts,e2e,vram}.py` +
+`benchmarks/_common.py` + `benchmarks/_llama.py`; `benchmarks/tests/` proves their shape against
+the fake providers inside the ordinary gate run (D13), and the `make bench-*` targets are the real
+runs and are never part of `gate`.
+
+**Common CLI, additive to §7.0.** `--profile`/`--out`/`--runs`/`--seed`/`--tag` are as designed
+(`--profile` defaults to `$SIM_MODEL_PROFILE` — the env var the product actually reads — then
+`$MODEL_PROFILE`, then `DEV_3060TI`). Two flags are new:
+
+- `--provider fake|real` (default `real`). `fake` runs the D13 fakes and is what the gate
+  exercises; without it there would be no way to prove the envelope's shape without a GPU.
+- `--models-root DIR` (default `./models`). A profile names container paths
+  (`/models/<kind>/<file>`); `_common.resolve_model_path()` maps `/models/<rest>` onto
+  `<models_root>/<rest>` and, as a documented fallback, onto the flat names the individual
+  `make models-*` targets downloaded to before `make models-layout` existed
+  (`gigaam-v3-e2e_ctc`, `silero-vad/silero_vad.onnx`, `piper/`, `qwen3-tts/`, a top-level
+  `*.gguf`). A path resolving to neither is a `NOT_RUN` carrying that path — never a guess. An
+  absolute host path is used verbatim, which is how the owner's read-only GGUFs are benchmarked
+  through `--model-path`.
+
+**`write_result()` refusals (§7.0's rule, made mechanical).** It raises `BenchmarkHonestyError` on
+(1) an aggregate with no sample behind it, (2) a `NOT_RUN` carrying any sample or aggregate, and
+(3) a `NOT_RUN`/`FAILED` with no `reason`. `NOT_RUN` and `PARTIAL` exit 0 — they are honest
+results, not failures of the run; only `FAILED` exits non-zero.
+
+**§7.1 ASR.** The manifest gains one additive field, `source`: `piper:<voice>` for a synthesized
+item, `human:<who>` for a recorded one. Aggregates are reported per `category × condition` **and
+per `source`**, because a WER measured on a TTS→ASR round trip measures GigaAM against Piper's
+pronunciation rather than against human variation, and a reader must be able to see which is
+which. `entity_accuracy`'s entity rule is stated once, in `_common.entity_tokens()`: an entity is
+a token whose §7.2 folding produced a canonical *number*; a sample with no number scores `None`
+rather than 1.0, so it cannot inflate the mean.
+
+**§7.2 LLM.** `--suite interpreter|dialogue|explanation|all` is additive. `interpreter` reports
+every metric twice, all / excluding `uncertain` (E13-B3's ruling), and reuses
+`benchmarks/interpreter_eval/scoring.py` rather than reimplementing it. `dialogue` runs the real
+`CallerResponseGenerator` + `ResponseValidator` per turn and computes
+`dialogue_consistency_rate` by **exact canonical comparison of the delivered value**: the turn's
+`AllowedFactsPackage` says what `value_ru` each allowed fact carries, both it and the spoken
+utterance are folded through `50-voice-pipeline.md` §7.2, and a fact asked twice is consistent
+when the same canonical value came back both times. `explanation` runs the E16 explanation prompt
+over a fixture `ScoreReport` and is what closes §12's open E19 item. Two further additive
+aggregates: `validator_failure_codes` as a histogram (E13-B4's 0.69 first-try validity needs the
+top code named before anyone proposes touching a validator rule) and `chars_per_output_token`,
+which is the measurement `app.application.dialogue.validator.estimate_tokens`'s constant is
+checked against. The §43 attack matrix is **imported** from
+`backend/tests/adversarial/test_forbidden_fact_leak_suite.py`; `_common.ensure_backend_on_path()`
+is the documented dev-tooling allowance that makes it importable.
+
+**§7.3 TTS.** `--tts-provider piper|qwen3_tts|chatterbox|fake`; `chatterbox` is a `NOT_RUN`
+("provider not implemented in this repo"), and `qwen3_tts` talks to a worker the *caller* started
+— the script never starts or signals one, and an unreachable worker is a `NOT_RUN` with the URL in
+`reason`. **Deviation:** the cancellation sub-suite is driven on the `TtsStream.cancel()` seam
+rather than through `TtsSpeechSink.speak()`. That is the seam `TtsSpeechSink` itself cancels on,
+and it is the half of a barge-in that belongs to the provider; the transport half (clearing the
+outbound queue) is `benchmark_e2e.py`'s `cutoff_latency_ms`, so the two scripts measure the two
+halves once each instead of both measuring a blurred sum.
+
+**§7.4 E2E.** `--transport inprocess|livekit` is additive. `inprocess` drives the real
+`TurnPipeline` through `FakeCallTransport` fed with the `turns.jsonl` WAV frames — no network hop,
+and it is what the gate runs. `livekit` publishes the same WAVs into a real room through
+`workers/voice_agent/voice_agent/transport/headless_client.py` (the only module in the workspace
+that may import the SDK, D9) against a voice-agent already in that room, and reads the metric back
+from **that session's** event log and `inference_metrics` rows (`--session-id`, `SIM_DATABASE_URL`);
+the client's own first-audio wall time is kept beside it as `first_audio_wall_ms_crosscheck` only.
+In both transports the reported number is `CALLER_TTS_STARTED.first_audio_offset_ms` minus
+`USER_SPEECH_ENDED.at_offset_ms`, read from the log, never timed by the benchmark.
+Two further points a reader must not miss:
+
+- `config.dialogue_chain` says what the run actually exercised. `inprocess` runs ASR + TTS through
+  the real pipeline (`asr_tts`): the interpret → gate → generate chain needs a persisted session
+  for its dialogue context and is measured on its own by `benchmark_llm.py`. `livekit` measures
+  whatever the running voice-agent is wired with, which is the full chain.
+- `--clock simulated|wall|auto`. `FakeCallTransport` drives a `FakeClock` whose time advances one
+  frame at a time, which is right for a fake provider and wrong for a real one (a 190 ms GigaAM
+  call would advance it by nothing). `wall` — the default under `--provider real` — adds real
+  elapsed time on top of the scripted ingest timeline.
+
+**§7.5 VRAM.** As designed, plus: each load step is wrapped, so an OOM at step *k* yields
+`status: "PARTIAL"` with the deltas of the steps that completed and a `reason` naming step *k* and
+the free MB at that moment. `--start-tts-worker` is refused with an explanatory error rather than
+implemented: this machine's rules forbid signalling a process the script did not start, so the
+Qwen3-TTS worker is started and stopped by the operator. `--nvml stub` forces a deterministic
+zero sampler and exists only so the gate's shape run is reproducible; a real run never passes it,
+and NVML genuinely unavailable is still `NOT_RUN, reason: "NVML unavailable"`.
+
 ---
 
 ## 8. llama-server launch flags
@@ -937,13 +1084,20 @@ active profile's `llm.*` block, and builds the flag line below itself — no pro
 it). Flags are llama.cpp server flags; the exact set available depends on the build, so any flag
 that a given build rejects is reported at start-up rather than silently dropped.
 
-**Image pin (E18-E, 2026-09-22):** `infra/docker-compose.yml`'s `llama-server` service pins
-`ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (override with `LLAMA_CPP_IMAGE`) — confirmed to
-exist via `docker manifest inspect ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (read-only, no
-pull; resolved to a two-platform, amd64+arm64, OCI image index). **UNVERIFIED still:** the precise
-flag spelling this specific tag accepts — no pull was done (E18 forbids GPU work/model downloads;
-`TODO(E19)`: run `llama-server --help` against the pinned tag for real and reconcile any flag this
-document gets wrong before the first real launch).
+**Image pin (E18-E, 2026-09-22; flags VERIFIED E19-F, 2026-09-22):** `infra/docker-compose.yml`'s
+`llama-server` service pins `ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (override with
+`LLAMA_CPP_IMAGE`) — confirmed to exist via `docker manifest inspect` on 2026-09-22 (E18-E), then
+actually **pulled** and run for real (E19-F, no GPU needed for `--help`/`--version`):
+`docker pull ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (4.35 GB), `docker run --rm <image>
+--version` → `version: 0.4.1-dev (build 11065, commit ce8caa6e6), built with GNU 14.2.0 for Linux
+x86_64` (the "b11065" tag names the build number, confirmed to match), `docker run --rm <image>
+--help` (full capture: `docs/benchmarks/results/llama-server-b11065-help.txt`). Every flag both
+launch templates below spell — `--model`, `--alias`, `--host`, `--port`, `--ctx-size`, `--parallel`,
+`--n-gpu-layers`, `--batch-size`, `--ubatch-size`, `--flash-attn` (confirmed `on|off|auto`, exactly
+the `on` this HLD already used), `--cache-type-k`/`--cache-type-v`, `--threads`, `--jinja`,
+`--chat-template-kwargs`, `--metrics` — is accepted by this exact tag, spelled exactly as written
+here; nothing needed fixing. `infra/scripts/llama-server-entrypoint.sh` (the actual launcher) spells
+the identical set; `.env.example`'s `LLAMA_CPP_IMAGE` comment cites the same capture.
 
 **DEV — Qwen3-4B on the 3060 Ti (partial offload, CPU-heavy):**
 
@@ -961,9 +1115,14 @@ llama-server \
   --threads 8 \
   --jinja \
   --chat-template-kwargs '{"enable_thinking": false}' \
-  --no-warmup=false \
   --metrics
 ```
+
+(E19-F: this template previously also showed `--no-warmup=false`, which is not a flag the real
+binary accepts that way — `--help` confirms warmup is a bare `--warmup`/`--no-warmup` boolean pair,
+default enabled, so `--no-warmup=false` would either be rejected or silently misparsed; it was never
+in `infra/scripts/llama-server-entrypoint.sh`'s actual flag list either, so this was a doc-only stray
+— removed, not replaced, since the default (`--warmup` implied, unwritten) is what this project wants.)
 
 **FINAL — Qwen3-8B Q4_K_M on the 3080 Ti (full offload):**
 
@@ -995,8 +1154,9 @@ Notes that matter for this project:
 - `--jinja` is required for the Qwen3 chat template to be applied server-side, which is what makes
   `chat_template_kwargs.enable_thinking=false` effective. The `/no_think` prefix (D10) is kept as a
   belt-and-braces measure for builds that ignore the kwarg.
-- `--flash-attn on` is enabled on both profiles; if the build reports it unsupported for the card,
-  the launch script falls back to `auto` and logs it.
+- `--flash-attn on` is enabled on both profiles; the pinned build accepts `on|off|auto` (confirmed,
+  E19-F `--help` capture) — if the build reports it unsupported for the card, the launch script
+  falls back to `auto` and logs it.
 - No flag exposes the server outside the compose network: `--host 0.0.0.0` is bound inside the
   network only and the service publishes **no** host port (SPEC §41).
 - `--metrics` exposes llama.cpp's own Prometheus endpoint for debugging. It is not the source of
@@ -1021,8 +1181,9 @@ without a real `.env` or Docker Hub/GHCR access.
 
 - Image: **pinned** `ghcr.io/ggml-org/llama.cpp:server-cuda-b11065` (override via
   `LLAMA_CPP_IMAGE`), never `:latest`. Confirmed to exist with `docker manifest inspect` (read-only,
-  no pull) on 2026-09-22 — resolves to an amd64+arm64 OCI image index. The exact **flag spelling**
-  this tag's binary accepts is still **UNVERIFIED** (no pull was done; `TODO(E19)`, see §8).
+  no pull) on 2026-09-22 — resolves to an amd64+arm64 OCI image index. **Flag spelling VERIFIED**
+  (E19-F, 2026-09-22): the image was pulled and `--help`/`--version` run for real — see §8's "Image
+  pin" paragraph and `docs/benchmarks/results/llama-server-b11065-help.txt` for the full capture.
 - `runtime: nvidia` / `deploy.resources.reservations.devices` with `capabilities: [gpu]`;
   `NVIDIA_VISIBLE_DEVICES` from `.env` so the dev machine can pin a device.
 - Volumes: `${MODELS_DIR}:/models:ro`, plus `infra/scripts/llama-server-entrypoint.sh` bind-mounted
@@ -1128,14 +1289,25 @@ because the gate runs entirely on fake providers (D1, D13).
    never-measured starting points) are gone — OWNER DECISIONS 2026-09-21 replaced the LLM with the
    measured Qwen3.5-2B choice (`n_gpu_layers: -1`, task reports e13-b3/e13-b4) and
    `vram_budget_mb: 7168` assumes a dedicated card (§1, §2.2); `DEV_3060TI_SHARED` (§2.2a) is the
-   additive profile for this machine's actual shared-card state. `measured_peak_vram_mb` is still
-   `null` on `DEV_3060TI` itself (a COMBINED three-model peak has never been run) — `TODO(E19)`.
-3. **Partially resolved, E18-E:** the llama.cpp tag is now pinned
-   (`ghcr.io/ggml-org/llama.cpp:server-cuda-b11065`, confirmed to exist via `docker manifest
-   inspect`, read-only, no pull) and `infra/scripts/llama-server-entrypoint.sh` computes the §8 flag
-   line from the active profile. The exact spelling of `--chat-template-kwargs` / `--flash-attn on`
-   this specific tag's binary accepts is still UNVERIFIED — no pull was done (E18 forbids GPU work);
-   `TODO(E19)`: run it for real and reconcile.
+   additive profile for this machine's actual shared-card state. **Resolved, E19-D3:**
+   `measured_peak_vram_mb` on `DEV_3060TI` is no longer `null` — a real combined VAD→ASR→TTS→LLM
+   sequence completed on this machine once the owner's resident GPU process was stopped, freeing
+   the card. Per-component deltas: VAD 0 MB (cpu), ASR (GigaAM, cuda) 1530 MB, TTS (Qwen3-TTS 0.6B
+   worker) 2373 MB, LLM (Qwen3.5-2B, `--parallel 2`, GPU_FULL) 1559 MB; `project_peak_mb` **5560**
+   (`peak_mb` 5910 − `baseline_used_mb` 350), `free_min_mb` 2281, all 20 turns completed, margin
+   `7168 − 5560 = 1608 ≥ 512`. Two earlier attempts on the *shared* card (owner's process still
+   resident) came back `PARTIAL` — kept as history in `docs/benchmarks/vram.md` §2.1, not
+   overwritten. `DEV_3060TI_SHARED` remains the profile to use whenever this card is shared with
+   other GPU work. `docs/benchmarks/results/vram-DEV_3060TI-20260922T092121636Z.json`,
+   `docs/benchmarks/vram.md`, `backend/app/config/profiles/DEV_3060TI.yaml`'s own comment (§2.2
+   above).
+3. **Resolved, E18-E + E19-F:** the llama.cpp tag is pinned
+   (`ghcr.io/ggml-org/llama.cpp:server-cuda-b11065`) and `infra/scripts/llama-server-entrypoint.sh`
+   computes the §8 flag line from the active profile. The exact spelling of every flag it emits
+   (`--chat-template-kwargs`, `--flash-attn on`, and the rest of §8's list) was pulled and run for
+   real (E19-F, 2026-09-22, `docker run --rm <image> --help`/`--version`,
+   `docs/benchmarks/results/llama-server-b11065-help.txt`) — every flag matches exactly, nothing
+   needed reconciling.
 4. Voice ids: Piper's is now pinned and measured (`ru_RU-irina-medium`, `make models-piper`, §11's
    model table — no longer a placeholder). Qwen3-TTS's is a real vendor CustomVoice speaker name
    (`Serena`, one of the closed four `Serena`/`Ryan`/`Vivian`/`Aiden` — E14-B recon §1.1), not a
@@ -1186,11 +1358,17 @@ because the gate runs entirely on fake providers (D1, D13).
    1.7B-subdirectory, 0.6B-resolves-its-own-subdirectory), so the 1.7B path is provably correct too,
    even though this machine still cannot load it to prove that end-to-end.
 
-   **1.7B: still NOT_RUN.** Free VRAM measured live at the start of this task (2026-09-22,
-   `andreipc-B660M-DS3H-DDR4`, RTX 3060 Ti 8 GB): **3196 MB**, below the ~4.6 GB the 1.7B checkpoint
-   needs (bf16 residency, E14-B recon §1.1) — the owner's other resident process (PID 1082982,
-   Higgs-TTS, 4638 MiB) holds the rest of the 8 GB card. Unchanged since E14-B/E14-C; this task did
-   not attempt the 1.7B.
+   **Resolved, E19-D3: 1.7B, real run, measured.** Qwen3-TTS 1.7B CustomVoice (the owner's
+   originally evaluated checkpoint) has now been run for real
+   (`docs/benchmarks/results/tts-DEV_3060TI-20260922T093750665Z.json`, 90+90 samples,
+   `status: OK`) — mean RTF **0.823**, first-audio p50 **3519 ms** / p95 **8780 ms**, peak VRAM
+   ~5.4 GB total (near-baseline card, run after the owner's process was stopped). It is
+   **latency-indistinguishable from the 0.6B variant** on this machine (0.823 vs 0.848 RTF, within
+   run-to-run noise) — the 0.6B/1.7B choice is a quality decision, not a latency one; see
+   `docs/benchmarks/tts.md` §1 for the full comparison. (Superseded text, kept for the history: at
+   the original ~3196 MB free beside the owner's resident process, the 1.7B checkpoint's ~4.6 GB
+   bf16 residency did not fit — E14-B recon §1.1 — so this paragraph read "still NOT_RUN" until the
+   owner stopped that process for this run.)
 
    **0.6B: real run, measured** (`SIM_TTS_QWEN3_MODEL=0.6B`, worker started by hand on port 8112,
    loopback only; `uv run python benchmarks/tts_qwen3_0_6b_real_run.py synth`/`asr`, same machine,
@@ -1240,6 +1418,85 @@ because the gate runs entirely on fake providers (D1, D13).
    components alone would need running together. Whether to change any profile's default variant
    from these numbers is a manager decision (this task changed no profile default).
 
+7. **MEASURED 2026-09-22 (E19-B/B2) — ASR.** `v3_e2e_ctc` cuda: RTF mean 0.0041, `latency_ms` p50
+   10.7 / p95 14.8, WER mean 0.0518 (piper-source, n=216) / 0.0 (human sample, n=3), entity_accuracy
+   0.8571. `v3_ctc` cuda: RTF mean 0.0042, `latency_ms` p50 10.8 / p95 15.6, WER mean 0.0250 / 0.0,
+   entity_accuracy 0.9821. Both also measured on cpu (RTF 0.0378/0.0433) — WER/CER/entity_accuracy
+   identical to their cuda counterparts on this corpus. faster-whisper: `NOT_RUN` — never installed
+   by this project (E12 ruling 4). A real measurement bug (10x CLEAN/NOISY latency gap from an
+   unwarmed cuFFT shape cache) was found and fixed in the same task (E19-B2) — see
+   `docs/benchmarks/asr.md`'s own "E19-B2" section for the before/after. `docs/benchmarks/asr.md`
+   (cites all five result files under `docs/benchmarks/results/asr-DEV_3060TI-20260922T*`).
+8. **MEASURED 2026-09-22 (E19-C/E19-C2) — LLM.** Bar table (post-fix, `--suite all`, product call
+   parameters, 85 samples/model):
+
+   | Model | explicit_acc | validity | leak | consistency | combined p50 | bar |
+   |:--|--:|--:|--:|--:|--:|:--|
+   | Qwen3.5-0.8B | 0.722 | 0.729 | 0.0 | 0.583 | 990.4 ms | FAIL |
+   | **Qwen3.5-2B (DEV default)** | **1.000** | **0.953** | **0.0** | 0.538 | **462.5 ms** | FAIL (consistency only) |
+   | Qwen3.5-4B | 0.840 | 0.941 | 0.0 | 0.714 | 2113.3 ms | FAIL |
+   | Qwen3-4B (`--parallel 2`) | — | — | — | — | — | **FAILED** (CUDA OOM) |
+   | Qwen3-4B (`--parallel 1`) | 0.826 | 0.624 | 0.0 | 0.929 | 3496.9 ms | FAIL (too slow) |
+   | Qwen3-8B | — | — | — | — | — | **NOT_RUN** (no GGUF on this machine) |
+
+   No model passes; see §2's "MEASURED" callout above for the ruling. **Degenerate caller
+   utterance, found and fixed (E19-C → E19-C2):** under the caller's GBNF grammar the Qwen3.5
+   family emitted a bare `}` as the utterance on 13-27 of 46 real dialogue turns per model
+   (Qwen3-4B: 1/46), and `ResponseValidator` accepted it (`EMPTY` only rejected empty-after-strip).
+   Fixed at both boundaries: the grammar now requires a Cyrillic letter inside the spoken-text field
+   (`grammar.SpokenText` → `speech-string`), and §7.1's `EMPTY` rule in `50-voice-pipeline.md` is
+   "no letter after strip". Post-fix: **0 of 46 on every model.** `docs/benchmarks/llm.md` §1/§3 (cites every `e19c-llm-*` result file under `docs/benchmarks/results/`).
+9. **MEASURED 2026-09-22 (E19-D) — TTS.** Piper (CPU) vs Qwen3-TTS 0.6B (GPU) time-to-first-audio,
+   overall: Piper p50/p95 **135.9 / 404.7 ms**, RTF mean 0.032; Qwen3-TTS p50/p95
+   **4130.2 / 11078.0 ms**, RTF mean 0.848 — Piper is 20-40x faster to first audio on every text
+   category, because Qwen3-TTS's `first_audio_latency_ms == total_synthesis_latency_ms` on all 90
+   real samples (whole-utterance provider). Cancellation: `chunks_after_cancel_max` is 0 for both
+   (the mechanical SPEC §40 bar is met), but `cancel_latency_ms` is sub-millisecond for **both**,
+   because both adapters buffer the entire utterance before yielding a first `TtsChunk` — a
+   pre-existing HLD gap for both providers (§10 item 4 above for Piper; `qwen3_tts.py`'s own module
+   docstring for Qwen3-TTS), not something this benchmark's cancellation call can exercise. **No
+   chunked/streaming generation entry point exists in the installed `qwen_tts==0.1.1` package**
+   (verified directly against its installed source: `grep -rn yield` over the package is zero hits,
+   no `stream=` kwarg on any `generate_*` method) — this ceiling cannot be closed by worker code.
+   `docs/benchmarks/tts.md` (cites every `tts-DEV_3060TI-20260922T04*` result file under
+   `docs/benchmarks/results/`).
+10. **MEASURED 2026-09-22 (E19-D/D2/D3) — VRAM.** `DEV_3060TI_SHARED`: `status: OK`,
+    `project_peak_mb` **1559** (now the profile's `measured_peak_vram_mb`, §2.2a). `DEV_3060TI`
+    (three GPU models): `status: OK`, `project_peak_mb` **5560** (E19-D3, run after the owner's GPU
+    process was stopped — see item 2 above for the full per-component breakdown; two earlier
+    attempts on the shared card came back `PARTIAL`, kept as history). `docs/benchmarks/vram.md`.
+11. **MEASURED 2026-09-22 (E19-F) — model hashes and provenance.** Every model file on disk (both
+    GigaAM dirs, Silero, Piper, Qwen3-4B, Qwen3-TTS 0.6B + tokenizer, the three Qwen3.5 GGUFs) has
+    its sha256 computed fresh, source repo and revision resolved and tabulated, including the
+    owner's `~/models/Qwen3.5-*` GGUFs (matched byte-for-byte against `unsloth/Qwen3.5-<size>-GGUF`
+    at pinned commits) and the Qwen3-8B GGUF pinned for the FINAL profiles but not downloaded (R4/R9).
+    `docs/benchmarks/models.md`.
+12. **BUILT 2026-09-22 (E19-F) — CUDA images.** `sim112/voice-agent:e19` (7.23 GB) and
+    `sim112/tts-qwen3:e19` (6.5 GB) both built for real from their Dockerfiles (§9 below) and
+    smoke-tested (`torch.cuda.is_available()` true, no model load, no GPU lock needed); both
+    Dockerfiles' UNVERIFIED-BUILD comments flipped to BUILT with the date and image size.
+    `docs/benchmarks/results/docker-build-{voice-agent,tts-qwen3}-tail.txt`.
+13. **MEASURED 2026-09-22 (E19-E2/E19-E3, final) — E2E.** In-process, real full dialogue chain,
+    `DEV_3060TI_SHARED`, `--runs 4`: **p50 1192 ms / p95 1864 ms / p99 2056 ms**, 35 of 36 scripted
+    turns produced audio (the fifth, `"}"`-only-utterance defect fixed by E19-C2), against the DEV
+    targets 1500/2500 ms — `meets_target: true`; barge-in met on every interruption. Real LiveKit
+    run (same profile, `--runs 4`): the agent now joins the room for real (a missing per-call access
+    token, bug #4, fixed in E19-E3 — the agent mints its own token via the backend's
+    `LiveKitTokenService`); 34 of 39 detected turns answered, **24 of 24 scripted barge-ins cut off
+    under the 250 ms budget** over real WebRTC (32 of 32 across both transports). Its *latency*
+    figure is **not publishable**: `speech_end_to_first_audio_ms` is stamped from two different
+    clocks over the LiveKit transport (capture offsets vs session offsets), so all 34 samples came
+    out negative and the benchmark discarded them (`overall.n = 0`,
+    `discarded_nonpositive_count: 34`) rather than invent a percentile (SPEC §27) — open, `E20 R13`.
+    A second, unrelated defect (`E20 R14`) makes the first LiveKit attempt at the shipped
+    `SIM_SIM_TICK_MS=500` deadlock on the `simulation_sessions` row lock between the runner and the
+    agent after 2 turns; the measured run used a 10 s tick as a benchmark-only environment setting,
+    not a product change. The quoted headline latency therefore remains the in-process figure above,
+    a lower bound excluding the media-plane hop. `docs/benchmarks/e2e.md` (§6 lists all six product
+    bugs this benchmark found, four fixed and two open),
+    `docs/benchmarks/results/e2e-DEV_3060TI_SHARED-20260922T091948626Z.json` (in-process),
+    `docs/benchmarks/results/e2e-DEV_3060TI_SHARED-20260922T101931685Z.json` (LiveKit).
+
 ---
 
 ## 11. Model sources, pinned revisions and licences (E12)
@@ -1252,13 +1509,18 @@ URLs, sha256, `make` target) lives in `models/README.md`; this table is the cros
 | Model | `model_version` | Source | Pinned revision | Licence | Fetched by |
 |:--|:--|:--|:--|:--|:--|
 | Silero VAD | (`vad.provider: silero`) | `github.com/snakers4/silero-vad`, `src/silero_vad/data/silero_vad.onnx` | tag `v5.1.2` (the v5 model interface this port's `SileroVAD` is written against — `v6.x` changed the graph) | MIT | `make models-silero`, sha256-checked |
-| GigaAM Conformer-CTC | `v3_e2e_ctc` (primary, SPEC §19) | local HF-format checkpoint (owner-provided; exact upstream repo/revision UNVERIFIED by this task — see `models/README.md`) | n/a — files placed manually, not re-fetched by any `make` target | MIT (per the checkpoint's own `README.md`) | manual; `models/` is gitignored (SPEC §41) |
-| GigaAM Conformer-CTC | `v3_ctc` (benchmarked alternative, SPEC §19) | same as above | same as above | MIT | manual |
+| GigaAM Conformer-CTC | `v3_e2e_ctc` (primary, SPEC §19) | `huggingface.co/ai-sage/GigaAM-v3` (E19-F, 2026-09-22: resolved from local `.cache/huggingface/download/*.metadata` commit hashes matched against the HF API — no local record named the repo before this) | pinned commit `cec030b4c4f35d928e4a9044a3bdb29ebd499fac` | MIT (per the checkpoint's own `README.md`) | manual (owner, before this task started); `models/` is gitignored (SPEC §41) |
+| GigaAM Conformer-CTC | `v3_ctc` (benchmarked alternative, SPEC §19) | `huggingface.co/ai-sage/GigaAM-v3` (same resolution as above) | pinned commit `15ef3b5a88da78f93134b3cb7f015c70aefa8946` | MIT | manual (owner) |
 | faster-whisper (optional) | whisper size per `SIM_WHISPER_MODEL_PATH` | not fetched by this project at all (E12 ruling 4) | n/a | n/a | never — a developer points `SIM_WHISPER_MODEL_PATH` at a CTranslate2 model they already have |
 | Qwen3-4B (LLM, `llm.provider: llama_cpp`, DEV_3060TI, SPEC §22) | `Qwen3-4B-Q4_K_M` | `huggingface.co/Qwen/Qwen3-4B-GGUF`, file `Qwen3-4B-Q4_K_M.gguf` | HF repo `main` at fetch time; file identity is the sha256 below, not a git commit (E13-B1 measured 2026-09-21: 2 497 280 256 bytes, sha256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5` — matches the HF repo's own LFS `sha256` for this file, queried via `HfApi.model_info(files_metadata=True)`) | Apache-2.0 (per the repo's own licence file) | `make models-llm` (`hf download`, `curl -C -` fallback), sha256 not re-verified by the target itself — see this task's report |
+| Qwen3.5-{0.8B,2B,4B} (LLM, `llm.provider: llama_cpp`, DEV_3060TI/`_SHARED`, OWNER DECISION 2026-09-21) | `Qwen3.5-<size>-Q4_K_M` | `huggingface.co/unsloth/Qwen3.5-<size>-GGUF` — **no official `Qwen/Qwen3.5-<size>-GGUF` repo exists** (E19-F, 2026-09-22: confirmed via HF API, `docs/benchmarks/models.md` §3); resolved by matching sha256 against the owner's already-downloaded `~/models/Qwen3.5-<size>/` copies (byte-identical, all three sizes) | pinned commits `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` (0.8B) / `f6d5376be1edb4d416d56da11e5397a961aca8ae` (2B) / `e87f176479d0855a907a41277aca2f8ee7a09523` (4B) | see the repo's own licence file (base model `Qwen/Qwen3.5-<size>`, Apache-2.0) | owner (`~/models`, date unrecorded) for all three; `make models-llm-qwen35` (E19-F, 2026-09-22) additionally fetched the 2B into `models/llm/` — sha256-**identical** to the owner's copy |
+| Qwen3-8B (LLM, FINAL_3080TI_\* profiles, SPEC §22/§26) | `Qwen3-8B-Q4_K_M` | `huggingface.co/Qwen/Qwen3-8B-GGUF` | pinned commit `7c41481f57cb95916b40956ab2f0b139b296d974` (HF API, E19-F, 2026-09-22) | Apache-2.0 | `make models-llm-qwen3-8b` — **defined, NOT run** (R9/R4: no Qwen3-8B GGUF and no 3080 Ti on this machine) |
 | Qwen3-TTS 1.7B CustomVoice (`tts.provider: qwen3_tts`, GPU default incl. DEV_3060TI, OWNER DECISION E14) | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice@0c0e3051f131929182e2c023b9537f8b1c68adfe` | `huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` | pinned commit `0c0e3051f131929182e2c023b9537f8b1c68adfe` (owner-evaluated, E14-B recon §1.1) | see the repo's own licence file | `make models-tts-qwen3` (`hf download`, only when >= 12 GB disk is free — NOT_RUN otherwise); loaded by the standalone `workers/tts_qwen3` worker, never by `backend`/`voice-agent` directly |
 | Qwen3-TTS-Tokenizer-12Hz (paired with the checkpoint above) | n/a | `huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz` | pinned commit `7dd38ad4e9bad454aae9cd937d0cd577604fe229` (owner-evaluated, E14-B recon §1.1) | see the repo's own licence file | `make models-tts-qwen3` |
 | Piper `ru_RU-irina-medium` (`tts.provider: piper`, CPU, the configured fallback) | `ru_RU-irina-medium` | `huggingface.co/rhasspy/piper-voices`, path `ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx` (+ `.onnx.json`) | HF repo `main` at fetch time; file identity is the sha256 recorded by this task's report (measured, not pinned in advance — same posture as the Qwen3-4B GGUF row above) | MIT (per `rhasspy/piper-voices`) | `make models-piper` (`curl -C -`, retried) |
+
+Full per-file sha256/size/licence/fetch-date table (all of the above plus `warmup/warmup_ru.wav`):
+`docs/benchmarks/models.md` (E19-F).
 
 `GigaAMProvider` (`backend/app/inference/asr/gigaam_provider.py`) loads the local directory with
 `AutoModel.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)` and
@@ -1303,7 +1565,12 @@ stored, and the report — scores, evidence, timeline, everything SPEC §29 asks
 unaffected, because the explanation use case never holds a write path to the score tables at all
 (structural guarantee, `backend/tests/invariants/test_explanation_cannot_write_scores.py`).
 
-`TODO(E19)`: a `requires_models` latency benchmark for the explanation call (comparable to the
-interpreter/generator eval harnesses of §7) is not part of this task — no real-model timing number
-for `SIM_EXPLANATION_*` appears anywhere in this document, by the same "never fake a benchmark
-value" rule §7 states for everything else (SPEC §27).
+**MEASURED 2026-09-22 (E19-C, E19-C2 post-fix) —** `make bench-llm BENCH_ARGS="--suite explanation
+--model-path models/llm/Qwen3.5-2B-Q4_K_M.gguf"`, the E16 prompt
+(`app.application.reports.explanation.prompt.build_messages`) over the committed
+`benchmarks/data/llm/explanation_fixture.json`, TRAINEE + INSTRUCTOR audiences, the shipped
+`SIM_EXPLANATION_*` parameters (`max_tokens=400`, `temperature=0.2`, `timeout_ms=8000`). With the
+DEV default LLM (Qwen3.5-2B): **p50 331.0 ms, p95 954.6 ms** (n=2 audiences per run, pooled over
+three runs). The 8000 ms timeout has wide headroom; the slowest candidate measured (Qwen3.5-4B)
+still fits comfortably. `docs/benchmarks/llm.md` §4,
+`docs/benchmarks/results/e19c-llm-qwen35-2b-p2-DEV_3060TI-20260922T052828858Z.json`.

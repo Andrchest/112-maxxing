@@ -97,7 +97,23 @@ def test_livekit_is_refused_everywhere_else(
     assert relative_path in out
 
 
-def test_the_real_repository_has_exactly_one_livekit_importer() -> None:
+#: The only files in the workspace that may import the LiveKit SDK (D9, E19 R7). The boundary is
+#: the *directory* `workers/voice_agent/voice_agent/transport/` — `backend/tools/check_imports.py`
+#: enforces exactly that — and this set is the enumeration of what actually lives there today, so
+#: a new importer cannot appear unnoticed:
+#:
+#: * `livekit_transport.py` — the agent's `CallTransport` (E11).
+#: * `headless_client.py` — the trainee-side client `benchmarks/benchmark_e2e.py --transport
+#:   livekit` drives (E19-E, HLD 60 §7.4). It is in the same package on purpose: the benchmark
+#:   imports this class and never the SDK, which is why `check_imports.py` still forbids `livekit`
+#:   under `benchmarks/**`.
+LIVEKIT_IMPORTERS = {
+    "workers/voice_agent/voice_agent/transport/livekit_transport.py",
+    "workers/voice_agent/voice_agent/transport/headless_client.py",
+}
+
+
+def test_the_real_repository_imports_livekit_only_in_the_transport_package() -> None:
     """Not a rule about a temp tree: the actual checked-in source, scanned for `livekit`."""
     importers: list[str] = []
     for path in sorted((REPO_ROOT / "backend").rglob("*.py")) + sorted(
@@ -114,6 +130,4 @@ def test_the_real_repository_has_exactly_one_livekit_importer() -> None:
                 names = [node.module]
             if any(name == "livekit" or name.startswith("livekit.") for name in names):
                 importers.append(str(path.relative_to(REPO_ROOT)))
-    assert set(importers) == {"workers/voice_agent/voice_agent/transport/livekit_transport.py"}, (
-        importers
-    )
+    assert set(importers) == LIVEKIT_IMPORTERS, importers

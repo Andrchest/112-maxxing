@@ -208,6 +208,14 @@ voice_agent    -> application, inference, infrastructure
   process/venv), `PiperTTS` (CPU, the configured fallback everywhere — no longer the DEV default),
   `ChatterboxTTS`, `FakeTTS` (gate). LLM — `LlamaCppClient` (OpenAI-compatible HTTP to the local llama-server only;
   `base_url` must be loopback/compose-internal, enforced in config validation — §41), `FakeLLM`.
+  **MEASURED (E19), 2026-09-22:** the DEV default LLM is `Qwen3.5-2B` (not one of the two SPEC §22
+  illustrations) — fastest by >2x and the only model clearing 3 of E19's 4 quality-bar criteria; no
+  model, including SPEC §22's own "Qwen3-4B quantized", clears all four
+  (`dialogue_consistency_rate` is the failing one everywhere it is tried); decision unchanged,
+  `docs/benchmarks/llm.md`. TTS default (Qwen3-TTS, above) is unchanged by measurement: it is
+  whole-utterance-per-call (mean RTF 0.848, p50 first-audio 4.1 s on a NUMERIC-category sentence),
+  mitigated by the sentence chunker, not by this decision; Piper meets SPEC §27's target trivially
+  (p50 136 ms) but stays the fallback per the owner's own choice; `docs/benchmarks/tts.md`.
 - Recording: the agent writes trainee and caller audio to `DATA_DIR/recordings/{session_id}/` (WAV),
   rows in `audio_segments` with session-relative `start_ms`; `transcript_segments.audio_segment_id`
   links them. Backend serves audio with HTTP Range. Retention: `RECORDING_RETENTION_DAYS` + a purge

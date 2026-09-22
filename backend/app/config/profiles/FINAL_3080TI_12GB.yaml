@@ -3,7 +3,10 @@ description: >
   Demo profile for an RTX 3080 Ti 12 GB. Qwen3-8B Q4_K_M only if the VRAM benchmark passes with
   the configured margin; otherwise config validation refuses the profile (measured_peak_vram_mb is
   null below, which — unlike DEV_* — is an outright ProfileRefused for a FINAL_* profile, HLD 60
-  §2.5). No number in this file has been measured on a 3080 Ti; that measurement is E19's job.
+  §2.5). No number in this file has been measured on a 3080 Ti. NOT_RUN 2026-09-22: no RTX 3080 Ti
+  and no Qwen3-8B GGUF on the dev machine; on the target card run `make models-llm-qwen3-8b &&
+  make bench-vram PROFILE=FINAL_3080TI_12GB` and paste its `project_peak_mb` here with
+  `measured_at` (E19-F; the download target itself is defined at Makefile `models-llm-qwen3-8b`).
 
 hardware:
   gpu_name_contains: "3080 Ti"
@@ -29,8 +32,11 @@ llm:
   flash_attention: "on"
   kv_cache_type: f16
   # 138 / 80 — the same E13-B3/E13-B4 measured p99 + 25% headroom used by the DEV profiles
-  # (backend/app/config/settings.py); not re-measured on Qwen3-8B specifically (E19), reused
-  # rather than the illustrative, never-measured 200 of docs/hld/60-inference-ops.md §2.1's table.
+  # (backend/app/config/settings.py); not re-measured on Qwen3-8B specifically. NOT_RUN 2026-09-22:
+  # no RTX 3080 Ti and no Qwen3-8B GGUF on the dev machine; on the target card run
+  # `make models-llm-qwen3-8b && make bench-vram PROFILE=FINAL_3080TI_12GB` and paste its
+  # `project_peak_mb` here with `measured_at` (E19-F) — reused rather than the illustrative,
+  # never-measured 200 of docs/hld/60-inference-ops.md §2.1's table.
   max_response_tokens: 80
   interpreter_max_tokens: 138
   request_timeout_ms: 3000
@@ -57,7 +63,10 @@ tts:
   fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
   fallback_voice_id: ru_RU-irina-medium
   fallback_output_sample_rate: 22050
-  model_variant: null             # UNVERIFIED on a 3080 Ti — not this task's to invent (E19)
+  # UNVERIFIED on a 3080 Ti. NOT_RUN 2026-09-22: no RTX 3080 Ti and no Qwen3-8B GGUF on the dev
+  # machine; on the target card run `make models-llm-qwen3-8b && make bench-vram
+  # PROFILE=FINAL_3080TI_12GB` and paste its `project_peak_mb` here with `measured_at` (E19-F).
+  model_variant: null
 
 vad:
   provider: silero

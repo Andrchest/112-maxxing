@@ -1,0 +1,2 @@
+id,run_index,suite,baseline_used_mb,idle_after_load_mb,peak_mb,project_peak_mb,free_min_mb,idle_after_turns_mb,turns,vad_delta_mb,asr_delta_mb,tts_delta_mb,llm_delta_mb
+sequence,0,vram,4996,6555,6555,1559,1636,6555,20,0,0,0,1559

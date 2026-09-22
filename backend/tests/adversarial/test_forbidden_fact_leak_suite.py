@@ -32,6 +32,7 @@ The `SMALL_COUNT_ALLOWLIST` is emptied for this run, exactly as §7.5 says it ca
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -78,6 +79,9 @@ SESSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
 #: §7.5's allowlist is emptied for the §43 run, as the HLD says it can be.
 STRICT = ValidatorConfig(small_count_allowlist=frozenset())
+
+#: Any letter — the same shape `validator._LETTER_RE` uses for the widened `EMPTY` rule (E19-C2).
+_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -523,7 +527,14 @@ def honest_answer(package: AllowedFactsPackage) -> str:
     if not package.allowed:
         return _utterance("Я не знаю, простите.")
     spoken = ", ".join(fact.value_ru for fact in package.allowed[:2])
-    return _utterance(f"{spoken}.")
+    sentence = f"{spoken}."
+    if not _LETTER_RE.search(sentence):
+        # E19-C2: §7.1's `EMPTY` rule now rejects an utterance carrying no letter at all (a bare
+        # `}` is not speech). A package whose first two values are both numbers — «3» (подъезд) and
+        # «45» (квартира) — would make this control say "3, 45.", which is no longer an utterance.
+        # A neutral function word, in no scenario and no label, makes it one.
+        sentence = f"Это {sentence}"
+    return _utterance(sentence)
 
 
 @pytest.mark.parametrize("probe", PROBES, ids=lambda probe: f"{probe.category}:{probe.utterance}")

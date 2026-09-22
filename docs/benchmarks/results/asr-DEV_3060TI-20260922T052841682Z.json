@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "benchmark": "asr",
+  "status": "NOT_RUN",
+  "profile": "DEV_3060TI",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T05:28:41.680+00:00",
+  "finished_at": "2026-09-22T05:28:41.682+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI",
+    "asr": {
+      "provider": "gigaam",
+      "model_version": "v3_e2e_ctc",
+      "model_path": "/models/asr/gigaam-v3-e2e-ctc",
+      "device": "cuda",
+      "compute_type": "float16",
+      "sample_rate": 16000
+    },
+    "provider_mode": "real",
+    "asr_provider": "faster_whisper",
+    "model_version": "v3_e2e_ctc",
+    "device": "cuda",
+    "manifest": "benchmarks/data/asr/manifest.jsonl",
+    "runs": 1,
+    "seed": 0,
+    "tag": "E19-B2 faster-whisper NOT_RUN (E12 ruling 4)"
+  },
+  "samples": [],
+  "aggregates": {},
+  "notes": [],
+  "reason": "faster-whisper: not installed by this project (E12 ruling 4) — --whisper-model-path/SIM_WHISPER_MODEL_PATH not set to an existing path (got: None)"
+}

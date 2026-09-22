@@ -45,9 +45,11 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.application.dialogue.grammar import SpokenText
 from app.application.dialogue.meta_lexicon import (
     LATIN_ALLOWLIST,
     META_LEXICON_EN,
@@ -121,12 +123,29 @@ class ValidationFailureCode(enum.StrEnum):
 CALLER_UTTERANCE_FIELD = "utterance"
 
 
+#: §7.1's EMPTY rule, widened in E19-C2: an utterance that carries no letter at all is empty
+#: *speech*, whatever characters it contains. E19-C measured the Qwen3.5 family filling the
+#: grammar's `utterance` string with a bare `}` (13-27 of 46 dialogue turns, depending on the
+#: model) and this validator passing it through to the trainee's ear, because `"}".strip()` is
+#: truthy. Latin is accepted as well as Cyrillic here even though §7.4 dislikes Latin runs: that
+#: is `META_LANGUAGE`/§7.4's job, and `EMPTY` must not quietly become a second language check.
+_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
 class CallerUtterance(BaseModel):
-    """§7.1's Pydantic model: `{"utterance": str}` and nothing else (`extra="forbid"`)."""
+    """§7.1's Pydantic model: `{"utterance": str}` and nothing else (`extra="forbid"`).
+
+    `SpokenText` is a grammar-only marker (`app.application.dialogue.grammar`): it makes the
+    generated GBNF require at least one Cyrillic letter inside the string, so the model cannot
+    *produce* `{"utterance":"}"}` in the first place. pydantic ignores it for validation and for
+    `model_json_schema()`, so `CALLER_JSON_SCHEMA` — the non-grammar fallback — is unchanged.
+    The `EMPTY` check below is the second boundary: the grammar stops it being generated, the
+    validator stops it being spoken, and neither relies on the other (SPEC §44).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    utterance: str
+    utterance: Annotated[str, SpokenText()]
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,9 +373,12 @@ class ResponseValidator:
             return ValidationVerdict(ok=False, failures=tuple(failures))
 
         stripped = utterance.strip()
-        if not stripped:
+        if not _LETTER_RE.search(stripped):
             failures.append(
-                ValidationFailure(ValidationFailureCode.EMPTY, "the utterance is empty")
+                ValidationFailure(
+                    ValidationFailureCode.EMPTY,
+                    "the utterance contains no letter — there is nothing to say",
+                )
             )
             return ValidationVerdict(ok=False, failures=tuple(failures))
 

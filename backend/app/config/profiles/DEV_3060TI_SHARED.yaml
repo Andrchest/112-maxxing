@@ -14,11 +14,15 @@ hardware:
 
 vram_budget_mb: 3000
 min_vram_margin_mb: 512
-# MEASURED (task report e13-b4): Qwen3.5-2B Q4_K_M, GPU_FULL(999), --parallel 2 — the ONLY GPU
-# resident on this profile (ASR and TTS both run on CPU below), so this is a true combined peak,
-# not an assumption like DEV_3060TI's unmeasured sum.
-measured_peak_vram_mb: 1558
-measured_at: 2026-09-21
+# MEASURED for real by benchmarks/benchmark_vram.py (task report E19-D, 20 turns, --provider
+# real): Qwen3.5-2B Q4_K_M, GPU_FULL(999), --parallel 2 — the ONLY GPU resident on this profile
+# (ASR and TTS both run on CPU below), so this is a true combined peak, not an assumption like
+# DEV_3060TI's unmeasured sum. project_peak_mb=1559 (peak_mb 6555 - baseline_used_mb 4996),
+# vad/asr/tts_delta_mb all 0 (CPU), llm_delta_mb 1559 — consistent with the earlier single-call
+# e13-b4 measurement (1558) within 1 MB of sampling noise.
+# docs/benchmarks/results/vram-DEV_3060TI_SHARED-20260922T050401Z.json
+measured_peak_vram_mb: 1559
+measured_at: 2026-09-22
 
 llm:
   provider: llama_cpp

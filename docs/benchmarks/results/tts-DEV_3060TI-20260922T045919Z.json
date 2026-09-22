@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "benchmark": "tts",
+  "status": "NOT_RUN",
+  "profile": "DEV_3060TI",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T04:59:19.384+00:00",
+  "finished_at": "2026-09-22T04:59:19.965+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "profile_name": "DEV_3060TI",
+    "tts": {
+      "provider": "qwen3_tts",
+      "model_path": "/models/tts/qwen3-tts",
+      "voice_id": "Serena",
+      "device": "cuda",
+      "output_sample_rate": 24000,
+      "max_chunk_ms": 20,
+      "fallback_provider": "piper",
+      "fallback_model_path": "/models/tts/piper/ru_RU-irina-medium.onnx",
+      "fallback_voice_id": "ru_RU-irina-medium",
+      "fallback_output_sample_rate": 22050,
+      "model_variant": null
+    },
+    "provider_mode": "real",
+    "tts_provider": "chatterbox",
+    "lines": "benchmarks/data/tts/lines.jsonl",
+    "cancel_after_ms": 120,
+    "runs": 1,
+    "seed": 0,
+    "tag": ""
+  },
+  "samples": [],
+  "aggregates": {},
+  "notes": [],
+  "reason": "Chatterbox Multilingual: provider not implemented in this repo (E20 list)"
+}

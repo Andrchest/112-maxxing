@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "benchmark": "vram",
+  "status": "OK",
+  "profile": "DEV_3060TI_SHARED",
+  "git_sha": "0beec6a7ff030bb6960467150a0e33af537b75f9",
+  "started_at": "2026-09-22T05:03:26.430+00:00",
+  "finished_at": "2026-09-22T05:04:01.425+00:00",
+  "hardware": {
+    "gpu_name": "NVIDIA GeForce RTX 3060 Ti",
+    "driver": "595.84",
+    "total_vram_mb": 8192
+  },
+  "config": {
+    "profile_name": "DEV_3060TI_SHARED",
+    "llm": {
+      "provider": "llama_cpp",
+      "model_name": "Qwen3.5-2B",
+      "model_path": "/models/llm/Qwen3.5-2B-Q4_K_M.gguf",
+      "quantization": "Q4_K_M",
+      "base_url": "http://llama-server:8080/v1",
+      "n_ctx": 4096,
+      "n_gpu_layers": -1,
+      "n_batch": 512,
+      "n_ubatch": 256,
+      "parallel_slots": 2,
+      "flash_attention": "on",
+      "kv_cache_type": "q8_0",
+      "max_response_tokens": 80,
+      "interpreter_max_tokens": 138,
+      "request_timeout_ms": 3000,
+      "thinking_enabled": false
+    },
+    "asr": {
+      "provider": "gigaam",
+      "model_version": "v3_e2e_ctc",
+      "model_path": "/models/asr/gigaam-v3-e2e-ctc",
+      "device": "cpu",
+      "compute_type": "float32",
+      "sample_rate": 16000
+    },
+    "tts": {
+      "provider": "piper",
+      "model_path": "/models/tts/piper/ru_RU-irina-medium.onnx",
+      "voice_id": "ru_RU-irina-medium",
+      "device": "cpu",
+      "output_sample_rate": 22050,
+      "max_chunk_ms": 20,
+      "fallback_provider": "none",
+      "fallback_model_path": null,
+      "fallback_voice_id": null,
+      "fallback_output_sample_rate": null,
+      "model_variant": null
+    },
+    "vad": {
+      "provider": "silero",
+      "model_path": "/models/vad/silero_vad.onnx",
+      "device": "cpu"
+    },
+    "provider_mode": "real",
+    "turns": 20,
+    "runs": 1,
+    "seed": 0,
+    "tag": "",
+    "nvml": "auto"
+  },
+  "samples": [
+    {
+      "id": "sequence",
+      "run_index": 0,
+      "suite": "vram",
+      "baseline_used_mb": 4996,
+      "idle_after_load_mb": 6555,
+      "peak_mb": 6555,
+      "project_peak_mb": 1559,
+      "free_min_mb": 1636,
+      "idle_after_turns_mb": 6555,
+      "turns": 20,
+      "vad_delta_mb": 0,
+      "asr_delta_mb": 0,
+      "tts_delta_mb": 0,
+      "llm_delta_mb": 1559
+    }
+  ],
+  "aggregates": {
+    "n": 1,
+    "baseline_used_mb": 4996,
+    "idle_after_load_mb": 6555,
+    "peak_mb": 6555,
+    "project_peak_mb": 1559,
+    "free_min_mb": 1636,
+    "vad_delta_mb": 0,
+    "asr_delta_mb": 0,
+    "tts_delta_mb": 0,
+    "llm_delta_mb": 1559
+  },
+  "notes": [
+    "nvml_mode=pynvml",
+    "llama-server terminated",
+    "nvml_samples=334 peak_used_mb=6555"
+  ]
+}

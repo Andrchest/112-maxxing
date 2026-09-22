@@ -1,0 +1,36 @@
+{"id": "short_01", "category": "SHORT", "text": "Пожар в квартире"}
+{"id": "short_02", "category": "SHORT", "text": "Нужна скорая помощь"}
+{"id": "short_03", "category": "SHORT", "text": "Человек без сознания"}
+{"id": "short_04", "category": "SHORT", "text": "Вижу сильный дым"}
+{"id": "short_05", "category": "SHORT", "text": "ДТП на трассе"}
+{"id": "short_06", "category": "SHORT", "text": "Помогите, тут пожар"}
+{"id": "medium_01", "category": "MEDIUM", "text": "Горит кухня в квартире, идёт сильный дым"}
+{"id": "medium_02", "category": "MEDIUM", "text": "В подъезде чувствуется резкий запах газа"}
+{"id": "medium_03", "category": "MEDIUM", "text": "Женщина упала и не может встать"}
+{"id": "medium_04", "category": "MEDIUM", "text": "Соседи услышали крики и почувствовали запах гари"}
+{"id": "medium_05", "category": "MEDIUM", "text": "На балконе стоит газовый баллон"}
+{"id": "medium_06", "category": "MEDIUM", "text": "Проводка искрит, из розетки идёт дым"}
+{"id": "long_01", "category": "LONG", "text": "Горит квартира на четвёртом этаже, в доме сильное задымление, внутри может находиться пожилая женщина"}
+{"id": "long_02", "category": "LONG", "text": "Соседка сообщает, что из окна квартиры на первом этаже валит густой чёрный дым и слышны крики о помощи"}
+{"id": "long_03", "category": "LONG", "text": "Мы вызвали скорую помощь, потому что пожилому мужчине внезапно стало плохо и он потерял сознание на лестничной площадке"}
+{"id": "long_04", "category": "LONG", "text": "На перекрёстке произошло дорожно-транспортное происшествие с участием трёх автомобилей, есть пострадавшие пассажиры"}
+{"id": "long_05", "category": "LONG", "text": "В квартире произошло возгорание проводки, огонь уже перекинулся на мебель, из окна хорошо видно открытое пламя"}
+{"id": "long_06", "category": "LONG", "text": "Просим срочно направить пожарную бригаду и скорую помощь по этому адресу, там находится ребёнок и пожилой человек"}
+{"id": "address_01", "category": "ADDRESS", "text": "Смоленск, улица Николаева, дом 27"}
+{"id": "address_02", "category": "ADDRESS", "text": "Дом 27, подъезд 3, квартира 45"}
+{"id": "address_03", "category": "ADDRESS", "text": "Этаж четвёртый, квартира сорок пять"}
+{"id": "address_04", "category": "ADDRESS", "text": "Улица Николаева, дом двадцать семь, подъезд три"}
+{"id": "address_05", "category": "ADDRESS", "text": "Ориентир — напротив продуктового магазина"}
+{"id": "address_06", "category": "ADDRESS", "text": "Адрес: город Смоленск, улица Николаева, 27"}
+{"id": "number_01", "category": "NUMBER", "text": "Мне семьдесят восемь лет"}
+{"id": "number_02", "category": "NUMBER", "text": "Пострадавших трое"}
+{"id": "number_03", "category": "NUMBER", "text": "Телефон плюс семь девять один ноль один два три четыре пять шесть семь"}
+{"id": "number_04", "category": "NUMBER", "text": "В доме девять этажей"}
+{"id": "number_05", "category": "NUMBER", "text": "Этаж четыре, подъезд три"}
+{"id": "number_06", "category": "NUMBER", "text": "В квартире находится один человек"}
+{"id": "terminology_01", "category": "TERMINOLOGY", "text": "Возгорание началось на кухне"}
+{"id": "terminology_02", "category": "TERMINOLOGY", "text": "Нужна срочная эвакуация жильцов"}
+{"id": "terminology_03", "category": "TERMINOLOGY", "text": "Пострадавший находится без сознания"}
+{"id": "terminology_04", "category": "TERMINOLOGY", "text": "Пожар, вызовите МЧС скорее"}
+{"id": "terminology_05", "category": "TERMINOLOGY", "text": "На месте ДТП уже работает скорая"}
+{"id": "terminology_06", "category": "TERMINOLOGY", "text": "Сильное задымление видно из окна подъезда"}

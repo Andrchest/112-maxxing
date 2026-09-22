@@ -56,6 +56,7 @@ from app.application.ports.llm import (
 from app.application.ports.metrics_recorder import MetricsRecorder
 from app.application.ports.tts import TTSProvider
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.ports.vad import VADProvider
 from app.application.voice.asr_responder import (
     AsrTurnResponder,
     UnitOfWorkSessionStageResolver,
@@ -91,11 +92,15 @@ from voice_agent.providers import (
 )
 
 __all__ = [
+    "AGENT_IDENTITY_PREFIX",
+    "AGENT_TOKEN_TTL_MINUTES",
     "VAD_ENERGY",
     "VAD_SILERO",
     "NullCallerSpeechSink",
     "ScriptedFakeDialogueLLM",
     "VoiceAgentDeps",
+    "agent_participant_identity",
+    "build_agent_token",
     "build_asr",
     "build_dialogue_responder",
     "build_llm",
@@ -162,6 +167,56 @@ class VoiceAgentDeps:
         validate_vram_margin(profile)
         overlaid = apply_profile(settings, profile)
         return VoiceAgentDeps.build(overlaid, clock, uow_factory)
+
+
+#: TTL of the token the agent mints for itself (E19-E3). A call is bounded by the session, not by
+#: a clock the agent controls, so the only safe bound is "longer than any call anyone will run":
+#: `VoiceTurnConfig.max_turn_ms` bounds one TURN (30 s), not the call, and
+#: `Settings.livekit_token_ttl_minutes` (10) is the TRAINEE's browser token — deliberately short,
+#: because a browser can ask the API for another one and the agent cannot. Two hours is the ruling's
+#: ceiling and is checked only at join, so a long call already in progress is never cut off by it.
+AGENT_TOKEN_TTL_MINUTES = 120
+
+#: `participant_identity` of the agent in the room. One identity per CALL, not per session or per
+#: process: LiveKit refuses a second participant with the same identity, so a reconnect or a second
+#: call in the same session must not collide with a stale one.
+AGENT_IDENTITY_PREFIX = "voice-agent"
+
+
+def agent_participant_identity(call_id: uuid.UUID) -> str:
+    """`voice-agent:<call_id>` — the identity the agent joins the room under (E19-E3)."""
+    return f"{AGENT_IDENTITY_PREFIX}:{call_id}"
+
+
+def build_agent_token(settings: Settings, *, room: str, call_id: uuid.UUID) -> str:
+    """The agent's OWN LiveKit access token for `room`, minted locally (E19-E3, D9, SPEC §41).
+
+    A LiveKit access token is a plain HS256 JWT over `SIM_LIVEKIT_API_SECRET`, which this process
+    already holds — so the agent needs neither the SDK nor a REST call to the backend to obtain
+    one, and D9's "the agent never talks to the backend via REST" is preserved. The signing code is
+    the backend's own `LiveKitTokenService`, reused rather than copied, so the agent and the
+    trainee's browser token can never drift apart in claims or algorithm
+    (`check_imports.py` allows `voice_agent` → `app.infrastructure`; only `livekit` itself is
+    confined to `voice_agent.transport`).
+
+    **No token ever travels over Redis.** HLD 40's `voice:join` payload stays
+    `{session_id, room, call_id}`; the agent mints from that, at the moment it joins.
+
+    The grant is `LiveKitTokenService`'s: `roomJoin` on exactly this room, `canPublish` +
+    `canSubscribe` (a call is two-way audio), and nothing else — no `roomAdmin`, no `roomCreate`,
+    no `canPublishData`. The token is returned to one caller and never logged (SPEC §41).
+    """
+    from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
+
+    service = LiveKitTokenService(
+        settings.livekit_api_key,
+        settings.livekit_api_secret,
+        livekit_url=settings.livekit_url,
+        ttl_minutes=AGENT_TOKEN_TTL_MINUTES,
+    )
+    return service.mint(
+        room_name=room, participant_identity=agent_participant_identity(call_id)
+    ).token
 
 
 def build_transport(
@@ -478,6 +533,7 @@ def build_pipeline(
     transport: CallTransport,
     started_at: datetime | None = None,
     responder: TurnResponder | None = None,
+    vad: VADProvider | None = None,
     asr: ASRProvider | None = None,
     llm: LLMClient | None = None,
     tts: TTSProvider | None = None,
@@ -486,11 +542,21 @@ def build_pipeline(
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
 
-    `asr` and `llm` are built from `SIM_ASR_PROVIDER` / `SIM_LLM_PROVIDER` when the caller does
-    not supply them; the voice-agent process builds each **once** and passes it here so that a
-    long-lived model is loaded per process, not per call.
+    `vad`, `asr` and `llm` are built from `SIM_VAD_PROVIDER` / `SIM_ASR_PROVIDER` /
+    `SIM_LLM_PROVIDER` when the caller does not supply them; the voice-agent process builds each
+    **once** and passes it here so that a long-lived model is loaded per process, not per call.
+
+    **`vad` is a parameter for a reason** (E19-E2). It used to be built here, unconditionally and
+    per call, while `voice_agent.main.VoiceAgent._warm_vad` warmed a *different* instance it kept in
+    `self._vad` and never passed on — so with `SIM_VAD_PROVIDER=silero` (every model profile) the
+    first frame of the first real call raised `SileroVAD.warm_up() must be called before
+    process()`. `EnergyVAD` (the gate's, D13) has no such precondition, which is why no gate test
+    saw it. `60-inference-ops.md` §4.2 warms one instance per process at start-up, and
+    `main.VoiceAgent`'s own comment already says the VAD is "built once per process, warmed once,
+    shared by every call" — this parameter is what makes that true. Re-use across calls is safe
+    because `TurnPipeline.run()` calls `vad.reset()` before the first frame of every call.
     """
-    vad = build_vad(deps.settings, deps.config)
+    vad = vad if vad is not None else build_vad(deps.settings, deps.config)
     provider = asr if asr is not None else build_asr(deps.settings)
     return TurnPipeline(
         session_id=session_id,
