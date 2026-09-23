@@ -26,8 +26,9 @@ line-length = 100
 target-version = "py312"
 # Python tooling only: `docs/` (design docs, code fences included, are never reformatted — see
 # docs/SPEC.md and docs/hld/00-decisions.md) and `frontend/` (owned by the npm/eslint/prettier
-# toolchain) are out of scope for ruff.
-extend-exclude = ["docs", "frontend"]
+# toolchain) are out of scope for ruff, and so is `requirements/sources/` (organizer and owner
+# source files archived verbatim — never edited, so never reformatted).
+extend-exclude = ["docs", "frontend", "requirements/sources"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
