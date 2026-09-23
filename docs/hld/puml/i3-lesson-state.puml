@@ -1,0 +1,60 @@
+@startuml i3-lesson-state
+' The Lesson (занятие) machine and its arrival kinds — docs/hld/70-i3-alignment.md §70.3 (D15, E4).
+' A lesson owns N ordinary SimulationSessions (one per scenario_plan entry); each session keeps
+' its own SESSION_TRANSITIONS, incident, clock and event log (INV 5 unchanged).
+' Transition labels read: trigger [guard] / who may fire.
+
+skinparam state {
+  BackgroundColor<<terminal>> #EEEEEE
+}
+
+title Lesson — LESSON_TRANSITIONS and how its sessions are started
+
+state "LESSON (LessonState)" as LESSON {
+  [*] --> CREATED : createLesson\n(every plan session created, each READY)
+  CREATED --> ACTIVE : start\n[every plan session READY]\n/ INSTRUCTOR
+  ACTIVE --> COMPLETED : complete\n[every plan session COMPLETED or ABORTED]\n/ SYSTEM (LessonRunner)
+  CREATED --> ABORTED : abort\n(aborts every non-terminal session)\n/ INSTRUCTOR, SYSTEM
+  ACTIVE --> ABORTED : abort\n(aborts every non-terminal session)\n/ INSTRUCTOR, SYSTEM
+  COMPLETED --> [*]
+  ABORTED --> [*]
+
+  state COMPLETED <<terminal>>
+  state ABORTED <<terminal>>
+}
+
+state "PLAN ENTRY n (its session)" as ENTRY {
+  state "session READY\n(card not yet arrived)" as WAITING
+  state "arrival condition holds?" as ARR <<choice>>
+  state "session ACTIVE\n(card arrived; its timers run)" as RUNNING
+  state "session COMPLETED / ABORTED" as DONE <<terminal>>
+
+  [*] --> WAITING
+  WAITING --> ARR : LessonRunner tick\n(lesson ACTIVE)
+  ARR --> WAITING : no
+  ARR --> RUNNING : yes / start_session as\nActorRef(INSTRUCTOR, lesson creator)
+  RUNNING --> DONE : the session's own machine
+  DONE --> [*]
+}
+
+note right of ENTRY
+  Arrival kinds (PlanEntry.arrival):
+  - AT_OFFSET {offset_ms}: lesson wall ms since
+    start >= offset_ms (position 1 must be AT_OFFSET)
+  - AFTER_PREVIOUS_112_STAGE {delay_ms}: the previous
+    card's OPERATOR_112 stage reached HANDED_OFF
+  - AFTER_PREVIOUS_SESSION {delay_ms}: the previous
+    card's session is COMPLETED or ABORTED
+  503 INFERENCE_NOT_READY from start_session is retried
+  next tick and appends nothing. The fired arrival is
+  recorded in SESSION_STARTED.lesson_arrival.
+end note
+
+note bottom of LESSON
+  One asyncio task per ACTIVE lesson, Redis lock
+  lock:lesson:{id}:runner, re-adopted on backend start
+  (the SimulationRunner discipline, D7). Lessons have no
+  event log of their own.
+end note
+
+@enduml

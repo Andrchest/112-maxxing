@@ -1,0 +1,48 @@
+@startuml i3-card-status
+' The derived card-status projection of docs/hld/70-i3-alignment.md §70.4.6 (D16).
+' card_status(legs, handoff_offset, timers, now_offset, report_released) is a PURE function
+' (backend/app/domain/dds/card_status.py). It is not a state machine: nothing fires it; it is
+' re-evaluated after every leg change and every passed deadline, materialised into
+' incidents.card_status in the same Unit of Work, and each change of its value appends one
+' DDS_CARD_STATUS_CHANGED (SIMULATION, reason = the rule that matched).
+' Rules are evaluated top to bottom; the first match wins (precedence = assumption A-5).
+
+title Card status (memo p.27) — derived projection, precedence order
+
+start
+if (handoff exists AND every leg COMPLETED,\nor the notification list is empty?) then (yes)
+  #EEEEEE:COMPLETED — «Завершена»\n(REQ-5311);
+  stop
+endif
+if (some leg NOT_ACCEPTED or REFUSED?) then (yes)
+  #FFDDDD:REFUSED — «Отказ»\n(REQ-5309, chief-specialist check dropped, C2);
+  stop
+endif
+if (handoff + timers.not_completed_after_ms passed\nAND some leg not COMPLETED?) then (yes)
+  #FFDDDD:NOT_COMPLETED — «Не завершено»\n(REQ-5310, 48 h default, scaled by the author, C3);
+  stop
+endif
+if (some leg has accept_missed:\nno Принята / Не принята within\ntimers.accept_within_ms of its HANDOFF_RECEIVED,\nsticky once set?) then (yes)
+  #FFDDDD:NOT_NOTIFIED — «Не оповещено»\n(REQ-5308);
+  stop
+endif
+if (the instructor released the session report?) then (yes)
+  :CHECKED — «Проверена»\n(REQ-5307, column only, no event — HLD 20 §20.3);
+  stop
+endif
+if (handoff exists: 112 stage HANDED_OFF\nor prefab materialised?) then (yes)
+  :WORKED — «Отработана»\n(REQ-5306);
+  stop
+endif
+:REGISTERED — «Зарегистрирована»\n(REQ-5305);
+stop
+
+legend right
+  Red fill = the statuses REQ-5312 flags red in the lists.
+  Before E5 (no leg statuses) E4 feeds the same function with
+  each leg's status mirrored from its DDSStageState (picker map).
+  Deadline-driven changes are stamped with the deadline offset
+  under the flush-before-append rule (70 §70.3.5) — INV 7.
+endlegend
+
+@enduml

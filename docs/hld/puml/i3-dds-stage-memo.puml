@@ -1,0 +1,67 @@
+@startuml i3-dds-stage-memo
+' The DDS stage (DDSStageState) by dds_mode — docs/hld/70-i3-alignment.md §70.4.4 (D16, E5a).
+' DDS_TRANSITIONS of HLD 10 §10.8 is unchanged except for ONE additive row, labelled in bold:
+'   ACKNOWLEDGED --close [memo_all_legs_terminal]--> RESOLVED  (TRAINEE, like RESOLVED --close--> CLOSED)
+' Transition labels read: trigger [guard] / who may fire.
+
+skinparam state {
+  BackgroundColor<<terminal>> #EEEEEE
+  BackgroundColor<<unused>> #F7F7F7
+  FontColor<<unused>> #999999
+}
+
+title DDS stage — memo mode (MEMO_STATUSES) vs picker mode (RESOURCE_PICKER)
+
+state "DDS STAGE, dds_mode = MEMO_STATUSES" as MEMO {
+  state CLOSED <<terminal>>
+  state "RESOURCE_SELECTION, DISPATCHED,\nEN_ROUTE, ARRIVED, WORKING\n(never entered in memo mode)" as NOTUSED <<unused>>
+
+  [*] --> RECEIVED
+  RECEIVED --> ACKNOWLEDGED : acknowledge\n[any ДДС participant]\n/ TRAINEE (inside the first primary decision,\nor the first open_card when the trainee owns no leg)
+  ACKNOWLEDGED --> RESOLVED : **close**\n**[memo_all_legs_terminal]**\n**/ TRAINEE — additive row, the only memo closure path**
+  RESOLVED --> CLOSED : close / TRAINEE\n(fired in the same UoW as the row above)
+  RECEIVED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  ACKNOWLEDGED --> CLOSED : abort_stage / INSTRUCTOR, SYSTEM
+  CLOSED --> [*]
+}
+
+state "DDS STAGE, dds_mode = RESOURCE_PICKER (HLD 10 §10.8, unchanged)" as PICKER {
+  state "RECEIVED" as P_RECEIVED
+  state "ACKNOWLEDGED" as P_ACKNOWLEDGED
+  state "RESOURCE_SELECTION" as P_RESOURCE_SELECTION
+  state "DISPATCHED" as P_DISPATCHED
+  state "EN_ROUTE" as P_EN_ROUTE
+  state "ARRIVED" as P_ARRIVED
+  state "WORKING" as P_WORKING
+  state "RESOLVED" as P_RESOLVED
+  state "CLOSED" as P_CLOSED <<terminal>>
+
+  [*] --> P_RECEIVED
+  P_RECEIVED --> P_ACKNOWLEDGED : acknowledge / TRAINEE
+  P_ACKNOWLEDGED --> P_RESOURCE_SELECTION : open_resource_selection / TRAINEE
+  P_RESOURCE_SELECTION --> P_DISPATCHED : dispatch / TRAINEE
+  P_DISPATCHED --> P_EN_ROUTE : first_en_route / SIMULATION
+  P_EN_ROUTE --> P_ARRIVED : first_arrived / SIMULATION
+  P_ARRIVED --> P_WORKING : work_started / SIMULATION
+  P_WORKING --> P_RESOLVED : incident_resolved / SIMULATION
+  P_RESOLVED --> P_CLOSED : close / TRAINEE
+  P_CLOSED --> [*]
+
+}
+
+note bottom of MEMO
+  memo_all_legs_terminal holds iff dds_mode = MEMO_STATUSES and every leg's
+  ServiceResponseStatus is COMPLETED («Работы завершены»), NOT_ACCEPTED
+  («Не принята») or REFUSED («Отказ от выполнения работ»).
+  Legs progress on their own machine (i3-service-response-status.puml);
+  scripted responders and stage automation fire no stage trigger here.
+  Memo scoring keys on DDS_SERVICE_STATUS_SET, never on dispatch events.
+end note
+
+note bottom of PICKER
+  Picker mode is unchanged: the new ACKNOWLEDGED --close--> RESOLVED row
+  exists in the table but its guard always denies here (409 INVALID_TRANSITION).
+  Abort rows (abort_stage) omitted for brevity; see state-machines.puml.
+end note
+
+@enduml

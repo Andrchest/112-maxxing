@@ -1,0 +1,287 @@
+@startuml i3-domain
+' I3 — new and changed aggregates of docs/hld/70-i3-alignment.md (D14–D18).
+' <<new>> = introduced by I3; <<changed>> = an existing type gaining additive members.
+' Existing associations that I3 does not touch are drawn only where they anchor a new type.
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide empty members
+
+skinparam class {
+  BackgroundColor<<new>> #EFF5FF
+  BackgroundColor<<changed>> #FFF6EF
+}
+
+package "session (F1)" {
+  enum CardSource <<new>> {
+    GENERATED_CARD
+    CALLER_VOICE
+  }
+  enum DdsMode <<new>> {
+    MEMO_STATUSES
+    RESOURCE_PICKER
+  }
+  enum DdsCardCheck <<new>> {
+    OFF
+    ON
+  }
+  enum DdsBrigadeCall <<new>> {
+    OFF
+    ON
+  }
+  class SessionVariants <<new>> {
+    +card_source: CardSource
+    +dds_mode: DdsMode
+    +dds_card_check: DdsCardCheck
+    +dds_brigade_call: DdsBrigadeCall
+    .. frozen; recorded in SESSION_CREATED ..
+  }
+  class ScenarioVariants <<new>> {
+    +supported: VariantSupport
+    +default: SessionVariants
+  }
+  class SimulationSession <<changed>> {
+    +id: SessionId
+    +scenario_version_id: ScenarioVersionId
+    +session_mode: SessionMode
+    +variants: SessionVariants
+    +lesson_id: LessonId | None
+    +lesson_position: int | None
+  }
+  class Incident <<changed>> {
+    +incident_id: IncidentId
+    +session_id: SessionId
+    +card_status: CardStatus
+    +display_number: int
+    .. uq_incidents_session kept (INV 5) ..
+  }
+  class SessionParticipant <<changed>> {
+    +user_id: UserId
+    +assigned_role_type: RoleType | None
+    +assigned_service_id: ServiceId | None
+  }
+  SessionVariants --> CardSource
+  SessionVariants --> DdsMode
+  SessionVariants --> DdsCardCheck
+  SessionVariants --> DdsBrigadeCall
+  ScenarioVariants *-- SessionVariants
+  SimulationSession *-- SessionVariants
+  SimulationSession "1" *-- "1" Incident
+  SimulationSession "1" *-- "*" SessionParticipant
+}
+
+package "lesson (F2)" {
+  enum LessonState <<new>> {
+    CREATED
+    ACTIVE
+    COMPLETED
+    ABORTED
+  }
+  enum ArrivalKind <<new>> {
+    AT_OFFSET
+    AFTER_PREVIOUS_112_STAGE
+    AFTER_PREVIOUS_SESSION
+  }
+  class Arrival <<new>> {
+    +kind: ArrivalKind
+    +offset_ms: int | None
+    +delay_ms: int
+  }
+  class PlanEntry <<new>> {
+    +position: int
+    +scenario_version_id: ScenarioVersionId
+    +arrival: Arrival
+    +variants: PartialVariants | None
+    +participants: tuple[UserId] | None
+    +weight: float
+  }
+  class LessonParticipant <<new>> {
+    +user_id: UserId
+    +assigned_role_type: RoleType | None
+    +assigned_service_id: ServiceId | None
+  }
+  class Lesson <<new>> {
+    +lesson_id: LessonId
+    +title_ru: str
+    +created_by_user_id: UserId
+    +session_mode: SessionMode
+    +variants: PartialVariants
+    +participants: tuple[LessonParticipant]
+    +scenario_plan: tuple[PlanEntry]
+    +state: LessonState
+  }
+  Lesson *-- "1..*" PlanEntry
+  Lesson *-- "*" LessonParticipant
+  PlanEntry *-- Arrival
+  Arrival --> ArrivalKind
+  Lesson --> LessonState
+}
+Lesson "1" o-- "1..*" SimulationSession : owns N ordinary sessions\n(one per PlanEntry)
+
+package "scenario (schema_version 2)" {
+  class ScenarioVersion <<changed>> {
+    +schema_version: 1 | 2
+    +variants: ScenarioVariants | None
+    +timers: CardTimers | None
+    +reference_pack: str | None
+    +expected_response: ExpectedResponse
+  }
+  class CardTimers <<new>> {
+    +accept_within_ms: int = 30000
+    +fill_within_ms: int = 180000
+    +not_completed_after_ms: int = 172800000
+  }
+  class ExpectedResponse <<changed>> {
+    +required_services: tuple[ServiceId]
+    +prefab_handoff: PrefabHandoff | None
+    +responders: Mapping[ServiceId, tuple[ResponderStep]] | "DEFAULT" | None
+  }
+  ScenarioVersion *-- ScenarioVariants
+  ScenarioVersion *-- CardTimers
+  ScenarioVersion *-- ExpectedResponse
+}
+PlanEntry --> ScenarioVersion
+
+package "dds (F3)" {
+  enum ServiceResponseStatus <<new>> {
+    ADDED
+    RECEIVED
+    ACCEPTED
+    NOT_ACCEPTED
+    RESPONSE_STARTED
+    ARRIVED
+    WORKING
+    COMPLETED
+    REFUSED
+  }
+  enum CardStatus <<new>> {
+    REGISTERED
+    WORKED
+    CHECKED
+    NOT_NOTIFIED
+    REFUSED
+    NOT_COMPLETED
+    COMPLETED
+  }
+  enum LegResponder <<new>> {
+    TRAINEE
+    SCRIPTED
+  }
+  class DDSAssignment <<changed>> {
+    +assignment_id: AssignmentId
+    +snapshot_id: SnapshotId
+    +service_type: ServiceId
+    +state: DDSStageState
+    +response_status: ServiceResponseStatus
+    +response_status_at_offset_ms: int | None
+    +order_number: str | None
+    +last_comment_ru: str | None
+    +accept_missed: bool
+    +responder: LegResponder
+    +bound_user_id: UserId | None
+  }
+  class ServiceStatusEntry <<new>> {
+    +assignment_id: AssignmentId
+    +event_id: EventId
+    +previous_status: ServiceResponseStatus
+    +new_status: ServiceResponseStatus
+    +order_number: str | None
+    +comment_ru: str | None
+    +source: StatusSource
+    +actor_user_id: UserId | None
+    +at_offset_ms: int
+    .. append-only (dds_service_status_history) ..
+  }
+  class card_status <<new>> {
+    {static} +card_status(legs, handoff_offset, timers, now, released): CardStatus
+    .. pure derived projection ..
+  }
+  DDSAssignment --> ServiceResponseStatus
+  DDSAssignment --> LegResponder
+  DDSAssignment "1" *-- "*" ServiceStatusEntry
+  card_status ..> DDSAssignment : reads legs
+  card_status ..> CardStatus
+}
+Incident --> CardStatus : materialised
+
+package "layers" {
+  class HandoffSnapshot <<changed>> {
+    +card_values: Mapping[str, FactValue]
+    +recipient_services: tuple[ServiceId]
+    .. = auto ∪ manual (frozen) ..
+  }
+  class OperatorCard {
+    +values: Mapping[str, FactValue]
+    .. writers: TRAINEE / INSTRUCTOR only (INV 4) ..
+  }
+}
+HandoffSnapshot "1" --> "1..*" DDSAssignment : one leg per ServiceId
+
+package "reference (F4 + F5, data files)" {
+  class ReferencePack <<new>> {
+    +pack_id: str
+    +card_schema: CardSchema
+    +services: ServiceCatalog
+    +classifier: Classifier | None
+    +shas: Mapping[str, str]
+  }
+  class CardSchema <<new>> {
+    +schema_id: "v1" | "v2"
+    +fields: tuple[CardFieldSpec]
+  }
+  class CardFieldSpec <<changed>> {
+    +field_path: str
+    +value_type: ValueType
+    +label_ru: str
+    +group: str | None
+    +order: int
+    +control: CardControl
+    +options: tuple[CardOption] | None
+    +visible_when: CardCondition | None
+    +required_in_block: bool
+    +routing_relevant: bool
+  }
+  class ServiceCatalogEntry <<new>> {
+    +id: ServiceId
+    +name_ru: str
+    +kind: CITY | DISTRICT | PREFECTURE | DEPARTMENT
+    +code: str | None
+    +status_policy: DEFAULT | NO_REFUSAL
+    +display: bool
+    +deprecated: bool
+  }
+  class ClassifierRow <<new>> {
+    +code: str
+    +features: tuple[str]
+    +main_service: str | None
+    +routing: Mapping[str, tuple[RoutingCell]]
+  }
+  class Resolution <<new>> {
+    +classifier_code: str | None
+    +candidate_codes: tuple[str]
+    +auto_services: tuple[ServiceId]
+    +informed_services: tuple[ServiceId]
+    +reasons: tuple[RoutingReason]
+  }
+  class resolve_notification_list <<new>> {
+    {static} +resolve(classifier, catalog, card_values): Resolution
+    .. pure; recorded as RECIPIENTS_RESOLVED, never written into the card ..
+  }
+  ReferencePack *-- CardSchema
+  CardSchema *-- "*" CardFieldSpec
+  ReferencePack *-- "*" ServiceCatalogEntry
+  ReferencePack *-- "*" ClassifierRow
+  resolve_notification_list ..> ClassifierRow
+  resolve_notification_list ..> ServiceCatalogEntry
+  resolve_notification_list ..> Resolution
+}
+resolve_notification_list ..> OperatorCard : reads values only
+
+note bottom of DDSAssignment
+  DDSStageState unchanged; DDS_TRANSITIONS gains ONE additive row
+  ACKNOWLEDGED --close [memo_all_legs_terminal]--> RESOLVED, the only
+  memo closure path (70 §70.4.4, i3-dds-stage-memo.puml). Memo mode
+  swaps DDS_GUARDS for DDS_GUARDS_MEMO and the available-actions map.
+end note
+
+@enduml

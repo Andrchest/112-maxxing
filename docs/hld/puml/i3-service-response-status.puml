@@ -1,0 +1,82 @@
+@startuml i3-service-response-status
+' The per-leg ServiceResponseStatus machine of docs/hld/70-i3-alignment.md §70.4.2 (D16, E5).
+' One instance per DDSAssignment (one leg per notified service). Labels read:
+' trigger [guard] / who may fire. Statuses carry the memo's Russian names (REQ-5281…5289).
+' Every accepted transition appends one DDS_SERVICE_STATUS_SET and one history row.
+
+skinparam state {
+  BackgroundColor<<terminal>> #EEEEEE
+  BackgroundColor<<primary>> #FFF6EF
+}
+
+title ServiceResponseStatus — one leg (DDSAssignment)
+
+state "ADDED\nДобавлена" as ADDED
+state "RECEIVED\nПолучена службой" as RECEIVED
+state "ACCEPTED\nПринята" as ACCEPTED <<primary>>
+state "NOT_ACCEPTED\nНе принята" as NOT_ACCEPTED <<primary>>
+state "RESPONSE_STARTED\nНачало реагирования" as RESPONSE_STARTED
+state "ARRIVED\nПрибытие" as ARRIVED
+state "WORKING\nПроведение работ" as WORKING
+state "COMPLETED\nРаботы завершены" as COMPLETED <<terminal>>
+state "REFUSED\nОтказ от выполнения работ" as REFUSED <<terminal>>
+
+[*] --> ADDED : leg created at HANDOFF_RECEIVED\n/ SIMULATION
+ADDED --> RECEIVED : receive\n[DDS_CARD_OPENED, or first scripted step]\n/ SIMULATION
+RECEIVED --> ACCEPTED : accept\n[guard_leg_actor_bound]\n/ TRAINEE, SIMULATION
+RECEIVED --> NOT_ACCEPTED : decline\n[comment present; policy allows refusal]\n/ TRAINEE, SIMULATION
+NOT_ACCEPTED --> ACCEPTED : accept\n(correction, REQ-5327)\n/ TRAINEE
+ACCEPTED --> RESPONSE_STARTED : start_response\n/ TRAINEE, SIMULATION
+RESPONSE_STARTED --> ARRIVED : arrive\n/ TRAINEE, SIMULATION
+ARRIVED --> WORKING : start_work\n/ TRAINEE, SIMULATION
+WORKING --> COMPLETED : complete\n/ TRAINEE, SIMULATION
+
+ACCEPTED --> REFUSED : refuse\n[comment present; policy allows refusal]\n(also the correction of REQ-5328)
+RESPONSE_STARTED --> REFUSED : refuse\n[comment present; policy allows refusal]
+ARRIVED --> REFUSED : refuse\n[comment present; policy allows refusal]
+WORKING --> REFUSED : refuse\n[comment present; policy allows refusal]
+
+RECEIVED --> COMPLETED : complete_without_brigade\n[policy NO_REFUSAL (103)]
+ACCEPTED --> COMPLETED : complete_without_brigade\n[policy NO_REFUSAL (103)]
+RESPONSE_STARTED --> COMPLETED : complete_without_brigade\n[policy NO_REFUSAL (103)]
+ARRIVED --> COMPLETED : complete_without_brigade\n[policy NO_REFUSAL (103)]
+WORKING --> COMPLETED : complete_without_brigade\n[policy NO_REFUSAL (103)]
+
+COMPLETED --> [*]
+REFUSED --> [*]
+
+note right of NOT_ACCEPTED
+  Competence decision (always on, every dds_mode):
+  «Не принята» needs a comment with the reason
+  (422 COMMENT_REQUIRED otherwise, REQ-5284).
+  Policy NO_REFUSAL (service 103) removes decline
+  and refuse; complete_without_brigade replaces them
+  (REQ-5290).
+end note
+
+note left of RECEIVED
+  One step at a time (REQ-5293): the pencil dropdown
+  offers only the legal next triggers. Any other
+  status is 409 INVALID_TRANSITION (INV 8).
+  «Номер наряда» (order_number) is free text on each
+  entry; each entry is visible to every notified
+  service (broadcast).
+end note
+
+note top of REFUSED
+  Stage closure in memo mode: when every leg is COMPLETED,
+  NOT_ACCEPTED or REFUSED, guard memo_all_legs_terminal holds and
+  the ДДС may close (ACKNOWLEDGED --close--> RESOLVED --close--> CLOSED,
+  i3-dds-stage-memo.puml).
+end note
+
+note bottom of COMPLETED
+  RESOURCE_PICKER mode: the same statuses are mirrored
+  by stage automation (source PICKER_MIRROR) from the
+  leg's DDSStageState: RECEIVED→RECEIVED,
+  ACKNOWLEDGED|RESOURCE_SELECTION|DISPATCHED→ACCEPTED,
+  EN_ROUTE→RESPONSE_STARTED, ARRIVED→ARRIVED,
+  WORKING→WORKING, RESOLVED→COMPLETED.
+end note
+
+@enduml

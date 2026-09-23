@@ -306,3 +306,100 @@ voice_agent    -> application, inference, infrastructure
   suite can run against the real llama-server via `benchmarks/benchmark_llm.py`.
 - Every fake provider lives next to its port and is what the gate uses; real adapters get contract
   tests that are skipped unless the model/extra is present (marker `requires_models`).
+
+## D14. Variant switches (I3, F1 — `70-i3-alignment.md` §70.2, §70.11)
+
+- One frozen value object `SessionVariants` (`backend/app/domain/session/variants.py`) with four
+  switches: `card_source` {`GENERATED_CARD`, `CALLER_VOICE`} (the AI caller is frozen, kept), `dds_mode`
+  {`MEMO_STATUSES`, `RESOURCE_PICKER`}, `dds_card_check` {`OFF`, `ON`}, `dds_brigade_call` {`OFF`, `ON`}.
+- Three homes, fixed precedence, no fourth: the scenario declares *supported + default* (schema-2 key
+  `variants`; a schema-1 document gets a derived set that reproduces today's behaviour), session
+  creation *selects* within `supported` (`409 VARIANT_NOT_SUPPORTED`; an unimplemented value is
+  `409 VARIANT_NOT_AVAILABLE`), and `SESSION_CREATED.variants` + `simulation_sessions.variants`
+  *record* the result. Immutable after creation.
+- Scoring rules gain `applies_to_variants` with exactly the `applies_to_roles` "non-applicable ⇒
+  zero/zero result" semantics; no evaluator changes.
+- E1 ships `dds_mode` with effective default `RESOURCE_PICKER`; E5 flips the product default to
+  `MEMO_STATUSES` for schema-2 scenarios (schema-1 scenarios keep `RESOURCE_PICKER`, P5).
+- **Amends D4:** "a ScenarioVersion file has exactly the SPEC §4 top-level keys" now reads "a
+  `schema_version: 1` file has exactly those keys; `schema_version: 2` adds the optional keys
+  `variants`, `timers`, `reference_pack` (and `expected_response.responders`)". SPEC §4 lists a
+  *required* structure; D4's *exactly* is the part amended. The loader refuses the schema-2 keys in a
+  schema-1 document.
+
+## D15. A card stream is a Lesson of ordinary sessions (I3, F2 — `70-i3-alignment.md` §70.3)
+
+- `uq_incidents_session`, SPEC §1 and §13 are kept literally: one session = one incident = one card.
+- A **Lesson** (занятие) owns N ordinary sessions, all created at lesson creation (`READY`) and
+  started by a `LessonRunner` (the `SimulationRunner` discipline: one task per ACTIVE lesson, Redis lock,
+  re-adoption) when each `scenario_plan` entry's arrival holds (`AT_OFFSET`,
+  `AFTER_PREVIOUS_112_STAGE`, `AFTER_PREVIOUS_SESSION`), acting as the instructor who created the
+  lesson. Lessons have no event log of their own.
+- Per-card timers are scenario data in **session** ms (`timers.accept_within_ms` 30 000,
+  `fill_within_ms` 180 000, `not_completed_after_ms` default 48 h, author-scaled). Their consequences
+  are SIMULATION-authored `DDS_CARD_STATUS_CHANGED` events stamped with the deadline offset, appended
+  under the flush-before-append rule; the late action is scored by ordinary `DEADLINE` rules.
+
+## D16. Per-service response statuses on the legs (I3, F3 — `70-i3-alignment.md` §70.4)
+
+- Each `DDSAssignment` leg carries a `ServiceResponseStatus` machine in the ДДС memo vocabulary
+  (Добавлена → Получена службой → Принята / Не принята → Начало реагирования → Прибытие → Проведение
+  работ → Работы завершены | Отказ от выполнения работ), one step at a time, comment mandatory for
+  «Не принята» / «Отказ», service 103 policy `NO_REFUSAL`, «Номер наряда» free text per status entry,
+  append-only history `dds_service_status_history`. The competence decision is always on.
+- `DDSStageState` is unchanged; `DDS_TRANSITIONS` gains exactly **one additive row**
+  `ACKNOWLEDGED --close--> RESOLVED` (TRAINEE, like the existing `close` row) with guard
+  `memo_all_legs_terminal` (holds iff `dds_mode = MEMO_STATUSES` and every leg is `COMPLETED`,
+  `NOT_ACCEPTED` or `REFUSED`; denies in picker mode). In memo mode it is the only closure path and
+  `RESOURCE_SELECTION` … `WORKING` are never entered; the picker mode is unchanged. Guards
+  (`DDS_GUARDS_MEMO`) and the available-actions map become variant-aware. Memo scoring rules key on
+  `DDS_SERVICE_STATUS_SET`, never on dispatch events. (Manager decision on open point O-1, option (a)
+  tightened; `70` §70.4.4.) E5a lands the row with HLD 10 §10.8/§10.9, the parsed-table test and INV 8.
+- Card statuses (Зарегистрирована, Отработана, Проверена, Не оповещено, Отказ, Не завершено,
+  Завершена) are a pure derived projection, materialised into `incidents.card_status`.
+- The card is broadcast to every notified service; every ДДС participant sees every leg and its history.
+  Several ДДС trainees = participant→service binding inside the one DDS stage
+  (`session_participants.assigned_service_id`); unbound legs are played by scripted responders.
+
+## D17. The 112 card schema is versioned data (I3, F4 — `70-i3-alignment.md` §70.5)
+
+- `reference/card-schema/v1.yaml` = today's 38 `CARD_FIELDS`; `v2.yaml` is authored from the organizer
+  docx. Fields that mean the same keep their `field_path`; the per-type questionnaire is `visible_when`
+  (a card-local `CardCondition`) + option lists; everything is served through the existing
+  `field_specs` (additive `CardFieldSpec` properties) to both the 112 and the ДДС side.
+- The scenario names the reference pack; `SESSION_CREATED.reference_pack` records ids and sha256s.
+  Scoring stays path-and-payload only; one additive `Comparison` member `CONTAINS`.
+
+## D18. Classifier, services catalog and routing (I3, F5 — `70-i3-alignment.md` §70.6)
+
+- Classifier v_046_24 and «СЛУЖБЫ 112» are sha-pinned data files under `reference/`, generated from the
+  source xlsx/docx by `backend/tools/import_*.py`; not tables. F4 and F5 share one reference pack and
+  one version; questionnaire option codes are the classifier's признак codes.
+- `ServiceType` becomes `ServiceId = str`; the six current ids stay verbatim as catalog ids; the DB CHECK
+  on `dds_assignments.service_type` is relaxed to non-empty; a scenario's service ids are checked
+  against the catalog at import.
+- Routing is a pure resolver whose result is recorded as a SIMULATION `RECIPIENTS_RESOLVED` event —
+  never a SYSTEM write into the card (INV 4, D3). Notification list = auto ∪ manual; only 112 adds
+  services; removal is refused under schema v2 (`409 SERVICE_REMOVAL_FORBIDDEN`). The LLM never sees the
+  card (SPEC §2).
+
+## D19. I3 requirement-conflict picks (`70-i3-alignment.md` §70.9, §70.10)
+
+- C1 ДДС card check: both behind `dds_card_check`, default `OFF` (latest customer answer).
+- C2 no control-department role: «Отказ» from the leg alone; «Проверена» = instructor report release.
+- C3/C4 the 48-h and 3-minute norms are scenario timer data with the memo/room values as defaults.
+- C5/C6 SPEC §1/§13 and §7 kept; the stream is a lesson, the memo statuses live per leg.
+- C7 `dds_brigade_call` default `OFF` until H2/E6 (owner to confirm).
+- C8 `UTILITY_EMERGENCY` kept as a deprecated catalog entry, hidden from the v2 picker.
+- C10 removal refused under schema v2; `SERVICE_DESELECTED` kept for v1 and old logs.
+- C11 automatic routing is a table lookup, not an LLM decision.
+- Evidence gaps are carried as explicit assumptions A-1…A-13, each with the epic that checks it.
+
+## D20. The reference look replaces D12's dark console for the 112 card and ДДС screens (I3, C9)
+
+- The organizer asks for screens «100 % похожи» on the real system. E7a (with E3's and E5's layouts)
+  moves the 112 card and ДДС screens to a light theme: orange bar `#EC653B`, blue tags `#157DBD`,
+  backgrounds `#EFEFEF` / `#C9CED1`, checked by Playwright screenshot comparison against images extracted
+  from the organizer files. D12's structure (FSD layout, TanStack Query, Zustand, `ru.ts` strings,
+  `available_actions`-driven buttons, generated types) is unchanged; only its "dense dark operations
+  console" look is superseded on those screens.

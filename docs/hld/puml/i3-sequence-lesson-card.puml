@@ -1,0 +1,144 @@
+@startuml i3-sequence-lesson-card
+' I3 — one card of a lesson, end to end (docs/hld/70-i3-alignment.md §70.3–§70.6).
+'
+' Scope: a lesson whose plan entry n is a schema-2 scenario with reference pack v046_24-r1.
+' Each `append` is one row in that card's session_events, allocated under the next_seq_no row
+' lock in the same Unit of Work as the state change (D5); every append is followed after commit
+' by a publish to Redis session:{id}:events (HLD 40), omitted below for brevity.
+' The lesson itself has no event log; it only starts sessions (D15).
+
+title Lesson → session start → handoff → RECIPIENTS_RESOLVED → per-service legs → deadline status
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "Instructor" as INS
+actor "112 trainee" as T112
+actor "ДДС trainee\n(bound to FIRE_RESCUE)" as TDDS
+
+box "backend (FastAPI)" #EFF5FF
+  participant "API\napp/api" as API
+  participant "LessonRunner\napplication/lessons" as LR
+  participant "Use cases\napp/application" as UC
+  participant "Domain\nrouting / dds / lesson" as DOM
+  participant "SimulationRunner\n+ stage automation" as RUN
+  participant "ReferenceCatalog\n(reference/ files, sha-pinned)" as REF
+end box
+
+box "infrastructure" #F3FFF3
+  database "PostgreSQL" as PG
+end box
+
+== 1. Lesson creation (POST /api/v1/lessons — createLesson) ==
+
+INS -> API : POST /api/v1/lessons\n{title_ru, session_mode, variants, participants, scenario_plan}
+API -> UC : CreateLessonUseCase
+UC -> DOM : resolve_variants(request, scenario.variants, IMPLEMENTED_VARIANT_VALUES)\nper plan entry
+note right of DOM
+  409 VARIANT_NOT_AVAILABLE for an unimplemented value,
+  409 VARIANT_NOT_SUPPORTED outside the scenario's supported set (D14).
+end note
+loop each plan entry (position 1..N)
+  UC -> PG : existing create_session path:\nsimulation_sessions (+variants, lesson_id, lesson_position),\nincidents (card_status REGISTERED, display_number), role_stages
+  UC -> PG : append **SESSION_CREATED**\n{…, variants, scenario_role_chain, reference_pack{ids, shas},\ntimers, lesson_id, lesson_position}
+end
+UC -> PG : lessons row (state CREATED)
+INS -> API : POST /api/v1/lessons/{id}/start
+API -> UC : lesson CREATED → ACTIVE
+
+== 2. Arrival: the LessonRunner starts card n ==
+
+loop every SIM_TICK_MS while the lesson is ACTIVE
+  LR -> DOM : arrival_holds(entry n, lesson clock, previous sessions)
+end
+LR -> UC : start_session(session n)\nas ActorRef(INSTRUCTOR, lesson creator)
+UC -> PG : append **SESSION_STARTED** {…, lesson_arrival{kind, due_offset_ms, fired_offset_ms}}
+note over RUN : SimulationRunner adopts session n\n(one runner per ACTIVE card, D7)
+
+== 3a. card_source = CALLER_VOICE: the 112 trainee fills the card ==
+
+T112 -> API : PUT …/operator/card/field {incident.types, q.TYPE.GROUP, address.district …}
+API -> UC : SetCardFieldUseCase
+UC -> DOM : set_field(card, path, value)  — trainee write only (INV 4)
+UC -> PG : append **CARD_FIELD_CHANGED**
+UC -> REF : pack v046_24-r1: classifier, services
+UC -> DOM : resolve_notification_list(classifier, catalog, card_values)\n(path is routing_relevant)
+DOM --> UC : Resolution {classifier_code, auto_services, informed_services, reasons}
+UC -> PG : append **RECIPIENTS_RESOLVED** (SIMULATION)\n{auto_services, manual_services, notification_list, final: false}
+note right of UC
+  The resolution is an event, never a card write:
+  recipients.services keeps only the trainee's manual
+  additions; removal is 409 SERVICE_REMOVAL_FORBIDDEN (C10).
+end note
+T112 -> API : POST …/operator/handoff
+API -> UC : CreateHandoffUseCase
+UC -> DOM : resolve once more; freeze_card_to_snapshot(card, auto ∪ manual)
+UC -> PG : append **RECIPIENTS_RESOLVED** {final: true}
+UC -> PG : handoff_snapshots (immutable) +\nappend **HANDOFF_CREATED** {recipient_services = union,\nauto_recipient_services, manual_recipient_services, informed_services}
+
+== 3b. card_source = GENERATED_CARD: the prefab is the card ==
+
+note over UC, PG
+  start_session materialises expected_response.prefab_handoff exactly as a [DDS] chain does today
+  (application/handoff/prefab_handoff.py): RECIPIENTS_RESOLVED {final: true} then HANDOFF_CREATED,
+  actor SIMULATION. No 112 stage is built (effective role_chain = [DDS]).
+end note
+
+== 4. Per-service legs (one DDSAssignment per ServiceId of the union) ==
+
+UC -> DOM : snapshot_to_assignment(snapshot, service) for each service
+loop each notified service
+  UC -> PG : dds_assignments (response_status ADDED, responder TRAINEE|SCRIPTED, bound_user_id)\nappend **HANDOFF_RECEIVED** {service_type, responder, bound_user_id}
+end
+UC -> DOM : card_status(...) = WORKED
+UC -> PG : incidents.card_status = WORKED +\nappend **DDS_CARD_STATUS_CHANGED** {REGISTERED → WORKED}
+
+== 5. The ДДС works its own leg (dds_mode = MEMO_STATUSES) ==
+
+TDDS -> API : POST …/dds/legs/{assignment_id}/open
+API -> UC : OpenDdsCardUseCase (constructed without WorldTruth or ScenarioVersion, INV 3)
+UC -> PG : append **DDS_CARD_OPENED** (TRAINEE)\nappend **DDS_SERVICE_STATUS_SET** {ADDED → RECEIVED, source SYSTEM}
+TDDS -> API : POST …/dds/legs/{assignment_id}/status\n{status: ACCEPTED, order_number, comment_ru}
+API -> UC : SetServiceStatusUseCase
+UC -> DOM : guard_leg_actor_bound; SERVICE_RESPONSE_TRANSITIONS.fire(RECEIVED, accept)
+UC -> PG : flush due deadlines first (none due)\nappend **DDS_SERVICE_STATUS_SET** {RECEIVED → ACCEPTED}\n+ stage acknowledge: **DDS_ACKNOWLEDGED**, **STAGE_STATE_CHANGED**
+note right of UC
+  Every other notified service sees this entry
+  (broadcast read model, history per leg).
+end note
+
+== 6. An unanswered leg (POLICE, no decision yet) misses its accept deadline ==
+
+loop every SIM_TICK_MS
+  RUN -> DOM : due deadlines at now_ms?\n(leg POLICE: received + accept_within_ms passed,\nno ACCEPTED / NOT_ACCEPTED)
+end
+RUN -> DOM : mark accept_missed; card_status(...) = NOT_NOTIFIED
+RUN -> PG : incidents.card_status = NOT_NOTIFIED +\nappend **DDS_CARD_STATUS_CHANGED** (SIMULATION)\n{WORKED → NOT_NOTIFIED, reason ACCEPT_DEADLINE_MISSED,\nassignment_id, deadline_offset_ms}\nstamped with the DEADLINE offset (flush-before-append, INV 7)
+note right of RUN
+  The late action itself is scored by an ordinary DEADLINE rule
+  (HANDOFF_RECEIVED → DDS_SERVICE_STATUS_SET, new_status ∈
+  {ACCEPTED, NOT_ACCEPTED}, max 30 000 ms) — no new evaluator.
+end note
+
+== 7. Memo-mode closure: every leg terminal, the ДДС closes ==
+
+TDDS -> API : POST …/dds/close {closure_reason, comment_ru}
+API -> UC : CloseDdsIncidentUseCase (memo)
+UC -> DOM : DDS_TRANSITIONS.fire(ACKNOWLEDGED, close)\n[memo_all_legs_terminal: every leg COMPLETED | NOT_ACCEPTED | REFUSED]\nthen fire(RESOLVED, close)
+UC -> PG : append **STAGE_STATE_CHANGED** ×2 (ACKNOWLEDGED → RESOLVED → CLOSED),\n**DDS_INCIDENT_CLOSED**, **ROLE_STAGE_COMPLETED**
+note right of UC
+  The only memo closure path (additive row, 70 §70.4.4).
+  RESOURCE_SELECTION … WORKING are never entered in memo mode;
+  a leg still open ⇒ 409 INVALID_TRANSITION. In picker mode the
+  guard denies and the unchanged RESOLVED --close--> CLOSED applies.
+end note
+
+== 8. Lesson completes ==
+
+LR -> DOM : every plan session COMPLETED or ABORTED?
+LR -> PG : lessons.state = COMPLETED
+INS -> API : GET /api/v1/lessons/{id}/report\n(N ScoreReports + weighted sum)
+
+@enduml

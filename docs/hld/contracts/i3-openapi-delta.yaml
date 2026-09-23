@@ -1,0 +1,1377 @@
+# HLD — I3 contract delta (docs/hld/70-i3-alignment.md, D14–D18)
+#
+# A standalone OpenAPI 3.1 FRAGMENT. It is not served and not used for type generation: each
+# implementing epic (E1, E2, E4, E3, E5 — see docs/hld/90-tbd-epics.md "I3 TBD epics") merges its
+# part into docs/hld/openapi.yaml in the same commit as the code, copying names literally.
+#
+# Conventions (as in openapi.yaml):
+#   - `x-epic` names the epic that merges the item;
+#   - `x-change: NEW | CHANGED | ADDITIVE` — CHANGED replaces a definition, ADDITIVE only adds
+#     optional or new required-in-response properties to an existing schema;
+#   - `x-action` / `x-emits` as in openapi.yaml;
+#   - references to unchanged definitions point into openapi.yaml.
+openapi: 3.1.0
+info:
+  title: System-112 / DDS training simulator — I3 contract delta
+  version: 1.1.0-i3-delta
+  summary: New and changed operations and schemas of initiative I3 (variants, lessons, reference data, ДДС leg statuses).
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: sessions
+  - name: lessons
+  - name: incidents
+  - name: reference
+  - name: operator
+  - name: dds
+
+paths:
+
+  /api/v1/sessions:
+    post:
+      tags: [sessions]
+      operationId: createSession
+      x-epic: E1
+      x-change: CHANGED
+      summary: Create a simulation session (INSTRUCTOR / ADMIN) — now with variants.
+      description: |
+        As before (openapi.yaml), plus: `variants` (every field optional) is resolved per switch as
+        request → scenario default → product default (70 §70.2.2). A value outside
+        `IMPLEMENTED_VARIANT_VALUES` is `409 VARIANT_NOT_AVAILABLE` (checked first); a value outside
+        the scenario's `supported` set is `409 VARIANT_NOT_SUPPORTED`. The resolved variants are
+        recorded in `SESSION_CREATED.variants` and returned in `SessionDetail.variants`. Under
+        `card_source: GENERATED_CARD` the effective role chain is the suffix starting at DDS.
+      x-action: '-'
+      x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionCreateRequest' }
+      responses:
+        '201':
+          description: The created session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetailI3' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/lessons:
+    post:
+      tags: [lessons]
+      operationId: createLesson
+      x-epic: E4
+      x-change: NEW
+      summary: Create a lesson (занятие) of N cards (INSTRUCTOR / ADMIN).
+      description: |
+        Validates the whole plan and creates **every** plan session at once through the existing
+        `createSession` path (each `READY`, with `lesson_id` / `lesson_position`), in one Unit of
+        Work. Nothing ticks until `startLesson`. Refusals are those of `createSession` for the
+        offending entry, with `detail` naming its `position`.
+      x-action: '-'
+      x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LessonCreateRequest' }
+      responses:
+        '201':
+          description: The created lesson in state `CREATED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [lessons]
+      operationId: listLessons
+      x-epic: E4
+      x-change: NEW
+      summary: List lessons — mine, or all for an instructor.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [MINE, ALL], default: MINE }
+        - name: state
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/LessonState' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Lessons, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LessonListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/lessons/{lesson_id}:
+    get:
+      tags: [lessons]
+      operationId: getLesson
+      x-epic: E4
+      x-change: NEW
+      summary: A lesson with its plan and the per-card status of every session.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/lessons/{lesson_id}/start:
+    post:
+      tags: [lessons]
+      operationId: startLesson
+      x-epic: E4
+      x-change: NEW
+      summary: Start the lesson (`CREATED → ACTIVE`); the LessonRunner then starts cards by arrival.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson in state `ACTIVE`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/lessons/{lesson_id}/abort:
+    post:
+      tags: [lessons]
+      operationId: abortLesson
+      x-epic: E4
+      x-change: NEW
+      summary: Abort the lesson and every non-terminal card session.
+      x-action: '-'
+      x-emits: [SESSION_ABORTED]
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../openapi.yaml#/components/schemas/AbortSessionRequest' }
+      responses:
+        '200':
+          description: The lesson in state `ABORTED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/lessons/{lesson_id}/report:
+    get:
+      tags: [lessons]
+      operationId: getLessonReport
+      x-epic: E4
+      x-change: NEW
+      summary: The N card reports of a completed lesson plus the weighted sum.
+      description: |
+        Composes the existing per-session `ScoreReportView`s; no new evaluator. Trainee access
+        follows the per-session release rule (a lesson release releases every card, `x-emits: []`).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonReport' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/instructor/lessons/{lesson_id}/report/release:
+    post:
+      tags: [lessons]
+      operationId: releaseLessonReport
+      x-epic: E4
+      x-change: NEW
+      summary: Release every card report of the lesson to its trainees (idempotent, no event).
+      description: |
+        Calls the existing per-session release for every card; sets `incidents.card_status` to
+        `CHECKED` where the projection allows it (70 §70.4.6). Emits no event (HLD 20 §20.3).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson after release.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/incidents:
+    get:
+      tags: [incidents]
+      operationId: listMyIncidents
+      x-epic: E4
+      x-change: NEW
+      summary: The caller's cross-session incident list (ДДС «Список происшествий», 112 «реестр»).
+      description: |
+        One row per session the caller participates in (optionally one lesson), with the materialised
+        `card_status` and the deadline offsets; the client renders countdowns from
+        `session_offset_ms` and never decides a status. A ДДС trainee sees rows only once the card
+        has arrived (its session is `ACTIVE` or terminal).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: lesson_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: role_type
+          in: query
+          required: false
+          schema: { $ref: '../openapi.yaml#/components/schemas/RoleType' }
+        - name: card_status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/CardStatus' }
+        - name: q
+          in: query
+          required: false
+          description: Search over display number, address and classifier code («Поиск»).
+          schema: { type: string }
+      responses:
+        '200':
+          description: Incidents, newest arrival first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/IncidentListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+
+  /api/v1/reference/manifest:
+    get:
+      tags: [reference]
+      operationId: getReferenceManifest
+      x-epic: E2
+      x-change: NEW
+      summary: The reference packs and the sha256 of every reference file.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: '`reference/manifest.json`, verbatim.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferenceManifest' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+
+  /api/v1/reference/services:
+    get:
+      tags: [reference]
+      operationId: listReferenceServices
+      x-epic: E2
+      x-change: NEW
+      summary: The service catalog («СЛУЖБЫ 112») of a pack.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: include_hidden
+          in: query
+          required: false
+          description: 'Include `display: false` and `deprecated` entries (labels for old logs).'
+          schema: { type: boolean, default: false }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Catalog entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ServiceCatalogEntry' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/reference/classifier:
+    get:
+      tags: [reference]
+      operationId: searchClassifier
+      x-epic: E2
+      x-change: NEW
+      summary: Search the incident classifier (v_046_24) of a pack — the «Класс.:» picker.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Matching rows (routing omitted; fetch one row for it).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClassifierRowSummary' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/reference/classifier/{code}:
+    get:
+      tags: [reference]
+      operationId: getClassifierRow
+      x-epic: E2
+      x-change: NEW
+      summary: One classifier row with its routing cells (instructor tooling, resolver fixtures).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The row.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClassifierRow' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/reference/card-schema/{schema_id}:
+    get:
+      tags: [reference]
+      operationId: getCardSchema
+      x-epic: E3
+      x-change: NEW
+      summary: A card schema (`v1` / `v2`) as field specs — the same `CardFieldSpec` the card views carry.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: schema_id
+          in: path
+          required: true
+          schema: { type: string, examples: [v1, v2] }
+      responses:
+        '200':
+          description: The schema.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardSchemaView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/operator/services/deselect:
+    post:
+      tags: [operator]
+      operationId: deselectRecipientService
+      x-epic: E2
+      x-change: CHANGED
+      summary: Remove a manually added service — refused for every service under a schema-v2 card.
+      description: |
+        Unchanged for a `v1` card. Under `card_schema: v2` any removal is
+        `409 SERVICE_REMOVAL_FORBIDDEN` (memo p.14, REQ-5275, 70 C10); an automatically resolved
+        service can never be removed on either schema, because it is not in `recipients.services`.
+      x-action: select_services
+      x-emits: [SERVICE_DESELECTED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceSelectionRequest' }
+      responses:
+        '200':
+          description: The new selection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceSelectionView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/sessions/{session_id}/dds/legs:
+    get:
+      tags: [dds]
+      operationId: listDdsLegs
+      x-epic: E5
+      x-change: NEW
+      summary: Every leg of the card with its status history — each notified service sees all of them.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The legs, in notification-list order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/legs/{assignment_id}/open:
+    post:
+      tags: [dds]
+      operationId: openDdsCard
+      x-epic: E5
+      x-change: NEW
+      summary: The ДДС opens the card on its leg (technical status «Получена службой»).
+      description: |
+        Idempotent: a second call on a leg past `ADDED` appends nothing and returns the leg.
+      x-action: open_card
+      x-emits: [DDS_CARD_OPENED, DDS_SERVICE_STATUS_SET]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/AssignmentIdParam'
+      responses:
+        '200':
+          description: The leg.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/sessions/{session_id}/dds/legs/{assignment_id}/status:
+    post:
+      tags: [dds]
+      operationId: setDdsServiceStatus
+      x-epic: E5
+      x-change: NEW
+      summary: Set the next response status of one service's leg (the memo's pencil form).
+      description: |
+        Fires one `SERVICE_RESPONSE_TRANSITIONS` trigger (70 §70.4.2). An `ADDED` leg is first moved to
+        `RECEIVED`. Out-of-sequence status ⇒ `409 INVALID_TRANSITION`; missing comment on
+        `NOT_ACCEPTED` / `REFUSED` ⇒ `422 COMMENT_REQUIRED`; a leg bound to another participant ⇒
+        `403 FORBIDDEN_FOR_SERVICE`; `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. The
+        trainee's first primary decision also fires the stage's `acknowledge`; no other stage trigger
+        is fired (memo mode never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline
+        events are appended first (flush-before-append).
+      x-action: set_service_status
+      x-emits: [DDS_CARD_STATUS_CHANGED, DDS_SERVICE_STATUS_SET, DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/AssignmentIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceStatusRequest' }
+      responses:
+        '200':
+          description: The leg after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+        '422': { $ref: '#/components/responses/UnprocessableEntityI3' }
+
+  /api/v1/sessions/{session_id}/dds/close:
+    post:
+      tags: [dds]
+      operationId: closeDdsIncident
+      x-epic: E5a
+      x-change: CHANGED
+      summary: Close the DDS stage — memo mode closes from ACKNOWLEDGED through the one additive row.
+      description: |
+        Picker mode unchanged (`RESOLVED --close--> CLOSED`). Memo mode: fires `close` from
+        `ACKNOWLEDGED` (additive `DDS_TRANSITIONS` row, guard `memo_all_legs_terminal` — every leg
+        `COMPLETED`, `NOT_ACCEPTED` or `REFUSED`) and then from `RESOLVED`, in one Unit of Work; a leg
+        still open ⇒ `409 INVALID_TRANSITION`. In picker mode the new guard always denies (70 §70.4.4).
+      x-action: close
+      x-emits: [STAGE_STATE_CHANGED, DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED, SCORING_RULE_EVALUATED, SESSION_COMPLETED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../openapi.yaml#/components/schemas/CloseIncidentRequest' }
+      responses:
+        '200':
+          description: The session after closure (response unchanged).
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/SessionDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+
+  /api/v1/sessions/{session_id}/dds/card-issues:
+    post:
+      tags: [dds]
+      operationId: flagDdsCardIssue
+      x-epic: E5
+      x-change: NEW
+      summary: 'The ДДС flags an error in the received card (only `dds_card_check: ON`).'
+      description: |
+        Records the flag against the frozen snapshot only; the DDS never sees the truth (INV 3).
+        `dds_card_check: OFF` ⇒ `409 ACTION_NOT_AVAILABLE`.
+      x-action: flag_card_issue
+      x-emits: [DDS_CARD_ISSUE_FLAGGED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagCardIssueRequest' }
+      responses:
+        '201':
+          description: The recorded flag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardIssueView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI3' }
+        '422': { $ref: '#/components/responses/UnprocessableEntityI3' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    LessonIdParam:
+      name: lesson_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AssignmentIdParam:
+      name: assignment_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PackQueryParam:
+      name: pack
+      in: query
+      required: false
+      description: Reference pack id; default = the newest pack in the manifest.
+      schema: { type: string, examples: [v046_24-r1, legacy-r1] }
+
+  responses:
+    ConflictI3:
+      description: |
+        Everything of openapi.yaml's `Conflict`, plus `VARIANT_NOT_SUPPORTED`,
+        `VARIANT_NOT_AVAILABLE`, `SERVICE_REMOVAL_FORBIDDEN`, `LESSON_NOT_ACTIVE`,
+        `REFERENCE_PACK_UNKNOWN`.
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+    ForbiddenI3:
+      description: openapi.yaml's `Forbidden`, plus `FORBIDDEN_FOR_SERVICE` (the leg is bound to another ДДС participant).
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+    UnprocessableEntityI3:
+      description: openapi.yaml's `UnprocessableEntity`, plus `COMMENT_REQUIRED`, `SERVICE_UNKNOWN`, `CARD_OPTION_UNKNOWN`.
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+
+  schemas:
+
+    # ------------------------------------------------------------ errors ----
+    ProblemCodeI3Additions:
+      x-epic: [E1, E2, E4, E5]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ProblemCode'
+      type: string
+      enum:
+        - VARIANT_NOT_SUPPORTED        # E1
+        - VARIANT_NOT_AVAILABLE        # E1
+        - REFERENCE_PACK_UNKNOWN       # E2
+        - SERVICE_UNKNOWN              # E2
+        - SERVICE_REMOVAL_FORBIDDEN    # E2
+        - CARD_OPTION_UNKNOWN          # E3
+        - LESSON_NOT_ACTIVE            # E4
+        - COMMENT_REQUIRED             # E5
+        - FORBIDDEN_FOR_SERVICE        # E5
+
+    # ------------------------------------------------------------- enums ----
+    ServiceType:
+      x-epic: E2
+      x-change: CHANGED
+      description: |
+        `ServiceId` — a catalog id (70 §70.6.3), no longer a closed enum. The six legacy ids
+        (`FIRE_RESCUE`, `POLICE`, `AMBULANCE`, `GAS_SERVICE`, `UTILITY_EMERGENCY`, `EDDS`) stay valid
+        verbatim; the name `ServiceType` is kept so every existing `$ref` survives.
+      type: string
+      minLength: 1
+      pattern: '^[A-Z][A-Z0-9_]*$'
+    CardSource:
+      x-epic: E1
+      x-change: NEW
+      type: string
+      enum: [GENERATED_CARD, CALLER_VOICE]
+    DdsMode:
+      x-epic: E1
+      x-change: NEW
+      type: string
+      enum: [MEMO_STATUSES, RESOURCE_PICKER]
+    DdsCardCheck:
+      x-epic: E1
+      x-change: NEW
+      type: string
+      enum: ['OFF', 'ON']
+    DdsBrigadeCall:
+      x-epic: E1
+      x-change: NEW
+      type: string
+      enum: ['OFF', 'ON']
+    LessonState:
+      x-epic: E4
+      x-change: NEW
+      type: string
+      enum: [CREATED, ACTIVE, COMPLETED, ABORTED]
+    ArrivalKind:
+      x-epic: E4
+      x-change: NEW
+      type: string
+      enum: [AT_OFFSET, AFTER_PREVIOUS_112_STAGE, AFTER_PREVIOUS_SESSION]
+    CardStatus:
+      x-epic: E4
+      x-change: NEW
+      description: 'Card status of the memo p.27 (70 §70.4.6). Labels: Зарегистрирована, Отработана, Проверена, Не оповещено, Отказ, Не завершено, Завершена.'
+      type: string
+      enum: [REGISTERED, WORKED, CHECKED, NOT_NOTIFIED, REFUSED, NOT_COMPLETED, COMPLETED]
+    ServiceResponseStatus:
+      x-epic: E5
+      x-change: NEW
+      description: 'Per-leg status of the memo p.21–22 (70 §70.4.1). Labels: Добавлена, Получена службой, Принята, Не принята, Начало реагирования, Прибытие, Проведение работ, Работы завершены, Отказ от выполнения работ.'
+      type: string
+      enum: [ADDED, RECEIVED, ACCEPTED, NOT_ACCEPTED, RESPONSE_STARTED, ARRIVED, WORKING, COMPLETED, REFUSED]
+    CardControl:
+      x-epic: E3
+      x-change: NEW
+      type: string
+      enum: [TEXT, TEXTAREA, NUMBER, SELECT, TOGGLE_SET, CHIPS, CHECKBOX, PHONE]
+    EventTypeI3Additions:
+      x-epic: [E2, E4, E5]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/EventType'
+      type: string
+      enum:
+        - RECIPIENTS_RESOLVED          # E2
+        - DDS_CARD_STATUS_CHANGED      # E4
+        - DDS_CARD_OPENED              # E5
+        - DDS_SERVICE_STATUS_SET       # E5
+        - DDS_CARD_ISSUE_FLAGGED       # E5
+    PermissionI3Additions:
+      x-epic: E5
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/Permission'
+      type: string
+      enum: [SET_SERVICE_STATUS, FLAG_CARD_ISSUE]
+
+    # ------------------------------------------------------------ variants ----
+    SessionVariants:
+      x-epic: E1
+      x-change: NEW
+      description: The resolved, recorded variants of one session (immutable after creation).
+      type: object
+      additionalProperties: false
+      required: [card_source, dds_mode, dds_card_check, dds_brigade_call]
+      properties:
+        card_source: { $ref: '#/components/schemas/CardSource' }
+        dds_mode: { $ref: '#/components/schemas/DdsMode' }
+        dds_card_check: { $ref: '#/components/schemas/DdsCardCheck' }
+        dds_brigade_call: { $ref: '#/components/schemas/DdsBrigadeCall' }
+    VariantsRequest:
+      x-epic: E1
+      x-change: NEW
+      description: Every field optional; a missing one takes the scenario default, then the product default.
+      type: object
+      additionalProperties: false
+      properties:
+        card_source: { $ref: '#/components/schemas/CardSource' }
+        dds_mode: { $ref: '#/components/schemas/DdsMode' }
+        dds_card_check: { $ref: '#/components/schemas/DdsCardCheck' }
+        dds_brigade_call: { $ref: '#/components/schemas/DdsBrigadeCall' }
+    ScenarioVariantsView:
+      x-epic: E1
+      x-change: NEW
+      x-additive-to:
+        - '../openapi.yaml#/components/schemas/ScenarioVersionListItem'   # as property `variants`
+        - '../openapi.yaml#/components/schemas/ScenarioVersionTraineeSummary'
+      description: What a scenario version supports and defaults to, after the schema-1 derivation and the implemented-values filter.
+      type: object
+      additionalProperties: false
+      required: [supported, default]
+      properties:
+        supported:
+          type: object
+          additionalProperties: false
+          required: [card_source, dds_mode, dds_card_check, dds_brigade_call]
+          properties:
+            card_source: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardSource' } }
+            dds_mode: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsMode' } }
+            dds_card_check: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsCardCheck' } }
+            dds_brigade_call: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsBrigadeCall' } }
+        default: { $ref: '#/components/schemas/SessionVariants' }
+
+    SessionCreateRequest:
+      x-epic: E1
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/SessionCreateRequest'
+      type: object
+      additionalProperties: false
+      required: [scenario_version_id, session_mode, participants]
+      properties:
+        scenario_version_id: { type: string, format: uuid }
+        session_mode: { $ref: '../openapi.yaml#/components/schemas/SessionMode' }
+        participants:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        session_seed: { type: [string, 'null'] }
+        time_scale: { type: number, minimum: 0.1, maximum: 10, default: 1 }
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
+
+    ParticipantAssignment:
+      x-epic: E5
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ParticipantAssignment'
+      type: object
+      additionalProperties: false
+      required: [user_id, assigned_role_type]
+      properties:
+        user_id: { type: string, format: uuid }
+        assigned_role_type:
+          oneOf:
+            - $ref: '../openapi.yaml#/components/schemas/RoleType'
+            - type: 'null'
+        assigned_service_id:
+          description: ДДС participant → service binding (MULTI_TRAINEE); distinct per session (70 §70.4.5).
+          type: [string, 'null']
+
+    SessionDetailI3:
+      x-epic: [E1, E2, E4]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/SessionDetail'
+      description: The properties I3 adds to `SessionDetail` (all required in responses).
+      type: object
+      required: [variants, scenario_role_chain, reference_pack, lesson_id, lesson_position]
+      properties:
+        variants: { $ref: '#/components/schemas/SessionVariants' }
+        scenario_role_chain:
+          type: array
+          items: { $ref: '../openapi.yaml#/components/schemas/RoleType' }
+        reference_pack: { $ref: '#/components/schemas/ReferencePackRecord' }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        lesson_position: { type: [integer, 'null'], minimum: 1 }
+
+    # ------------------------------------------------------------- lessons ----
+    Arrival:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: '#/components/schemas/ArrivalKind' }
+        offset_ms:
+          type: [integer, 'null']
+          minimum: 0
+          description: Required for `AT_OFFSET` (lesson wall ms since start), forbidden otherwise.
+        delay_ms: { type: integer, minimum: 0, default: 0 }
+    PlanEntry:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [position, scenario_version_id, arrival]
+      properties:
+        position: { type: integer, minimum: 1 }
+        scenario_version_id: { type: string, format: uuid }
+        arrival: { $ref: '#/components/schemas/Arrival' }
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
+        participants:
+          description: E9a hook — per-workstation tasks; absent = every lesson participant.
+          type: [array, 'null']
+          items: { type: string, format: uuid }
+        weight:
+          description: E9a hook — difficulty weight in the lesson report.
+          type: number
+          exclusiveMinimum: 0
+          default: 1
+    LessonCreateRequest:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [title_ru, session_mode, participants, scenario_plan]
+      properties:
+        title_ru: { type: string, minLength: 1 }
+        session_mode: { $ref: '../openapi.yaml#/components/schemas/SessionMode' }
+        participants:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
+        scenario_plan:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PlanEntry' }
+        time_scale: { type: number, minimum: 0.1, maximum: 10, default: 1 }
+    LessonSessionView:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [position, session_id, incident_id, display_number, state, card_status, arrival, variants]
+      properties:
+        position: { type: integer, minimum: 1 }
+        session_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        display_number: { type: integer }
+        state: { $ref: '../openapi.yaml#/components/schemas/SessionState' }
+        card_status: { $ref: '#/components/schemas/CardStatus' }
+        arrival: { $ref: '#/components/schemas/Arrival' }
+        started_at_lesson_offset_ms: { type: [integer, 'null'] }
+        variants: { $ref: '#/components/schemas/SessionVariants' }
+    LessonListItem:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [lesson_id, title_ru, session_mode, state, card_count, created_at, created_by_user_id]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        session_mode: { $ref: '../openapi.yaml#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/LessonState' }
+        card_count: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        created_by_user_id: { type: string, format: uuid }
+    LessonDetail:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        session_mode: { $ref: '../openapi.yaml#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/LessonState' }
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        scenario_plan:
+          type: array
+          items: { $ref: '#/components/schemas/PlanEntry' }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/LessonSessionView' }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        report_released_at: { type: [string, 'null'], format: date-time }
+    LessonReport:
+      x-epic: E4
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [lesson_id, cards, weighted_total, weighted_max]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        cards:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [position, session_id, weight, score]
+            properties:
+              position: { type: integer, minimum: 1 }
+              session_id: { type: string, format: uuid }
+              weight: { type: number }
+              score: { $ref: '../openapi.yaml#/components/schemas/ScoreReportView' }
+        weighted_total: { type: number }
+        weighted_max: { type: number }
+
+    IncidentListItem:
+      x-epic: E4
+      x-change: NEW
+      description: One row of «Список происшествий» / «реестр». Deadlines are session offsets; `null` = not applicable yet.
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - incident_id
+        - display_number
+        - lesson_id
+        - card_status
+        - session_state
+        - arrived_at_utc
+        - session_offset_ms
+        - accept_deadline_offset_ms
+        - fill_deadline_offset_ms
+        - not_completed_deadline_offset_ms
+        - classifier_code
+        - address_line_ru
+        - my_role_type
+      properties:
+        session_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        display_number: { type: integer }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        card_status: { $ref: '#/components/schemas/CardStatus' }
+        session_state: { $ref: '../openapi.yaml#/components/schemas/SessionState' }
+        arrived_at_utc: { type: [string, 'null'], format: date-time }
+        session_offset_ms: { type: integer, minimum: 0 }
+        accept_deadline_offset_ms: { type: [integer, 'null'] }
+        fill_deadline_offset_ms: { type: [integer, 'null'] }
+        not_completed_deadline_offset_ms: { type: [integer, 'null'] }
+        classifier_code: { type: [string, 'null'] }
+        address_line_ru:
+          description: From the snapshot for a ДДС row, from the live card for a 112 row (never WorldTruth).
+          type: [string, 'null']
+        my_role_type:
+          oneOf:
+            - $ref: '../openapi.yaml#/components/schemas/RoleType'
+            - type: 'null'
+
+    # ----------------------------------------------------------- reference ----
+    ReferencePackRecord:
+      x-epic: E2
+      x-change: NEW
+      description: What `SESSION_CREATED.reference_pack` records (ids and sha256 of the files used).
+      type: object
+      additionalProperties: false
+      required: [pack_id, card_schema, card_schema_sha256, classifier, classifier_sha256, services, services_sha256]
+      properties:
+        pack_id: { type: string }
+        card_schema: { type: string }
+        card_schema_sha256: { type: string }
+        classifier: { type: [string, 'null'] }
+        classifier_sha256: { type: [string, 'null'] }
+        services: { type: string }
+        services_sha256: { type: string }
+    ReferenceManifest:
+      x-epic: E2
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [manifest_version, packs, files, sources]
+      properties:
+        manifest_version: { type: integer, const: 1 }
+        packs:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [card_schema, services, classifier]
+            properties:
+              card_schema: { type: string }
+              services: { type: string }
+              classifier: { type: [string, 'null'] }
+        files:
+          type: object
+          additionalProperties: { type: string, pattern: '^[0-9a-f]{64}$' }
+        sources:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [path, sha256, tool]
+            properties:
+              path: { type: string }
+              sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+              tool: { type: string }
+    ServiceCatalogEntry:
+      x-epic: E2
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [id, name_ru, full_name_ru, kind, code, okrug, district, classifier_org_id, status_policy, display, deprecated]
+      properties:
+        id: { $ref: '#/components/schemas/ServiceType' }
+        name_ru: { type: string }
+        full_name_ru: { type: string }
+        kind: { type: string, enum: [CITY, DISTRICT, PREFECTURE, DEPARTMENT] }
+        code: { type: [string, 'null'], examples: ['101', '103'] }
+        okrug: { type: [string, 'null'] }
+        district: { type: [string, 'null'] }
+        classifier_org_id: { type: [string, 'null'] }
+        status_policy: { type: string, enum: [DEFAULT, NO_REFUSAL] }
+        display: { type: boolean }
+        deprecated: { type: boolean }
+        phone: { type: [string, 'null'] }
+    ClassifierRowSummary:
+      x-epic: E2
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [code, group_no, group_ru, features, final_type_ru, main_service]
+      properties:
+        code: { type: string }
+        group_no: { type: integer }
+        group_ru: { type: string }
+        features:
+          type: array
+          maxItems: 3
+          items: { type: string }
+        final_type_ru: { type: string }
+        main_service: { type: [string, 'null'] }
+    ClassifierRow:
+      x-epic: E2
+      x-change: NEW
+      allOf:
+        - $ref: '#/components/schemas/ClassifierRowSummary'
+        - type: object
+          required: [extra_features, ekp35_ru, routing]
+          properties:
+            extra_features:
+              type: array
+              items: { type: string }
+            ekp35_ru: { type: [string, 'null'] }
+            routing:
+              description: Per organisation column, the sub-column cells; a cell counts as a notification iff non-empty and not «нет реагирования» (assumption A-1).
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [when, value]
+                  properties:
+                    when:
+                      type: object
+                      additionalProperties: { type: boolean }
+                    value: { type: [string, 'null'] }
+
+    # ---------------------------------------------------------------- card ----
+    CardOption:
+      x-epic: E3
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [code, label_ru]
+      properties:
+        code: { type: string }
+        label_ru: { type: string }
+    CardCondition:
+      x-epic: E3
+      x-change: NEW
+      description: A condition over the card's own values (not the world `Condition`, HLD 30 §30.6.1).
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [all]
+          properties:
+            all: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardCondition' } }
+        - type: object
+          additionalProperties: false
+          required: [any]
+          properties:
+            any: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardCondition' } }
+        - type: object
+          additionalProperties: false
+          required: [not]
+          properties:
+            not: { $ref: '#/components/schemas/CardCondition' }
+        - type: object
+          additionalProperties: false
+          required: [field_path, op]
+          properties:
+            field_path: { type: string }
+            op: { type: string, enum: [EQ, NE, IN, CONTAINS, PRESENT] }
+            value: { $ref: '../openapi.yaml#/components/schemas/FactValue' }
+    CardFieldSpec:
+      x-epic: E3
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/CardFieldSpec'
+      description: |
+        openapi.yaml's six properties unchanged, plus the I3 layout/questionnaire properties.
+        For a v1 schema the additive properties take their neutral values
+        (`group: null`, `control: TEXT|SELECT|CHECKBOX` by value type, `options: null`,
+        `visible_when: null`, `required_in_block: false`, `routing_relevant: false`).
+      type: object
+      additionalProperties: false
+      required: [field_path, value_type, enum_name, label_ru, scoring_relevant, required_for_handoff, group, order, control, options, visible_when, required_in_block, routing_relevant]
+      properties:
+        field_path: { type: string, examples: [address.house, incident.types, q.fire.where] }
+        value_type: { $ref: '../openapi.yaml#/components/schemas/ValueType' }
+        enum_name: { type: [string, 'null'] }
+        label_ru: { type: string }
+        scoring_relevant: { type: boolean }
+        required_for_handoff: { type: boolean }
+        group: { type: [string, 'null'], examples: [header, applicant, address, incident, questionnaire, services] }
+        order: { type: integer, minimum: 0 }
+        control: { $ref: '#/components/schemas/CardControl' }
+        options:
+          type: [array, 'null']
+          items: { $ref: '#/components/schemas/CardOption' }
+        visible_when:
+          oneOf:
+            - $ref: '#/components/schemas/CardCondition'
+            - type: 'null'
+        required_in_block: { type: boolean }
+        routing_relevant: { type: boolean }
+    CardSchemaView:
+      x-epic: E3
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [schema_id, sha256, field_specs]
+      properties:
+        schema_id: { type: string }
+        sha256: { type: string }
+        field_specs:
+          type: array
+          items: { $ref: '#/components/schemas/CardFieldSpec' }
+    OperatorCardViewI3:
+      x-epic: E3
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/OperatorCardView'
+      type: object
+      required: [card_schema]
+      properties:
+        card_schema: { type: string, examples: [v1, v2] }
+
+    ServiceSelectionRequest:
+      x-epic: E2
+      x-change: CHANGED
+      type: object
+      additionalProperties: false
+      required: [service_type]
+      properties:
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+    ServiceSelectionView:
+      x-epic: E2
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ServiceSelectionView'
+      description: |
+        `selected_services` keeps meaning `recipients.services` (manual additions only). New:
+        the resolver's result and the notification list the handoff will freeze.
+      type: object
+      additionalProperties: false
+      required: [card_id, selected_services, available_services, card, auto_services, informed_services, notification_list, classifier_code, candidate_codes, removal_allowed]
+      properties:
+        card_id: { type: string, format: uuid }
+        selected_services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceType' }
+        available_services:
+          type: array
+          description: Catalog ids the picker offers (hidden and deprecated entries excluded under v2).
+          items: { $ref: '#/components/schemas/ServiceType' }
+        card: { $ref: '../openapi.yaml#/components/schemas/OperatorCardView' }
+        auto_services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceType' }
+        informed_services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceType' }
+        notification_list:
+          type: array
+          description: auto ∪ manual — what `createHandoff` freezes into `recipient_services`.
+          items: { $ref: '#/components/schemas/ServiceType' }
+        classifier_code: { type: [string, 'null'] }
+        candidate_codes:
+          type: array
+          items: { type: string }
+        removal_allowed:
+          type: boolean
+          description: '`false` for every service under a v2 card (C10).'
+
+    # ----------------------------------------------------------------- dds ----
+    DdsWorkItemI3:
+      x-epic: [E3, E5]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/DdsWorkItem'
+      description: |
+        Added to `DdsWorkItem`: the field specs of the snapshot's card schema (E3; deletes
+        frontend/src/features/dds/card-field-labels.ts), the card status and the legs (E5). Still
+        sourced from `handoff_snapshots`, `dds_assignments` and the reference pack only (INV 3).
+      type: object
+      required: [card_schema, field_specs, card_status, display_number]
+      properties:
+        card_schema: { type: string }
+        field_specs:
+          type: array
+          items: { $ref: '#/components/schemas/CardFieldSpec' }
+        card_status: { $ref: '#/components/schemas/CardStatus' }
+        display_number: { type: integer }
+        legs:
+          type: array
+          items: { $ref: '#/components/schemas/DdsLegView' }
+    ServiceStatusEntryView:
+      x-epic: E5
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [event_id, previous_status, new_status, order_number, comment_ru, completion_reason, source, actor_user_id, actor_display_ru, at_offset_ms]
+      properties:
+        event_id: { type: string, format: uuid }
+        previous_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        new_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        order_number: { type: [string, 'null'], description: '«Номер наряда», free text (assumption A-2).' }
+        comment_ru: { type: [string, 'null'] }
+        completion_reason: { type: [string, 'null'], enum: [WITHOUT_BRIGADE, null] }
+        source: { type: string, enum: [TRAINEE, SCRIPTED_RESPONDER, PICKER_MIRROR, SYSTEM] }
+        actor_user_id: { type: [string, 'null'], format: uuid }
+        actor_display_ru: { type: string, description: 'Shown before the time (REQ-5295).' }
+        at_offset_ms: { type: integer }
+    DdsLegView:
+      x-epic: E5
+      x-change: NEW
+      description: One notified service's block — collapsed = last status + time; expanded = history (REQ-5294).
+      type: object
+      additionalProperties: false
+      required: [assignment_id, service_type, service_name_ru, response_status, response_status_at_offset_ms, order_number, last_comment_ru, accept_missed, responder, bound_user_id, is_mine, history, available_actions]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+        service_name_ru: { type: string }
+        response_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        response_status_at_offset_ms: { type: [integer, 'null'] }
+        order_number: { type: [string, 'null'] }
+        last_comment_ru: { type: [string, 'null'] }
+        accept_missed: { type: boolean }
+        responder: { type: string, enum: [TRAINEE, SCRIPTED] }
+        bound_user_id: { type: [string, 'null'], format: uuid }
+        is_mine:
+          type: boolean
+          description: The caller may set statuses on this leg (the pencil is shown).
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceStatusEntryView' }
+        available_actions:
+          type: array
+          description: The legal next triggers of this leg for the caller (empty when `is_mine` is false).
+          items: { $ref: '../openapi.yaml#/components/schemas/ActionDescriptor' }
+    SetServiceStatusRequest:
+      x-epic: E5
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          description: The target status; `COMPLETED` under policy `NO_REFUSAL` from a non-`WORKING` status means `complete_without_brigade`.
+          allOf:
+            - $ref: '#/components/schemas/ServiceResponseStatus'
+        order_number: { type: [string, 'null'], maxLength: 64 }
+        comment_ru:
+          type: [string, 'null']
+          maxLength: 2000
+          description: Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`.
+    FlagCardIssueRequest:
+      x-epic: E5
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [assignment_id, issue_kind, comment_ru]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        field_path: { type: [string, 'null'] }
+        issue_kind: { type: string, enum: [MISSING, WRONG, CONTRADICTION, OTHER] }
+        comment_ru: { type: string, minLength: 1, maxLength: 2000 }
+    CardIssueView:
+      x-epic: E5
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [event_id, assignment_id, field_path, issue_kind, comment_ru, at_offset_ms]
+      properties:
+        event_id: { type: string, format: uuid }
+        assignment_id: { type: string, format: uuid }
+        field_path: { type: [string, 'null'] }
+        issue_kind: { type: string, enum: [MISSING, WRONG, CONTRADICTION, OTHER] }
+        comment_ru: { type: string }
+        at_offset_ms: { type: integer }
