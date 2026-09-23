@@ -69,12 +69,16 @@ function ResourceRow({ resource, canSelect, canDeselect, pending, onSelect, onDe
         ))}
       </div>
       <div className="flex items-center gap-2">
-        {resource.current_status === 'AVAILABLE' ? (
+        {/* D13: before resource selection is open (`canSelect` false — `select_resource` is not
+            currently an available action at all), no «Выбрать»/hint is shown for an AVAILABLE
+            unit; once selection is open, a unit the backend still will not let this trainee pick
+            renders the disabled button plus the hint. */}
+        {resource.current_status === 'AVAILABLE' && canSelect ? (
           <Button
             type="button"
             size="sm"
             variant="outline"
-            disabled={!canSelect || !resource.selectable || pending}
+            disabled={!resource.selectable || pending}
             onClick={() => onSelect(resource.resource_id)}
           >
             {t('ddsSelectButton')}
@@ -85,7 +89,7 @@ function ResourceRow({ resource, canSelect, canDeselect, pending, onSelect, onDe
             {t('ddsDeselectButton')}
           </Button>
         ) : null}
-        {resource.current_status === 'AVAILABLE' && !resource.selectable ? (
+        {resource.current_status === 'AVAILABLE' && canSelect && !resource.selectable ? (
           <span className="text-xs text-muted-foreground">{t('ddsNotSelectableHint')}</span>
         ) : null}
       </div>

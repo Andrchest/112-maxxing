@@ -9,8 +9,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { ActorType, EventType, TimelineEntryView } from '@/shared/api';
 import { actorTypeLabelRu } from './timeline-labels';
+import { eventTypeLabelRu } from './event-type-labels';
 import { timelineEntryRowId } from './timeline-row-id';
 
 interface TimelineSectionProps {
@@ -75,7 +77,7 @@ export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineS
               <option value={ALL}>{t('reportTimelineFilterAll')}</option>
               {eventTypeOptions.map((eventType) => (
                 <option key={eventType} value={eventType}>
-                  {eventType}
+                  {eventTypeLabelRu(eventType)}
                 </option>
               ))}
             </select>
@@ -100,7 +102,7 @@ export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineS
                 }`}
               >
                 <span className="font-mono text-xs text-muted-foreground">
-                  {entry.monotonic_offset_ms} {t('reportOffsetMsUnit')}
+                  {formatCallDurationMs(entry.monotonic_offset_ms)}
                 </span>
                 <span className="text-xs text-muted-foreground">{actorTypeLabelRu(entry.actor_type)}</span>
                 <span>{entry.summary_ru}</span>

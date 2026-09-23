@@ -16,7 +16,47 @@ import type {
   EmotionLabel,
   KnowledgeState,
   CallStateView,
+  SessionState,
+  RoleType,
+  StageState,
 } from '@/shared/api';
+
+export const SESSION_STATE_LABEL_KEY: Record<SessionState, keyof typeof ru> = {
+  CREATED: 'sessionStateCreated',
+  READY: 'sessionStateReady',
+  ACTIVE: 'sessionStateActive',
+  ROLE_TRANSITION: 'sessionStateRoleTransition',
+  COMPLETED: 'sessionStateCompleted',
+  ABORTED: 'sessionStateAborted',
+};
+export function sessionStateLabelRu(value: SessionState): string {
+  return t(SESSION_STATE_LABEL_KEY[value]);
+}
+
+// Operator112StageState only — DDSStageState already has its own table below
+// (`DDS_STAGE_STATE_LABEL_KEY`). `StageState` (`RoleStageView.state`) is the union of both; which
+// table applies depends on the stage's own `role_type`, so callers dispatch through
+// {@link stageStateLabelRu} rather than indexing either table directly.
+const OPERATOR_STAGE_STATE_LABEL_KEY: Record<string, keyof typeof ru> = {
+  WAITING_FOR_CALL: 'stageStateWaitingForCall',
+  RINGING: 'stageStateRinging',
+  CONNECTED: 'stageStateConnected',
+  INTERVIEW: 'stageStateInterview',
+  HANDOFF_PREPARATION: 'stageStateHandoffPreparation',
+  HANDED_OFF: 'stageStateHandedOff',
+  STAGE_COMPLETED: 'stageStateStageCompleted',
+};
+
+/** `RoleStageView.state` (`StageState = Operator112StageState | DDSStageState`), labelled by the
+ * stage's own `role_type` — an EDDS stage never occurs in this catalog (only OPERATOR_112/DDS run
+ * a `RoleStage`), so `roleType === 'DDS'` is the only branch besides operator. */
+export function stageStateLabelRu(roleType: RoleType, state: StageState): string {
+  if (roleType === 'DDS') {
+    return ddsStageStateLabelRu(state as DDSStageState);
+  }
+  const key = OPERATOR_STAGE_STATE_LABEL_KEY[state];
+  return key ? t(key) : state;
+}
 
 export const SERVICE_TYPE_LABEL_KEY: Record<ServiceType, keyof typeof ru> = {
   FIRE_RESCUE: 'serviceTypeFireRescue',

@@ -18,8 +18,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { getInstructorSessionOverview, problemMessageRu, queryKeys, type ProblemCode } from '@/shared/api';
+import { getInstructorSessionOverview, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
 import { SessionStagesSection } from './session-stages-section';
@@ -33,11 +34,18 @@ import { CallStateSection } from './call-state-section';
 import { InferenceHealthSection } from './inference-health-section';
 import { AbortSessionButton } from './abort-session-button';
 
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
+
 export function InstructorLiveOverviewPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
   const userRole = useAuthStore((state) => state.user?.user_role);
+  const roleLabel = userRole ? t(USER_ROLE_LABEL_KEY[userRole]) : undefined;
   const canAbort = userRole === 'INSTRUCTOR' || userRole === 'ADMIN';
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const wsClientRef = useRef<WsClient | null>(null);
@@ -80,7 +88,7 @@ export function InstructorLiveOverviewPage() {
 
   if (overviewQuery.isLoading) {
     return (
-      <AppShell title={t('instructorLiveOverviewTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('instructorOverviewLoading')}</p>
       </AppShell>
     );
@@ -90,7 +98,7 @@ export function InstructorLiveOverviewPage() {
     const error = overviewQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('instructorLiveOverviewTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -108,7 +116,7 @@ export function InstructorLiveOverviewPage() {
   return (
     <AppShell
       title={t('instructorLiveOverviewTitle')}
-      role={t('userRoleInstructor')}
+      role={roleLabel}
       userLabel={userLabel}
       connectionStatus={connectionStatus}
       readiness={overview.inference_health.overall}

@@ -9,8 +9,9 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type SessionMode } from '@/shared/api';
+import { listScenarios, listSessions, problemMessageRu, queryKeys, type ProblemCode, type SessionMode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { sessionStateLabelRu } from './instructor-labels';
 
 const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
   SINGLE_ROLE: 'instructorSessionModeSingleRole',
@@ -24,6 +25,15 @@ export function InstructorSessionsList() {
     queryKey: queryKeys.sessions.list('ALL'),
     queryFn: () => listSessions({ scope: 'ALL' }),
   });
+  // D3: the list shows the scenario's Russian title, not its (English/slug) identifier —
+  // `SessionListItem` carries only `scenario_slug`, so this looks the title up from the scenario
+  // catalog by slug, falling back to the slug itself for a scenario this fetch has not (yet)
+  // returned (defensive, never a blank label).
+  const scenariosQuery = useQuery({
+    queryKey: queryKeys.scenarios.list(),
+    queryFn: listScenarios,
+  });
+  const scenarioTitleBySlug = new Map((scenariosQuery.data?.items ?? []).map((scenario) => [scenario.slug, scenario.title_ru]));
 
   return (
     <Card className="max-w-xl">
@@ -47,10 +57,10 @@ export function InstructorSessionsList() {
               <li key={session.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
                 <div>
                   <p className="text-sm font-medium">
-                    {session.scenario_slug} (v{session.scenario_version})
+                    {scenarioTitleBySlug.get(session.scenario_slug) ?? session.scenario_slug} (v{session.scenario_version})
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {session.state}
+                    {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {sessionStateLabelRu(session.state)}
                   </p>
                 </div>
                 <div className="flex gap-2">

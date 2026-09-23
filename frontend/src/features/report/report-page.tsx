@@ -11,9 +11,11 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { getSessionReport, releaseReportToTrainee, problemMessageRu, queryKeys, type ProblemCode, type ReportReleaseView } from '@/shared/api';
+import { getSessionReport, releaseReportToTrainee, problemMessageRu, queryKeys, type ProblemCode, type ReportReleaseView, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { formatTimestampRu } from '@/shared/lib/format-timestamp';
 import { TotalsSection } from './totals-section';
 import { CategoriesSection } from './categories-section';
 import { CriticalErrorsSection } from './critical-errors-section';
@@ -29,10 +31,17 @@ import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
 import { ExplanationPanel } from './explanation-panel';
 
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
+
 export function ReportPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const user = useAuthStore((state) => state.user);
   const userLabel = user?.display_name_ru;
+  const roleLabel = user ? t(USER_ROLE_LABEL_KEY[user.user_role]) : undefined;
   const canManage = user?.user_role === 'INSTRUCTOR' || user?.user_role === 'ADMIN';
   const queryClient = useQueryClient();
 
@@ -76,7 +85,7 @@ export function ReportPage() {
 
   if (reportQuery.isLoading) {
     return (
-      <AppShell title={t('reportTitle')} userLabel={userLabel}>
+      <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
         <h1 className="sr-only">{t('reportTitle')}</h1>
         <p className="text-sm text-muted-foreground">{t('reportLoading')}</p>
       </AppShell>
@@ -97,7 +106,7 @@ export function ReportPage() {
               ? problemMessageRu(error.code as ProblemCode)
               : t('problemUnknown');
     return (
-      <AppShell title={t('reportTitle')} userLabel={userLabel}>
+      <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
         <h1 className="sr-only">{t('reportTitle')}</h1>
         <p role={code === 'REPORT_NOT_RELEASED' || code === 'REPORT_NOT_READY' ? undefined : 'alert'} className="text-sm text-muted-foreground">
           {stateMessage}
@@ -112,7 +121,7 @@ export function ReportPage() {
   }
 
   return (
-    <AppShell title={t('reportTitle')} userLabel={userLabel}>
+    <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-heading text-lg font-medium">{t('reportTitle')}</h1>
         {canManage ? (
@@ -126,7 +135,7 @@ export function ReportPage() {
       </div>
       {releaseInfo?.released_at ? (
         <p className="text-xs text-muted-foreground">
-          {t('reportReleasedAtLabel')}: {releaseInfo.released_at}
+          {t('reportReleasedAtLabel')}: {formatTimestampRu(releaseInfo.released_at)}
         </p>
       ) : null}
       {releaseError ? (

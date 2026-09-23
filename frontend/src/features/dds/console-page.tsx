@@ -11,12 +11,13 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
 import { useAuthStore, useSessionEventsStore } from '@/entities/session';
 import { useWorkItemStore, applyWorkItemEvent } from '@/entities/work-item';
 import { useResourceStore, applyResourceEvent } from '@/entities/resource';
 import { useNotificationStore, applyNotificationEvent } from '@/entities/notification';
 import { useRadioStore, applyRadioMessageEvent } from '@/entities/radio';
-import { getSessionSnapshot, listDdsResources, problemMessageRu, queryKeys, type ProblemCode } from '@/shared/api';
+import { getSessionSnapshot, listDdsResources, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
 import { WorkItemPanel } from './work-item-panel';
@@ -31,13 +32,31 @@ import { ddsStageStateLabelRu } from './dds-labels';
 
 /** Event types this page re-fetches the snapshot for, rather than folding (D12 design decision
  * #1: "no optimistic stage changes" — a re-fetch is still "the server's response"). Mirrors
- * `features/operator/console-page.tsx`'s `STAGE_REFRESH_EVENT_TYPES`. */
-const STAGE_REFRESH_EVENT_TYPES = new Set(['STAGE_STATE_CHANGED', 'HANDOFF_RECEIVED', 'ROLE_TRANSITION_STARTED', 'ROLE_TRANSITION_COMPLETED']);
+ * `features/operator/console-page.tsx`'s `STAGE_REFRESH_EVENT_TYPES`. `RESOURCE_STATUS_CHANGED`
+ * is included (D14): a resource's status can change from the simulated world clock alone, with no
+ * DDS command in between, so `available_actions` (e.g. `select_resource`/`dispatch_additional`)
+ * must be re-pulled from the server on that event too, not only on a stage-state change. */
+const STAGE_REFRESH_EVENT_TYPES = new Set([
+  'STAGE_STATE_CHANGED',
+  'HANDOFF_RECEIVED',
+  'ROLE_TRANSITION_STARTED',
+  'ROLE_TRANSITION_COMPLETED',
+  'RESOURCE_STATUS_CHANGED',
+]);
+
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
 
 export function DdsConsolePage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
+  // D4: the header role chip is the signed-in account's role, not the simulation role.
+  const userRole = useAuthStore((state) => state.user?.user_role);
+  const roleLabel = userRole ? t(USER_ROLE_LABEL_KEY[userRole]) : undefined;
   const workItem = useWorkItemStore((state) => state.workItem);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const wsClientRef = useRef<WsClient | null>(null);
@@ -107,7 +126,7 @@ export function DdsConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('ddsTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('ddsConsoleLoading')}</p>
       </AppShell>
     );
@@ -117,7 +136,7 @@ export function DdsConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('ddsTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -131,7 +150,7 @@ export function DdsConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot && (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED')) {
     return (
-      <AppShell title={t('ddsTitle')} role={t('roleTypeDds')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -144,14 +163,14 @@ export function DdsConsolePage() {
 
   if (!snapshot || snapshot.work_item === null) {
     return (
-      <AppShell title={t('ddsTitle')} role={t('roleTypeDds')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('ddsConsoleNoWorkItem')}</p>
       </AppShell>
     );
   }
 
   return (
-    <AppShell title={t('ddsTitle')} role={t('roleTypeDds')} userLabel={userLabel} connectionStatus={connectionStatus}>
+    <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
       {workItem ? (
         <div className="mb-3">
           <Badge variant="outline" data-slot="dds-stage-badge">

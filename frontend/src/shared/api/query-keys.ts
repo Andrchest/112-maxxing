@@ -18,6 +18,8 @@ export const queryKeys = {
     list: (scope: 'MINE' | 'ALL' = 'MINE') => ['sessions', 'list', scope] as const,
     detail: (sessionId: string) => ['sessions', sessionId] as const,
     snapshot: (sessionId: string) => ['sessions', sessionId, 'snapshot'] as const,
+    // I3 E0 (D10): the operator transcript's history hydration (`listSessionEvents`).
+    transcript: (sessionId: string) => ['sessions', sessionId, 'transcript'] as const,
   },
   // -- E10: the DDS console's own REST reads (openapi.yaml; D12) ------------------------------
   dds: {

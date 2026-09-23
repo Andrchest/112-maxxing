@@ -32,10 +32,11 @@ describe('ResourceBoard — action gating strictly from available_actions', () =
     expect(screen.getByText(ru.resourceCapabilityFireSuppression)).toBeInTheDocument();
   });
 
-  it('does not render a select button when select_resource is not in available_actions', () => {
+  it('does not render a select button (or the "not selectable" hint) when select_resource is not in available_actions (D13)', () => {
     seed([makeResource()], ACTIONS_BY_DDS_STAGE_STATE.ACKNOWLEDGED);
     render(<ResourceBoard sessionId="sess-1" />);
-    expect(screen.getByRole('button', { name: ru.ddsSelectButton })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: ru.ddsSelectButton })).not.toBeInTheDocument();
+    expect(screen.queryByText(ru.ddsNotSelectableHint)).not.toBeInTheDocument();
   });
 
   it('disables select when selectable is false, regardless of available_actions', () => {

@@ -4,6 +4,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
+import { formatCallDurationMs } from '@/entities/call';
 import { groupCardFields } from '@/entities/card';
 import type { HandoffSnapshotView } from '@/shared/api';
 import { SNAPSHOT_CARD_FIELDS, formatSnapshotValueRu, serviceTypeLabelRu, snapshotFieldLabelRu } from './snapshot-card-fields';
@@ -59,7 +60,7 @@ export function HandoffSection({ handoff }: HandoffSectionProps) {
             </Badge>
           ))}
           <span className="ml-auto text-xs text-muted-foreground">
-            {t('reportHandoffCreatedAtLabel')}: {handoff.created_at_offset_ms}
+            {t('reportHandoffCreatedAtLabel')}: {formatCallDurationMs(handoff.created_at_offset_ms)}
           </span>
         </div>
         {groups.map((group) => (

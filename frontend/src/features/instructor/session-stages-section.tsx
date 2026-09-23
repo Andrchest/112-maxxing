@@ -11,7 +11,9 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
+import { formatCallDurationMs } from '@/entities/call';
 import type { RoleStageView, RoleType, SessionDetail } from '@/shared/api';
+import { sessionStateLabelRu, stageStateLabelRu } from './instructor-labels';
 
 const ROLE_TYPE_LABEL_KEY: Record<RoleType, keyof typeof ru> = {
   OPERATOR_112: 'roleTypeOperator112',
@@ -52,13 +54,14 @@ interface SessionStagesSectionProps {
 export function SessionStagesSection({ session, stages }: SessionStagesSectionProps) {
   const remainingSeconds = useCountdownSeconds(session.transition_continue_available_at_offset_ms, session.monotonic_offset_ms);
   const activeStage = stages.find((stage) => stage.role_stage_id === session.active_role_stage_id) ?? null;
+  const participantNameByUserId = new Map(session.participants.map((participant) => [participant.user_id, participant.display_name_ru]));
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <h2 className="font-heading text-base leading-snug font-medium">{t('instructorOverviewSessionTitle')}</h2>
         <Badge variant="outline" data-slot="session-state-badge">
-          {t('sessionsStateLabel')}: {session.state}
+          {t('sessionsStateLabel')}: {sessionStateLabelRu(session.state)}
         </Badge>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -78,19 +81,24 @@ export function SessionStagesSection({ session, stages }: SessionStagesSectionPr
             <li key={stage.role_stage_id} className="flex flex-col gap-1 rounded-md border border-border p-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{t(ROLE_TYPE_LABEL_KEY[stage.role_type])}</span>
-                <Badge variant={stage.role_stage_id === session.active_role_stage_id ? 'default' : 'outline'}>{stage.state}</Badge>
+                <Badge variant={stage.role_stage_id === session.active_role_stage_id ? 'default' : 'outline'}>
+                  {stageStateLabelRu(stage.role_type, stage.state)}
+                </Badge>
               </div>
               <span className="text-muted-foreground">
-                {t('instructorOverviewStageParticipantLabel')}: {stage.participant_user_id ?? t('instructorOverviewStageNoParticipant')}
+                {t('instructorOverviewStageParticipantLabel')}:{' '}
+                {stage.participant_user_id
+                  ? (participantNameByUserId.get(stage.participant_user_id) ?? stage.participant_user_id)
+                  : t('instructorOverviewStageNoParticipant')}
               </span>
               {stage.started_at_offset_ms !== null ? (
                 <span className="text-muted-foreground">
-                  {t('instructorOverviewStageStartedLabel')}: {stage.started_at_offset_ms}
+                  {t('instructorOverviewStageStartedLabel')}: {formatCallDurationMs(stage.started_at_offset_ms)}
                 </span>
               ) : null}
               {stage.completed_at_offset_ms !== null ? (
                 <span className="text-muted-foreground">
-                  {t('instructorOverviewStageCompletedLabel')}: {stage.completed_at_offset_ms}
+                  {t('instructorOverviewStageCompletedLabel')}: {formatCallDurationMs(stage.completed_at_offset_ms)}
                 </span>
               ) : null}
             </li>

@@ -156,7 +156,7 @@ describe('CreateSessionForm', () => {
       time_scale: 1,
     });
 
-    await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+    await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateReady}`);
     await waitFor(() => expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled());
 
     await user.click(screen.getByRole('button', { name: ru.instructorStartButton }));
@@ -170,7 +170,7 @@ describe('CreateSessionForm', () => {
     });
     expect(startCall[1].body).toBeUndefined();
 
-    await screen.findByText(`${ru.instructorSessionStateLabel}: ACTIVE`);
+    await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateActive}`);
   });
 
   it('renders the Russian INFERENCE_NOT_READY message when start is refused', async () => {
@@ -207,7 +207,7 @@ describe('CreateSessionForm', () => {
     renderForm();
     await fillInScenarioVersionAndParticipant(user);
     await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
-    await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+    await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateReady}`);
     await waitFor(() => expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled());
 
     await user.click(screen.getByRole('button', { name: ru.instructorStartButton }));
@@ -243,7 +243,7 @@ describe('CreateSessionForm', () => {
   async function createUpToReadySession(user: ReturnType<typeof userEvent.setup>) {
     await fillInScenarioVersionAndParticipant(user);
     await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
-    await screen.findByText(`${ru.instructorSessionStateLabel}: READY`);
+    await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateReady}`);
   }
 
   it.each(['NOT_READY', 'WARMING', 'FATAL'] as const)(

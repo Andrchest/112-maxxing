@@ -8,7 +8,7 @@ describe('SessionStagesSection — session state, active role, stages, transitio
   it('renders the session state and the active role', () => {
     const session = makeSessionDetail({ state: 'ACTIVE', active_role_stage_id: 'stage-1' });
     render(<SessionStagesSection session={session} stages={[makeRoleStageView({ role_stage_id: 'stage-1', role_type: 'OPERATOR_112' })]} />);
-    expect(screen.getByText(new RegExp(`${ru.sessionsStateLabel}: ACTIVE`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`${ru.sessionsStateLabel}: ${ru.sessionStateActive}`))).toBeInTheDocument();
     expect(screen.getByText(new RegExp(`${ru.instructorOverviewActiveRoleLabel}: ${ru.roleTypeOperator112}`))).toBeInTheDocument();
   });
 

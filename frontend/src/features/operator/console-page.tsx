@@ -18,12 +18,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
 import { useAuthStore, useSessionEventsStore, useCallStateStore } from '@/entities/session';
 import { useCardStore, applyCardEvent } from '@/entities/card';
 import { applyCallEvent } from '@/entities/call';
 import { useStageStore } from '@/entities/stage';
 import { useNotificationStore, applyNotificationEvent } from '@/entities/notification';
-import { getSessionSnapshot, continueToNextStage, problemMessageRu, queryKeys, type ProblemCode, type SessionDetail } from '@/shared/api';
+import { getSessionSnapshot, continueToNextStage, problemMessageRu, queryKeys, type ProblemCode, type SessionDetail, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
 import { PhoneWidget } from './phone-widget';
@@ -81,12 +82,13 @@ function useCountdownSeconds(targetOffsetMs: number | null, nowOffsetMs: number)
 interface RoleTransitionScreenProps {
   session: SessionDetail;
   sessionId: string;
+  roleLabel: string | undefined;
   userLabel: string | undefined;
   connectionStatus: ConnectionStatus;
   onContinued: () => Promise<void>;
 }
 
-function RoleTransitionScreen({ session, sessionId, userLabel, connectionStatus, onContinued }: RoleTransitionScreenProps) {
+function RoleTransitionScreen({ session, sessionId, roleLabel, userLabel, connectionStatus, onContinued }: RoleTransitionScreenProps) {
   const remainingSeconds = useCountdownSeconds(session.transition_continue_available_at_offset_ms, session.monotonic_offset_ms);
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -105,7 +107,7 @@ function RoleTransitionScreen({ session, sessionId, userLabel, connectionStatus,
   }
 
   return (
-    <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+    <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
       <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
         <h1 className="font-heading text-lg font-medium">{t('operatorRoleTransitionTitle')}</h1>
         {remainingSeconds > 0 ? (
@@ -129,11 +131,21 @@ function RoleTransitionScreen({ session, sessionId, userLabel, connectionStatus,
   );
 }
 
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
+
 export function OperatorConsolePage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
+  // D4: the header role chip is the signed-in account's role (Стажёр/Инструктор/Администратор),
+  // not the simulation role — every authenticated page shows the same chip meaning.
+  const userRole = useAuthStore((state) => state.user?.user_role);
+  const roleLabel = userRole ? t(USER_ROLE_LABEL_KEY[userRole]) : undefined;
   const stageState = useStageStore((state) => state.stageState);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const wsClientRef = useRef<WsClient | null>(null);
@@ -205,7 +217,7 @@ export function OperatorConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleLoading')}</p>
       </AppShell>
     );
@@ -215,7 +227,7 @@ export function OperatorConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -236,6 +248,7 @@ export function OperatorConsolePage() {
       <RoleTransitionScreen
         session={snapshot.session}
         sessionId={sessionId}
+        roleLabel={roleLabel}
         userLabel={userLabel}
         connectionStatus={connectionStatus}
         onContinued={async () => {
@@ -253,7 +266,7 @@ export function OperatorConsolePage() {
 
   if (snapshot.card === null) {
     return (
-      <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleWrongRole')}</p>
       </AppShell>
     );
@@ -263,7 +276,7 @@ export function OperatorConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED') {
     return (
-      <AppShell title={t('operatorTitle')} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -277,13 +290,13 @@ export function OperatorConsolePage() {
   return (
     <AppShell
       title={t('operatorTitle')}
-      role={t('roleTypeOperator112')}
+      role={roleLabel}
       userLabel={userLabel}
       connectionStatus={connectionStatus}
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr_320px]">
         <div className="flex flex-col gap-4">
-          <PhoneWidget sessionId={sessionId} />
+          <PhoneWidget sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
           <StageActionBar sessionId={sessionId} onCommandNeedsRefresh={() => void snapshotQuery.refetch()} />
         </div>
         <div>
@@ -295,7 +308,7 @@ export function OperatorConsolePage() {
         </div>
         <div className="flex flex-col gap-4">
           <ServicesPanel sessionId={sessionId} />
-          <TranscriptPanel />
+          <TranscriptPanel sessionId={sessionId} />
           <NotificationsPlaceholder sessionId={sessionId} />
         </div>
       </div>

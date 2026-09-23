@@ -58,6 +58,7 @@ from app.domain.events.types import EventType
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import OperatorCard
 from app.domain.scenario.version import ScenarioVersion
+from app.domain.scoring.context import build_context
 from app.domain.scoring.engine import report_checksum
 from app.domain.scoring.results import ScoreCategoryTotal, ScoreReport, ScoreResult
 from app.domain.scoring.rules import ScoringRule
@@ -134,7 +135,7 @@ class GetSessionReport:
 
             events = tuple(await uow.events.read(session_id))
             scenario_version = await _scenario_version(uow, session.scenario_version_id)
-            score_report = _stored_report(session_id, scenario_version, stored_results)
+            score_report = _stored_report(session_id, scenario_version, stored_results, events)
 
             detail = await assemble_session_detail(uow, session, viewer=user, clock=self._clock)
             card = await uow.operator_cards.get(session.incident.incident_id)
@@ -162,7 +163,11 @@ class GetSessionReport:
 
         actor_ids = {event.seq_no: _actor_id(event) for event in events}
         timeline = tuple(
-            timeline_entry(envelope, actor_id=actor_ids.get(envelope.seq_no))
+            timeline_entry(
+                envelope,
+                actor_id=actor_ids.get(envelope.seq_no),
+                scenario_title=scenario_version.title,
+            )
             for envelope in (visibility.timeline_entry(source_of_row(event)) for event in events)
             if envelope is not None
         )
@@ -259,14 +264,22 @@ def _stored_report(
     session_id: SessionId,
     scenario_version: ScenarioVersion,
     results: Sequence[ScoreResult],
+    events: Sequence[SessionEvent],
 ) -> ScoreReport:
     """The stored rows as a `ScoreReport` — totals re-derived from the rows, nothing re-scored.
 
     "Re-derived" is arithmetic over what is stored (a sum per category), not a re-evaluation: no
-    evaluator runs, no event is read, and `report_checksum` over the result is by construction
-    the checksum of the stored numbers, which is what `rescoreSession` compares against (§10.14
-    reading #10).
+    evaluator runs and `report_checksum` over the result is by construction the checksum of the
+    stored numbers, which is what `rescoreSession` compares against (§10.14 reading #10).
+
+    `computed_from_event_count` is the one field that is not a `score_results` column (it is a
+    report-level fact, not a per-rule one, same reading `rescore_session._stored_report`'s own
+    docstring gives) — derived here the same way `score()` itself derives it
+    (`ScoringContext.computed_from_event_count`, `SCORING_*` events dropped first) over the
+    already-fetched `events` this call site's sibling read path gives every other section (I3 E0
+    D8: the count a loaded report shows must be the true count, not a placeholder zero).
     """
+    computed_from_event_count = build_context(scenario_version, events).computed_from_event_count
     totals: dict[str, list[float]] = {}
     for result in results:
         bucket = totals.setdefault(str(result.category.value), [0.0, 0.0])
@@ -288,7 +301,7 @@ def _stored_report(
         by_category=by_category,
         critical_errors=tuple(result for result in results if result.critical_failure),
         results=tuple(results),
-        computed_from_event_count=0,
+        computed_from_event_count=computed_from_event_count,
     )
 
 

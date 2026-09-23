@@ -11,13 +11,22 @@ import { useParams, Navigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
+import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { getSessionSnapshot, problemMessageRu, queryKeys, type ProblemCode } from '@/shared/api';
+import { getSessionSnapshot, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
 
 export function SessionOpenRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const userLabel = useAuthStore((state) => state.user?.display_name_ru);
+  const user = useAuthStore((state) => state.user);
+  const userLabel = user?.display_name_ru;
+  const roleLabel = user ? t(USER_ROLE_LABEL_KEY[user.user_role]) : undefined;
 
   const query = useQuery({
     queryKey: queryKeys.sessions.snapshot(sessionId ?? ''),
@@ -31,7 +40,7 @@ export function SessionOpenRedirect() {
 
   if (query.isLoading) {
     return (
-      <AppShell title={t('sessionsTitle')} userLabel={userLabel}>
+      <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
         <p className="text-sm text-muted-foreground">{t('sessionsOpeningConsole')}</p>
       </AppShell>
     );
@@ -40,7 +49,7 @@ export function SessionOpenRedirect() {
   if (query.isError) {
     const message = query.error instanceof ProblemError ? problemMessageRu(query.error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('sessionsTitle')} userLabel={userLabel}>
+      <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -57,7 +66,7 @@ export function SessionOpenRedirect() {
   }
 
   return (
-    <AppShell title={t('sessionsTitle')} userLabel={userLabel}>
+    <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
       <p className="text-sm text-muted-foreground">{t('sessionsNoConsoleYet')}</p>
     </AppShell>
   );

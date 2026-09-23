@@ -8,6 +8,35 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import type { CardFieldSpec, FactValue, ServiceType } from '@/shared/api';
 
+// Same enum-value tables `features/report/format-fact-value.ts` keeps for `final_card`'s own
+// `formatFactValueRu` (same treatment, not a shared import) — needed here too so the handoff
+// snapshot's `incident.type`/`caller.relationship` render the same Russian label the final card
+// does, instead of the raw enum member (D6: "the report Снимок передачи вызова shows the same
+// Russian type label as Итоговая карточка").
+const INCIDENT_TYPE_LABEL_KEY: Record<string, keyof typeof ru> = {
+  FIRE: 'incidentTypeFire',
+  MEDICAL: 'incidentTypeMedical',
+  CRIME: 'incidentTypeCrime',
+  TRAFFIC_ACCIDENT: 'incidentTypeTrafficAccident',
+  GAS_LEAK: 'incidentTypeGasLeak',
+  UTILITY_FAILURE: 'incidentTypeUtilityFailure',
+  RESCUE: 'incidentTypeRescue',
+  OTHER: 'incidentTypeOther',
+};
+const CALLER_RELATIONSHIP_LABEL_KEY: Record<string, keyof typeof ru> = {
+  VICTIM: 'callerRelationshipVictim',
+  WITNESS: 'callerRelationshipWitness',
+  NEIGHBOUR: 'callerRelationshipNeighbour',
+  RELATIVE: 'callerRelationshipRelative',
+  PASSERBY: 'callerRelationshipPasserby',
+  OFFICIAL: 'callerRelationshipOfficial',
+  UNKNOWN: 'callerRelationshipUnknown',
+};
+const ENUM_LABEL_KEYS_BY_ENUM_NAME: Record<string, Record<string, keyof typeof ru>> = {
+  IncidentType: INCIDENT_TYPE_LABEL_KEY,
+  CallerRelationship: CALLER_RELATIONSHIP_LABEL_KEY,
+};
+
 export const SNAPSHOT_CARD_FIELDS: readonly CardFieldSpec[] = [
   { field_path: 'incident.type', value_type: 'ENUM', enum_name: 'IncidentType', label_ru: '', scoring_relevant: true, required_for_handoff: true },
   { field_path: 'incident.subtype', value_type: 'STRING', enum_name: null, label_ru: '', scoring_relevant: false, required_for_handoff: false },
@@ -109,6 +138,8 @@ export function serviceTypeLabelRu(value: ServiceType): string {
   return t(SERVICE_TYPE_LABEL_KEY[value]);
 }
 
+const SPEC_BY_PATH = new Map(SNAPSHOT_CARD_FIELDS.map((spec) => [spec.field_path, spec]));
+
 /** `snapshot.card_values` has no `CardFieldSpec` attached to each value (unlike
  * `OperatorCardView`) — {@link SNAPSHOT_CARD_FIELDS} supplies the spec by `field_path` so the same
  * boolean/enum/list formatting `features/report/format-fact-value.ts` gives `final_card` applies
@@ -125,6 +156,12 @@ export function formatSnapshotValueRu(fieldPath: string, value: FactValue | unde
       return value.map((item) => serviceTypeLabelRu(item as ServiceType)).join(', ');
     }
     return value.join(', ');
+  }
+  const spec = SPEC_BY_PATH.get(fieldPath);
+  if (spec?.value_type === 'ENUM' && spec.enum_name) {
+    const enumLabelKeys = ENUM_LABEL_KEYS_BY_ENUM_NAME[spec.enum_name];
+    const key = enumLabelKeys?.[String(value)];
+    if (key) return t(key);
   }
   return String(value);
 }

@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type RoleType, type SessionMode } from '@/shared/api';
+import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type RoleType, type SessionMode, type SessionState, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 
 const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
@@ -18,6 +18,21 @@ const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
   FULL_CYCLE_SINGLE_TRAINEE: 'instructorSessionModeFullCycle',
   MULTI_TRAINEE: 'instructorSessionModeMultiTrainee',
   ASSESSMENT: 'instructorSessionModeAssessment',
+};
+
+const SESSION_STATE_LABEL_KEY: Record<SessionState, keyof typeof ru> = {
+  CREATED: 'sessionStateCreated',
+  READY: 'sessionStateReady',
+  ACTIVE: 'sessionStateActive',
+  ROLE_TRANSITION: 'sessionStateRoleTransition',
+  COMPLETED: 'sessionStateCompleted',
+  ABORTED: 'sessionStateAborted',
+};
+
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
 };
 
 /** `SessionListItem.my_role_type` is `session_participants.assigned_role_type` verbatim — under
@@ -34,14 +49,16 @@ function consoleHrefFor(sessionId: string, myRoleType: RoleType | null, sessionM
 }
 
 export function SessionsLandingPage() {
-  const userLabel = useAuthStore((state) => state.user?.display_name_ru);
+  const user = useAuthStore((state) => state.user);
+  const userLabel = user?.display_name_ru;
+  const roleLabel = user ? t(USER_ROLE_LABEL_KEY[user.user_role]) : undefined;
   const sessionsQuery = useQuery({
     queryKey: queryKeys.sessions.list('MINE'),
     queryFn: () => listSessions({ scope: 'MINE' }),
   });
 
   return (
-    <AppShell title={t('sessionsTitle')} userLabel={userLabel}>
+    <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
       <h1 className="text-lg font-semibold tracking-tight">{t('sessionsTitle')}</h1>
       {sessionsQuery.isLoading ? <p className="mt-2 text-sm text-muted-foreground">{t('sessionsLoading')}</p> : null}
       {sessionsQuery.isError ? (
@@ -66,7 +83,7 @@ export function SessionsLandingPage() {
                       {session.scenario_slug} (v{session.scenario_version})
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {session.state}
+                      {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {t(SESSION_STATE_LABEL_KEY[session.state])}
                     </p>
                   </div>
                   {href ? (

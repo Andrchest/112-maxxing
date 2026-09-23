@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { Label } from '@/shared/ui/label';
 import { Card, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
@@ -20,6 +20,7 @@ import {
   type SessionDetail,
   type SessionMode,
 } from '@/shared/api';
+import { sessionStateLabelRu } from './instructor-labels';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -81,6 +82,7 @@ function ProblemAlert({ error }: { error: unknown }) {
  * `available_actions`-driven UI lands with the session snapshot pages in E8-B/E9/E10).
  */
 export function CreateSessionForm() {
+  const queryClient = useQueryClient();
   const [scenarioId, setScenarioId] = useState('');
   const [versionId, setVersionId] = useState('');
   const [sessionMode, setSessionMode] = useState<SessionMode>('SINGLE_ROLE');
@@ -129,14 +131,25 @@ export function CreateSessionForm() {
     .filter((component) => component.status !== 'READY')
     .map((component) => component.component);
 
+  // D1: the sibling `InstructorSessionsList` (instructor-page.tsx) reads the same
+  // `queryKeys.sessions.list('ALL')` cache entry — invalidating it here is what makes that list
+  // pick up a just-created/-started session without a page reload (D12: still "the server's
+  // response", just fanned out to every query reading it, same idiom react-query already gives
+  // every other mutation in this app).
   const createMutation = useMutation({
     mutationFn: createSession,
-    onSuccess: (detail) => setSession(detail),
+    onSuccess: (detail) => {
+      setSession(detail);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.list('ALL') });
+    },
   });
 
   const startMutation = useMutation({
     mutationFn: (sessionId: string) => startSession(sessionId),
-    onSuccess: (detail) => setSession(detail),
+    onSuccess: (detail) => {
+      setSession(detail);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.list('ALL') });
+    },
   });
 
   // Participant rows are reset directly by whichever handler changed the scenario version or
@@ -308,7 +321,7 @@ export function CreateSessionForm() {
 
         {session ? (
           <p className="text-xs text-muted-foreground" data-slot="session-state">
-            {t('instructorSessionStateLabel')}: {session.state}
+            {t('instructorSessionStateLabel')}: {sessionStateLabelRu(session.state)}
           </p>
         ) : null}
         {session && session.state === 'READY' && !readinessSatisfied ? (

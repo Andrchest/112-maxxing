@@ -66,14 +66,21 @@ export function AppShell({ title, role, userLabel, connectionStatus, readiness, 
         <Separator orientation="vertical" className="h-5" />
         <span className="font-mono text-xs text-muted-foreground">{title}</span>
         <div className="ml-auto flex items-center gap-3">
-          {userLabel ? (
+          {/* D4 addendum: the seeded demo accounts' own `display_name_ru` can equal the account
+              role's own label (e.g. the trainee account is literally named "Стажёр"), which would
+              otherwise print the same word twice ("Стажёр Стажёр"). The role chip already carries
+              that information, so the separate user-label span is dropped only in that case —
+              a genuinely different display name (the common case) still shows both. */}
+          {userLabel && userLabel !== role ? (
             <span className="font-mono text-xs text-muted-foreground" data-slot="user-label">
               {userLabel}
             </span>
           ) : null}
-          <Badge variant="outline" className="font-mono text-xs" data-slot="role-badge">
-            {role ?? t('roleBadgeNone')}
-          </Badge>
+          {role ? (
+            <Badge variant="outline" className="font-mono text-xs" data-slot="role-badge">
+              {role}
+            </Badge>
+          ) : null}
           {readiness ? (
             <Badge
               variant={READINESS_BADGE_VARIANT[readiness]}

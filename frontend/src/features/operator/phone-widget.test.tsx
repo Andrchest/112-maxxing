@@ -122,7 +122,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     useCallStateStore.setState({ callState: makeCallState({ phase: 'NO_CALL' }) });
     useStageStore.setState({ availableActions: [] });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     expect(screen.queryByRole('button', { name: /answer/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/^\d{2}:\d{2}$/)).not.toBeInTheDocument();
@@ -132,7 +132,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     useCallStateStore.setState({ callState: makeCallState({ phase: 'RINGING', caller_display_ru: 'Caller X' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.RINGING });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     expect(screen.getByRole('button', { name: 'Answer' })).toBeInTheDocument();
     expect(screen.getByText('Caller X')).toBeInTheDocument();
@@ -143,7 +143,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', answered_at_offset_ms: 1000 }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     expect(screen.getByRole('button', { name: 'End call' })).toBeInTheDocument();
     expect(screen.getByText(/^\d{2}:\d{2}$/)).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     useCallStateStore.setState({ callState: makeCallState({ phase: 'ENDED', duration_ms: 65_000 }) });
     useStageStore.setState({ availableActions: [] });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     expect(screen.getByText('01:05')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /answer/i })).not.toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', caller_speaking: true }) });
     useStageStore.setState({ availableActions: [] });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     expect(screen.getByText(ru.operatorCallerSpeaking)).toBeInTheDocument();
   });
@@ -188,7 +188,7 @@ describe('PhoneWidget — one state per CallStateView.phase (D12 design decision
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await user.click(screen.getByRole('button', { name: 'Answer' }));
 
     await waitFor(() => expect(useCallStateStore.getState().callState?.phase).toBe('CONNECTED'));
@@ -241,7 +241,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'RINGING', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.RINGING });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await Promise.resolve();
 
     expect(roomInstances).toHaveLength(0);
@@ -253,7 +253,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1', answered_at_offset_ms: 0 }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     await waitFor(() => expect(roomInstances).toHaveLength(1));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -267,7 +267,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     await waitFor(() => expect(roomInstances).toHaveLength(1));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -280,7 +280,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     await waitFor(() => expect(roomInstances).toHaveLength(1));
     expect(roomInstances[0]!.connectCalls).toEqual([{ url: RESPONSE_LIVEKIT_URL, token: 'jwt-voice-token' }]);
@@ -291,7 +291,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await waitFor(() => expect(roomInstances).toHaveLength(1));
 
     // The same snapshot/event data re-arriving (e.g. a reactive re-fetch) must not re-request a
@@ -311,7 +311,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     await waitFor(() => expect(roomInstances).toHaveLength(1));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -326,7 +326,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
 
     await waitFor(() => expect(screen.getByText(ru.operatorMicPermissionDenied)).toBeInTheDocument());
 
@@ -344,7 +344,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await waitFor(() => expect(roomInstances[0]?.localParticipant.micEnabledCalls).toEqual([true]));
 
     const muteButton = screen.getByRole('button', { name: ru.operatorMuteButton });
@@ -366,7 +366,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await waitFor(() => expect(roomInstances).toHaveLength(1));
 
     roomInstances[0]!.emit('reconnecting');
@@ -383,7 +383,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    render(<PhoneWidget sessionId="sess-1" />);
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await waitFor(() => expect(roomInstances).toHaveLength(1));
 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'ENDED', call_id: 'call-1', duration_ms: 12_000 }) });
@@ -396,7 +396,7 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1' }) });
     useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
 
-    const { unmount } = render(<PhoneWidget sessionId="sess-1" />);
+    const { unmount } = render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
     await waitFor(() => expect(roomInstances).toHaveLength(1));
 
     unmount();

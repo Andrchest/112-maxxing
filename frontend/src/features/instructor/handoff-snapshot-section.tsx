@@ -7,6 +7,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { HandoffSnapshotView, OperatorCardView } from '@/shared/api';
 import { serviceTypeLabelRu } from './instructor-labels';
 import { formatFactValueRu, formatRawFactValueRu } from './format-fact-value';
@@ -46,7 +47,7 @@ export function HandoffSnapshotSection({ handoff, card }: HandoffSnapshotSection
             </Badge>
           ))}
           <span className="ml-auto text-xs text-muted-foreground">
-            {t('reportHandoffCreatedAtLabel')}: {handoff.created_at_offset_ms}
+            {t('reportHandoffCreatedAtLabel')}: {formatCallDurationMs(handoff.created_at_offset_ms)}
           </span>
         </div>
         <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">

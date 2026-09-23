@@ -5,6 +5,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { GateTurnView } from '@/shared/api';
 import { gateOutcomeLabelRu, gateReasonLabelRu } from './instructor-labels';
 
@@ -38,9 +39,7 @@ export function GateTurnsSection({ gateTurns }: GateTurnsSectionProps) {
                   <span className="text-sm font-medium">
                     {t('instructorGateTurnLabel')} {turn.turn_index + 1}
                   </span>
-                  <span className="text-xs text-muted-foreground">
-                    {turn.at_offset_ms} {t('reportOffsetMsUnit')}
-                  </span>
+                  <span className="text-xs text-muted-foreground">{formatCallDurationMs(turn.at_offset_ms)}</span>
                 </div>
                 <ul className="flex flex-col gap-1">
                   {turn.decisions.map((decision) => (

@@ -3,6 +3,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { CallStateView } from '@/shared/api';
 import { callPhaseLabelRu } from './instructor-labels';
 
@@ -25,7 +26,7 @@ export function CallStateSection({ callState }: CallStateSectionProps) {
         ) : null}
         {callState.duration_ms !== null ? (
           <p className="text-xs text-muted-foreground">
-            {t('instructorCallStateDurationLabel')}: {callState.duration_ms}
+            {t('instructorCallStateDurationLabel')}: {formatCallDurationMs(callState.duration_ms)}
           </p>
         ) : null}
         {callState.caller_speaking ? (

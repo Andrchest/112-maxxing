@@ -58,6 +58,26 @@ export function getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> 
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/snapshot`);
 }
 
+// -- I3 E0 (D10): the REST twin of the WebSocket replay ------------------------------------
+// `listSessionEvents` is "the same envelopes, the same per-role filtering ... and the same
+// payload redaction table" (openapi.yaml) as the WS stream — used to hydrate a panel that reads
+// `entities/session`'s event log (e.g. the operator transcript) with what already happened before
+// this page mounted, since a fresh WS connection only replays from `last_seq_no` forward.
+export type SessionEventEnvelope = components['schemas']['SessionEventEnvelope'];
+export type SessionEventPage = components['schemas']['SessionEventPage'];
+
+export function listSessionEvents(
+  sessionId: string,
+  params: { afterSeqNo?: number; limit?: number; eventType?: components['schemas']['EventType'][] } = {},
+): Promise<SessionEventPage> {
+  const query = new URLSearchParams();
+  if (params.afterSeqNo !== undefined) query.set('after_seq_no', String(params.afterSeqNo));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  for (const eventType of params.eventType ?? []) query.append('event_type', eventType);
+  const qs = query.toString();
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/events${qs ? `?${qs}` : ''}`);
+}
+
 export function answerCall(sessionId: string): Promise<OperatorStageView> {
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/call/answer`, { method: 'POST' });
 }

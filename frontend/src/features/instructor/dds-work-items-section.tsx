@@ -7,6 +7,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { DdsWorkItem, EmergencyResourceView } from '@/shared/api';
 import { closureReasonLabelRu, ddsStageStateLabelRu, resourceStatusLabelRu, resourceTypeLabelRu, serviceTypeLabelRu } from './instructor-labels';
 
@@ -16,6 +17,7 @@ interface DdsWorkItemsSectionProps {
 }
 
 export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSectionProps) {
+  const callsignByResourceId = new Map(resources.map((resource) => [resource.resource_id, resource.callsign]));
   return (
     <Card>
       <CardHeader>
@@ -34,16 +36,16 @@ export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSect
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                   <span>
-                    {t('instructorDdsReceivedAtLabel')}: {assignment.received_at_offset_ms}
+                    {t('instructorDdsReceivedAtLabel')}: {formatCallDurationMs(assignment.received_at_offset_ms)}
                   </span>
                   {assignment.dispatched_at_offset_ms !== null ? (
                     <span>
-                      {t('instructorDdsDispatchedAtLabel')}: {assignment.dispatched_at_offset_ms}
+                      {t('instructorDdsDispatchedAtLabel')}: {formatCallDurationMs(assignment.dispatched_at_offset_ms)}
                     </span>
                   ) : null}
                   {assignment.closed_at_offset_ms !== null ? (
                     <span>
-                      {t('instructorDdsClosedAtLabel')}: {assignment.closed_at_offset_ms}
+                      {t('instructorDdsClosedAtLabel')}: {formatCallDurationMs(assignment.closed_at_offset_ms)}
                     </span>
                   ) : null}
                   {assignment.closure_reason ? <span>{closureReasonLabelRu(assignment.closure_reason)}</span> : null}
@@ -54,7 +56,9 @@ export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSect
                   </p>
                 ) : null}
                 {assignment.dispatched_resource_ids.length > 0 ? (
-                  <p className="text-xs">{assignment.dispatched_resource_ids.join(', ')}</p>
+                  <p className="text-xs">
+                    {assignment.dispatched_resource_ids.map((resourceId) => callsignByResourceId.get(resourceId) ?? resourceId).join(', ')}
+                  </p>
                 ) : null}
               </li>
             ))}

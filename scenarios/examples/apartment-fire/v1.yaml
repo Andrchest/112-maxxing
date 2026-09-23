@@ -9,7 +9,7 @@ id: 3f6c1a20-0e1a-4b1e-9d2a-0a7c5b2f1d11
 schema_version: 1
 scenario_id: 9c2a77bc-4e3d-4a1a-9a71-2cf0a1e4b501
 version: 1
-title: "Apartment fire, Smolensk, Nikolaeva 27"
+title: "Пожар в квартире, Смоленск, ул. Николаева, 27"
 description: "Neighbour reports smoke from a ninth-floor block; one elderly resident is inside."
 difficulty: 3
 deterministic_seed: "apartment-fire-v1"

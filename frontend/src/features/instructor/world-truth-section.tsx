@@ -6,7 +6,7 @@
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import type { WorldTruthView } from '@/shared/api';
-import { formatRawFactValueRu } from './format-fact-value';
+import { formatWorldTruthValueRu } from './format-fact-value';
 
 interface WorldTruthSectionProps {
   worldTruth: WorldTruthView;
@@ -31,7 +31,7 @@ export function WorldTruthSection({ worldTruth }: WorldTruthSectionProps) {
             {factIds.map((factId) => (
               <div key={factId} className="flex flex-col gap-0.5">
                 <dt className="text-xs text-muted-foreground">{worldTruth.label_ru?.[factId] ?? factId}</dt>
-                <dd className="text-sm">{formatRawFactValueRu(worldTruth.facts[factId])}</dd>
+                <dd className="text-sm">{formatWorldTruthValueRu(factId, worldTruth.facts[factId])}</dd>
               </div>
             ))}
           </dl>

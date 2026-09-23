@@ -139,6 +139,26 @@ async def test_the_instructor_report_has_every_spec_29_item(completed: OperatorF
     assert body["released"] is False
 
 
+async def test_computed_from_event_count_is_the_true_count_not_a_placeholder(
+    completed: OperatorFlow, uow_factory: Any
+) -> None:
+    """I3 E0 D8: the loaded-report path must show the same figure `score()` itself derived at
+    scoring time (`ScoringContext.computed_from_event_count`), never a hard-coded 0 — the label
+    ("Событий учтено") and the number it names must agree.
+
+    `SCORING_RULE_EVALUATED` (`RULE_COUNT` rows, one per scoring rule) is the only event type
+    `score()` itself produces and therefore excludes from its own count (`context.py`'s
+    `_SCORING_EVENT_TYPES`); every other `session_events` row for this session is counted.
+    """
+    response = await report(completed)
+    assert response.status_code == 200, response.text
+    computed = response.json()["score_report"]["computed_from_event_count"]
+    assert computed > 0
+
+    _, session_events_count = await _counts(uow_factory, completed.session_id)
+    assert computed == session_events_count - RULE_COUNT
+
+
 # ---------------------------------------------------------------------------------------------
 # R1 — the refusals
 # ---------------------------------------------------------------------------------------------

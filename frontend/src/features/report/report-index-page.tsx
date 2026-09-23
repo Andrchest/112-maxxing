@@ -11,7 +11,7 @@ import { Card, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type SessionMode } from '@/shared/api';
+import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type SessionMode, type SessionState, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 
 const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
@@ -21,9 +21,25 @@ const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
   ASSESSMENT: 'instructorSessionModeAssessment',
 };
 
+const SESSION_STATE_LABEL_KEY: Record<SessionState, keyof typeof ru> = {
+  CREATED: 'sessionStateCreated',
+  READY: 'sessionStateReady',
+  ACTIVE: 'sessionStateActive',
+  ROLE_TRANSITION: 'sessionStateRoleTransition',
+  COMPLETED: 'sessionStateCompleted',
+  ABORTED: 'sessionStateAborted',
+};
+
+const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
+
 export function ReportIndexPage() {
   const user = useAuthStore((state) => state.user);
   const userLabel = user?.display_name_ru;
+  const roleLabel = user ? t(USER_ROLE_LABEL_KEY[user.user_role]) : undefined;
   const scope = user?.user_role === 'TRAINEE' ? 'MINE' : 'ALL';
 
   const sessionsQuery = useQuery({
@@ -32,7 +48,7 @@ export function ReportIndexPage() {
   });
 
   return (
-    <AppShell title={t('reportIndexTitle')} userLabel={userLabel}>
+    <AppShell title={t('reportIndexTitle')} role={roleLabel} userLabel={userLabel}>
       <h1 className="text-lg font-semibold tracking-tight">{t('reportIndexTitle')}</h1>
       {sessionsQuery.isLoading ? <p className="mt-2 text-sm text-muted-foreground">{t('reportIndexLoading')}</p> : null}
       {sessionsQuery.isError ? (
@@ -51,7 +67,7 @@ export function ReportIndexPage() {
                     {session.scenario_slug} (v{session.scenario_version})
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {session.state}
+                    {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {t(SESSION_STATE_LABEL_KEY[session.state])}
                   </p>
                 </div>
                 <Button asChild size="sm">

@@ -6,7 +6,8 @@
 // DDS side, no separate field-label catalog is needed here — only the per-option enum labels.
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import type { CardFieldSpec, FactValue } from '@/shared/api';
+import type { CardFieldSpec, FactValue, ServiceType } from '@/shared/api';
+import { serviceTypeLabelRu } from './snapshot-card-fields';
 
 const INCIDENT_TYPE_LABEL_KEY: Record<string, keyof typeof ru> = {
   FIRE: 'incidentTypeFire',
@@ -41,7 +42,11 @@ export function formatFactValueRu(spec: CardFieldSpec, value: FactValue | undefi
     return value === true ? t('factBooleanYes') : t('factBooleanNo');
   }
   if (spec.value_type === 'STRING_LIST') {
-    return Array.isArray(value) ? value.join(', ') : String(value);
+    const items = Array.isArray(value) ? value : [];
+    if (spec.field_path === 'recipients.services') {
+      return items.map((item) => serviceTypeLabelRu(item as ServiceType)).join(', ');
+    }
+    return items.join(', ');
   }
   if (spec.value_type === 'ENUM' && spec.enum_name) {
     const enumLabelKeys = ENUM_LABEL_KEYS_BY_ENUM_NAME[spec.enum_name];

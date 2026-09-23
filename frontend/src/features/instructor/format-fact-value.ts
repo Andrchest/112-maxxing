@@ -4,7 +4,8 @@
 // value.ts`, `features/dds/card-field-labels.ts`; same treatment, not a shared import).
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import type { CardFieldSpec, FactValue } from '@/shared/api';
+import type { CardFieldSpec, FactValue, ServiceType } from '@/shared/api';
+import { serviceTypeLabelRu } from './instructor-labels';
 
 const INCIDENT_TYPE_LABEL_KEY: Record<string, keyof typeof ru> = {
   FIRE: 'incidentTypeFire',
@@ -39,7 +40,11 @@ export function formatFactValueRu(spec: CardFieldSpec, value: FactValue | undefi
     return value === true ? t('factBooleanYes') : t('factBooleanNo');
   }
   if (spec.value_type === 'STRING_LIST') {
-    return Array.isArray(value) ? value.join(', ') : String(value);
+    const items = Array.isArray(value) ? value : [];
+    if (spec.field_path === 'recipients.services') {
+      return items.map((item) => serviceTypeLabelRu(item as ServiceType)).join(', ');
+    }
+    return items.join(', ');
   }
   if (spec.value_type === 'ENUM' && spec.enum_name) {
     const enumLabelKeys = ENUM_LABEL_KEYS_BY_ENUM_NAME[spec.enum_name];
@@ -59,4 +64,25 @@ export function formatRawFactValueRu(value: FactValue | undefined): string {
   if (value === false) return t('factBooleanNo');
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
+}
+
+// -- World truth / caller belief: fact_id -> enum-value lookup (D5) -------------------------
+// `WorldTruthView`/`CallerBeliefView` carry no `enum_name` per fact (only `value_types`, D8),
+// unlike `CardFieldSpec`. The demo scenario's own ENUM facts are known statically here (the same
+// backend-side table lives in `backend/app/domain/facts/value_labels_ru.py`, which this mirrors
+// for the trainee-facing UI's own display, not the caller's spoken wording) — a fact_id this table
+// does not know falls back to the raw value, never a guessed label.
+const WORLD_TRUTH_ENUM_VALUE_KEY: Record<string, Record<string, keyof typeof ru>> = {
+  'incident.type': INCIDENT_TYPE_LABEL_KEY,
+  'incident.fire_source': { KITCHEN: 'factValueFireSourceKitchen' },
+};
+
+/** {@link formatRawFactValueRu}, plus a fact_id-specific enum-value lookup for `WorldTruthView`/
+ * `CallerBeliefView` facts (which carry no per-fact `enum_name` the way `CardFieldSpec` does). */
+export function formatWorldTruthValueRu(factId: string, value: FactValue | undefined): string {
+  if (typeof value === 'string') {
+    const key = WORLD_TRUTH_ENUM_VALUE_KEY[factId]?.[value];
+    if (key) return t(key);
+  }
+  return formatRawFactValueRu(value);
 }

@@ -54,9 +54,18 @@ const PHASE_DOT_CLASS: Record<CallStateView['phase'], string> = {
 
 interface PhoneWidgetProps {
   sessionId: string;
+  /** `SessionDetail.monotonic_offset_ms` (server "now" as of the last snapshot fetch) — the
+   * anchor {@link computeElapsedSinceMs} ticks from (D9). */
+  monotonicOffsetMs: number;
 }
 
-export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
+/** D9: elapsed ms since `answeredAtOffsetMs`, both server offsets — never `Date.now()`, so a page
+ * reload mid-call restores the real elapsed time instead of restarting at 0. */
+function computeElapsedSinceMs(answeredAtOffsetMs: number | null, nowOffsetMs: number): number {
+  return answeredAtOffsetMs === null ? 0 : Math.max(0, nowOffsetMs - answeredAtOffsetMs);
+}
+
+export function PhoneWidget({ sessionId, monotonicOffsetMs }: PhoneWidgetProps) {
   const callState = useCallStateStore((state) => state.callState);
   const availableActions = useStageStore((state) => state.availableActions);
   const answerAction = availableActions.find((action) => action.action_id === 'answer') ?? null;
@@ -65,26 +74,28 @@ export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const phase = callState?.phase ?? 'NO_CALL';
-  // Elapsed wall-clock ms since the widget observed CONNECTED — a display-only best-effort timer
-  // (SPEC §32: "timer"); `Date.now()` only ever runs inside the effect/interval callback, never
-  // in the render body, so render itself only ever reads plain state.
-  const [connectedElapsedMs, setConnectedElapsedMs] = useState(0);
-  // Reset during render on a phase change (React docs: "Adjusting state when a prop changes"),
-  // not inside the effect body below, which only starts/stops the interval.
-  const [phaseAtLastRender, setPhaseAtLastRender] = useState(phase);
-  if (phase !== phaseAtLastRender) {
-    setPhaseAtLastRender(phase);
-    if (phase !== 'CONNECTED') {
-      setConnectedElapsedMs(0);
-    }
+  const answeredAtOffsetMs = callState?.answered_at_offset_ms ?? null;
+
+  // D9: the call timer counts from the server's own `answered_at_offset_ms`, ticked locally
+  // between snapshot refreshes from `monotonicOffsetMs` (DESIGN: no client clock authority beyond
+  // ticking a counter between server refreshes, the same idiom the role-transition countdown in
+  // `features/operator/console-page.tsx`'s `useCountdownSeconds` already uses). Reset during
+  // render when a fresh pair arrives (React docs: "adjusting state when a prop changes"), not
+  // inside the effect body, which only starts/stops the interval.
+  const [connectedElapsedMs, setConnectedElapsedMs] = useState(() => computeElapsedSinceMs(answeredAtOffsetMs, monotonicOffsetMs));
+  const [trackedAnsweredAt, setTrackedAnsweredAt] = useState(answeredAtOffsetMs);
+  const [trackedNow, setTrackedNow] = useState(monotonicOffsetMs);
+  if (trackedAnsweredAt !== answeredAtOffsetMs || trackedNow !== monotonicOffsetMs) {
+    setTrackedAnsweredAt(answeredAtOffsetMs);
+    setTrackedNow(monotonicOffsetMs);
+    setConnectedElapsedMs(computeElapsedSinceMs(answeredAtOffsetMs, monotonicOffsetMs));
   }
 
   useEffect(() => {
-    if (phase !== 'CONNECTED') return;
-    const startedAtWallClock = Date.now();
-    const id = setInterval(() => setConnectedElapsedMs(Date.now() - startedAtWallClock), 1000);
+    if (phase !== 'CONNECTED' || answeredAtOffsetMs === null) return;
+    const id = setInterval(() => setConnectedElapsedMs((previous) => previous + 1000), 1000);
     return () => clearInterval(id);
-  }, [phase]);
+  }, [phase, answeredAtOffsetMs]);
 
   // -- E11-C: the LiveKit media session (SPEC §15, D9) ----------------------------------------
   const mediaPhase = useMediaStateStore((state) => state.phase);
@@ -215,7 +226,10 @@ export function PhoneWidget({ sessionId }: PhoneWidgetProps) {
               {answerAction.label_ru}
             </Button>
           ) : null}
-          {endCallAction ? (
+          {/* D11: once the call itself has ended (`CallStateView.phase === 'ENDED'`), never offer
+              to end it again — even if the stage's own `available_actions` still lists `end_call`
+              for a moment (e.g. before the next snapshot refresh). */}
+          {endCallAction && phase !== 'ENDED' ? (
             <Button type="button" variant="destructive" disabled={pending} onClick={() => void handleHangup()}>
               {endCallAction.label_ru}
             </Button>

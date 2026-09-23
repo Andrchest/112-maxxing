@@ -12,7 +12,7 @@ describe('CallStateSection — the phone widget state, read-only', () => {
 
   it('renders duration when the call has one', () => {
     render(<CallStateSection callState={makeCallStateView({ duration_ms: 12000 })} />);
-    expect(screen.getByText(new RegExp(`${ru.instructorCallStateDurationLabel}: 12000`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`${ru.instructorCallStateDurationLabel}: 00:12`))).toBeInTheDocument();
   });
 
   it('renders no duration line when null', () => {

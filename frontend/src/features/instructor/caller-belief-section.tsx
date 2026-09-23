@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import type { CallerBeliefView } from '@/shared/api';
 import { emotionLabelRu, knowledgeStateLabelRu } from './instructor-labels';
-import { formatRawFactValueRu } from './format-fact-value';
+import { formatWorldTruthValueRu } from './format-fact-value';
 
 interface CallerBeliefSectionProps {
   callerBelief: CallerBeliefView;
@@ -39,7 +39,7 @@ export function CallerBeliefSection({ callerBelief }: CallerBeliefSectionProps) 
               return (
                 <div key={factId} className="flex flex-col gap-0.5 rounded-md border border-border p-2">
                   <dt className="text-xs text-muted-foreground">{callerBelief.label_ru?.[factId] ?? factId}</dt>
-                  <dd className="text-sm">{formatRawFactValueRu(callerBelief.facts[factId])}</dd>
+                  <dd className="text-sm">{formatWorldTruthValueRu(factId, callerBelief.facts[factId])}</dd>
                   <dd className="text-xs text-muted-foreground">
                     {knowledge ? knowledgeStateLabelRu(knowledge) : null}
                     {' · '}

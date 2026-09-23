@@ -4,6 +4,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
 import type { DdsDecisionView } from '@/shared/api';
 import { serviceTypeLabelRu } from './snapshot-card-fields';
 import { closureReasonLabelRu, statusUpdateKindLabelRu } from './dds-decision-labels';
@@ -29,7 +30,7 @@ export function DdsDecisionsSection({ decisions }: DdsDecisionsSectionProps) {
                   <Badge variant="outline">{serviceTypeLabelRu(decision.service_type)}</Badge>
                   {decision.acknowledged_at_offset_ms !== null ? (
                     <span className="text-xs text-muted-foreground">
-                      {t('reportDdsAcknowledgedLabel')}: {decision.acknowledged_at_offset_ms}
+                      {t('reportDdsAcknowledgedLabel')}: {formatCallDurationMs(decision.acknowledged_at_offset_ms)}
                     </span>
                   ) : null}
                 </div>
@@ -39,9 +40,7 @@ export function DdsDecisionsSection({ decisions }: DdsDecisionsSectionProps) {
                     <ul className="flex flex-col gap-1">
                       {decision.dispatch_events.map((dispatchEvent, index) => (
                         <li key={index} className="flex items-center gap-2 text-xs">
-                          <span>
-                            {dispatchEvent.at_offset_ms} {t('reportOffsetMsUnit')}
-                          </span>
+                          <span>{formatCallDurationMs(dispatchEvent.at_offset_ms)}</span>
                           <span>{dispatchEvent.callsigns.join(', ')}</span>
                           {dispatchEvent.is_additional ? <Badge variant="secondary">{t('reportDdsAdditionalDispatchBadge')}</Badge> : null}
                         </li>
@@ -64,7 +63,7 @@ export function DdsDecisionsSection({ decisions }: DdsDecisionsSectionProps) {
                 {decision.closure_reason ? (
                   <p className="text-xs">
                     {t('reportDdsClosureLabel')}: {closureReasonLabelRu(decision.closure_reason)}
-                    {decision.closed_at_offset_ms !== null ? ` (${decision.closed_at_offset_ms} ${t('reportOffsetMsUnit')})` : null}
+                    {decision.closed_at_offset_ms !== null ? ` (${formatCallDurationMs(decision.closed_at_offset_ms)})` : null}
                   </p>
                 ) : null}
               </li>
