@@ -22,6 +22,11 @@ of the frozen caller chain. One trainee turn, in this fixed order:
    {proposed_by_call_id}` (INV 4, D24).
 
 The first reply of a call opens with the persona's greeting («Начальник караула, слушаю.»).
+
+**The AI 112 operator (I3 E6d, HLD 80 §80.3.4).** A call to 112 (`call_kind: OPERATOR_112`) runs
+this same responder: the loader hands it the operator's knowledge (the snapshot only), the
+templates follow REQ-5332's checklist — one `DDS_CALL_ASSERTION` per item the ДДС covered, the
+next missing item asked for — and nothing is ever proposed (the operator reports no status).
 """
 
 from __future__ import annotations

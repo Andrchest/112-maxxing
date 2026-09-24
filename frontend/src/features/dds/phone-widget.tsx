@@ -11,6 +11,9 @@
 //   «Ответить» on a brigade's ringing INBOUND call, from the call's own `available_actions`
 //   (`answer`, `answerDdsCall`). The party is the server's `persona_title_ru`
 //   («Начальник караула ПСЧ»).
+// * (I3 E6d) «Позвонить в 112» when the stage offers `call_112` and the line is free
+//   (`startDdsCall {kind: OPERATOR_112}`); the AI 112 operator answers («Оператор 112») and asks
+//   for REQ-5332's checklist — what the ДДС says is scored, never shown here.
 //
 // The call's state is the server's `DdsCallView` — `listDdsCalls` on mount and on every
 // `DDS_CALL_*` event (the console invalidates `queryKeys.dds.calls`), `startDdsCall` /
@@ -185,6 +188,10 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
     return runCallCommand(() => startDdsCall(sessionId, { kind: 'SERVICE_HEAD', assignment_id: assignmentId }));
   }
 
+  function handleCall112(): Promise<void> {
+    return runCallCommand(() => startDdsCall(sessionId, { kind: 'OPERATOR_112' }));
+  }
+
   function handleAnswer(callId: string): Promise<void> {
     return runCallCommand(() => answerDdsCall(sessionId, callId));
   }
@@ -203,6 +210,7 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
 
   const lineFree = !call || call.state === 'ENDED';
   const callClaimant = lineFree ? (availableActions.find((action) => action.action_id === 'call_claimant') ?? null) : null;
+  const call112 = lineFree ? (availableActions.find((action) => action.action_id === 'call_112') ?? null) : null;
   const hangUp = call?.available_actions.find((action) => action.action_id === 'hang_up') ?? null;
   const answer = call?.available_actions.find((action) => action.action_id === 'answer') ?? null;
   const callServiceHead = lineFree ? (availableActions.find((action) => action.action_id === 'call_service_head') ?? null) : null;
@@ -266,6 +274,11 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
         {callClaimant ? (
           <Button type="button" size="sm" disabled={pending} onClick={() => void handleCallClaimant()}>
             {callClaimant.label_ru}
+          </Button>
+        ) : null}
+        {call112 ? (
+          <Button type="button" size="sm" disabled={pending} data-slot="dds-call-112" onClick={() => void handleCall112()}>
+            {call112.label_ru}
           </Button>
         ) : null}
         {call && hangUp ? (

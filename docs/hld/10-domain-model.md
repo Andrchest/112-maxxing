@@ -973,8 +973,8 @@ constructed without a world-truth repository, so the data cannot be reached even
 
 | State | Actions |
 |:--|:--|
-| `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус; `call_service_head` / Позвонить старшему (only `dds_brigade_call: ON`, I3 E6c); `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b) |
-| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b); `close` / Закрыть происшествие; `call_service_head` / Позвонить старшему (only `dds_brigade_call: ON`, I3 E6c); `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b) |
+| `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус; `call_service_head` / Позвонить старшему (only `dds_brigade_call: ON`, I3 E6c); `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b); `call_112` / Позвонить в 112 (only `dds_brigade_call: ON`, I3 E6d) |
+| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b); `close` / Закрыть происшествие; `call_service_head` / Позвонить старшему (only `dds_brigade_call: ON`, I3 E6c); `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b); `call_112` / Позвонить в 112 (only `dds_brigade_call: ON`, I3 E6d) |
 | `RESOURCE_SELECTION` | — (never entered in memo mode) |
 | `DISPATCHED` | — (never entered in memo mode) |
 | `EN_ROUTE` | — (never entered in memo mode) |
@@ -986,9 +986,11 @@ constructed without a world-truth repository, so the data cannot be reached even
 **The ДДС phone (additive, I3 E6b — `80-telephony.md` §80.5, D25).** Under `dds_brigade_call: ON`
 (memo mode only, R41) `call_service_head` / Позвонить старшему (`PLACE_DDS_CALL`, `startDdsCall
 {kind: SERVICE_HEAD, assignment_id}` — only a leg the trainee plays, `plays_leg`, else `403
-FORBIDDEN_FOR_SERVICE`; I3 E6c) and `call_claimant` / Позвонить заявителю (`PLACE_DDS_CALL`,
-`startDdsCall {kind: CLAIMANT}`, E6b) close the `RECEIVED` and `ACKNOWLEDGED` rows, the two states
-the ДДС holds the card in; `call_112` (E6d) joins those rows when its kind lands. `hang_up` /
+FORBIDDEN_FOR_SERVICE`; I3 E6c), `call_claimant` / Позвонить заявителю (`PLACE_DDS_CALL`,
+`startDdsCall {kind: CLAIMANT}`, E6b) and `call_112` / Позвонить в 112 (`PLACE_DDS_CALL`,
+`startDdsCall {kind: OPERATOR_112}`, `dialed = "112"`, answered by the AI 112 operator following
+REQ-5332's checklist; E6d) close the `RECEIVED` and `ACKNOWLEDGED` rows, the two states the ДДС
+holds the card in. `hang_up` /
 Положить трубку (`PLACE_DDS_CALL`, trigger `hang_up`) and, on a ringing INBOUND call (a brigade's
 `report: CALL_IN` step), `answer` / Ответить (`PLACE_DDS_CALL`, trigger `answer`, `answerDdsCall`,
 E6c) are actions of a live `DdsCall`, not of the stage — they are served as
@@ -1545,10 +1547,10 @@ property name, does remain `CallerProfile.identity_ru`.
 | `DDS_CARD_OPENED` (additive, I3 E5a) | `TRAINEE` | `assignment_id: uuid`, `service_type: ServiceId`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС opened the card on one leg (HLD 70 §70.4.2) | DDS, INSTRUCTOR |
 | `DDS_SERVICE_STATUS_SET` (additive, I3 E5a) | `TRAINEE`, `SIMULATION` | `assignment_id: uuid`, `service_type: ServiceId`, `previous_status: ServiceResponseStatus`, `new_status: ServiceResponseStatus`, `trigger: str`, `order_number: str \| null`, `comment_ru: str \| null`, `completion_reason: "WITHOUT_BRIGADE" \| null`, `source: TRAINEE \| SCRIPTED_RESPONDER \| PICKER_MIRROR \| SYSTEM`, `actor_user_id: uuid \| null`, `at_offset_ms: int`, (additive, I3 E6c) `proposed_by_call_id: uuid \| null` — present only when the trainee confirms a status heard on a ДДС call (80 §80.3.3) — one step of one leg's response status (HLD 70 §70.4.2); materialised into `dds_service_status_history` | DDS, INSTRUCTOR |
 | `DDS_CALL_STARTED` (additive, I3 E6b) | `TRAINEE` (OUTBOUND), `SIMULATION` (INBOUND) | `call_id: uuid`, `kind: DdsCallKind`, `direction: DdsCallDirection`, `assignment_id: uuid \| null`, `service_type: ServiceId \| null`, `dialed: str`, `endpoint: CallEndpoint`, `room: str`, `persona_id: str \| null`, `actor_user_id: uuid \| null`, `selection_reason: BROWSER_BUTTON \| LAST_OPENED_CARD \| OLDEST_ACTIVE \| INBOUND_SCRIPT`, `at_offset_ms: int` — `[*] --start--> DIALING` of a ДДС call (80 §80.3.2, §80.6.1) | DDS, INSTRUCTOR |
-| `DDS_CALL_ANSWERED` (additive, I3 E6b) | `SIMULATION` (AI callee), `TRAINEE` (INBOUND) | `call_id: uuid`, `answered_by: AI \| TRAINEE`, `at_offset_ms: int` | DDS, INSTRUCTOR |
+| `DDS_CALL_ANSWERED` (additive, I3 E6b) | `SIMULATION` (AI callee), `TRAINEE` (INBOUND) | `call_id: uuid`, `answered_by: AI \| TRAINEE`, `at_offset_ms: int` — `AI` on every OUTBOUND call, a call to 112 included (I3 E6d); `TRAINEE` on an `OPERATOR_112` call is the reserved hook for a human 112 trainee (owner Q1, E6g — not in I3) | DDS, INSTRUCTOR |
 | `DDS_CALL_ENDED` (additive, I3 E6b) | `TRAINEE`, `SIMULATION`, `SYSTEM` | `call_id: uuid`, `reason: HANGUP \| NO_ANSWER \| BUSY \| ABORT \| TRANSPORT_LOST`, `duration_ms: int` (0 when never connected), `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_CALL_STATUS_PROPOSED` (additive, I3 E6c) | `SIMULATION` | `call_id: uuid`, `assignment_id: uuid`, `service_type: ServiceId`, `status: ServiceResponseStatus`, `order_number: str \| null`, `comment_ru: str \| null`, `script_after_ms: int`, `due_offset_ms: int` (`received_at_offset_ms + script_after_ms`, the INV 7 key), `at_offset_ms: int` (when the head said it) — a due script step the service head reported on the call, heard to its end; changes no leg — the trainee confirms it with `setDdsServiceStatus {proposed_by_call_id}` (80 §80.4.2, D24) | DDS, INSTRUCTOR |
-| `DDS_CALL_ASSERTION` (additive, I3 E6c) | `MODEL` | `call_id: uuid`, `turn_id: uuid`, `field_path: str`, `value_ru: str`, `matches_snapshot: bool`, `at_offset_ms: int` — one card fact the trainee stated on a service head's first call, matched by code against the handoff snapshot (80 §80.4.2) | INSTRUCTOR |
+| `DDS_CALL_ASSERTION` (additive, I3 E6c) | `MODEL` | `call_id: uuid`, `turn_id: uuid`, `field_path: str`, `value_ru: str`, `matches_snapshot: bool`, `at_offset_ms: int` — one card fact the trainee stated on a service head's first call, matched by code against the handoff snapshot (80 §80.4.2); on a call to 112 (I3 E6d, 80 §80.3.4) one REQ-5332 checklist item: `call.self_identification` (`matches_snapshot` = the service named is one the card was routed to), `call.card_reference` (always `true`: the snapshot holds no card number to compare), `address.*` (matched as above), `incident.change` (always `false`: a change is what the card does not say) | INSTRUCTOR |
 | `DDS_CARD_ISSUE_FLAGGED` (additive, I3 E5b) | `TRAINEE` | `assignment_id: uuid`, `field_path: str \| null`, `issue_kind: MISSING \| WRONG \| CONTRADICTION \| OTHER`, `comment_ru: str`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС flagged an error in the received card (`dds_card_check: ON`, «Отметить ошибку в карточке»), against the frozen snapshot only (HLD 70 §70.7, C1); the comparison to truth happens only in scoring (INV 3) | DDS, INSTRUCTOR |
 
 **The per-turn events of a ДДС call (additive, I3 E6b — 80 §80.6).** `USER_SPEECH_*`, `ASR_*`,

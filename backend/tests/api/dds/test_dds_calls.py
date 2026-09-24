@@ -361,14 +361,10 @@ async def test_on_offers_call_claimant_on_the_stage(
         action["action_id"]: action["label_ru"] for action in snapshot.json()["available_actions"]
     }
     assert actions["call_claimant"] == "Позвонить заявителю"
-    # E6c landed the service head («Позвонить старшему»); E6d's 112 kind is not offered yet (409 on
-    # a direct call).
+    # E6c landed the service head («Позвонить старшему»), E6d the call to 112
+    # (`test_operator_112_calls.py`).
     assert actions["call_service_head"] == "Позвонить старшему"
-    assert "call_112" not in actions
-    head = await client.post(
-        f"{API}/{on_session}/dds-calls", headers=dds(tokens), json={"kind": "OPERATOR_112"}
-    )
-    assert head.status_code == 409 and head.json()["code"] == "ACTION_NOT_AVAILABLE"
+    assert actions["call_112"] == "Позвонить в 112"
 
 
 async def test_the_claimant_call_rings_is_answered_and_is_hung_up(

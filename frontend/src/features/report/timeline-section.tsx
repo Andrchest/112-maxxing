@@ -4,9 +4,15 @@
 // `stage`/`role_stage_id` field to filter by directly; see the report's "HLD gaps"). No
 // virtualisation (brief: not required for this data size).
 //
+// Calls (I3 E6c backend, rendered since E6d): an entry of a call carries `call_id` and the call's
+// party label `call_party_ru` («Вызов 112: абонент», «Звонок ДДС: Оператор 112»). When the report
+// has any, a third filter shows one call's entries at a time and each call entry carries its party
+// label; a report without them renders exactly as before.
+//
 // `highlightedSeqNo` supports the rule-evidence section's "scroll to / highlight this event"
 // (§29 item 14): when it changes, the matching row scrolls into view and gets a highlight ring.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { formatCallDurationMs } from '@/entities/call';
@@ -14,6 +20,7 @@ import type { ActorType, EventType, TimelineEntryView } from '@/shared/api';
 import { actorTypeLabelRu } from './timeline-labels';
 import { eventTypeLabelRu } from './event-type-labels';
 import { timelineEntryRowId } from './timeline-row-id';
+import { timelineCalls } from './call-groups';
 
 interface TimelineSectionProps {
   timeline: readonly TimelineEntryView[];
@@ -25,6 +32,7 @@ const ALL = 'ALL' as const;
 export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineSectionProps) {
   const [actorFilter, setActorFilter] = useState<ActorType | typeof ALL>(ALL);
   const [eventTypeFilter, setEventTypeFilter] = useState<EventType | typeof ALL>(ALL);
+  const [callFilter, setCallFilter] = useState<string>(ALL);
   const rowRefs = useRef(new Map<number, HTMLLIElement>());
 
   const actorOptions = useMemo(
@@ -36,8 +44,13 @@ export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineS
     [timeline],
   );
 
+  const callOptions = useMemo(() => timelineCalls(timeline), [timeline]);
+
   const filtered = timeline.filter(
-    (entry) => (actorFilter === ALL || entry.actor_type === actorFilter) && (eventTypeFilter === ALL || entry.event_type === eventTypeFilter),
+    (entry) =>
+      (actorFilter === ALL || entry.actor_type === actorFilter) &&
+      (eventTypeFilter === ALL || entry.event_type === eventTypeFilter) &&
+      (callFilter === ALL || entry.call_id === callFilter),
   );
 
   useEffect(() => {
@@ -82,6 +95,24 @@ export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineS
               ))}
             </select>
           </label>
+          {callOptions.length > 0 ? (
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {t('reportTimelineCallFilterLabel')}
+              <select
+                className="h-7 rounded-lg border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+                value={callFilter}
+                data-slot="timeline-call-filter"
+                onChange={(event) => setCallFilter(event.target.value)}
+              >
+                <option value={ALL}>{t('reportTimelineCallFilterAll')}</option>
+                {callOptions.map((option) => (
+                  <option key={option.callId} value={option.callId}>
+                    {option.partyRu}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>
@@ -105,6 +136,11 @@ export function TimelineSection({ timeline, highlightedSeqNo = null }: TimelineS
                   {formatCallDurationMs(entry.monotonic_offset_ms)}
                 </span>
                 <span className="text-xs text-muted-foreground">{actorTypeLabelRu(entry.actor_type)}</span>
+                {entry.call_id ? (
+                  <Badge variant="outline" data-slot="timeline-call-party">
+                    {entry.call_party_ru ?? t('reportCallPartyUnknown')}
+                  </Badge>
+                ) : null}
                 <span>{entry.summary_ru}</span>
               </li>
             ))}

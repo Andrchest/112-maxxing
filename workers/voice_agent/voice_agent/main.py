@@ -10,8 +10,9 @@ A separate process, not a backend thread. It:
    calls are keyed by `(session_id, call_id)` (I3 E6b, HLD 80 §80.3.6): a ДДС call-back to the
    claimant (`call_kind: CLAIMANT`) runs beside the session's 112 call, on the same frozen caller
    pipeline, and never writes the 112 call's `CALL_ENDED` or `session:{id}:call_state`; a call to a
-   service head (`call_kind: SERVICE_HEAD`, I3 E6c) runs the responder chain instead
-   (`build_service_head_responder`) in the persona's voice;
+   service head (`call_kind: SERVICE_HEAD`, I3 E6c) and the AI 112 operator (`call_kind:
+   OPERATOR_112`, I3 E6d) run the responder chain instead (`build_service_head_responder`) in the
+   persona's voice;
 3. warms the inference components up in `60-inference-ops.md` §4.2's **sequential** order — VAD,
    then ASR, then the LLM, then TTS — and heartbeats one `voice:health:{service}` key per warmed
    component with `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A
@@ -115,10 +116,14 @@ HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_S
 
 #: `voice:join.call_kind` of the session's 112 call — absent from the payload means this (§80.3.6).
 CALL_KIND_CALLER = "CALLER"
-#: The ДДС call kinds this build runs: the claimant call-back on the frozen caller chain (I3 E6b)
-#: and the service head on the responder chain (I3 E6c). `OPERATOR_112` (E6d) is ignored until then.
+#: The ДДС call kinds this build runs: the claimant call-back on the frozen caller chain (I3 E6b),
+#: the service head (I3 E6c) and the AI 112 operator (I3 E6d) on the responder chain.
 SUPPORTED_DDS_CALL_KINDS: frozenset[str] = frozenset(
-    {DdsCallKind.CLAIMANT.value, DdsCallKind.SERVICE_HEAD.value}
+    {DdsCallKind.CLAIMANT.value, DdsCallKind.SERVICE_HEAD.value, DdsCallKind.OPERATOR_112.value}
+)
+#: The ДДС call kinds whose AI party is a persona on the responder chain (HLD 80 §80.3.6).
+RESPONDER_CALL_KINDS: frozenset[str] = frozenset(
+    {DdsCallKind.SERVICE_HEAD.value, DdsCallKind.OPERATOR_112.value}
 )
 
 #: `CALL_ENDED.reason` when the call's transport could not be built at all (E19-E3). A free `str`
@@ -851,9 +856,10 @@ class VoiceAgent:
                 if dds_call
                 else {}
             )
-            if call_kind == DdsCallKind.SERVICE_HEAD.value:
+            if call_kind in RESPONDER_CALL_KINDS:
                 # I3 E6c (HLD 80 §80.4): the service head's chain behind ASR, in its own voice;
-                # the fixed lines come from the warmed cache when there is one.
+                # the fixed lines come from the warmed cache when there is one. I3 E6d: the AI
+                # 112 operator is the same chain — the loader and the templates read the kind.
                 dds_options["next_stage"] = build_service_head_responder(
                     self._deps,
                     voice_id=self._persona_voice(persona_id),

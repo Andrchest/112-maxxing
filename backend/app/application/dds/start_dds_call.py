@@ -9,10 +9,9 @@ in the same transaction — and, for a claimant whose 112 call is live, `busy` r
 `guard_dds_call_allowed` (§80.3.2) is this command's gate, in the DDS pipeline's fixed order
 (`DdsCommandGate.open`): session `ACTIVE` (`409 SESSION_NOT_ACTIVE`), a ДДС participant trainee of
 the active DDS stage (`403`), and the kind's action id in `available_actions` — which holds only
-under `dds_brigade_call: ON`, in memo mode, in `RECEIVED` / `ACKNOWLEDGED`, and only for a kind an
-epic has landed (`call_claimant` in E6b; `call_service_head` E6c, `call_112` E6d), else `409
-ACTION_NOT_AVAILABLE`. Then one line per workstation: a live call of the same user ⇒ `409
-DDS_LINE_BUSY`.
+under `dds_brigade_call: ON`, in memo mode, in `RECEIVED` / `ACKNOWLEDGED` (`call_claimant` E6b,
+`call_service_head` E6c, `call_112` E6d), else `409 ACTION_NOT_AVAILABLE`. Then one line per
+workstation: a live call of the same user ⇒ `409 DDS_LINE_BUSY`.
 
 **The service head (§80.3.3, §80.4.1; I3 E6c).** `assignment_id` names the leg (`422` without
 one; `404` for a leg not on this card) and the caller must play it (`plays_leg`, else `403
@@ -28,6 +27,12 @@ to `caller.phone_aon`; a card with neither number has nobody to call back (`409
 ACTION_NOT_AVAILABLE`). No persona is resolved: the scenario's `CallerProfile` is the claimant, and
 the voice agent runs the frozen caller chain for this `call_id` (`voice:join {call_kind:
 CLAIMANT}`).
+
+**112 (§80.3.4; I3 E6d).** `dialed` is `"112"` (the dial plan's first row, §80.3.5) and the persona
+is the pack's `applies: {kind: OPERATOR_112}` one — the AI 112 operator, who knows the frozen
+snapshot and nothing else and asks for REQ-5332's checklist (`responder_templates.py`). The human
+112 trainee on a second line is owner question Q1 — the reserved hook (`answered_by: TRAINEE`,
+E6g) has no behaviour here: the AI always answers.
 
 **The endpoint** is `BROWSER` in E6b; the softphone endpoint (`SIP`, a live `sip:binding:{user}`)
 is E6e's (§80.3.7). The answer carries the room-scoped token for the browser endpoint.
@@ -67,7 +72,7 @@ from app.domain.dds.call import (
     DdsLineBusyError,
     start_call,
 )
-from app.domain.dds.personas import Persona, resolve_persona
+from app.domain.dds.personas import OPERATOR_112_KIND, Persona, resolve_persona
 from app.domain.enums import ServiceId
 from app.domain.events.types import EventType
 from app.domain.layers.handoff import HandoffSnapshot
@@ -75,6 +80,7 @@ from app.domain.routing.dial_plan import phone_extension
 
 __all__ = [
     "ACTION_ID_BY_KIND",
+    "DIALED_112",
     "PersonaOverrideProbe",
     "StartDdsCall",
     "StartedDdsCall",
@@ -99,6 +105,8 @@ ACTION_ID_BY_KIND: dict[DdsCallKind, str] = {
 """`openapi.yaml`'s `x-action` of `startDdsCall`, per kind (HLD 80 §80.5)."""
 
 _PHONE_FIELDS = ("caller.phone", "caller.phone_aon")
+DIALED_112 = "112"
+"""What a call to 112 dials (HLD 80 §80.3.5's first row)."""
 _NON_DIGIT = re.compile(r"\D")
 
 
@@ -199,8 +207,12 @@ class StartDdsCall:
                 service_type, dialed, persona = await service_head_target(
                     ctx, assignment_id, override
                 )
+            elif kind is DdsCallKind.OPERATOR_112:
+                # I3 E6d (§80.3.4): the AI 112 operator answers (owner Q1's default).
+                dialed = DIALED_112
+                persona = resolve_persona(ctx.personas, code=None, kind=OPERATOR_112_KIND)
             else:
-                dialed = claimant_number(ctx.snapshot) if kind is DdsCallKind.CLAIMANT else None
+                dialed = claimant_number(ctx.snapshot)
             if dialed is None:
                 raise ActionNotAvailableError(ACTION_ID_BY_KIND[kind], ctx.stage_state)
             call, started = start_call(

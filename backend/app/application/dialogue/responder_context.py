@@ -24,13 +24,21 @@ beyond the snapshot it was sent and asks for what the checklist names: the snaps
 `required_for_handoff` paths of the session's card schema (address, what happened, …; the
 caller's own number and the recipient list are not the brigade's business). The trainee's answers
 are matched to those values by code (`ResponderTemplates`), never by a model.
+
+**The AI 112 operator (§80.3.4; I3 E6d).** A call to 112 (`kind = OPERATOR_112`) is answered by the
+same chain with the same loader: its knowledge is **the session's snapshot and nothing else** — the
+frozen card the ДДС holds (the DDS stage's legs share one `handoff_snapshots` row), the catalog
+entries of the services the card was routed to (reference data, to recognise the service a ДДС
+names when it introduces itself), the address items of the snapshot, and which REQ-5332 checklist
+items the trainee has already stated on this call (its own `DDS_CALL_ASSERTION`s). The script
+probe is never called for it: no script step, no leg status, no proposal.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.application.ports.clock import Clock
 from app.application.ports.reference import ReferencePort
@@ -41,8 +49,8 @@ from app.application.simulation.sim_time import running_ms
 from app.domain.common.ids import SessionId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.dds.call import DdsCallDirection, fold_dds_calls
-from app.domain.dds.personas import Persona, resolve_persona
+from app.domain.dds.call import DdsCall, DdsCallDirection, DdsCallKind, fold_dds_calls
+from app.domain.dds.personas import OPERATOR_112_KIND, Persona, resolve_persona
 from app.domain.dds.responders import (
     ScriptedResponders,
     ScriptedStep,
@@ -59,6 +67,7 @@ from app.domain.routing.catalog import ServiceCatalogEntry
 from app.domain.session.session import SimulationSession
 
 __all__ = [
+    "ADDRESS_PREFIX",
     "CHECKLIST_EXCLUDED_PREFIXES",
     "ChecklistItem",
     "DueStep",
@@ -74,6 +83,9 @@ type ScriptProbe = Callable[[SessionId], Awaitable[ScriptedResponders | None]]
 
 CHECKLIST_EXCLUDED_PREFIXES: tuple[str, ...] = ("caller.", "recipients.")
 """Required card paths a brigade head does not ask for: the caller's own data and the list."""
+
+ADDRESS_PREFIX = "address."
+"""The snapshot paths the 112 operator's checklist item «адрес» is matched against (REQ-5332)."""
 
 
 class ResponderNotFoundError(LookupError):
@@ -105,15 +117,16 @@ class ResponderKnowledge:
     session_id: SessionId
     call_id: uuid.UUID
     direction: DdsCallDirection
-    assignment_id: uuid.UUID
-    service_type: ServiceId
+    assignment_id: uuid.UUID | None
+    """The leg of a service head's call; `None` on a call to 112 (I3 E6d)."""
+    service_type: ServiceId | None
     service: ServiceCatalogEntry | None
     persona: Persona | None
     snapshot_values: Mapping[str, FactValue]
     checklist: tuple[ChecklistItem, ...]
     steps_due: tuple[DueStep, ...]
     steps_pending_count: int
-    leg_status_now: ServiceResponseStatus
+    leg_status_now: ServiceResponseStatus | None
     leg_order_number: str | None
     received_at_offset_ms: int
     first_call: bool
@@ -123,6 +136,13 @@ class ResponderKnowledge:
     proposed_on_this_call: frozenset[tuple[str, int]]
     """`(status, due_offset_ms)` already proposed on this call: never proposed twice on it."""
     now_ms: int
+    kind: DdsCallKind = DdsCallKind.SERVICE_HEAD
+    """Whose knowledge this is: a service head's (E6c) or the AI 112 operator's (E6d)."""
+    recipients: tuple[ServiceCatalogEntry, ...] = ()
+    """112 only: the catalog entries of the services the snapshot was routed to."""
+    stated_on_this_call: Mapping[str, bool] = field(default_factory=dict)
+    """112 only: `field_path → matched the snapshot at least once` of this call's
+    `DDS_CALL_ASSERTION`s — the REQ-5332 items the trainee has already covered."""
 
 
 def checklist_of(
@@ -164,6 +184,15 @@ class ResponderContextLoader:
             if session is None or session.started_at is None:
                 raise ResponderNotFoundError(f"session {session_id}")
             call = await uow.dds_calls.get(session_id, call_id)
+            if call is not None and call.kind is DdsCallKind.OPERATOR_112:
+                values, recipients_ids, received_at = await _session_snapshot(uow, session)
+                log = list(await uow.events.read(session_id))
+                now_ms = running_ms(session, self._clock.now())
+                await uow.commit()
+                # I3 E6d: the snapshot and nothing else — the script probe is never asked.
+                return self._operator_knowledge(
+                    session_id, call, values, recipients_ids, received_at, log, now_ms
+                )
             if call is None or call.assignment_id is None:
                 raise ResponderNotFoundError(f"service-head call {call_id}")
             leg = await _leg(uow, session, str(call.assignment_id))
@@ -238,6 +267,87 @@ class ResponderContextLoader:
             now_ms=now_ms,
         )
 
+    def _operator_knowledge(
+        self,
+        session_id: SessionId,
+        call: DdsCall,
+        snapshot_values: Mapping[str, FactValue],
+        recipient_ids: Sequence[ServiceId],
+        received_at_offset_ms: int,
+        log: Sequence[SessionEvent],
+        now_ms: int,
+    ) -> ResponderKnowledge:
+        """The AI 112 operator's knowledge (I3 E6d, §80.3.4): the snapshot, the recipients' catalog
+        entries, the snapshot's address items and what this call has covered so far."""
+        catalog = reference_catalog(self._reference)
+        pack_id = session_pack_id(log)
+        services = catalog.services(pack_id)
+        persona = resolve_persona(
+            catalog.personas(pack_id),
+            code=None,
+            kind=OPERATOR_112_KIND,
+            override=call.persona_id,
+        )
+        recipients = tuple(
+            entry
+            for entry in (
+                None if services is None else services.get(service_id)
+                for service_id in recipient_ids
+            )
+            if entry is not None
+        )
+        wanted = str(call.call_id).lower()
+        previous = [
+            other.call_id
+            for other in fold_dds_calls(session_id, log)
+            if other.kind is DdsCallKind.OPERATOR_112 and str(other.call_id).lower() != wanted
+        ]
+        return ResponderKnowledge(
+            session_id=session_id,
+            call_id=call.call_id,
+            direction=call.direction,
+            assignment_id=None,
+            service_type=None,
+            service=None,
+            persona=persona,
+            snapshot_values=dict(snapshot_values),
+            checklist=tuple(
+                item
+                for item in checklist_of(snapshot_values, pack_card_schema(catalog, log))
+                if item.field_path.startswith(ADDRESS_PREFIX)
+            ),
+            steps_due=(),
+            steps_pending_count=0,
+            leg_status_now=None,
+            leg_order_number=None,
+            received_at_offset_ms=received_at_offset_ms,
+            first_call=True,
+            call_history=tuple(previous),
+            proposed_on_this_call=frozenset(),
+            now_ms=now_ms,
+            kind=DdsCallKind.OPERATOR_112,
+            recipients=recipients,
+            stated_on_this_call=_stated_on(log, wanted),
+        )
+
+
+async def _session_snapshot(
+    uow: UnitOfWork, session: SimulationSession
+) -> tuple[Mapping[str, FactValue], tuple[ServiceId, ...], int]:
+    """The frozen card the ДДС holds — its DDS stage's legs share one snapshot row — its recipient
+    services and when the ДДС received it (I3 E6d)."""
+    for stage in session.stages:
+        if stage.role_type is not RoleType.DDS:
+            continue
+        legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
+        if not legs:
+            continue
+        snapshot = await uow.handoffs.get(legs[0].snapshot_id)
+        if snapshot is None:
+            break
+        return snapshot.card_values, snapshot.recipient_services, legs[0].received_at_offset_ms
+    raise ResponderNotFoundError(f"snapshot of session {session.id}")
+
 
 async def _leg(uow: UnitOfWork, session: SimulationSession, assignment_id: str) -> DDSAssignment:
     """The leg by id, among the session's DDS stages' legs."""
@@ -274,3 +384,16 @@ def _proposed_on(log: Sequence[SessionEvent], call_key: str) -> frozenset[tuple[
         if event.event_type is EventType.DDS_CALL_STATUS_PROPOSED
         and str(event.payload.get("call_id", "")).lower() == call_key
     )
+
+
+def _stated_on(log: Sequence[SessionEvent], call_key: str) -> Mapping[str, bool]:
+    """`field_path → any matched` of every `DDS_CALL_ASSERTION` already on this call (I3 E6d)."""
+    stated: dict[str, bool] = {}
+    for event in log:
+        if event.event_type is not EventType.DDS_CALL_ASSERTION:
+            continue
+        if str(event.payload.get("call_id", "")).lower() != call_key:
+            continue
+        path = str(event.payload["field_path"])
+        stated[path] = stated.get(path, False) or bool(event.payload.get("matches_snapshot"))
+    return stated

@@ -1542,8 +1542,7 @@ paths:
         the user has a live softphone binding and the deployment offers `sip` (80 §80.3.7, E6e),
         else `BROWSER`; `voice` is the room-scoped LiveKit token for the browser endpoint and
         `null` for `SIP` (the softphone rings instead). `SERVICE_HEAD` kind: E6c; `OPERATOR_112`
-        kind: E6d; `CLAIMANT`: E6b. Until an epic lands its kind, that kind is `409
-        ACTION_NOT_AVAILABLE`. A `CLAIMANT` call is placed to the frozen snapshot's `caller.phone`;
+        kind: E6d; `CLAIMANT`: E6b — all three are implemented. A `CLAIMANT` call is placed to the frozen snapshot's `caller.phone`;
         while the session's 112 call is live the claimant is `busy` (the call comes back `ENDED`).
         (I3 E6c — 80 §80.4.1) A `SERVICE_HEAD` call without `assignment_id` ⇒ `422
         VALIDATION_ERROR`, a leg not on this card ⇒ `404`; it dials the service's number (its
@@ -1551,6 +1550,12 @@ paths:
         reference pack by catalog category (`code` over `kind`) unless the scenario names one for
         the service (R42); `persona_id` is recorded on `DDS_CALL_STARTED` and a `busy` persona
         answers `BUSY`.
+        (I3 E6d — 80 §80.3.4) An `OPERATOR_112` call («Позвонить в 112», `call_112`) dials `112`
+        and is answered by the AI 112 operator (persona `OPERATOR_112`; owner Q1's default): it
+        knows the session's snapshot only and asks for REQ-5332's checklist — self-identification,
+        the address, the card being worked, the change — each item the trainee covers becoming a
+        `DDS_CALL_ASSERTION` for the instructor and the scorer. `answered_by` is `AI` on every
+        I3 call; `TRAINEE` on an `OPERATOR_112` call is the reserved hook of E6g.
       x-action: [call_service_head, call_claimant, call_112]
       x-emits: [DDS_CALL_STARTED, DDS_CALL_ENDED]
       parameters:

@@ -84,9 +84,9 @@ async def test_the_112_call_and_a_claimant_call_back_are_two_pipelines() -> None
         # §40.6's retry re-publishes both; each is a no-op now.
         await agent._on_join(join(CALL_112, f"session-{SESSION}"))
         await agent._on_join(join(DDS_CALL, f"dds-{SESSION}-{DDS_CALL}", call_kind="CLAIMANT"))
-        # `OPERATOR_112` needs E6d's responder chain and is not run by this build (the service
-        # head, E6c, is: `test_service_head_in_agent.py`).
-        await agent._on_join(join(uuid.uuid4(), "dds-y", call_kind="OPERATOR_112"))
+        # An unknown kind is ignored (the service head, E6c, and the 112 operator, E6d, run the
+        # responder chain: `test_service_head_in_agent.py`, `test_operator_112_in_agent.py`).
+        await agent._on_join(join(uuid.uuid4(), "dds-y", call_kind="SOMEONE_ELSE"))
         await asyncio.sleep(0)
         assert set(agent.active_calls) == {(SESSION, CALL_112), (SESSION, DDS_CALL)}
         assert agent.active_sessions == (SESSION,)

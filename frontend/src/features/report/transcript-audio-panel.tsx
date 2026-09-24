@@ -2,6 +2,12 @@
 // segment as an authenticated blob the first time it is needed (an `<audio>` element cannot carry
 // a Bearer header, D9/D12) and keeps one object URL per fetched segment for the life of this
 // component, revoking every one of them on unmount.
+//
+// Calls (I3 E6c backend, rendered since E6d): a segment of a call carries `call_id` and the call's
+// party label `call_party_ru`. When the transcript has any, its turns are grouped per call, in the
+// order the calls first speak, each group headed by its party label («Вызов 112: абонент»,
+// «Звонок ДДС: Оператор 112»); on a ДДС call «Оператор» is the ДДС trainee. A transcript without
+// them renders as one list, exactly as before.
 import { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
@@ -10,6 +16,7 @@ import { ru } from '@/shared/i18n/ru';
 import { getAudioSegment, problemMessageRu, type AudioSegmentRef, type ProblemCode, type TranscriptSegmentView } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { isTranscriptSegmentPlaying, seekTargetForTranscriptSegment } from '@/shared/media/report-audio';
+import { groupTranscriptByCall } from './call-groups';
 
 const SPEAKER_LABEL_KEY = {
   OPERATOR: 'speakerOperator',
@@ -98,6 +105,31 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
 
   const activeUrl = activeAudioSegmentId ? objectUrls[activeAudioSegmentId] : undefined;
 
+  function renderSegment(segment: TranscriptSegmentView) {
+    const target = seekTargetForTranscriptSegment(segment, audioSegments);
+    const playing = isTranscriptSegmentPlaying(segment, activeAudioSegmentId, currentTimeSeconds, audioSegments);
+    const audioSegment = segment.audio_segment_id ? audioSegments.find((s) => s.audio_segment_id === segment.audio_segment_id) : null;
+    return (
+      <li key={segment.id}>
+        <button
+          type="button"
+          disabled={!target}
+          onClick={() => void handleTranscriptClick(segment)}
+          className={`flex w-full flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors ${
+            playing ? 'bg-primary/10 ring-1 ring-primary' : target ? 'hover:bg-muted' : 'cursor-default opacity-70'
+          }`}
+        >
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{t(SPEAKER_LABEL_KEY[segment.speaker])}</Badge>
+            {loadingSegmentId === segment.audio_segment_id ? '…' : null}
+            {audioSegment?.purged ? t('problemAudioPurged') : null}
+          </span>
+          <span>{segment.text}</span>
+        </button>
+      </li>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -119,32 +151,18 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
         {transcript.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('reportTranscriptEmpty')}</p>
         ) : (
-          <ul className="flex max-h-96 flex-col gap-1 overflow-auto">
-            {transcript.map((segment) => {
-              const target = seekTargetForTranscriptSegment(segment, audioSegments);
-              const playing = isTranscriptSegmentPlaying(segment, activeAudioSegmentId, currentTimeSeconds, audioSegments);
-              const audioSegment = segment.audio_segment_id ? audioSegments.find((s) => s.audio_segment_id === segment.audio_segment_id) : null;
-              return (
-                <li key={segment.id}>
-                  <button
-                    type="button"
-                    disabled={!target}
-                    onClick={() => void handleTranscriptClick(segment)}
-                    className={`flex w-full flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors ${
-                      playing ? 'bg-primary/10 ring-1 ring-primary' : target ? 'hover:bg-muted' : 'cursor-default opacity-70'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Badge variant="outline">{t(SPEAKER_LABEL_KEY[segment.speaker])}</Badge>
-                      {loadingSegmentId === segment.audio_segment_id ? '…' : null}
-                      {audioSegment?.purged ? t('problemAudioPurged') : null}
-                    </span>
-                    <span>{segment.text}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="flex max-h-96 flex-col gap-2 overflow-auto">
+            {groupTranscriptByCall(transcript).map((group) => (
+              <section key={group.callId ?? 'no-call'} className="flex flex-col gap-1" data-slot="transcript-call-group">
+                {group.callId !== null ? (
+                  <h3 className="text-xs font-medium text-muted-foreground" data-slot="transcript-call-heading">
+                    {group.partyRu ?? t('reportCallPartyUnknown')}
+                  </h3>
+                ) : null}
+                <ul className="flex flex-col gap-1">{group.segments.map(renderSegment)}</ul>
+              </section>
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>

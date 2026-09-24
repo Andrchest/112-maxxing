@@ -930,4 +930,9 @@ export const ru = {
   ddsLegProposalFromCall: 'Статус со звонка',
   eventTypeDdsCallStatusProposed: 'Старший службы доложил статус',
   eventTypeDdsCallAssertion: 'ДДС сообщила сведения по телефону',
+  // -- I3 E6d: the call to 112, and the report's calls (HLD 80 §80.3.4, §80.6.1) ----------------
+  ddsPhoneCall112: 'Позвонить в 112',
+  reportTimelineCallFilterLabel: 'Звонок',
+  reportTimelineCallFilterAll: 'Все звонки',
+  reportCallPartyUnknown: 'Звонок',
 } as const;
