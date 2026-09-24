@@ -88,6 +88,7 @@ PAYLOAD_LABELS_RU: Mapping[str, str] = {
     "field_path": "поле",
     "from_role_type": "из роли",
     "intent": "намерение",
+    "issue_kind": "вид ошибки в карточке",
     "new_state": "новое состояние",
     "new_status": "новый статус",
     "new_value": "новое значение",
@@ -229,6 +230,9 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.DDS_CARD_OPENED: SummaryTemplate("ДДС открыла карточку", ("service_type",)),
     EventType.DDS_SERVICE_STATUS_SET: SummaryTemplate(
         "Статус службы изменён", ("service_type", "new_status")
+    ),
+    EventType.DDS_CARD_ISSUE_FLAGGED: SummaryTemplate(
+        "ДДС отметила ошибку в карточке", ("issue_kind", "field_path")
     ),
 }
 

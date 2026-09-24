@@ -71,6 +71,7 @@ from app.domain.layers.card_schema import CardSchema
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.roles.visibility import VisibilitySource
 from app.domain.session.session import RoleStage, SimulationSession
+from app.domain.session.variants import DdsMode
 
 __all__ = ["GetSnapshot", "SessionSnapshotView"]
 
@@ -242,9 +243,25 @@ def _available_actions(
     filter is the one `openapi.yaml` describes on this field, and it is advisory only — the
     command gate re-checks both of D8's gates server-side whatever the UI shows.
     """
-    if stage is None or stage.participant_user_id != user.user_id:
+    if stage is None:
+        return ()
+    if stage.participant_user_id != user.user_id and not _memo_dds_participant(
+        session, stage, user
+    ):
         return ()
     module = ROLE_MODULES.get(stage.role_type)
     if module is None:
         return ()
     return action_views(module.available_actions(stage.state, variants=session.variants))
+
+
+def _memo_dds_participant(
+    session: SimulationSession, stage: RoleStage, user: AuthenticatedUser
+) -> bool:
+    """A second (or third) ДДС trainee of a memo session acts on the one DDS stage too (HLD 70
+    §70.4.4 `DDS_GUARDS_MEMO`, §70.4.5, I3 E5b) — the command gate's `may_command` reading."""
+    return (
+        stage.role_type is RoleType.DDS
+        and session.variants.dds_mode is DdsMode.MEMO_STATUSES
+        and session.plays_dds(user.user_id)
+    )

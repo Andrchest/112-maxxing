@@ -12,8 +12,8 @@ the table offers `set_service_status`, whose first step on an `ADDED` leg is exa
 `receive`, so the gate accepts either action id (`DdsCommandGate.open`'s "any of these").
 
 **The stage.** `acknowledge` is fired here only when the trainee owns no leg of this card
-(§70.4.4) — until E5b binds services every leg is unbound, so every ДДС participant owns every leg
-and the first primary decision (`setDdsServiceStatus`) acknowledges instead.
+(§70.4.4) — e.g. a ДДС participant bound to a service this card did not notify (I3 E5b); a
+trainee who plays a leg acknowledges with their first primary decision (`setDdsServiceStatus`).
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from app.application.dds.views import DdsLegView
 from app.domain.common.actors import ActorRef
 from app.domain.common.ids import AssignmentId, SessionId
 from app.domain.dds.assignment import DDSAssignment, fire_response_trigger
+from app.domain.dds.responders import plays_leg
 from app.domain.dds.response import ServiceResponseStatus, StatusSource
 from app.domain.enums import ActorType, DDSStageState
 from app.domain.events.session_event import DomainEvent
@@ -76,8 +77,9 @@ class OpenDdsCard:
 
 
 def _owns_a_leg(ctx: DdsCommandContext, user: AuthenticatedUser) -> bool:
-    """The trainee plays at least one leg of this card (unbound, or bound to them)."""
-    return any(leg.bound_user_id in (None, user.user_id) for leg in ctx.legs)
+    """The trainee plays at least one leg of this card (unbound, or bound to them; a `SCRIPTED`
+    leg is nobody's — I3 E5b)."""
+    return any(plays_leg(leg, user.user_id) for leg in ctx.legs)
 
 
 def _opened(ctx: DdsCommandContext, leg: DDSAssignment) -> DomainEvent:

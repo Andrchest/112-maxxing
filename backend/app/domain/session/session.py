@@ -54,6 +54,7 @@ from app.domain.enums import (
     DDSStageState,
     Operator112StageState,
     RoleType,
+    ServiceId,
     SessionMode,
     SessionState,
 )
@@ -141,6 +142,9 @@ class SessionParticipant(BaseModel):
     user_id: UserId
     assigned_role_type: RoleType | None = None
     participant_id: UUID | None = None
+    assigned_service_id: ServiceId | None = None
+    """The ДДС participant → service binding (HLD 70 §70.4.5, I3 E5b): the leg of this service is
+    theirs to play; distinct per session (`guard_scenario_valid_and_participants_assigned`)."""
 
 
 class RoleStage(BaseModel):
@@ -250,6 +254,30 @@ class SimulationSession(BaseModel):
         if not started:
             return None
         return max(started, key=lambda stage: stage.order_index)
+
+    def plays_dds(self, user_id: UserId) -> bool:
+        """The user is a ДДС participant: assigned `DDS`, the one participant of a full-cycle
+        session (`assigned_role_type` null, `ALL_STAGES_ONE_PARTICIPANT`), or the participant a
+        DDS stage is bound to (HLD 70 §70.4.4 "any ДДС participant of the session")."""
+        if any(
+            stage.role_type is RoleType.DDS and stage.participant_user_id == user_id
+            for stage in self.stages
+        ):
+            return True
+        return any(
+            participant.user_id == user_id and participant.assigned_role_type is RoleType.DDS
+            for participant in self.participants
+        )
+
+    @property
+    def dds_service_bindings(self) -> dict[str, UserId]:
+        """`service_id → user_id` over the participants bound to a service (§70.4.5, I3 E5b);
+        empty when nobody is bound — one trainee then plays every leg."""
+        return {
+            str(participant.assigned_service_id): participant.user_id
+            for participant in self.participants
+            if participant.assigned_service_id is not None
+        }
 
     def stage(self, stage_id: RoleStageId) -> RoleStage:
         """The stage with `role_stage_id == stage_id`; raises `KeyError` when there is none."""
@@ -762,7 +790,13 @@ def _bind_participants(
     bound: list[RoleStage] = []
     for stage in stages:
         matching = [p for p in participants if p.assigned_role_type is stage.role_type]
-        if len(matching) == 1:
+        if len(matching) == 1 or (
+            # Several ДДС trainees (HLD 70 §70.4.5, I3 E5b): each bound to a service; the stage's
+            # `participant_user_id` stays the *primary* one — the first in request order.
+            stage.role_type is RoleType.DDS
+            and len(matching) > 1
+            and all(p.assigned_service_id is not None for p in matching)
+        ):
             bound.append(stage.model_copy(update={"participant_user_id": matching[0].user_id}))
         else:
             bound.append(stage)
@@ -781,6 +815,7 @@ def create_session(
     created_by: ActorRef,
     participants: Sequence[tuple[UserId, RoleType | None]] = (),
     participant_ids: Sequence[UUID] | None = None,
+    assigned_services: Mapping[UserId, ServiceId] | None = None,
     session_seed: str | None = None,
     time_scale: float = 1.0,
     variants: SessionVariants | None = None,
@@ -804,7 +839,8 @@ def create_session(
     caller that has no reference pack at hand (domain-level tests), never from `CreateSession`.
     `timers` are the per-card timers (HLD 70 §70.3.4; `None` = the scenario's resolved timers) and
     `lesson_id` / `lesson_position` name the lesson card this session is (§70.3.2, both or
-    neither); `SESSION_CREATED` records all three.
+    neither); `SESSION_CREATED` records all three. `assigned_services` binds ДДС participants to
+    services (`user_id → service_id`, HLD 70 §70.4.5); `validate` checks the binding.
 
     Every id is passed in: the domain calls neither `uuid4` nor a clock. `session_seed` defaults to
     `scenario_version.deterministic_seed` (D7, SPEC §42 test 7).
@@ -876,11 +912,13 @@ def create_session(
         )
         for index, role_type in enumerate(role_chain)
     )
+    services = assigned_services or {}
     session_participants = tuple(
         SessionParticipant(
             user_id=user_id,
             assigned_role_type=role_type,
             participant_id=None if participant_ids is None else participant_ids[index],
+            assigned_service_id=services.get(user_id),
         )
         for index, (user_id, role_type) in enumerate(participants)
     )

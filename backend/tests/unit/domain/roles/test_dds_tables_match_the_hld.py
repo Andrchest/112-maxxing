@@ -159,19 +159,25 @@ def _variant_part(mode: DdsMode) -> str:
     return memo if mode is DdsMode.MEMO_STATUSES else picker
 
 
-def _variants(mode: DdsMode) -> SessionVariants:
+def _variants(mode: DdsMode, card_check: DdsCardCheck = DdsCardCheck.OFF) -> SessionVariants:
     return SessionVariants(
         card_source=CardSource.GENERATED_CARD,
         dds_mode=mode,
-        dds_card_check=DdsCardCheck.OFF,
+        dds_card_check=card_check,
         dds_brigade_call=DdsBrigadeCall.OFF,
     )
 
 
+_CARD_CHECK_ONLY = "only `dds_card_check: ON`"
+"""The qualifier §10.9's memo table puts on an action offered only under card check `ON` (E5b)."""
+
+
 def _documented_actions(
-    mode: DdsMode = DdsMode.RESOURCE_PICKER,
+    mode: DdsMode = DdsMode.RESOURCE_PICKER, card_check: DdsCardCheck = DdsCardCheck.OFF
 ) -> dict[DDSStageState, tuple[str, ...]]:
-    """`state -> the action ids §10.9 lists for it` in `mode`'s table, in the document's order."""
+    """`state -> the action ids §10.9 lists for it` in `mode`'s table, in the document's order.
+
+    An action qualified "only `dds_card_check: ON`" is listed only for `card_check` `ON`."""
     table: dict[DDSStageState, tuple[str, ...]] = {}
     for cells in _rows(_variant_part(mode), 2):
         names = _BACKTICKED.findall(cells[0])
@@ -182,6 +188,7 @@ def _documented_actions(
             _BACKTICKED.findall(part)[0]
             for part in cells[1].split(";")
             if _BACKTICKED.findall(part)
+            and (card_check is DdsCardCheck.ON or _CARD_CHECK_ONLY not in part)
         )
         table[state] = actions
     return table
@@ -189,6 +196,8 @@ def _documented_actions(
 
 DOCUMENTED_ACTIONS = _documented_actions()
 DOCUMENTED_MEMO_ACTIONS = _documented_actions(DdsMode.MEMO_STATUSES)
+DOCUMENTED_MEMO_CARD_CHECK_ACTIONS = _documented_actions(DdsMode.MEMO_STATUSES, DdsCardCheck.ON)
+DOCUMENTED_PICKER_CARD_CHECK_ACTIONS = _documented_actions(DdsMode.RESOURCE_PICKER, DdsCardCheck.ON)
 
 
 def test_the_parser_saw_every_dds_stage_state() -> None:
@@ -222,6 +231,37 @@ def test_memo_available_actions_match_the_documented_table(state: DDSStageState)
     """`DDSModule.available_actions(state, variants=memo)` is §10.9's memo row (HLD 70 §70.4.4)."""
     actual = DDSModule().available_actions(state, variants=_variants(DdsMode.MEMO_STATUSES))
     assert tuple(action.action_id for action in actual) == DOCUMENTED_MEMO_ACTIONS[state]
+
+
+@pytest.mark.parametrize("state", list(DDSStageState))
+def test_memo_card_check_actions_match_the_documented_table(state: DDSStageState) -> None:
+    """Under `dds_card_check: ON` the memo row also lists `flag_card_issue` (I3 E5b, C1)."""
+    variants = _variants(DdsMode.MEMO_STATUSES, DdsCardCheck.ON)
+    actual = DDSModule().available_actions(state, variants=variants)
+    assert tuple(action.action_id for action in actual) == DOCUMENTED_MEMO_CARD_CHECK_ACTIONS[state]
+
+
+def test_flag_card_issue_is_documented_for_card_check_on_only() -> None:
+    """A guard on the guard: the qualifier is parsed, and only `ACKNOWLEDGED` carries it."""
+    on = DOCUMENTED_MEMO_CARD_CHECK_ACTIONS[DDSStageState.ACKNOWLEDGED]
+    assert "flag_card_issue" in on
+    assert "flag_card_issue" not in DOCUMENTED_MEMO_ACTIONS[DDSStageState.ACKNOWLEDGED]
+    others = [actions for state, actions in DOCUMENTED_MEMO_CARD_CHECK_ACTIONS.items()]
+    assert sum("flag_card_issue" in actions for actions in others) == 1
+    for actions in DOCUMENTED_ACTIONS.values():
+        assert "flag_card_issue" not in actions
+
+
+@pytest.mark.parametrize("state", list(DDSStageState))
+def test_picker_card_check_actions_match_the_documented_table(state: DDSStageState) -> None:
+    """Under `dds_card_check: ON` the picker rows from `ACKNOWLEDGED` to `RESOLVED` also list
+    `flag_card_issue` (I3 E5b, §70.11: card check is supported in both modes)."""
+    variants = _variants(DdsMode.RESOURCE_PICKER, DdsCardCheck.ON)
+    actual = DDSModule().available_actions(state, variants=variants)
+    documented = DOCUMENTED_PICKER_CARD_CHECK_ACTIONS[state]
+    assert tuple(action.action_id for action in actual) == documented
+    flagged = state not in (DDSStageState.RECEIVED, DDSStageState.CLOSED)
+    assert ("flag_card_issue" in documented) is flagged
 
 
 def test_no_resource_action_is_offered_in_memo_mode() -> None:

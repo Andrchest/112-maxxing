@@ -1145,7 +1145,8 @@
         "DDS_CARD_STATUS_CHANGED",
         "RECIPIENTS_RESOLVED",
         "DDS_CARD_OPENED",
-        "DDS_SERVICE_STATUS_SET"
+        "DDS_SERVICE_STATUS_SET",
+        "DDS_CARD_ISSUE_FLAGGED"
       ],
       "title": "EventType",
       "type": "string"
@@ -1224,6 +1225,28 @@
             }
           ],
           "default": null
+        },
+        "responders": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "$ref": "#/$defs/ScriptedStep"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "const": "DEFAULT",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Responders"
         }
       },
       "required": [
@@ -1848,6 +1871,50 @@
       "title": "ScoringRule",
       "type": "object"
     },
+    "ScriptedStep": {
+      "additionalProperties": false,
+      "description": "One entry of a service's script: the status the leg moves to `after_ms` after its\n`HANDOFF_RECEIVED`, with the entry's comment and «Номер наряда» (free text, A-2).",
+      "properties": {
+        "after_ms": {
+          "minimum": 0,
+          "title": "After Ms",
+          "type": "integer"
+        },
+        "comment_ru": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment Ru"
+        },
+        "order_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order Number"
+        },
+        "status": {
+          "$ref": "#/$defs/ServiceResponseStatus"
+        }
+      },
+      "required": [
+        "after_ms",
+        "status"
+      ],
+      "title": "ScriptedStep",
+      "type": "object"
+    },
     "SeededRandomEvent": {
       "additionalProperties": false,
       "description": "Draws from the session-seeded RNG every `check_every_ms` (§30.6.3 #4).",
@@ -1966,6 +2033,22 @@
       ],
       "title": "SeededRandomEvent",
       "type": "object"
+    },
+    "ServiceResponseStatus": {
+      "description": "The memo's per-service statuses (p.21–22, REQ-5281–5289), §70.4.1.",
+      "enum": [
+        "ADDED",
+        "RECEIVED",
+        "ACCEPTED",
+        "NOT_ACCEPTED",
+        "RESPONSE_STARTED",
+        "ARRIVED",
+        "WORKING",
+        "COMPLETED",
+        "REFUSED"
+      ],
+      "title": "ServiceResponseStatus",
+      "type": "string"
     },
     "SessionVariants": {
       "additionalProperties": false,

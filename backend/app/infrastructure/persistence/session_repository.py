@@ -189,7 +189,11 @@ class SqlAlchemySessionRepository:
             result = await self._session.execute(
                 sa.update(_PARTICIPANTS)
                 .where(_PARTICIPANTS.c.id == row["id"])
-                .values(user_id=row["user_id"], assigned_role_type=row["assigned_role_type"])
+                .values(
+                    user_id=row["user_id"],
+                    assigned_role_type=row["assigned_role_type"],
+                    assigned_service_id=row["assigned_service_id"],
+                )
                 .returning(_PARTICIPANTS.c.id)
             )
             if result.one_or_none() is None:

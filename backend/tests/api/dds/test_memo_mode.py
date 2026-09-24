@@ -1,42 +1,55 @@
-"""The ДДС in memo mode, over HTTP (I3 E5a, HLD 70 §70.4.1–§70.4.4, §70.4.6; D16).
+"""The ДДС in memo mode, over HTTP (I3 E5a/E5b, HLD 70 §70.4.1–§70.4.6; D16).
 
-A memo session is the demo scenario run on its generated card (`card_source: GENERATED_CARD`, the
-`[DDS]` suffix) with `dds_mode: MEMO_STATUSES`: the prefab handoff materialises at start, one leg
-per recipient service, each in `ADDED`. The trainee then walks each leg's `ServiceResponseStatus`
-one step at a time with `setDdsServiceStatus`, and closes through the additive
-`ACKNOWLEDGED --close--> RESOLVED` row once every leg is terminal.
+A memo session is the committed schema-2 example `street-rubbish-fire` as the product creates it:
+its `variants` support `MEMO_STATUSES` and default to it, and it declares `responders: DEFAULT`
+(rule R36, I3 E5b) — so `createSession` with no variant request resolves `dds_mode:
+MEMO_STATUSES`. Nothing is patched. The prefab handoff materialises at start, one leg per notified
+service (Служба 101, ЦОДД, ОАТИ — «КАРТОЧКА 112.docx» image 19 — and the territorial ДДС the
+resolver adds), each in `ADDED`. The trainee then
+walks each leg's `ServiceResponseStatus` one step at a time with `setDdsServiceStatus`, and closes
+through the additive `ACKNOWLEDGED --close--> RESOLVED` row once every leg is terminal.
 
-**How the memo session is made.** No scenario can support `MEMO_STATUSES` through the product yet:
-rule R36 wants `expected_response.responders`, which is E5b's key (`backend/app/domain/scenario/
-validation.py`), and a schema-2 document without `variants` derives `dds_mode: {RESOURCE_PICKER}`.
-The `memo` fixture therefore forces the *resolved* `dds_mode` of `createSession` to
-`MEMO_STATUSES` (one patched function, everything else — validation, the record in
-`SESSION_CREATED.variants`, the start, every command — is the production path). The escalation is
-in the E5a report; when E5b lands `responders`, this fixture becomes a scenario that declares it.
+The 103 policy (`NO_REFUSAL`) needs an ambulance leg, which image 19 does not notify: that one test
+runs the same example with `AMBULANCE` added to its prefab's recipients (`ambulance_version_id`) —
+a real schema-2 document through the real import and validation, not a patch.
+
+E5b adds the service binding: a ДДС participant bound to one service plays that leg, and every
+other notified service is played by the scenario's scripted responder
+(`test_a_bound_trainee_plays_one_leg_and_the_script_plays_the_others`).
 """
 
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import sqlalchemy as sa
+import yaml
+from app.api.container import Container
 from app.application.scenarios.import_scenarios import canonical_content, content_digest
-from app.application.sessions import create_session as create_session_module
-from app.domain.common.ids import ScenarioId, ScenarioVersionId, UserId
+from app.application.testing.fakes import FakeClock
+from app.domain.common.ids import ScenarioId, ScenarioVersionId, SessionId, UserId
 from app.domain.scenario.version import ScenarioVersion
-from app.domain.session.variants import DdsMode, resolve_variants
 from app.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.api.conftest import auth, participant
-from tests.fixtures.scenarios import demo_document
 
 pytestmark = pytest.mark.integration
 
 API = "/api/v1/sessions"
+EXAMPLE_SLUG = "street-rubbish-fire"
+EXAMPLE_PATH = (
+    Path(__file__).resolve().parents[4] / "scenarios/examples/street-rubbish-fire/v1.yaml"
+)
+SERVICES = {"FIRE_RESCUE", "TSODD", "OATI", "DDS_DISTRICT_SHCHUKINO", "DDS_PREFECTURE_SZAO"}
+"""The example's notification list (auto ∪ manual): image 19's services bar plus the territorial
+ДДС of the district and the okrug the resolver adds (HLD 70 §70.6.4)."""
+OTHERS = sorted(SERVICES - {"FIRE_RESCUE"})
+"""Every leg but Служба 101 — the ones most tests simply decline to make the card closable."""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -45,30 +58,33 @@ API = "/api/v1/sessions"
 
 
 @pytest.fixture
-def memo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resolve every new session's `dds_mode` to `MEMO_STATUSES` (see the module docstring)."""
+async def rubbish_version_id(
+    unit_of_work: Any, demo_version_id: ScenarioVersionId
+) -> ScenarioVersionId:
+    """The committed example — `demo_version_id` imports every file under `scenarios/examples`."""
+    async with unit_of_work() as uow:
+        stored = await uow.scenarios.find_scenario_by_slug(EXAMPLE_SLUG)
+        assert stored is not None
+        version = await uow.scenarios.find_version(stored.scenario_id, 1)
+        assert version is not None
+        await uow.commit()
+    return version.scenario_version_id
 
-    def forced(requested: Any, scenario: Any, *args: Any, **kwargs: Any) -> Any:
-        resolved = resolve_variants(requested, scenario, *args, **kwargs)
-        return resolved.model_copy(update={"dds_mode": DdsMode.MEMO_STATUSES})
 
-    monkeypatch.setattr(create_session_module, "resolve_variants", forced)
-
-
-async def _insert_version(unit_of_work: Any, slug: str, services: list[str]) -> ScenarioVersionId:
-    """The demo document with a prefab handoff to `services`, inserted once per slug."""
+@pytest.fixture
+async def ambulance_version_id(unit_of_work: Any) -> ScenarioVersionId:
+    """The example with `AMBULANCE` (103, `NO_REFUSAL`) added to its prefab's recipients."""
+    slug = "street-rubbish-fire-with-103"
     async with unit_of_work() as uow:
         stored = await uow.scenarios.find_scenario_by_slug(slug)
         row = await uow.scenarios.find_version(stored.scenario_id, 1) if stored else None
         await uow.commit()
     if row is not None:
         return ScenarioVersionId(row.scenario_version_id)
-    document: dict[str, Any] = copy.deepcopy(demo_document())
+    document: dict[str, Any] = copy.deepcopy(yaml.safe_load(EXAMPLE_PATH.read_text("utf-8")))
     document["id"] = str(uuid4())
     document["scenario_id"] = str(uuid4())
-    prefab = document["expected_response"]["prefab_handoff"]
-    prefab["recipient_services"] = services
-    prefab["card_values"]["recipients.services"] = services
+    document["expected_response"]["prefab_handoff"]["recipient_services"].append("AMBULANCE")
     version = ScenarioVersion(**document)
     content = canonical_content(version)
     async with unit_of_work() as uow:
@@ -81,27 +97,26 @@ async def _insert_version(unit_of_work: Any, slug: str, services: list[str]) -> 
     return version.id
 
 
-@pytest.fixture
-async def police_version_id(unit_of_work: Any) -> ScenarioVersionId:
-    """The demo with a prefab to `FIRE_RESCUE` + `POLICE` — two `DEFAULT`-policy services."""
-    return await _insert_version(unit_of_work, "memo-fire-police", ["FIRE_RESCUE", "POLICE"])
-
-
 async def start_session(
     client: httpx.AsyncClient,
     tokens: dict[str, str],
     users: dict[str, UserId],
     version_id: ScenarioVersionId,
+    *,
+    assigned_service_id: str | None = None,
 ) -> UUID:
-    """A started `SINGLE_ROLE` generated-card session played by `trainee2` as the ДДС."""
+    """A started `SINGLE_ROLE` session of the example played by `trainee2` as the ДДС — no
+    variant request, so the scenario's own default (`MEMO_STATUSES`) applies."""
+    member = participant(users["trainee2"], "DDS")
+    if assigned_service_id is not None:
+        member["assigned_service_id"] = assigned_service_id
     created = await client.post(
         API,
         headers=auth(tokens["instructor1"]),
         json={
             "scenario_version_id": str(version_id),
             "session_mode": "SINGLE_ROLE",
-            "participants": [participant(users["trainee2"], "DDS")],
-            "variants": {"card_source": "GENERATED_CARD"},
+            "participants": [member],
         },
     )
     assert created.status_code == 201, created.text
@@ -113,26 +128,24 @@ async def start_session(
 
 @pytest.fixture
 async def memo_session(
-    memo: None,
     client: httpx.AsyncClient,
     tokens: dict[str, str],
     users: dict[str, UserId],
-    demo_version_id: ScenarioVersionId,
+    rubbish_version_id: ScenarioVersionId,
 ) -> UUID:
-    """The demo's generated card in memo mode: legs `FIRE_RESCUE` and `AMBULANCE` (103)."""
-    return await start_session(client, tokens, users, demo_version_id)
+    """The example's generated card in memo mode: legs `FIRE_RESCUE`, `TSODD`, `OATI`."""
+    return await start_session(client, tokens, users, rubbish_version_id)
 
 
 @pytest.fixture
-async def police_session(
-    memo: None,
+async def ambulance_session(
     client: httpx.AsyncClient,
     tokens: dict[str, str],
     users: dict[str, UserId],
-    police_version_id: ScenarioVersionId,
+    ambulance_version_id: ScenarioVersionId,
 ) -> UUID:
-    """A memo session whose two legs may both decline (`FIRE_RESCUE`, `POLICE`)."""
-    return await start_session(client, tokens, users, police_version_id)
+    """A memo session with a 103 leg besides the example's three."""
+    return await start_session(client, tokens, users, ambulance_version_id)
 
 
 async def legs(client: httpx.AsyncClient, token: str, session_id: UUID) -> dict[str, Any]:
@@ -215,7 +228,7 @@ async def test_a_memo_session_records_memo_and_starts_every_leg_added(
     created = next(item for item in log if item["event_type"] == "SESSION_CREATED")
     assert created["payload"]["variants"]["dds_mode"] == "MEMO_STATUSES"
     received = [item["payload"] for item in log if item["event_type"] == "HANDOFF_RECEIVED"]
-    assert {payload["service_type"] for payload in received} == {"FIRE_RESCUE", "AMBULANCE"}
+    assert {payload["service_type"] for payload in received} == SERVICES
     for payload in received:
         assert payload["responder"] == "TRAINEE"
         assert payload["bound_user_id"] is None
@@ -223,12 +236,18 @@ async def test_a_memo_session_records_memo_and_starts_every_leg_added(
 
     by_service = await legs(client, tokens["trainee2"], memo_session)
     assert {leg["response_status"] for leg in by_service.values()} == {"ADDED"}
-    assert by_service["AMBULANCE"]["service_name_ru"] == "Скорая медицинская помощь"
     assert all(leg["is_mine"] for leg in by_service.values())
-    fire_actions = {
-        action["action_id"] for action in by_service["FIRE_RESCUE"]["available_actions"]
-    }
-    assert fire_actions == {"accept", "decline"}
+    assert {leg["responder"] for leg in by_service.values()} == {"TRAINEE"}
+    for leg in by_service.values():
+        assert {action["action_id"] for action in leg["available_actions"]} == {"accept", "decline"}
+
+
+async def test_the_103_leg_offers_complete_without_brigade(
+    client: httpx.AsyncClient, tokens: dict[str, str], ambulance_session: UUID
+) -> None:
+    by_service = await legs(client, tokens["trainee2"], ambulance_session)
+    assert set(by_service) == SERVICES | {"AMBULANCE"}
+    assert by_service["AMBULANCE"]["service_name_ru"] == "Скорая медицинская помощь"
     ambulance_actions = {
         action["action_id"] for action in by_service["AMBULANCE"]["available_actions"]
     }
@@ -259,7 +278,7 @@ async def test_every_participant_reads_every_leg_but_only_the_ddss_may_set(
     )
 
     instructor = await legs(client, tokens["instructor1"], memo_session)
-    assert set(instructor) == {"FIRE_RESCUE", "AMBULANCE"}
+    assert set(instructor) == SERVICES
     assert [entry["new_status"] for entry in instructor["FIRE_RESCUE"]["history"]] == [
         "RECEIVED",
         "ACCEPTED",
@@ -270,7 +289,7 @@ async def test_every_participant_reads_every_leg_but_only_the_ddss_may_set(
         client,
         tokens["instructor1"],
         memo_session,
-        instructor["AMBULANCE"]["assignment_id"],
+        instructor["TSODD"]["assignment_id"],
         "ACCEPTED",
     )
     assert response.status_code == 403, response.text
@@ -287,7 +306,6 @@ async def test_one_leg_walks_every_status_and_the_stage_closes_through_resolved(
     token = tokens["trainee2"]
     by_service = await legs(client, token, memo_session)
     fire = by_service["FIRE_RESCUE"]["assignment_id"]
-    ambulance = by_service["AMBULANCE"]["assignment_id"]
 
     opened = await client.post(f"{API}/{memo_session}/dds/legs/{fire}/open", headers=auth(token))
     assert opened.status_code == 200, opened.text
@@ -314,13 +332,21 @@ async def test_one_leg_walks_every_status_and_the_stage_closes_through_resolved(
     # The stage never left ACKNOWLEDGED while the legs moved (70 §70.4.4).
     assert await dds_state(client, tokens, memo_session) == "ACKNOWLEDGED"
 
-    # 103 completes without a brigade straight from ADDED (receive first, then the trainee's).
-    ambulance_view = await walk(client, token, memo_session, ambulance, "COMPLETED")
-    assert [entry["new_status"] for entry in ambulance_view["history"]] == [
-        "RECEIVED",
-        "COMPLETED",
-    ]
-    assert ambulance_view["history"][-1]["completion_reason"] == "WITHOUT_BRIGADE"
+    # Every other service declines (a comment each): straight from ADDED, receive first.
+    for service in OTHERS:
+        declined = await set_status(
+            client,
+            token,
+            memo_session,
+            by_service[service]["assignment_id"],
+            "NOT_ACCEPTED",
+            comment_ru="Не наша компетенция",
+        )
+        assert declined.status_code == 200, declined.text
+        assert [entry["new_status"] for entry in declined.json()["history"]] == [
+            "RECEIVED",
+            "NOT_ACCEPTED",
+        ]
 
     before = len(await events(client, tokens, memo_session))
     closed = await close(client, token, memo_session)
@@ -348,8 +374,8 @@ async def test_one_leg_walks_every_status_and_the_stage_closes_through_resolved(
         assert never not in states
 
     card = [item["payload"] for item in log if item["event_type"] == "DDS_CARD_STATUS_CHANGED"]
-    assert card[-1]["new_status"] == "COMPLETED"
-    assert card[-1]["reason"] == "ALL_LEGS_COMPLETED"
+    assert card[-1]["new_status"] == "REFUSED"
+    assert card[-1]["reason"] == "LEG_DECLINED_OR_REFUSED"
     async with uow_factory() as uow:
         assert isinstance(uow, SqlAlchemyUnitOfWork)
         stored = (
@@ -365,40 +391,40 @@ async def test_one_leg_walks_every_status_and_the_stage_closes_through_resolved(
             )
         ).scalar_one()
         await uow.commit()
-    assert stored == "COMPLETED"
+    assert stored == "REFUSED"
     status_events = [item for item in log if item["event_type"] == "DDS_SERVICE_STATUS_SET"]
-    assert history_rows == len(status_events) == 8
+    assert history_rows == len(status_events) == 6 + 2 * len(OTHERS)
 
 
 async def test_every_leg_not_accepted_closes_cleanly(
-    client: httpx.AsyncClient, tokens: dict[str, str], police_session: UUID
+    client: httpx.AsyncClient, tokens: dict[str, str], memo_session: UUID
 ) -> None:
     """The O-1 case: no service takes the card, and the incident still closes."""
     token = tokens["trainee2"]
-    by_service = await legs(client, token, police_session)
-    for service in ("FIRE_RESCUE", "POLICE"):
+    by_service = await legs(client, token, memo_session)
+    for service in sorted(SERVICES):
         response = await set_status(
             client,
             token,
-            police_session,
+            memo_session,
             by_service[service]["assignment_id"],
             "NOT_ACCEPTED",
             comment_ru="Не наша компетенция",
         )
         assert response.status_code == 200, response.text
         assert response.json()["response_status"] == "NOT_ACCEPTED"
-    assert await dds_state(client, tokens, police_session) == "ACKNOWLEDGED"
+    assert await dds_state(client, tokens, memo_session) == "ACKNOWLEDGED"
 
-    log = await events(client, tokens, police_session)
+    log = await events(client, tokens, memo_session)
     acknowledged = [item for item in log if item["event_type"] == "DDS_ACKNOWLEDGED"]
     assert len(acknowledged) == 1, "only the first primary decision acknowledges the stage"
     card = [item["payload"] for item in log if item["event_type"] == "DDS_CARD_STATUS_CHANGED"]
     assert card[-1]["new_status"] == "REFUSED"
 
-    closed = await close(client, token, police_session, reason="TRANSFERRED")
+    closed = await close(client, token, memo_session, reason="TRANSFERRED")
     assert closed.status_code == 200, closed.text
     assert closed.json()["state"] == "COMPLETED"
-    assert await dds_state(client, tokens, police_session) == "CLOSED"
+    assert await dds_state(client, tokens, memo_session) == "CLOSED"
 
 
 async def test_close_with_a_leg_still_open_is_409_invalid_transition(
@@ -477,36 +503,36 @@ async def test_refusal_without_a_comment_is_422_and_with_one_is_terminal(
 
 
 async def test_103_cannot_refuse_and_completes_without_a_brigade(
-    client: httpx.AsyncClient, tokens: dict[str, str], memo_session: UUID
+    client: httpx.AsyncClient, tokens: dict[str, str], ambulance_session: UUID
 ) -> None:
     """REQ-5290: the `NO_REFUSAL` policy replaces «Не принята»/«Отказ» with
     `complete_without_brigade`; a `DEFAULT` service cannot use that shortcut."""
     token = tokens["trainee2"]
-    by_service = await legs(client, token, memo_session)
+    by_service = await legs(client, token, ambulance_session)
     ambulance = by_service["AMBULANCE"]["assignment_id"]
     fire = by_service["FIRE_RESCUE"]["assignment_id"]
 
     declined = await set_status(
-        client, token, memo_session, ambulance, "NOT_ACCEPTED", comment_ru="Не можем"
+        client, token, ambulance_session, ambulance, "NOT_ACCEPTED", comment_ru="Не можем"
     )
     assert declined.status_code == 409, declined.text
     assert declined.json()["code"] == "INVALID_TRANSITION"
-    shortcut = await set_status(client, token, memo_session, fire, "COMPLETED")
+    shortcut = await set_status(client, token, ambulance_session, fire, "COMPLETED")
     assert shortcut.status_code == 409, shortcut.text
 
-    await walk(client, token, memo_session, ambulance, "ACCEPTED", "RESPONSE_STARTED")
+    await walk(client, token, ambulance_session, ambulance, "ACCEPTED", "RESPONSE_STARTED")
     refused = await set_status(
-        client, token, memo_session, ambulance, "REFUSED", comment_ru="Не можем"
+        client, token, ambulance_session, ambulance, "REFUSED", comment_ru="Не можем"
     )
     assert refused.status_code == 409, refused.text
-    done = await walk(client, token, memo_session, ambulance, "COMPLETED")
+    done = await walk(client, token, ambulance_session, ambulance, "COMPLETED")
     assert done["response_status"] == "COMPLETED"
     last = done["history"][-1]
     assert (last["previous_status"], last["completion_reason"]) == (
         "RESPONSE_STARTED",
         "WITHOUT_BRIGADE",
     )
-    log = await events(client, tokens, memo_session)
+    log = await events(client, tokens, ambulance_session)
     status_set = [item for item in log if item["event_type"] == "DDS_SERVICE_STATUS_SET"]
     assert status_set[-1]["payload"]["trigger"] == "complete_without_brigade"
 
@@ -579,19 +605,19 @@ async def test_an_unknown_leg_is_404(
 
 
 async def test_a_decline_can_be_corrected_to_accepted(
-    client: httpx.AsyncClient, tokens: dict[str, str], police_session: UUID
+    client: httpx.AsyncClient, tokens: dict[str, str], memo_session: UUID
 ) -> None:
     """REQ-5327: Не принята → Принята; the card leaves «Отказ» (`LEG_STATUS_CORRECTED`)."""
     token = tokens["trainee2"]
-    fire = (await legs(client, token, police_session))["FIRE_RESCUE"]["assignment_id"]
+    fire = (await legs(client, token, memo_session))["FIRE_RESCUE"]["assignment_id"]
     declined = await set_status(
-        client, token, police_session, fire, "NOT_ACCEPTED", comment_ru="Ошибочно"
+        client, token, memo_session, fire, "NOT_ACCEPTED", comment_ru="Ошибочно"
     )
     assert declined.status_code == 200, declined.text
-    corrected = await walk(client, token, police_session, fire, "ACCEPTED")
+    corrected = await walk(client, token, memo_session, fire, "ACCEPTED")
     assert corrected["response_status"] == "ACCEPTED"
 
-    log = await events(client, tokens, police_session)
+    log = await events(client, tokens, memo_session)
     card = [item["payload"] for item in log if item["event_type"] == "DDS_CARD_STATUS_CHANGED"]
     assert [(item["new_status"], item["reason"]) for item in card[-2:]] == [
         ("REFUSED", "LEG_DECLINED_OR_REFUSED"),
@@ -632,18 +658,18 @@ async def test_a_picker_session_refuses_set_service_status_and_open_card(
 
 
 async def test_a_memo_session_rescores_identically(
-    client: httpx.AsyncClient, tokens: dict[str, str], police_session: UUID
+    client: httpx.AsyncClient, tokens: dict[str, str], memo_session: UUID
 ) -> None:
     """HLD 70 §70.1 (D5, INV 9): scoring reads `(ScenarioVersion, events)` only — the legs, their
     history and `incidents.card_status` are read models — so a closed memo session's stored report
     and a fresh `score()` over its log are the same checksum."""
     token = tokens["trainee2"]
-    by_service = await legs(client, token, police_session)
+    by_service = await legs(client, token, memo_session)
     fire = by_service["FIRE_RESCUE"]["assignment_id"]
     await walk(
         client,
         token,
-        police_session,
+        memo_session,
         fire,
         "ACCEPTED",
         "RESPONSE_STARTED",
@@ -651,20 +677,21 @@ async def test_a_memo_session_rescores_identically(
         "WORKING",
         "COMPLETED",
     )
-    declined = await set_status(
-        client,
-        token,
-        police_session,
-        by_service["POLICE"]["assignment_id"],
-        "NOT_ACCEPTED",
-        comment_ru="Не наша компетенция",
-    )
-    assert declined.status_code == 200, declined.text
-    closed = await close(client, token, police_session)
+    for service in OTHERS:
+        declined = await set_status(
+            client,
+            token,
+            memo_session,
+            by_service[service]["assignment_id"],
+            "NOT_ACCEPTED",
+            comment_ru="Не наша компетенция",
+        )
+        assert declined.status_code == 200, declined.text
+    closed = await close(client, token, memo_session)
     assert closed.status_code == 200, closed.text
 
     rescored = await client.post(
-        f"/api/v1/reports/{police_session}/rescore",
+        f"/api/v1/reports/{memo_session}/rescore",
         headers=auth(tokens["instructor1"]),
         json={"persist": False},
     )
@@ -673,3 +700,123 @@ async def test_a_memo_session_rescores_identically(
     assert outcome["identical_to_stored"] is True
     assert outcome["stored_checksum"] == outcome["recomputed_checksum"]
     assert outcome["differences"] == []
+
+
+# ---------------------------------------------------------------------------------------------
+# I3 E5b — a bound ДДС trainee plays one leg, the scripted responders play the others
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_bound_trainee_plays_one_leg_and_the_script_plays_the_others(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    users: dict[str, UserId],
+    rubbish_version_id: ScenarioVersionId,
+    container: Container,
+    clock: FakeClock,
+) -> None:
+    """HLD 70 §70.4.5, no test patching: `trainee2` is bound to Служба 101 (A); every other
+    notified service (B) has no bound participant and answers by `responders: DEFAULT`. A's
+    statuses are set by the trainee, B's by the script (SIMULATION, due-stamped), and the stage
+    closes through the memo row once every leg is terminal."""
+    token = tokens["trainee2"]
+    session_id = await start_session(
+        client, tokens, users, rubbish_version_id, assigned_service_id="FIRE_RESCUE"
+    )
+    log = await events(client, tokens, session_id)
+    created = next(item for item in log if item["event_type"] == "SESSION_CREATED")
+    assert created["payload"]["variants"]["dds_mode"] == "MEMO_STATUSES"
+    received = {
+        item["payload"]["service_type"]: item["payload"]
+        for item in log
+        if item["event_type"] == "HANDOFF_RECEIVED"
+    }
+    assert set(received) == SERVICES
+    assert received["FIRE_RESCUE"]["responder"] == "TRAINEE"
+    assert received["FIRE_RESCUE"]["bound_user_id"] == str(users["trainee2"])
+    for service in OTHERS:
+        assert (received[service]["responder"], received[service]["bound_user_id"]) == (
+            "SCRIPTED",
+            None,
+        )
+
+    by_service = await legs(client, token, session_id)
+    fire = by_service["FIRE_RESCUE"]
+    assert (fire["is_mine"], fire["responder"]) == (True, "TRAINEE")
+    for service in OTHERS:
+        assert by_service[service]["is_mine"] is False
+        assert by_service[service]["available_actions"] == []
+
+    # The trainee may not play a scripted leg — neither a status nor opening its card.
+    scripted = by_service["TSODD"]["assignment_id"]
+    refused = await set_status(client, token, session_id, scripted, "ACCEPTED")
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["code"] == "FORBIDDEN_FOR_SERVICE"
+    opened = await client.post(f"{API}/{session_id}/dds/legs/{scripted}/open", headers=auth(token))
+    assert opened.status_code == 403, opened.text
+    assert opened.json()["code"] == "FORBIDDEN_FOR_SERVICE"
+
+    # A: the trainee's own walk; the first decision acknowledges the stage.
+    await walk(client, token, session_id, fire["assignment_id"], "ACCEPTED")
+    assert await dds_state(client, tokens, session_id) == "ACKNOWLEDGED"
+    final = await walk(
+        client,
+        token,
+        session_id,
+        fire["assignment_id"],
+        "RESPONSE_STARTED",
+        "ARRIVED",
+        "WORKING",
+        "COMPLETED",
+    )
+    assert {entry["source"] for entry in final["history"][1:]} == {"TRAINEE"}
+
+    # B is not done before its schedule: closing is the ordinary 409.
+    early = await close(client, token, session_id)
+    assert early.status_code == 409, early.text
+    assert early.json()["code"] == "INVALID_TRANSITION"
+
+    clock.advance_ms(600_000)
+    await container.runner.tick_now(SessionId(session_id))
+    by_service = await legs(client, token, session_id)
+    for service in OTHERS:
+        leg = by_service[service]
+        assert leg["response_status"] == "COMPLETED"
+        history = leg["history"]
+        assert [entry["new_status"] for entry in history] == [
+            "RECEIVED",
+            "ACCEPTED",
+            "RESPONSE_STARTED",
+            "ARRIVED",
+            "WORKING",
+            "COMPLETED",
+        ]
+        assert [entry["at_offset_ms"] for entry in history] == [
+            0,
+            15_000,
+            60_000,
+            180_000,
+            200_000,
+            600_000,
+        ]
+        assert {entry["source"] for entry in history} == {"SCRIPTED_RESPONDER"}
+        assert {entry["actor_display_ru"] for entry in history} == {leg["service_name_ru"]}
+
+    closed = await close(client, token, session_id)
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["state"] == "COMPLETED"
+    log = await events(client, tokens, session_id)
+    moves = [
+        (item["payload"]["previous_state"], item["payload"]["new_state"])
+        for item in log
+        if item["event_type"] == "STAGE_STATE_CHANGED"
+    ]
+    assert moves[-2:] == [("ACKNOWLEDGED", "RESOLVED"), ("RESOLVED", "CLOSED")]
+    scripted_events = [
+        item
+        for item in log
+        if item["event_type"] == "DDS_SERVICE_STATUS_SET"
+        and item["payload"]["source"] == "SCRIPTED_RESPONDER"
+    ]
+    assert len(scripted_events) == 6 * len(OTHERS)
+    assert {item["actor_type"] for item in scripted_events} == {"SIMULATION"}

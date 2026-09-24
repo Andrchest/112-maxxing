@@ -12,7 +12,8 @@ D5's single Unit of Work transaction and D8's two-gate authorisation in the same
 2. the session is `ACTIVE`, else `409 SESSION_NOT_ACTIVE`;
 3. `resolve_participant` — D8's first gate, `403 PARTICIPANT_NOT_ASSIGNED`;
 4. the caller is a `TRAINEE` account **and** is the participant bound to the session's active
-   `RoleStage` **and** that stage's role is `DDS`, else `403 FORBIDDEN_FOR_ROLE`. An instructor
+   `RoleStage` — in memo mode any ДДС participant of the session (`may_command`, I3 E5b) —
+   **and** that stage's role is `DDS`, else `403 FORBIDDEN_FOR_ROLE`. An instructor
    may read the work item and the board; they may never issue a command here (SPEC §7);
 5. the command's action id — `openapi.yaml`'s `x-action` — is a member of
    `DDSModule.available_actions(stage_state, variants=session.variants)`, else
@@ -87,7 +88,7 @@ from app.application.sessions.start_session import SessionNotFoundError
 from app.application.simulation.sim_time import running_ms, sim_now_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
-from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, SessionId
+from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, SessionId, UserId
 from app.domain.common.state_machine import GuardContext, GuardRuntime
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.policy import StatusPolicy, policy_of
@@ -121,6 +122,7 @@ __all__ = [
     "history_entries",
     "is_memo",
     "load_legs",
+    "may_command",
     "state_change_row",
     "status_changed_event",
     "work_item_of",
@@ -170,6 +172,16 @@ class LegNotFoundError(DomainError):
 def is_memo(session: SimulationSession) -> bool:
     """The session runs `dds_mode: MEMO_STATUSES` (HLD 70 §70.4.4)."""
     return session.variants.dds_mode is DdsMode.MEMO_STATUSES
+
+
+def may_command(session: SimulationSession, stage: RoleStage, user_id: UserId) -> bool:
+    """D8's first gate for a DDS command: the participant bound to the active DDS stage — or, in
+    memo mode, **any** ДДС participant of the session (several ДДС trainees share the one DDS
+    stage, each bound to a service; HLD 70 §70.4.4 `DDS_GUARDS_MEMO`, §70.4.5, I3 E5b). Which leg
+    a trainee may move is the leg's own question (`guard_leg_actor_bound`)."""
+    if stage.participant_user_id == user_id:
+        return True
+    return is_memo(session) and session.plays_dds(user_id)
 
 
 def history_entries(
@@ -502,7 +514,7 @@ class DdsCommandGate:
 
             participant = resolve_participant(session, user)
             stage = dds_stage_of(session)
-            if stage is None or stage.participant_user_id != participant.user_id:
+            if stage is None or not may_command(session, stage, participant.user_id):
                 raise ForbiddenForRoleError(
                     f"the caller is not the DDS participant of the active stage of "
                     f"session {session_id}"

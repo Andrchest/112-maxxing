@@ -280,7 +280,6 @@ async def test_memo_statuses_on_a_schema_1_scenario_is_409_variant_not_supported
 @pytest.mark.parametrize(
     "variants",
     [
-        {"dds_card_check": "ON"},
         {"dds_brigade_call": "ON"},
     ],
 )
@@ -389,12 +388,12 @@ async def test_a_session_row_without_variants_reads_as_the_schema_1_derivation(
 async def test_scenario_reads_carry_the_filtered_variants_view(
     client: httpx.AsyncClient, tokens: dict[str, str], demo_version_id: ScenarioVersionId
 ) -> None:
-    """The demo is schema 1: derived support, `dds_card_check: ON` filtered out (E5)."""
+    """The demo is schema 1: derived support; `dds_card_check: ON` is implemented from E5b."""
     expected = {
         "supported": {
             "card_source": ["CALLER_VOICE", "GENERATED_CARD"],
             "dds_mode": ["RESOURCE_PICKER"],
-            "dds_card_check": ["OFF"],
+            "dds_card_check": ["OFF", "ON"],
             "dds_brigade_call": ["OFF"],
         },
         "default": CALLER_VOICE,

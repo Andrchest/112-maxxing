@@ -682,6 +682,20 @@ read `LegGuardSubject` (policy, the command's comment, the leg's `bound_user_id`
 leg's status moves. In `RESOURCE_PICKER` mode stage automation mirrors the status from the leg's
 `state` by §70.4.4's picker map (SIMULATION, `source: PICKER_MIRROR`), one step at a time.
 
+**Who plays a leg (I3 E5b, HLD 70 §70.4.5; `dds/responders.py`).** At creation each leg gets its
+`responder` from the session's ДДС participant → service binding
+(`session_participants.assigned_service_id`, distinct per session): its service bound → `TRAINEE`
+with `bound_user_id`; no ДДС participant bound at all → `TRAINEE`, `bound_user_id` null (one trainee
+plays every leg); otherwise `SCRIPTED`. `guard_leg_actor_bound` (`LegGuardSubject` also carries
+`responder`) admits a TRAINEE only as the leg's `bound_user_id` — any ДДС participant when it is
+null — and never on a `SCRIPTED` leg; the application answers `403 FORBIDDEN_FOR_SERVICE`. A
+`SCRIPTED` leg is walked by stage automation in memo mode (SIMULATION, `source:
+SCRIPTED_RESPONDER`) along the scenario's `expected_response.responders` script — `DEFAULT` =
+`receive +0, ACCEPTED +15 000, RESPONSE_STARTED +60 000, ARRIVED +180 000, WORKING +200 000,
+COMPLETED +600 000` ms after the leg's `HANDOFF_RECEIVED` — each step stamped with its due offset
+(INV 7). Only stage automation is handed the script, through a probe the composition root binds
+(INV 3).
+
 ### `Notification` — `backend/app/domain/dds/notification.py`
 `{notification_id, incident_id, audience_role: RoleType, severity: NotificationSeverity,
 title_ru: str, body_ru: str, created_at_offset_ms: int, source_world_event_id: str | None,
@@ -860,7 +874,7 @@ class Permission(str, Enum):
     VIEW_RESOURCE_BOARD = "VIEW_RESOURCE_BOARD"
     VIEW_TRANSCRIPT = "VIEW_TRANSCRIPT"
     SET_SERVICE_STATUS = "SET_SERVICE_STATUS"   # additive, I3 E5a
-    FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"         # additive, I3 E5a (used from E5b)
+    FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"         # additive, I3 E5a (used by flag_card_issue, E5b)
 
 class ActionDescriptor(BaseModel):
     action_id: str          # equals the state-machine trigger where one exists
@@ -943,13 +957,13 @@ constructed without a world-truth repository, so the data cannot be reached even
 | State | Actions |
 |:--|:--|
 | `RECEIVED` | `acknowledge` / Принять к исполнению |
-| `ACKNOWLEDGED` | `open_resource_selection` / Подбор сил и средств; `send_status_update` / Отправить статус |
-| `RESOURCE_SELECTION` | `select_resource` / Выбрать; `deselect_resource` / Снять; `dispatch` / Направить; `back_to_acknowledged` / Назад; `send_status_update` |
-| `DISPATCHED` | `open_resource_selection` / Добавить силы; `send_status_update` |
-| `EN_ROUTE` | `select_resource` / Выбрать (added, E9); `deselect_resource` / Снять (added, E9); `dispatch_additional` / Направить дополнительно; `send_status_update` |
-| `ARRIVED` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update` |
-| `WORKING` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update` |
-| `RESOLVED` | `close` / Закрыть происшествие; `send_status_update` |
+| `ACKNOWLEDGED` | `open_resource_selection` / Подбор сил и средств; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `RESOURCE_SELECTION` | `select_resource` / Выбрать; `deselect_resource` / Снять; `dispatch` / Направить; `back_to_acknowledged` / Назад; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `DISPATCHED` | `open_resource_selection` / Добавить силы; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `EN_ROUTE` | `select_resource` / Выбрать (added, E9); `deselect_resource` / Снять (added, E9); `dispatch_additional` / Направить дополнительно; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `ARRIVED` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `WORKING` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
+| `RESOLVED` | `close` / Закрыть происшествие; `send_status_update`; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b) |
 | `CLOSED` | — |
 
 - `available_actions(state, variants)` — **`dds_mode: MEMO_STATUSES`** (additive, I3 E5a — HLD 70 §70.4.4):
@@ -957,7 +971,7 @@ constructed without a world-truth repository, so the data cannot be reached even
 | State | Actions |
 |:--|:--|
 | `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус |
-| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `close` / Закрыть происшествие |
+| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b); `close` / Закрыть происшествие |
 | `RESOURCE_SELECTION` | — (never entered in memo mode) |
 | `DISPATCHED` | — (never entered in memo mode) |
 | `EN_ROUTE` | — (never entered in memo mode) |
@@ -968,9 +982,13 @@ constructed without a world-truth repository, so the data cannot be reached even
 
 No resource action is offered in memo mode. `close` in `ACKNOWLEDGED` is decided by its guard
 `memo_all_legs_terminal` (a leg still open is the ordinary `409 INVALID_TRANSITION`). HLD 70's
-`flag_card_issue` / Отметить ошибку в карточке joins `ACKNOWLEDGED` with E5b, only under
-`dds_card_check: ON`. `open_card` uses `VIEW_HANDOFF`; `set_service_status` and the leg triggers
-use `SET_SERVICE_STATUS`. The legs' own dropdown is each leg's legal next triggers (§10.7
+`flag_card_issue` / Отметить ошибку в карточке is offered in `ACKNOWLEDGED` only under
+`dds_card_check: ON` (I3 E5b, `flagDdsCardIssue`; `OFF` ⇒ `409 ACTION_NOT_AVAILABLE`) and uses
+`FLAG_CARD_ISSUE`; the picker table offers it the same way, in every state from `ACKNOWLEDGED`
+until the stage closes (the ДДС holds the card there; §70.11 supports card check in both modes). `open_card` uses `VIEW_HANDOFF`; `set_service_status` and the leg triggers
+use `SET_SERVICE_STATUS`. In memo mode every command is open to **any** ДДС participant of the
+session (several ДДС trainees, each bound to a service — HLD 70 §70.4.5); which leg a trainee may
+move is `guard_leg_actor_bound`'s question (§10.7). The legs' own dropdown is each leg's legal next triggers (§10.7
 `SERVICE_RESPONSE_TRANSITIONS`), served as `DdsLegView.available_actions`.
 
 Two of the stage triggers above had **no endpoint** in `openapi.yaml` — `open_resource_selection`
@@ -1482,6 +1500,7 @@ property name, does remain `CallerProfile.identity_ru`.
 | `RECIPIENTS_RESOLVED` (additive, I3 E2b′) | `SIMULATION` | `card_id: uuid`, `card_revision_id: uuid \| null`, `pack_id: str`, `classifier_code: str \| null`, `candidate_codes: list[str]`, `main_service: ServiceId \| null`, `auto_services: list[ServiceId]`, `informed_services: list[ServiceId]`, `manual_services: list[ServiceId]`, `notification_list: list[ServiceId]`, `reasons: list[{service_id: ServiceId, source: CLASSIFIER \| TERRITORIAL \| DEPARTMENT, column: str, sub_column: str \| null, row_code: str, row_match: CLASSIFIER_CODE \| COVERED \| GROUP_FALLBACK}]` (`row_code` / `row_match` additive to HLD 70 §70.7: which classifier row a reason came from and whether step 1 found it by the «Класс.:» pick, full coverage, or the group fallback), `final: bool`, `at_offset_ms: int`. Appended after a routing-relevant `CARD_FIELD_CHANGED` and, `final: true`, immediately before `HANDOFF_CREATED` (70 §70.6.4); never a card write (INV 4) | OPERATOR_112, INSTRUCTOR |
 | `DDS_CARD_OPENED` (additive, I3 E5a) | `TRAINEE` | `assignment_id: uuid`, `service_type: ServiceId`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС opened the card on one leg (HLD 70 §70.4.2) | DDS, INSTRUCTOR |
 | `DDS_SERVICE_STATUS_SET` (additive, I3 E5a) | `TRAINEE`, `SIMULATION` | `assignment_id: uuid`, `service_type: ServiceId`, `previous_status: ServiceResponseStatus`, `new_status: ServiceResponseStatus`, `trigger: str`, `order_number: str \| null`, `comment_ru: str \| null`, `completion_reason: "WITHOUT_BRIGADE" \| null`, `source: TRAINEE \| SCRIPTED_RESPONDER \| PICKER_MIRROR \| SYSTEM`, `actor_user_id: uuid \| null`, `at_offset_ms: int` — one step of one leg's response status (HLD 70 §70.4.2); materialised into `dds_service_status_history` | DDS, INSTRUCTOR |
+| `DDS_CARD_ISSUE_FLAGGED` (additive, I3 E5b) | `TRAINEE` | `assignment_id: uuid`, `field_path: str \| null`, `issue_kind: MISSING \| WRONG \| CONTRADICTION \| OTHER`, `comment_ru: str`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС flagged an error in the received card (`dds_card_check: ON`, «Отметить ошибку в карточке»), against the frozen snapshot only (HLD 70 §70.7, C1); the comparison to truth happens only in scoring (INV 3) | DDS, INSTRUCTOR |
 
 ### Turn record (materialized, not a domain type)
 

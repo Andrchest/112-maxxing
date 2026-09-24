@@ -49,18 +49,37 @@ RESPONSE_STARTED`, …, `RESOLVED → COMPLETED`), one `SERVICE_RESPONSE_TRANSIT
 as SIMULATION with `source: PICKER_MIRROR`, each step one `DDS_SERVICE_STATUS_SET` and one history
 row — after every stage trigger it fires and once per run to catch up with the trainee's commands,
 so the report and the lists speak one vocabulary in both modes. In `MEMO_STATUSES` mode it fires
-**no** stage trigger and mirrors nothing: the legs move by the trainee (and, from E5b, by scripted
-responders), and the stage leaves `ACKNOWLEDGED` only through the trainee's `close`.
+**no** stage trigger and mirrors nothing: the legs move by the trainee and by scripted responders,
+and the stage leaves `ACKNOWLEDGED` only through the trainee's `close`.
+
+**Scripted responders (I3 E5b, HLD 70 §70.4.5).** In memo mode a `SCRIPTED` leg — a notified
+service no ДДС participant is bound to — walks the scenario's `expected_response.responders` script
+(`DEFAULT` or its own, `app.domain.dds.responders`): every step due by the running offset is fired
+as SIMULATION (`source: SCRIPTED_RESPONDER`), one `SERVICE_RESPONSE_TRANSITIONS` step at a time, and
+**stamped with its due offset** (`HANDOFF_RECEIVED` + `after_ms`), not with this tick's. The due
+steps of every scripted leg are appended in due-offset order, one append per due offset, *before*
+the deadline flush, so the event store's flush-before-append rule interleaves the card-status
+deadlines — and settles the card status each step causes — exactly where they fall: the stream is
+the same at any tick rate (INV 7). The script is scenario data, so it
+reaches this module only through `ResponderProbe`, bound by the composition root to the runner-side
+`app.application.simulation.responder_scripts` (INV 3); the service's status policy comes from the
+reference pack the session recorded, like every DDS read. A step the machine refuses (a script the
+session's catalog no longer allows) stops that leg's script and is logged — never raised into the
+runner.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from itertools import groupby
 
 from app.application.dds.command_context import dds_stage_of, history_entries, is_memo
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.card_schemas import session_pack_id
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
@@ -68,10 +87,30 @@ from app.domain.common.errors import InvalidTransitionError
 from app.domain.common.ids import SessionId
 from app.domain.dds.assignment import DDSAssignment, fire_response_trigger
 from app.domain.dds.card_status import mirror_leg_status
-from app.domain.dds.response import ServiceResponseStatus, StatusSource
+from app.domain.dds.policy import StatusPolicy, policy_of
+from app.domain.dds.responders import (
+    ScriptedResponders,
+    ScriptedStep,
+    due_scripted_steps,
+    script_for,
+    step_trigger,
+)
+from app.domain.dds.response import (
+    TERMINAL_RESPONSE_STATUSES,
+    LegResponder,
+    ServiceResponseStatus,
+    StatusSource,
+)
 from app.domain.enums import ActorType, DDSStageState, SessionState
+from app.domain.events.session_event import DomainEvent
 
-__all__ = ["SIMULATION_TRIGGER_BY_STATE", "DdsStageAutomation", "ResolutionProbe"]
+__all__ = [
+    "SIMULATION_TRIGGER_BY_STATE",
+    "DdsStageAutomation",
+    "ResolutionProbe",
+    "ResponderProbe",
+    "fire_due_scripted_steps",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +131,13 @@ _SIMULATION = ActorRef(actor_type=ActorType.SIMULATION)
 type ResolutionProbe = Callable[[SessionId], Awaitable[bool]]
 """`expected_response.resolution_condition`, evaluated elsewhere and handed here as a boolean."""
 
+type ResponderProbe = Callable[[SessionId], Awaitable[ScriptedResponders | None]]
+"""`expected_response.responders`, read runner-side and handed here (INV 3, I3 E5b)."""
+
+
+async def _no_responders(_session_id: SessionId) -> ScriptedResponders | None:
+    return None
+
 
 class DdsStageAutomation:
     """Fire the DDS stage's SIMULATION triggers for one session (an `after_tick` hook)."""
@@ -101,10 +147,14 @@ class DdsStageAutomation:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         resolution_probe: ResolutionProbe,
+        responder_probe: ResponderProbe = _no_responders,
+        reference: ReferencePort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._resolution_probe = resolution_probe
+        self._responder_probe = responder_probe
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId) -> bool:
         """Advance the DDS stage as far as the board allows; `True` when anything fired."""
@@ -115,16 +165,22 @@ class DdsStageAutomation:
                 await uow.commit()
                 return False
             now_ms = running_ms(session, self._clock.now())
-            flushed = await uow.events.flush_deadlines(session_id, now_ms)
             stage = dds_stage_of(session)
+            if stage is not None and is_memo(session):
+                # Memo mode: stage automation drives legs only, never the stage (§70.4.4) — the
+                # scripted legs first, so the deadline flush below sees their due-stamped steps.
+                legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
+                scripted = await self._play_scripts(uow, session_id, legs, now_ms)
+                flushed = await uow.events.flush_deadlines(session_id, now_ms)
+                await uow.commit()
+                return scripted or bool(flushed)
+            flushed = await uow.events.flush_deadlines(session_id, now_ms)
             if stage is None:
                 await uow.commit()
                 return bool(flushed)
 
             legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
-            if not legs or is_memo(session):
-                # Memo mode: stage automation drives legs only, never the stage (§70.4.4); the
-                # scripted responders that will drive them arrive with E5b.
+            if not legs:
                 await uow.commit()
                 return bool(flushed)
             legs, mirrored = await _mirror_responses(uow, session_id, legs, now_ms)
@@ -181,6 +237,122 @@ class DdsStageAutomation:
         if fired:
             logger.debug("DDS stage automation advanced session %s", session_id)
         return fired
+
+    async def _play_scripts(
+        self, uow: UnitOfWork, session_id: SessionId, legs: list[DDSAssignment], now_ms: int
+    ) -> bool:
+        """Fire every due scripted step of the session's `SCRIPTED` legs (see the module
+        docstring); `True` when any was fired."""
+        open_scripted = [
+            leg
+            for leg in legs
+            if leg.responder is LegResponder.SCRIPTED
+            and leg.response_status not in TERMINAL_RESPONSE_STATUSES
+        ]
+        if not open_scripted:
+            return False
+        responders = await self._responder_probe(session_id)
+        log = await uow.events.read(session_id)
+        catalog = reference_catalog(self._reference).services(session_pack_id(log))
+        moved, events = fire_due_scripted_steps(
+            open_scripted,
+            responders,
+            now_ms,
+            policy=lambda leg: policy_of(catalog, leg.service_type),
+        )
+        if not events:
+            return False
+        for leg in moved:
+            await uow.dds_assignments.save(leg)
+        # One append per due offset: the store settles the card status a status event causes at
+        # the end of each append, so appending a whole tick's steps at once would stamp that
+        # change with the batch's last offset — and a slower tick would batch more (INV 7).
+        stored = []
+        for _offset, group in groupby(events, key=lambda event: event.monotonic_offset_ms):
+            stored.extend(await uow.events.append(session_id, list(group)))
+        await uow.dds_assignments.add_history(history_entries(session_id, stored))
+        return True
+
+
+def fire_due_scripted_steps(
+    legs: Sequence[DDSAssignment],
+    responders: ScriptedResponders | None,
+    now_ms: int,
+    *,
+    policy: Callable[[DDSAssignment], StatusPolicy],
+) -> tuple[list[DDSAssignment], list[DomainEvent]]:
+    """The scripted legs moved by every step due by `now_ms`, and their `DDS_SERVICE_STATUS_SET`s
+    in due-offset order (ties: leg order, then script order). Pure — the INV 7 unit of this module.
+
+    Legs are taken in a stable order (`received_at_offset_ms`, `service_type`: the legs of one
+    handoff share the offset and their ids are random). A leg still `ADDED` whose next step is not
+    `RECEIVED` gets the implicit `receive` at the same offset first (§70.4.2). A step the machine
+    refuses stops that leg's script (logged).
+    """
+    ordered = sorted(legs, key=lambda item: (item.received_at_offset_ms, item.service_type))
+    planned: list[tuple[int, int, int, DDSAssignment, ScriptedStep]] = []
+    for leg_index, leg in enumerate(ordered):
+        script = script_for(responders, leg.service_type)
+        due = due_scripted_steps(leg.response_status, leg.received_at_offset_ms, script, now_ms)
+        for step_index, (step, at) in enumerate(due):
+            planned.append((at, leg_index, step_index, leg, step))
+    planned.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    current = {leg.assignment_id: leg for leg in ordered}
+    stopped: set[object] = set()
+    events: list[DomainEvent] = []
+    for at, _leg_index, _step_index, original, step in planned:
+        if original.assignment_id in stopped:
+            continue
+        leg = current[original.assignment_id]
+        leg_policy = policy(leg)
+        try:
+            if leg.response_status is ServiceResponseStatus.ADDED and (
+                step.status is not ServiceResponseStatus.RECEIVED
+            ):
+                leg, received = fire_response_trigger(
+                    leg,
+                    "receive",
+                    actor=_SIMULATION,
+                    now_ms=at,
+                    source=StatusSource.SCRIPTED_RESPONDER,
+                    status_policy=leg_policy,
+                )
+                events.append(received)
+            trigger = step_trigger(leg.response_status, step.status, leg_policy)
+            if trigger is None:
+                raise InvalidTransitionError(
+                    "ServiceResponseStatus",
+                    leg.response_status.value,
+                    f"script {step.status.value}",
+                    "not one scripted step",
+                    to_state=step.status.value,
+                )
+            leg, event = fire_response_trigger(
+                leg,
+                trigger,
+                actor=_SIMULATION,
+                now_ms=at,
+                source=StatusSource.SCRIPTED_RESPONDER,
+                status_policy=leg_policy,
+                order_number=step.order_number,
+                comment_ru=step.comment_ru,
+            )
+        except InvalidTransitionError:
+            logger.warning(
+                "scripted responder of leg %s (%s) stopped at %s: %s is not playable",
+                leg.assignment_id,
+                leg.service_type,
+                leg.response_status.value,
+                step.status.value,
+            )
+            stopped.add(original.assignment_id)
+            current[original.assignment_id] = leg
+            continue
+        events.append(event)
+        current[original.assignment_id] = leg
+    moved = [current[leg.assignment_id] for leg in ordered if current[leg.assignment_id] is not leg]
+    return moved, events
 
 
 async def _mirror(

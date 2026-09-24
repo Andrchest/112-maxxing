@@ -5,6 +5,7 @@
 2. for each plan entry, in `position` order, create an ordinary session through the existing
    `createSession` path (`CreateSession.create_in`), with:
    - the lesson's participants, or the entry's subset (`PlanEntry.participants`, E9a's hook),
+     each with its ДДС service binding (`assigned_service_id`, HLD 70 §70.4.5, I3 E5b),
    - the lesson-wide variants request overridden switch by switch by the entry's,
    - `lesson_id` / `lesson_position` set,
    so each card is validated exactly as a single session would be (version valid, variants
@@ -27,8 +28,8 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.sessions.create_session import CreateSession, CreateSessionCommand
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
-from app.domain.common.ids import LessonId, UserId
-from app.domain.enums import RoleType, SessionMode
+from app.domain.common.ids import LessonId
+from app.domain.enums import SessionMode
 from app.domain.lesson.lesson import Lesson, create_lesson
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry
 from app.domain.session.variants import SWITCHES, PartialVariants
@@ -65,9 +66,8 @@ def merge_variants(lesson: PartialVariants, entry: PartialVariants | None) -> Pa
     )
 
 
-def _card_participants(
-    lesson: Lesson, entry: PlanEntry
-) -> tuple[tuple[UserId, RoleType | None], ...]:
+def _card_participants(lesson: Lesson, entry: PlanEntry) -> tuple[LessonParticipant, ...]:
+    """The card's participants: the lesson's, or the entry's subset (E9a's hook)."""
     if entry.participants is None:
         chosen = lesson.participants
     else:
@@ -79,7 +79,7 @@ def _card_participants(
                 f"lesson participants: {', '.join(unknown)}"
             )
         chosen = tuple(known[user_id] for user_id in entry.participants)
-    return tuple((participant.user_id, participant.assigned_role_type) for participant in chosen)
+    return chosen
 
 
 class CreateLesson:
@@ -114,11 +114,20 @@ class CreateLesson:
         async with self._unit_of_work() as uow:
             await uow.lessons.add(lesson)
             for entry in lesson.scenario_plan:
+                chosen = _card_participants(lesson, entry)
                 card = CreateSessionCommand(
                     scenario_version_id=entry.scenario_version_id,
                     session_mode=lesson.session_mode,
                     actor=command.actor,
-                    participants=_card_participants(lesson, entry),
+                    participants=tuple(
+                        (participant.user_id, participant.assigned_role_type)
+                        for participant in chosen
+                    ),
+                    assigned_services={
+                        participant.user_id: participant.assigned_service_id
+                        for participant in chosen
+                        if participant.assigned_service_id is not None
+                    },
                     time_scale=command.time_scale,
                     variants=merge_variants(lesson.variants, entry.variants),
                     lesson_id=lesson.lesson_id,

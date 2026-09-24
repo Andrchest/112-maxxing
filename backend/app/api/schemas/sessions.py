@@ -65,6 +65,9 @@ class ParticipantAssignmentSchema(ApiModel):
 
     user_id: UUID
     assigned_role_type: RoleType | None = None
+    assigned_service_id: str | None = None
+    """ДДС participant → service binding (MULTI_TRAINEE); distinct per session (HLD 70 §70.4.5,
+    I3 E5b). `null` = not bound."""
 
 
 class VariantsRequestSchema(ApiModel):

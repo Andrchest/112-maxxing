@@ -812,6 +812,21 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
+    EventType.DDS_CARD_ISSUE_FLAGGED: EventSpec(
+        # I3 E5b (HLD 70 §70.7, C1): the ДДС flags an error in the received card, recorded against
+        # the frozen snapshot only (`dds_card_check: ON`, «Отметить ошибку в карточке»).
+        event_type=EventType.DDS_CARD_ISSUE_FLAGGED,
+        actor_types=frozenset({ActorType.TRAINEE}),
+        payload_keys={
+            "assignment_id": "uuid",
+            "field_path": "str | null",
+            "issue_kind": "CardIssueKind",
+            "comment_ru": "str",
+            "actor_user_id": "uuid",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
 }
 
 assert frozenset(EVENT_PAYLOAD_CATALOG) == frozenset(EventType)

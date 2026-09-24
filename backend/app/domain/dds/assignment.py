@@ -8,7 +8,7 @@ given one to hold.
 **Response status (I3 E5a, HLD `70-i3-alignment.md` §70.4.3).** Each leg also carries the memo's
 per-service `ServiceResponseStatus` (`dds/response.py`), the offset it was entered at, the last
 entry's «Номер наряда» and comment, the sticky `accept_missed` flag, and who plays it
-(`responder`, `bound_user_id` — E5b binds services; until then every leg is `TRAINEE` and unbound).
+(`responder`, `bound_user_id` — set at creation by `dds/responders.py`'s `assign_responders`, E5b).
 `fire_response_trigger` is the one way the status moves: it runs `SERVICE_RESPONSE_MACHINE` and
 returns the moved leg with its `DDS_SERVICE_STATUS_SET`.
 """
@@ -100,7 +100,10 @@ def fire_response_trigger(
         role_type=RoleType.DDS if actor.actor_type is ActorType.TRAINEE else None,
         now_ms=now_ms,
         assignment=LegGuardSubject(
-            status_policy=status_policy, comment_ru=comment_ru, bound_user_id=leg.bound_user_id
+            status_policy=status_policy,
+            comment_ru=comment_ru,
+            bound_user_id=leg.bound_user_id,
+            responder=leg.responder,
         ),
     )
     previous = leg.response_status

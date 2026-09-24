@@ -40,6 +40,7 @@ from app.application.dds.close_incident import CloseDdsIncident
 from app.application.dds.command_context import DdsCommandGate
 from app.application.dds.deselect_resource import DeselectDdsResource
 from app.application.dds.dispatch import DispatchDdsResources
+from app.application.dds.flag_card_issue import FlagDdsCardIssue
 from app.application.dds.get_work_item import GetDdsWorkItem
 from app.application.dds.list_legs import ListDdsLegs
 from app.application.dds.list_notifications import ListNotifications
@@ -124,6 +125,7 @@ from app.application.sessions.create_session import CreateSession
 from app.application.sessions.get_snapshot import GetSnapshot
 from app.application.sessions.queries import GetSession, ListSessions
 from app.application.sessions.start_session import StartSession
+from app.application.simulation.responder_scripts import ScenarioResponderScripts
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
 from app.application.voice_token.create_voice_token import CreateVoiceToken
@@ -758,6 +760,10 @@ class Container:
         """`setDdsServiceStatus` (I3 E5a)."""
         return SetDdsServiceStatus(self.dds_command_gate())
 
+    def flag_dds_card_issue(self) -> FlagDdsCardIssue:
+        """`flagDdsCardIssue` (I3 E5b)."""
+        return FlagDdsCardIssue(self.dds_command_gate())
+
     def close_dds_incident(self) -> CloseDdsIncident:
         """`closeDdsIncident`."""
         return CloseDdsIncident(self.dds_command_gate(), self.clock)
@@ -768,9 +774,16 @@ class Container:
         The resolution verdict is `TickSession.resolution_condition_met`, bound here: evaluating
         `expected_response.resolution_condition` needs the live `WorldState`, which only the
         simulation slice may hold (D3), so the DDS slice is handed a boolean and nothing else.
+        The scripted responders (`expected_response.responders`, I3 E5b) arrive the same way —
+        through the runner-side `ScenarioResponderScripts`, so no DDS service holds the scenario
+        (INV 3).
         """
         return DdsStageAutomation(
-            self.unit_of_work, self.clock, self.tick_session.resolution_condition_met
+            self.unit_of_work,
+            self.clock,
+            self.tick_session.resolution_condition_met,
+            responder_probe=ScenarioResponderScripts(self.unit_of_work),
+            reference=self.reference,
         )
 
     async def _dds_stage_automation(self, session_id: SessionId) -> bool:

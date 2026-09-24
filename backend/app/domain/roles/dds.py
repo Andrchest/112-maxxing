@@ -148,6 +148,12 @@ _SET_SERVICE_STATUS = ActionDescriptor(
     permission=Permission.SET_SERVICE_STATUS,
 )
 
+_FLAG_CARD_ISSUE = ActionDescriptor(
+    action_id="flag_card_issue",
+    label_ru="Отметить ошибку в карточке",
+    permission=Permission.FLAG_CARD_ISSUE,
+)
+
 _MEMO_AVAILABLE_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
     DDSStageState.RECEIVED: (_OPEN_CARD, _SET_SERVICE_STATUS),
     DDSStageState.ACKNOWLEDGED: (_SET_SERVICE_STATUS, _SEND_STATUS_UPDATE, _CLOSE),
@@ -159,13 +165,40 @@ _MEMO_AVAILABLE_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = 
     DDSStageState.RESOLVED: (_CLOSE,),
     DDSStageState.CLOSED: (),
 }
-"""§70.4.4's memo table. `flag_card_issue` joins `ACKNOWLEDGED` with E5b (only under
-`dds_card_check: ON`, which is not implemented before it); `close` is offered in `ACKNOWLEDGED`
-and its guard `memo_all_legs_terminal` decides — a leg still open is the ordinary `409`."""
+"""§70.4.4's memo table under `dds_card_check: OFF`; `close` is offered in `ACKNOWLEDGED` and its
+guard `memo_all_legs_terminal` decides — a leg still open is the ordinary `409`."""
+
+_MEMO_CARD_CHECK_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
+    **_MEMO_AVAILABLE_ACTIONS,
+    DDSStageState.ACKNOWLEDGED: (
+        _SET_SERVICE_STATUS,
+        _SEND_STATUS_UPDATE,
+        _FLAG_CARD_ISSUE,
+        _CLOSE,
+    ),
+}
+"""The same table under `dds_card_check: ON` (I3 E5b, C1): «Отметить ошибку в карточке» joins
+`ACKNOWLEDGED`, in §70.4.4's order."""
+
+
+_PICKER_CARD_CHECK_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
+    state: (
+        actions
+        if state in (DDSStageState.RECEIVED, DDSStageState.CLOSED)
+        else (*actions, _FLAG_CARD_ISSUE)
+    )
+    for state, actions in _AVAILABLE_ACTIONS.items()
+}
+"""The picker table under `dds_card_check: ON` (I3 E5b, C1, §70.11): «Отметить ошибку в карточке»
+in every state from `ACKNOWLEDGED` until the stage closes — where the ДДС holds the card."""
 
 
 def _is_memo(variants: SessionVariants | None) -> bool:
     return variants is not None and variants.dds_mode.value == "MEMO_STATUSES"
+
+
+def _card_check_on(variants: SessionVariants | None) -> bool:
+    return variants is not None and variants.dds_card_check.value == "ON"
 
 
 class DDSModule:
@@ -231,6 +264,7 @@ class DDSModule:
                     EventType.DDS_CARD_STATUS_CHANGED,  # I3 E4a (HLD 70 §70.7)
                     EventType.DDS_CARD_OPENED,  # I3 E5a (HLD 70 §70.7)
                     EventType.DDS_SERVICE_STATUS_SET,  # I3 E5a (HLD 70 §70.7)
+                    EventType.DDS_CARD_ISSUE_FLAGGED,  # I3 E5b (HLD 70 §70.7)
                 }
             ),
         )
@@ -239,10 +273,16 @@ class DDSModule:
         self, stage_state: Enum, *, variants: SessionVariants | None = None
     ) -> tuple[ActionDescriptor, ...]:
         """§10.9's table for the session's `dds_mode` (HLD 70 §70.4.4): the memo table under
-        `MEMO_STATUSES`, the picker table otherwise (and for `variants=None`)."""
+        `MEMO_STATUSES` — with `flag_card_issue` in `ACKNOWLEDGED` when `dds_card_check: ON`
+        (I3 E5b) — the picker table otherwise (and for `variants=None`), with `flag_card_issue`
+        from `ACKNOWLEDGED` to `RESOLVED` under card check `ON`."""
         assert isinstance(stage_state, DDSStageState)
         if _is_memo(variants):
+            if _card_check_on(variants):
+                return _MEMO_CARD_CHECK_ACTIONS[stage_state]
             return _MEMO_AVAILABLE_ACTIONS[stage_state]
+        if _card_check_on(variants):
+            return _PICKER_CARD_CHECK_ACTIONS[stage_state]
         return _AVAILABLE_ACTIONS[stage_state]
 
     def state_machine_for(

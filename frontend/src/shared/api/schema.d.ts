@@ -1021,13 +1021,41 @@ export interface paths {
          * @description (additive, I3 E5a) Fires one `SERVICE_RESPONSE_TRANSITIONS` trigger (70 §70.4.2). An
          *     `ADDED` leg is first moved to `RECEIVED`. Out-of-sequence status ⇒ `409
          *     INVALID_TRANSITION`; missing comment on `NOT_ACCEPTED` / `REFUSED` ⇒ `422
-         *     COMMENT_REQUIRED`; a leg bound to another participant ⇒ `403 FORBIDDEN_FOR_SERVICE`;
-         *     `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. The trainee's first primary
+         *     COMMENT_REQUIRED`; a leg bound to another participant — or a `SCRIPTED` leg, played by
+         *     the scenario's script (I3 E5b, 70 §70.4.5) — ⇒ `403 FORBIDDEN_FOR_SERVICE`;
+         *     `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. In memo mode any ДДС participant
+         *     of the session may issue it (several ДДС trainees, each bound to a service). The trainee's first primary
          *     decision also fires the stage's `acknowledge`; no other stage trigger is fired (memo mode
          *     never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline events are
          *     appended first (flush-before-append).
          */
         post: operations["setDdsServiceStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds/card-issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The ДДС flags an error in the received card (only `dds_card_check: ON`).
+         * @description (additive, I3 E5b — 70 §70.4.4, §70.7, C1) «Отметить ошибку в карточке». Records the flag
+         *     against the frozen snapshot only; the DDS never sees the truth (INV 3) — whether the flag
+         *     was right is scoring's question. Offered under `dds_card_check: ON` in memo `ACKNOWLEDGED`
+         *     and in every picker state from `ACKNOWLEDGED` until the stage closes; `OFF` (the default)
+         *     or any other state ⇒ `409 ACTION_NOT_AVAILABLE`; a leg the caller does not play ⇒
+         *     `403 FORBIDDEN_FOR_SERVICE`; a blank `comment_ru` ⇒ `422 COMMENT_REQUIRED`; a `field_path`
+         *     outside the session's card schema ⇒ `422 CARD_FIELD_UNKNOWN`.
+         */
+        post: operations["flagDdsCardIssue"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1667,7 +1695,7 @@ export interface components {
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -1852,6 +1880,15 @@ export interface components {
              *     `ALL_STAGES_ONE_PARTICIPANT` (one trainee plays every stage).
              */
             assigned_role_type: components["schemas"]["RoleType"] | null;
+            /**
+             * @description (additive, I3 E5b) ДДС participant → service binding (70 §70.4.5): the leg of this
+             *     service is theirs; a notified service no participant is bound to is played by the
+             *     scenario's scripted responder. Distinct per session and only for a participant who
+             *     plays the DDS stage (else `validate` refuses: `409 INVALID_TRANSITION`); an id outside
+             *     the pack's service catalog ⇒ `422 SERVICE_UNKNOWN`. Several ДДС participants in
+             *     `MULTI_TRAINEE` must each be bound. `null`/absent = not bound.
+             */
+            assigned_service_id?: string | null;
         };
         SessionCreateRequest: {
             /** Format: uuid */
@@ -2638,6 +2675,25 @@ export interface components {
             closed_at_offset_ms: number | null;
             /** @description ADDITIVE (E20-E R11): the trainee's free-text closure comment (`DDS_INCIDENT_CLOSED.comment_ru`, E17 R2). `null`/absent when none was given or the leg is not yet closed. */
             comment_ru?: string | null;
+            /** @description (additive, I3 E5b) The leg's last memo status (picker legs — the mirrored one). */
+            response_status: components["schemas"]["ServiceResponseStatus"];
+            /**
+             * @description (additive, I3 E5b) Who played the leg — a ДДС trainee or the scenario's script.
+             * @enum {string}
+             */
+            responder: "TRAINEE" | "SCRIPTED";
+            /**
+             * Format: uuid
+             * @description (additive, I3 E5b) The ДДС participant bound to the leg's service, if any.
+             */
+            bound_user_id: string | null;
+            /**
+             * @description (additive, I3 E5b) Every `DDS_SERVICE_STATUS_SET` of the leg in log order, the author
+             *     before the time (REQ-5295) — the same entries the leg block shows.
+             */
+            status_history: components["schemas"]["ServiceStatusEntryView"][];
+            /** @description (additive, I3 E5b) The card issues flagged on this leg (`dds_card_check: ON`). */
+            card_issues: components["schemas"]["CardIssueView"][];
         };
         /** @description One `RESOURCE_STATUS_CHANGED` step — the resource timeline of SPEC §29. */
         ResourceTimelineEntryView: {
@@ -2693,6 +2749,11 @@ export interface components {
             timing_metrics: components["schemas"]["TimingMetricsView"];
             explanation_available: boolean;
             released: boolean;
+            /**
+             * @description (additive, I3 E5b) Per ДДС participant of the session, in participant order. Empty
+             *     when the viewer may not see the DDS sections.
+             */
+            dds_participant_totals: components["schemas"]["DdsParticipantTotalsView"][];
         };
         RescoreRequest: {
             /**
@@ -2988,6 +3049,49 @@ export interface components {
             order_number?: string | null;
             /** @description Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`. */
             comment_ru?: string | null;
+        };
+        /**
+         * @description (additive, I3 E5b) What the ДДС says is wrong with the received card (70 §70.7).
+         * @enum {string}
+         */
+        CardIssueKind: "MISSING" | "WRONG" | "CONTRADICTION" | "OTHER";
+        /** @description (additive, I3 E5b) «Отметить ошибку в карточке» (`dds_card_check: ON`). */
+        FlagCardIssueRequest: {
+            /** Format: uuid */
+            assignment_id: string;
+            field_path?: string | null;
+            issue_kind: components["schemas"]["CardIssueKind"];
+            comment_ru: string;
+        };
+        /** @description (additive, I3 E5b) One recorded card-issue flag (`DDS_CARD_ISSUE_FLAGGED`). */
+        CardIssueView: {
+            /** Format: uuid */
+            event_id: string;
+            /** Format: uuid */
+            assignment_id: string;
+            field_path: string | null;
+            issue_kind: components["schemas"]["CardIssueKind"];
+            comment_ru: string;
+            at_offset_ms: number;
+        };
+        /**
+         * @description (additive, I3 E5b) One ДДС participant's totals in the report (70 §70.4.5): the legs they
+         *     played (bound to them — or every trainee leg when nobody is bound), the statuses they set
+         *     (TRAINEE `DDS_SERVICE_STATUS_SET`), their primary decisions, refusals and completions, and
+         *     their card-issue flags. Scripted, system and picker-mirror steps count for nobody.
+         */
+        DdsParticipantTotalsView: {
+            /** Format: uuid */
+            user_id: string;
+            display_name_ru: string;
+            assigned_service_id: string | null;
+            legs: number;
+            status_entries: number;
+            accepted: number;
+            not_accepted: number;
+            refused: number;
+            completed: number;
+            card_issues: number;
         };
         Arrival: {
             kind: components["schemas"]["ArrivalKind"];
@@ -4480,6 +4584,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DdsLegView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    flagDdsCardIssue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagCardIssueRequest"];
+            };
+        };
+        responses: {
+            /** @description The recorded flag. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardIssueView"];
                 };
             };
             401: components["responses"]["Unauthorized"];

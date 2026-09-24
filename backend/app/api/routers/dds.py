@@ -41,11 +41,13 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import ContainerDep, TickAfterCommandDep
 from app.api.schemas.dds import (
+    CardIssueViewSchema,
     CloseIncidentRequestSchema,
     DdsLegViewSchema,
     DdsStageViewSchema,
     DispatchRequestSchema,
     DispatchResultViewSchema,
+    FlagCardIssueRequestSchema,
     NotificationPageSchema,
     NotificationViewSchema,
     RadioMessagePageSchema,
@@ -54,6 +56,7 @@ from app.api.schemas.dds import (
     SetServiceStatusRequestSchema,
     StatusUpdateRequestSchema,
     StatusUpdateViewSchema,
+    card_issue_schema,
     dds_leg_schema,
     dds_stage_schema,
     dispatch_result_schema,
@@ -222,6 +225,33 @@ async def set_dds_service_status(
     )
     await tick(SessionId(session_id))
     return dds_leg_schema(view)
+
+
+@router.post(
+    "/{session_id}/dds/card-issues",
+    operation_id="flagDdsCardIssue",
+    summary="The ДДС flags an error in the received card (only `dds_card_check: ON`).",
+    response_model=CardIssueViewSchema,
+    status_code=201,
+)
+async def flag_dds_card_issue(
+    session_id: UUID,
+    body: FlagCardIssueRequestSchema,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> CardIssueViewSchema:
+    """«Отметить ошибку в карточке» — one `DDS_CARD_ISSUE_FLAGGED` (I3 E5b, HLD 70 §70.7)."""
+    view = await container.flag_dds_card_issue()(
+        SessionId(session_id),
+        user,
+        assignment_id=AssignmentId(body.assignment_id),
+        issue_kind=body.issue_kind,
+        comment_ru=body.comment_ru,
+        field_path=body.field_path,
+    )
+    await tick(SessionId(session_id))
+    return card_issue_schema(view)
 
 
 @router.post(

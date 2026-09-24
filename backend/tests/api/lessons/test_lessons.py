@@ -546,3 +546,72 @@ async def test_releasing_a_worked_card_marks_it_checked_without_an_event(
     assert released.status_code == 200, released.text
     assert released.json()["sessions"][0]["card_status"] == "CHECKED"
     assert len(await lessons.events(session_id)) == before
+
+
+# ---------------------------------------------------------------------------------------------
+# I3 E5b — lesson participants carry the ДДС service binding (HLD 70 §70.4.5)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_lesson_participants_bind_dds_trainees_to_services_on_every_card(
+    lessons: Lessons, unit_of_work: Any, demo_version_id: ScenarioVersionId
+) -> None:
+    """`LessonParticipant.assigned_service_id` reaches every card's `session_participants`, and
+    each card's legs are played by the bound trainee or by the script."""
+    async with unit_of_work() as uow:
+        stored = await uow.scenarios.find_scenario_by_slug("street-rubbish-fire")
+        assert stored is not None
+        version = await uow.scenarios.find_version(stored.scenario_id, 1)
+        assert version is not None
+        await uow.commit()
+    one, two = lessons.users["trainee1"], lessons.users["trainee2"]
+    participants = [
+        {"user_id": str(one), "assigned_role_type": "DDS", "assigned_service_id": "FIRE_RESCUE"},
+        {"user_id": str(two), "assigned_role_type": "DDS", "assigned_service_id": "TSODD"},
+    ]
+    created = await lessons.created(
+        [
+            plan_entry(1, version.scenario_version_id),
+            plan_entry(2, version.scenario_version_id, offset_ms=60_000),
+        ],
+        session_mode="MULTI_TRAINEE",
+        participants=participants,
+    )
+    detail = await lessons.get(created["lesson_id"])
+    assert [(item["user_id"], item["assigned_service_id"]) for item in detail["participants"]] == [
+        (str(one), "FIRE_RESCUE"),
+        (str(two), "TSODD"),
+    ]
+
+    session_ids = [card["session_id"] for card in detail["sessions"]]
+    async with unit_of_work() as uow:
+        rows = (
+            await uow.session.execute(
+                sa.text(
+                    "SELECT session_id, user_id, assigned_service_id FROM session_participants "
+                    "WHERE session_id = ANY(:ids)"
+                ),
+                {"ids": [UUID(item) for item in session_ids]},
+            )
+        ).all()
+        await uow.commit()
+    bindings = {(str(row.session_id), str(row.user_id), row.assigned_service_id) for row in rows}
+    assert bindings == {
+        (session_id, str(user), service)
+        for session_id in session_ids
+        for user, service in ((one, "FIRE_RESCUE"), (two, "TSODD"))
+    }
+
+    await lessons.start(created["lesson_id"])
+    await lessons.tick(created["lesson_id"])
+    first = session_ids[0]
+    response = await lessons.client.get(
+        f"/api/v1/sessions/{first}/dds/legs", headers=auth(lessons.tokens["trainee2"])
+    )
+    assert response.status_code == 200, response.text
+    legs = {leg["service_type"]: leg for leg in response.json()}
+    assert legs["FIRE_RESCUE"]["bound_user_id"] == str(one)
+    assert legs["TSODD"]["bound_user_id"] == str(two)
+    assert legs["TSODD"]["is_mine"] is True and legs["FIRE_RESCUE"]["is_mine"] is False
+    others = set(legs) - {"FIRE_RESCUE", "TSODD"}
+    assert others and {legs[service]["responder"] for service in others} == {"SCRIPTED"}

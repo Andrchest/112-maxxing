@@ -54,7 +54,10 @@ def may_read_work_item(session: SimulationSession, user: AuthenticatedUser) -> b
     if user.is_instructor_or_admin:
         return True
     for stage in session.stages:
-        if stage.participant_user_id != user.user_id:
+        # Several ДДС trainees share the one DDS stage (HLD 70 §70.4.5, I3 E5b): every ДДС
+        # participant reads the work item and every leg (broadcast), not only the primary one.
+        dds_participant = stage.role_type is RoleType.DDS and session.plays_dds(user.user_id)
+        if stage.participant_user_id != user.user_id and not dds_participant:
             continue
         module = ROLE_MODULES.get(stage.role_type)
         if module is not None and module.visibility_policy.may_read(

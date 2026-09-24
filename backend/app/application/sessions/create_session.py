@@ -17,6 +17,8 @@ Everything below happens in **one** Unit of Work transaction (D5), in this order
    then build the aggregate with `app.domain.session.session.create_session` on the **effective**
    role chain those variants give, every id taken from the `IdGenerator` (the domain owns no
    randomness, D2/D7);
+   A ДДС participant's `assigned_service_id` (§70.4.5, I3 E5b) must name a service of the pack's
+   catalog (`422 SERVICE_UNKNOWN`); distinctness and "ДДС participants only" are `validate`'s.
 4. fire `validate` as `SYSTEM`;
 5. instantiate `WorldTruth` and `CallerBelief` from the version through `layers/copies.py` — the
    only conversion path between the information layers (D3) — plus an **empty** `OperatorCard`;
@@ -64,7 +66,7 @@ from app.domain.common.ids import (
 )
 from app.domain.common.state_machine import GuardRuntime
 from app.domain.dds.resources import EmergencyResource
-from app.domain.enums import ActorType, RoleType, SessionMode
+from app.domain.enums import ActorType, RoleType, ServiceId, SessionMode
 from app.domain.events.session_event import DomainEvent
 from app.domain.layers.copies import instantiate_caller_belief, instantiate_world_truth
 from app.domain.layers.operator_card import OperatorCard
@@ -75,6 +77,7 @@ from app.domain.session.session import SimulationSession, create_session
 from app.domain.session.variants import PartialVariants, effective_role_chain, resolve_variants
 
 __all__ = [
+    "BoundServiceUnknownError",
     "CreateSession",
     "CreateSessionCommand",
     "ReferencePackUnknownError",
@@ -106,6 +109,20 @@ class ReferencePackUnknownError(DomainError):
         super().__init__(f"reference pack {pack_id!r} is not in reference/manifest.json")
 
 
+class BoundServiceUnknownError(DomainError):
+    """A participant is bound to a service the session's catalog does not have (`422
+    SERVICE_UNKNOWN`, HLD 70 §70.4.5, §70.6.3; I3 E5b)."""
+
+    code = "SERVICE_UNKNOWN"
+
+    def __init__(self, service_id: str, pack_id: str) -> None:
+        self.service_id = service_id
+        self.pack_id = pack_id
+        super().__init__(
+            f"assigned_service_id {service_id!r} is not in the catalog of reference pack {pack_id}"
+        )
+
+
 @dataclass(frozen=True)
 class CreateSessionCommand:
     """`openapi.yaml`'s `SessionCreateRequest` plus the authenticated actor.
@@ -127,6 +144,10 @@ class CreateSessionCommand:
     """The lesson this session is a card of (HLD 70 §70.3.2); set only by `createLesson`."""
     lesson_position: int | None = None
     """The card's plan position; set exactly when `lesson_id` is."""
+    assigned_services: Mapping[UserId, ServiceId] = field(default_factory=dict)
+    """`ParticipantAssignment.assigned_service_id` per user (HLD 70 §70.4.5, I3 E5b): the ДДС
+    participant → service binding. Each id must be in the pack's service catalog
+    (`422 SERVICE_UNKNOWN`); `validate` checks the rest (distinct, ДДС participants only)."""
 
 
 class CreateSession:
@@ -168,6 +189,7 @@ class CreateSession:
         if reference_pack is None:
             raise ReferencePackUnknownError(version.reference_pack_id)
         scenario_valid = _is_valid(version, reference)
+        _check_bound_services(reference, version.reference_pack_id, command.assigned_services)
         variants = resolve_variants(command.variants, version.scenario_variants)
         chain = effective_role_chain(version.role_chain, variants.card_source)
 
@@ -183,6 +205,7 @@ class CreateSession:
             created_by=command.actor,
             participants=participants,
             participant_ids=[self._ids.new() for _ in participants],
+            assigned_services=command.assigned_services,
             session_seed=command.session_seed,
             time_scale=command.time_scale,
             variants=variants,
@@ -269,6 +292,16 @@ class CreateSession:
 def _parse(document: Mapping[str, Any]) -> ScenarioVersion:
     """The stored document back into the domain type — the one parser (`app.domain.scenario`)."""
     return ScenarioVersion.model_validate(dict(document))
+
+
+def _check_bound_services(
+    reference: ReferenceCatalog, pack_id: str, assigned: Mapping[UserId, ServiceId]
+) -> None:
+    """Every bound service is in the session's catalog, else `422 SERVICE_UNKNOWN` (§70.4.5)."""
+    catalog = reference.services(pack_id)
+    for service_id in assigned.values():
+        if catalog is not None and service_id not in catalog:
+            raise BoundServiceUnknownError(service_id, pack_id)
 
 
 def _is_valid(version: ScenarioVersion, reference: ReferenceCatalog) -> bool:

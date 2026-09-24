@@ -32,6 +32,8 @@ from pydantic import ValidationError
 
 from app.domain.common.errors import CardFieldError, ScenarioValidationError
 from app.domain.common.values import FactValue
+from app.domain.dds.policy import policy_of
+from app.domain.dds.responders import script_problems
 from app.domain.enums import (
     EffectKind,
     KnowledgeState,
@@ -188,9 +190,8 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
             f"(supported: {supported})"
         )
     # R01 (extended, HLD 70 §70.2.3): a key schema 2 introduced is refused in a schema-1
-    # document. `variants` (E1), `reference_pack` (E2a) and `timers` (E4a) are the model fields
-    # today; `expected_response.responders` is not, so `extra="forbid"` refuses it in every
-    # document until its epic (E5b) adds it.
+    # document — `variants` (E1), `reference_pack` (E2a), `timers` (E4a) and
+    # `expected_response.responders` (E5b).
     if version.schema_version < 2:
         for key in ("variants", "reference_pack", "timers"):
             if getattr(version, key) is not None:
@@ -198,6 +199,11 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
                     f"R01: {key} is a schema_version 2 key; schema_version "
                     f"{version.schema_version} does not allow it"
                 )
+        if version.expected_response.responders is not None:
+            out.append(
+                "R01: expected_response.responders is a schema_version 2 key; schema_version "
+                f"{version.schema_version} does not allow it"
+            )
 
 
 def _check_fact_sections(version: ScenarioVersion, out: list[str]) -> None:
@@ -673,13 +679,32 @@ def _check_variants(version: ScenarioVersion, out: list[str]) -> None:
             "R35: variants.supported.dds_mode has RESOURCE_PICKER, so available_resources must be "
             "non-empty and expected_response.resolution_condition present"
         )
-    if DdsMode.MEMO_STATUSES in supported.dds_mode:
-        # `expected_response.responders` arrives with E5b; until then no document can carry it,
-        # so a scenario cannot support MEMO_STATUSES yet.
+    if DdsMode.MEMO_STATUSES in supported.dds_mode and version.expected_response.responders is None:
+        # R36 (I3 E5b): a memo session plays every leg no ДДС participant is bound to by script,
+        # so the script — or the explicit `responders: DEFAULT` — must be written down.
         out.append(
             "R36: variants.supported.dds_mode has MEMO_STATUSES, so "
-            "expected_response.responders is required"
+            "expected_response.responders (or responders: DEFAULT) is required"
         )
+
+
+def _check_responders(
+    version: ScenarioVersion, reference: ReferenceCatalog, out: list[str]
+) -> None:
+    """Rule R36's second half (I3 E5b, HLD 70 §70.4.5): every script in
+    `expected_response.responders` can be played — each step one SIMULATION step of
+    `SERVICE_RESPONSE_TRANSITIONS` under the service's status policy (from the pack's catalog),
+    `after_ms` non-decreasing, a comment on «Не принята» / «Отказ» (`script_problems`)."""
+    responders = version.expected_response.responders
+    if responders is None or isinstance(responders, str):
+        return
+    catalog = reference.services(version.reference_pack_id)
+    for service_id, steps in sorted(responders.items()):
+        if not steps:
+            out.append(f"R36: expected_response.responders['{service_id}'] is empty")
+            continue
+        for problem in script_problems(steps, policy_of(catalog, service_id)):
+            out.append(f"R36: expected_response.responders['{service_id}']{problem}")
 
 
 def _check_variant_support(variants: ScenarioVariants, out: list[str]) -> None:
@@ -764,6 +789,9 @@ def _service_id_references(version: ScenarioVersion) -> Iterator[tuple[str, str]
     if expected.prefab_handoff is not None:
         for index, service in enumerate(expected.prefab_handoff.recipient_services):
             yield f"expected_response.prefab_handoff.recipient_services[{index}]", service
+    if expected.responders is not None and not isinstance(expected.responders, str):
+        for service in expected.responders:
+            yield f"expected_response.responders['{service}']", service
     for resource in version.available_resources:
         yield f"available_resources['{resource.resource_id}'].service_type", resource.service_type
     for rule in version.scoring_rules:
@@ -845,6 +873,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
         (32, 33, 34, 35, 36),
         lambda version, _modules, _reference, out: _check_variants(version, out),
     ),
+    ((36,), lambda version, _modules, reference, out: _check_responders(version, reference, out)),
     ((37,), lambda version, _modules, reference, out: _check_service_ids(version, reference, out)),
     (
         (38,),

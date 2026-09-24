@@ -24,13 +24,22 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from app.domain.caller.emotion import EmotionRule
 from app.domain.caller.profile import CallerProfile
 from app.domain.common.values import FactValue
 from app.domain.dds.resources import EtaProfile, ResourceAvailability, ResourceCapability
+from app.domain.dds.responders import ScriptedStep
 from app.domain.enums import (
     DisclosurePolicy,
     KnowledgeState,
@@ -171,6 +180,20 @@ class ExpectedResponse(BaseModel):
     min_units_by_service: Mapping[ServiceId, int] = Field(default_factory=dict)
     resolution_condition: Condition | None = None
     prefab_handoff: PrefabHandoff | None = None
+    responders: Mapping[ServiceId, tuple[ScriptedStep, ...]] | Literal["DEFAULT"] | None = None
+    """Schema 2 only (HLD 70 §70.4.5, I3 E5b): the scripted responders of the services no ДДС
+    participant is bound to — `DEFAULT` (§70.4.5's schedule) or a script per service
+    (`app.domain.dds.responders`). Rule R36 requires it when `MEMO_STATUSES` is supported; R01
+    refuses it in a schema-1 document. Read at runtime by stage automation only (INV 3)."""
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_responders(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """Leave `responders` out of a dump when the document has none, so every document written
+        before E5b dumps — and hashes (D4) — byte for byte as it did (P5)."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("responders") is None:
+            data.pop("responders", None)
+        return data
 
 
 class ResourceSpec(BaseModel):

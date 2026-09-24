@@ -38,6 +38,7 @@ from app.application.ports.dds_assignment_repository import StatusHistoryEntry
 from app.application.ports.notification_repository import StoredNotification
 from app.application.ports.resource_repository import StoredResource
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.card_issue import CardIssueKind
 from app.domain.dds.policy import StatusPolicy, allows_refusal
 from app.domain.dds.resources import (
     SELECTION_OPEN_STATES,
@@ -71,6 +72,8 @@ from app.domain.roles.registry import ROLE_MODULES
 from app.domain.session.session import RoleStage, SimulationSession
 
 __all__ = [
+    "CardIssueKind",
+    "CardIssueView",
     "DdsLegView",
     "DdsStageView",
     "DispatchResultView",
@@ -227,6 +230,17 @@ class DdsLegView(DdsView):
     is_mine: bool
     history: tuple[ServiceStatusEntryView, ...]
     available_actions: tuple[ActionView, ...]
+
+
+class CardIssueView(DdsView):
+    """`openapi.yaml`'s `CardIssueView` — one «Отметить ошибку в карточке» flag (I3 E5b)."""
+
+    event_id: UUID
+    assignment_id: UUID
+    field_path: str | None
+    issue_kind: CardIssueKind
+    comment_ru: str
+    at_offset_ms: int
 
 
 class DispatchResultView(DdsView):

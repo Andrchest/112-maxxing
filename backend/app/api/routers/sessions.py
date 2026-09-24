@@ -48,7 +48,7 @@ from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.sessions.create_session import CreateSessionCommand
 from app.application.sessions.queries import assemble_session_detail
 from app.domain.common.ids import ScenarioVersionId, SessionId, UserId
-from app.domain.enums import SessionState
+from app.domain.enums import ServiceId, SessionState
 from app.domain.session.session import SimulationSession
 from app.domain.session.variants import PartialVariants
 
@@ -92,6 +92,11 @@ async def create_session(
             variants=(
                 body.variants.to_domain() if body.variants is not None else PartialVariants()
             ),
+            assigned_services={
+                UserId(assignment.user_id): ServiceId(assignment.assigned_service_id)
+                for assignment in body.participants
+                if assignment.assigned_service_id is not None
+            },
         )
     )
     return await _detail(container, session, user)

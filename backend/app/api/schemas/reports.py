@@ -18,7 +18,14 @@ from uuid import UUID
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
-from app.api.schemas.dds import StatusUpdateViewSchema, status_update_schema
+from app.api.schemas.dds import (
+    CardIssueViewSchema,
+    ServiceStatusEntryViewSchema,
+    StatusUpdateViewSchema,
+    card_issue_schema,
+    status_entry_schema,
+    status_update_schema,
+)
 from app.api.schemas.handoff import HandoffSnapshotViewSchema, handoff_snapshot_schema
 from app.api.schemas.operator import (
     FactValueSchema,
@@ -37,7 +44,7 @@ from app.application.ports.report_explanation_repository import (
 )
 from app.application.ports.session_repository import ReportRelease
 from app.application.reports.assemble_report import SessionReportView
-from app.application.reports.dds_decisions import DdsDecision
+from app.application.reports.dds_decisions import DdsDecision, DdsParticipantTotals
 from app.application.reports.list_inference_metrics import InferenceMetricsPage
 from app.application.reports.resource_timeline import ResourceTimelineEntry
 from app.application.reports.timeline import TimelineEntry
@@ -46,6 +53,7 @@ from app.application.reports.transcript import AudioSegmentRef, TranscriptEntry,
 from app.application.reports.truth_vs_card import TruthVsCardEntry, Verdict
 from app.application.scoring.rescore_session import RescoreOutcome
 from app.domain.common.ids import SessionId
+from app.domain.dds.response import LegResponder, ServiceResponseStatus
 from app.domain.enums import (
     ActorType,
     ClosureReason,
@@ -61,6 +69,7 @@ from app.domain.scoring.rules import ScoringRule
 __all__ = [
     "AudioSegmentRefSchema",
     "DdsDecisionViewSchema",
+    "DdsParticipantTotalsViewSchema",
     "DispatchEventSchema",
     "GenerateExplanationRequestSchema",
     "InferenceMetricViewSchema",
@@ -82,6 +91,7 @@ __all__ = [
     "TruthVsCardDiffEntrySchema",
     "audio_segment_ref_schema",
     "dds_decision_schema",
+    "dds_participant_totals_schema",
     "inference_metric_schema",
     "inference_metrics_page_schema",
     "report_explanation_schema",
@@ -332,6 +342,26 @@ class DdsDecisionViewSchema(ApiModel):
     closure_reason: ClosureReason | None
     closed_at_offset_ms: int | None
     comment_ru: str | None = None
+    response_status: ServiceResponseStatus
+    responder: LegResponder
+    bound_user_id: UUID | None
+    status_history: list[ServiceStatusEntryViewSchema]
+    card_issues: list[CardIssueViewSchema]
+
+
+class DdsParticipantTotalsViewSchema(ApiModel):
+    """`openapi.yaml`'s `DdsParticipantTotalsView` — one ДДС participant's totals (I3 E5b)."""
+
+    user_id: UUID
+    display_name_ru: str
+    assigned_service_id: str | None
+    legs: int
+    status_entries: int
+    accepted: int
+    not_accepted: int
+    refused: int
+    completed: int
+    card_issues: int
 
 
 class ResourceTimelineEntryViewSchema(ApiModel):
@@ -390,6 +420,7 @@ class SessionReportSchema(ApiModel):
     timing_metrics: TimingMetricsViewSchema
     explanation_available: bool
     released: bool
+    dds_participant_totals: list[DdsParticipantTotalsViewSchema]
 
 
 class InferenceMetricViewSchema(ApiModel):
@@ -507,6 +538,27 @@ def dds_decision_schema(decision: DdsDecision) -> DdsDecisionViewSchema:
         closure_reason=decision.closure_reason,
         closed_at_offset_ms=decision.closed_at_offset_ms,
         comment_ru=decision.comment_ru,
+        response_status=decision.response_status,
+        responder=decision.responder,
+        bound_user_id=decision.bound_user_id,
+        status_history=[status_entry_schema(entry) for entry in decision.status_history],
+        card_issues=[card_issue_schema(issue) for issue in decision.card_issues],
+    )
+
+
+def dds_participant_totals_schema(totals: DdsParticipantTotals) -> DdsParticipantTotalsViewSchema:
+    """`DdsParticipantTotals` -> the wire model (I3 E5b)."""
+    return DdsParticipantTotalsViewSchema(
+        user_id=totals.user_id,
+        display_name_ru=totals.display_name_ru,
+        assigned_service_id=totals.assigned_service_id,
+        legs=totals.legs,
+        status_entries=totals.status_entries,
+        accepted=totals.accepted,
+        not_accepted=totals.not_accepted,
+        refused=totals.refused,
+        completed=totals.completed,
+        card_issues=totals.card_issues,
     )
 
 
@@ -577,6 +629,9 @@ def session_report_schema(view: SessionReportView) -> SessionReportSchema:
         timing_metrics=timing_metrics_schema(view.timing_metrics),
         explanation_available=view.explanation_available,
         released=view.released,
+        dds_participant_totals=[
+            dds_participant_totals_schema(totals) for totals in view.dds_participant_totals
+        ],
     )
 
 

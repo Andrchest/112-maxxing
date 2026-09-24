@@ -107,6 +107,8 @@ DDS_CONTAINER_FACTORIES: tuple[str, ...] = (
     "list_dds_legs",
     "open_dds_card",
     "set_dds_service_status",
+    # I3 E5b: «Отметить ошибку в карточке».
+    "flag_dds_card_issue",
 )
 
 #: The module that projects the DDS work item — the one place a repair could be smuggled in.
@@ -269,6 +271,67 @@ def test_no_dds_service_is_constructed_with_the_scenario(use_case: type) -> None
     }
     offenders = sorted(mentioned & SCENARIO_NAMES)
     assert not offenders, f"{use_case.__name__}.__init__ takes {offenders}"
+
+
+#: The one application module that reads `expected_response.responders` (I3 E5b, HLD 70 §70.1
+#: INV 3): the runner-side probe the composition root hands to stage automation. The scenario's
+#: own validation (`app/domain/scenario/validation.py`) is the only other reader in `app/`.
+RESPONDER_READERS: frozenset[str] = frozenset(
+    {
+        "app/application/simulation/responder_scripts.py",
+        "app/domain/scenario/validation.py",
+    }
+)
+
+
+def _reads_responders(path: Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == "responders" for node in ast.walk(tree)
+    )
+
+
+def test_responders_are_read_only_runner_side() -> None:
+    """INV 3 (I3 E5b): the scripted responders are scenario data. Only the runner-side probe reads
+    `expected_response.responders`; stage automation is handed the script through it, and no DDS
+    command or read module — nor any other module of `app/` — reaches the key."""
+    readers = {
+        str(path.relative_to(BACKEND))
+        for path in sorted((BACKEND / "app").rglob("*.py"))
+        if _reads_responders(path)
+    }
+    assert readers == RESPONDER_READERS
+    for path in dds_facing_modules():
+        names = _mentioned_names(path)
+        assert "responder_scripts" not in names, f"{path.name} imports the runner-side probe"
+        assert "ScenarioResponderScripts" not in names, f"{path.name} names the probe"
+
+
+def test_only_stage_automation_is_handed_the_script() -> None:
+    """The DDS use cases take no script; stage automation takes it as a probe, not a scenario."""
+    import inspect
+
+    from app.application.dds.stage_automation import DdsStageAutomation
+
+    for use_case in _dds_use_case_classes():
+        signature = inspect.signature(use_case.__init__)
+        mentioned = {
+            name
+            for parameter in signature.parameters.values()
+            for name in _annotation_names(parameter.annotation)
+        }
+        if use_case is DdsStageAutomation:
+            assert "ResponderProbe" in mentioned
+            continue
+        assert not mentioned & {"ResponderProbe", "ScriptedResponders", "ScriptedStep"}, (
+            f"{use_case.__name__}.__init__ is handed the scripted responders"
+        )
+
+
+def test_the_container_binds_the_runner_side_probe() -> None:
+    """The composition root is where the probe meets stage automation (I3 E5b)."""
+    source = (BACKEND / "app" / "api" / "container.py").read_text(encoding="utf-8")
+    assert "responder_probe=ScenarioResponderScripts(self.unit_of_work)" in source
 
 
 def test_the_card_schema_step_takes_only_a_view_a_snapshot_and_a_schema() -> None:

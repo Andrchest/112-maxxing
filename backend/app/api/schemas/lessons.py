@@ -26,7 +26,7 @@ from app.application.lessons.queries import IncidentListItemView, LessonDetailVi
 from app.application.ports.lesson_repository import StoredLessonListing
 from app.domain.common.ids import ScenarioVersionId, UserId
 from app.domain.dds.card_status import CardStatus
-from app.domain.enums import RoleType, SessionMode, SessionState
+from app.domain.enums import RoleType, ServiceId, SessionMode, SessionState
 from app.domain.lesson.lesson import LessonState
 from app.domain.lesson.plan import Arrival, ArrivalKind, LessonParticipant, PlanEntry
 
@@ -134,6 +134,11 @@ class LessonCreateRequestSchema(ApiModel):
             LessonParticipant(
                 user_id=UserId(assignment.user_id),
                 assigned_role_type=assignment.assigned_role_type,
+                assigned_service_id=(
+                    None
+                    if assignment.assigned_service_id is None
+                    else ServiceId(assignment.assigned_service_id)
+                ),
             )
             for assignment in self.participants
         )
@@ -244,6 +249,7 @@ def lesson_detail_schema(view: LessonDetailView) -> LessonDetailSchema:
             ParticipantAssignmentSchema(
                 user_id=UUID(str(participant.user_id)),
                 assigned_role_type=participant.assigned_role_type,
+                assigned_service_id=participant.assigned_service_id,
             )
             for participant in lesson.participants
         ],

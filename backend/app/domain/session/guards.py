@@ -109,7 +109,12 @@ def _reached(ctx: GuardContext, status: ResourceStatus) -> bool:
 
 
 def _participant_cardinality_holds(session: SimulationSession) -> bool:
-    """The `SessionPolicy.assignment_rule` cardinality of §10.10 / this task's brief."""
+    """The `SessionPolicy.assignment_rule` cardinality of §10.10 / this task's brief, plus the
+    ДДС service binding (HLD 70 §70.4.5, I3 E5b): only a participant who plays the DDS stage may
+    be bound to a service, and bound services are distinct. Under `ONE_PARTICIPANT_PER_STAGE` the
+    DDS stage may hold several participants exactly when every one of them is bound."""
+    if not _service_binding_holds(session):
+        return False
     rule = session.policy.assignment_rule
     participants = session.participants
     if rule is ParticipantAssignmentRule.SINGLE_STAGE_ONE_PARTICIPANT:
@@ -119,9 +124,36 @@ def _participant_cardinality_holds(session: SimulationSession) -> bool:
     role_chain = {stage.role_type for stage in session.stages}
     if any(p.assigned_role_type not in role_chain for p in participants):
         return False
+    for stage in session.stages:
+        matching = [p for p in participants if p.assigned_role_type is stage.role_type]
+        if len(matching) == 1:
+            continue
+        several_bound_dds = stage.role_type is RoleType.DDS and all(
+            p.assigned_service_id is not None for p in matching
+        )
+        if not (len(matching) > 1 and several_bound_dds):
+            return False
+    return True
+
+
+def _service_binding_holds(session: SimulationSession) -> bool:
+    """Every `assigned_service_id` is non-empty, distinct, and held by a participant who plays the
+    DDS stage (assigned `DDS`, or the one participant of `ALL_STAGES_ONE_PARTICIPANT`) of a chain
+    that has one."""
+    bound = [p for p in session.participants if p.assigned_service_id is not None]
+    if not bound:
+        return True
+    if not any(stage.role_type is RoleType.DDS for stage in session.stages):
+        return False
+    services = [str(p.assigned_service_id) for p in bound]
+    if any(service == "" for service in services) or len(set(services)) != len(services):
+        return False
+    all_stages = (
+        session.policy.assignment_rule is ParticipantAssignmentRule.ALL_STAGES_ONE_PARTICIPANT
+    )
     return all(
-        sum(1 for p in participants if p.assigned_role_type is stage.role_type) == 1
-        for stage in session.stages
+        p.assigned_role_type is RoleType.DDS or (all_stages and p.assigned_role_type is None)
+        for p in bound
     )
 
 
@@ -358,10 +390,7 @@ def guard_any_dds_participant(ctx: GuardContext) -> bool:
         return True
     if session is None:
         return False
-    return any(
-        participant.user_id == actor_id and participant.assigned_role_type is RoleType.DDS
-        for participant in session.participants
-    )
+    return bool(session.plays_dds(actor_id))
 
 
 DDS_GUARDS: Mapping[str, Callable[[GuardContext], bool]] = {

@@ -36,6 +36,7 @@ from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import SessionId, UserId
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.policy import policy_of
+from app.domain.dds.responders import plays_leg
 from app.domain.enums import DDSStageState, RoleType, SessionState
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.routing.catalog import ServiceCatalog
@@ -47,13 +48,8 @@ _SET_SERVICE_STATUS = "set_service_status"
 
 
 def is_dds_participant(session: SimulationSession, stage: RoleStage, user_id: UserId) -> bool:
-    """The user plays the DDS stage — its bound participant, or one assigned `DDS`."""
-    if stage.participant_user_id == user_id:
-        return True
-    return any(
-        participant.user_id == user_id and participant.assigned_role_type is RoleType.DDS
-        for participant in session.participants
-    )
+    """The user plays the DDS stage — its bound participant, or any ДДС participant."""
+    return stage.participant_user_id == user_id or session.plays_dds(user_id)
 
 
 def _is_mine(
@@ -64,7 +60,7 @@ def _is_mine(
         return False
     if not is_dds_participant(session, stage, user.user_id):
         return False
-    return leg.bound_user_id is None or leg.bound_user_id == user.user_id
+    return plays_leg(leg, user.user_id)
 
 
 def _may_act(session: SimulationSession, stage: RoleStage) -> bool:

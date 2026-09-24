@@ -7,7 +7,8 @@ One command, one step of `SERVICE_RESPONSE_TRANSITIONS`, in the fixed order belo
    offer — `dds_mode: RESOURCE_PICKER` is therefore `409 ACTION_NOT_AVAILABLE` (the contract's
    answer);
 2. the leg must be one of this stage's (`404`) and the caller must play it: its `bound_user_id`,
-   or any ДДС participant when it is unbound (§70.4.5, `403 FORBIDDEN_FOR_SERVICE`);
+   or any ДДС participant when it is unbound; a `SCRIPTED` leg is nobody's (§70.4.5,
+   `403 FORBIDDEN_FOR_SERVICE`);
 3. the requested status must be the leg's legal next one (`trigger_for`; an `ADDED` leg is read as
    `RECEIVED`, because it is moved there first) — else the ordinary `409 INVALID_TRANSITION`
    (INV 8, A-8: no step may be skipped);
@@ -37,6 +38,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError, InvalidTransitionError
 from app.domain.common.ids import AssignmentId, SessionId, UserId
 from app.domain.dds.assignment import DDSAssignment, fire_response_trigger
+from app.domain.dds.responders import plays_leg
 from app.domain.dds.response import (
     PRIMARY_DECISIONS,
     ServiceResponseStatus,
@@ -85,9 +87,12 @@ class ForbiddenForServiceError(DomainError):
 
 
 def check_leg_bound(leg: DDSAssignment, user_id: UserId) -> None:
-    """`guard_leg_actor_bound`'s gate half: a bound leg answers only its participant."""
-    if leg.bound_user_id is not None and leg.bound_user_id != user_id:
-        raise ForbiddenForServiceError(leg.assignment_id)
+    """`guard_leg_actor_bound`'s gate half: a bound leg answers only its participant, and a
+    `SCRIPTED` leg — a service no ДДС participant is bound to — answers no trainee at all (HLD 70
+    §70.4.5, I3 E5b); both are `403 FORBIDDEN_FOR_SERVICE`."""
+    if plays_leg(leg, user_id):
+        return
+    raise ForbiddenForServiceError(leg.assignment_id)
 
 
 def acknowledged_event(ctx: DdsCommandContext, leg: DDSAssignment) -> DomainEvent:

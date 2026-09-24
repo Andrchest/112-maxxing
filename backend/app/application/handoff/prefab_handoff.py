@@ -63,6 +63,7 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, IncidentId, RoleStageId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import handoff_received_keys
+from app.domain.dds.responders import assign_responders
 from app.domain.enums import ActorType, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
@@ -147,7 +148,10 @@ async def materialise_prefab_handoff(
         session.created_by_user_id,
         now_ms,
     )
-    legs = snapshot_to_assignments(snapshot, role_stage_id, now_ms)
+    # Who plays each leg: the bound ДДС participant, or the script (I3 E5b, HLD 70 §70.4.5).
+    legs = assign_responders(
+        snapshot_to_assignments(snapshot, role_stage_id, now_ms), session.dds_service_bindings
+    )
     await uow.handoffs.add(snapshot)
     await uow.dds_assignments.add_all(legs)
 

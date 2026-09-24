@@ -36,7 +36,13 @@ from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.realtime.redaction import source_of_row
 from app.application.reference.queries import reference_catalog
-from app.application.reports.dds_decisions import DdsDecision, dds_decisions
+from app.application.reports.dds_decisions import (
+    DdsDecision,
+    DdsParticipant,
+    DdsParticipantTotals,
+    dds_decisions,
+    dds_participant_totals,
+)
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
 from app.application.reports.timeline import TimelineEntry, timeline_entry
 from app.application.reports.timing_metrics import TimingMetrics, timing_metrics
@@ -105,6 +111,9 @@ class SessionReportView:
     timing_metrics: TimingMetrics
     explanation_available: bool
     released: bool
+    dds_participant_totals: tuple[DdsParticipantTotals, ...] = ()
+    """ADDITIVE (I3 E5b): per ДДС participant — legs played, statuses set, decisions, flags.
+    Empty when the viewer may not see the DDS sections."""
 
 
 class GetSessionReport:
@@ -176,6 +185,14 @@ class GetSessionReport:
             await uow.commit()
 
         actor_ids = {event.seq_no: _actor_id(event) for event in events}
+        display_names = {
+            UUID(str(participant.user_id)): participant.display_name_ru
+            for participant in detail.participants
+        }
+        catalog = reference_catalog(self._reference).services(scenario_version.reference_pack_id)
+        service_names = (
+            {} if catalog is None else {str(entry.id): entry.name_ru for entry in catalog.services}
+        )
         timeline = tuple(
             timeline_entry(
                 envelope,
@@ -205,11 +222,18 @@ class GetSessionReport:
                 else ()
             ),
             handoff=handoff,
-            dds_decisions=dds_decisions(legs, events),
+            dds_decisions=dds_decisions(
+                legs, events, display_names=display_names, service_names=service_names
+            ),
             resource_timeline=(resource_timeline(events) if visibility.shows_dds_sections else ()),
             timing_metrics=timing_metrics(turns, metrics, events),
             explanation_available=bool(explanations),
             released=released,
+            dds_participant_totals=(
+                dds_participant_totals(_dds_participants(session, detail), legs, events)
+                if visibility.shows_dds_sections
+                else ()
+            ),
         )
 
 
@@ -252,6 +276,26 @@ async def _dds_legs(uow: UnitOfWork, session: SimulationSession) -> list[DDSAssi
         if stage.role_type is RoleType.DDS:
             legs.extend(await uow.dds_assignments.list_for_stage(stage.role_stage_id))
     return legs
+
+
+def _dds_participants(
+    session: SimulationSession, detail: SessionDetailView
+) -> tuple[DdsParticipant, ...]:
+    """The session's ДДС participants (I3 E5b), in participant order, with their display names."""
+    names = {UUID(str(view.user_id)): view.display_name_ru for view in detail.participants}
+    return tuple(
+        DdsParticipant(
+            user_id=UUID(str(participant.user_id)),
+            display_name_ru=names.get(UUID(str(participant.user_id)), str(participant.user_id)),
+            assigned_service_id=(
+                None
+                if participant.assigned_service_id is None
+                else str(participant.assigned_service_id)
+            ),
+        )
+        for participant in session.participants
+        if session.plays_dds(participant.user_id)
+    )
 
 
 def _final_card(

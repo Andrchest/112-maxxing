@@ -1415,8 +1415,10 @@ paths:
         (additive, I3 E5a) Fires one `SERVICE_RESPONSE_TRANSITIONS` trigger (70 §70.4.2). An
         `ADDED` leg is first moved to `RECEIVED`. Out-of-sequence status ⇒ `409
         INVALID_TRANSITION`; missing comment on `NOT_ACCEPTED` / `REFUSED` ⇒ `422
-        COMMENT_REQUIRED`; a leg bound to another participant ⇒ `403 FORBIDDEN_FOR_SERVICE`;
-        `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. The trainee's first primary
+        COMMENT_REQUIRED`; a leg bound to another participant — or a `SCRIPTED` leg, played by
+        the scenario's script (I3 E5b, 70 §70.4.5) — ⇒ `403 FORBIDDEN_FOR_SERVICE`;
+        `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. In memo mode any ДДС participant
+        of the session may issue it (several ДДС trainees, each bound to a service). The trainee's first primary
         decision also fires the stage's `acknowledge`; no other stage trigger is fired (memo mode
         never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline events are
         appended first (flush-before-append).
@@ -1436,6 +1438,40 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/sessions/{session_id}/dds/card-issues:
+    post:
+      tags: [dds]
+      operationId: flagDdsCardIssue
+      summary: 'The ДДС flags an error in the received card (only `dds_card_check: ON`).'
+      description: |
+        (additive, I3 E5b — 70 §70.4.4, §70.7, C1) «Отметить ошибку в карточке». Records the flag
+        against the frozen snapshot only; the DDS never sees the truth (INV 3) — whether the flag
+        was right is scoring's question. Offered under `dds_card_check: ON` in memo `ACKNOWLEDGED`
+        and in every picker state from `ACKNOWLEDGED` until the stage closes; `OFF` (the default)
+        or any other state ⇒ `409 ACTION_NOT_AVAILABLE`; a leg the caller does not play ⇒
+        `403 FORBIDDEN_FOR_SERVICE`; a blank `comment_ru` ⇒ `422 COMMENT_REQUIRED`; a `field_path`
+        outside the session's card schema ⇒ `422 CARD_FIELD_UNKNOWN`.
+      x-action: flag_card_issue
+      x-emits: [DDS_CARD_ISSUE_FLAGGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagCardIssueRequest' }
+      responses:
+        '201':
+          description: The recorded flag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardIssueView' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2549,6 +2585,7 @@ components:
         - RECIPIENTS_RESOLVED          # additive, I3 E2b′
         - DDS_CARD_OPENED              # additive, I3 E5a
         - DDS_SERVICE_STATUS_SET       # additive, I3 E5a
+        - DDS_CARD_ISSUE_FLAGGED       # additive, I3 E5b
 
     # ------------------------------------------------------ value objects ----
     FactValue:
@@ -2830,6 +2867,15 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RoleType'
             - type: 'null'
+        assigned_service_id:
+          description: |
+            (additive, I3 E5b) ДДС participant → service binding (70 §70.4.5): the leg of this
+            service is theirs; a notified service no participant is bound to is played by the
+            scenario's scripted responder. Distinct per session and only for a participant who
+            plays the DDS stage (else `validate` refuses: `409 INVALID_TRANSITION`); an id outside
+            the pack's service catalog ⇒ `422 SERVICE_UNKNOWN`. Several ДДС participants in
+            `MULTI_TRAINEE` must each be bound. `null`/absent = not bound.
+          type: [string, 'null']
 
     SessionCreateRequest:
       type: object
@@ -3996,7 +4042,7 @@ components:
       type: object
       description: The DDS decisions section of SPEC §29 — what was acknowledged, dispatched, reported and closed.
       additionalProperties: false
-      required: [assignment_id, service_type, acknowledged_at_offset_ms, dispatch_events, status_updates, closure_reason, closed_at_offset_ms]
+      required: [assignment_id, service_type, acknowledged_at_offset_ms, dispatch_events, status_updates, closure_reason, closed_at_offset_ms, response_status, responder, bound_user_id, status_history, card_issues]
       properties:
         assignment_id: { type: string, format: uuid }
         service_type: { $ref: '#/components/schemas/ServiceType' }
@@ -4035,6 +4081,28 @@ components:
             ADDITIVE (E20-E R11): the trainee's free-text closure comment
             (`DDS_INCIDENT_CLOSED.comment_ru`, E17 R2). `null`/absent when none was given or the
             leg is not yet closed.
+        response_status:
+          description: (additive, I3 E5b) The leg's last memo status (picker legs — the mirrored one).
+          allOf:
+            - $ref: '#/components/schemas/ServiceResponseStatus'
+        responder:
+          description: (additive, I3 E5b) Who played the leg — a ДДС trainee or the scenario's script.
+          type: string
+          enum: [TRAINEE, SCRIPTED]
+        bound_user_id:
+          description: (additive, I3 E5b) The ДДС participant bound to the leg's service, if any.
+          type: [string, 'null']
+          format: uuid
+        status_history:
+          description: |
+            (additive, I3 E5b) Every `DDS_SERVICE_STATUS_SET` of the leg in log order, the author
+            before the time (REQ-5295) — the same entries the leg block shows.
+          type: array
+          items: { $ref: '#/components/schemas/ServiceStatusEntryView' }
+        card_issues:
+          description: '(additive, I3 E5b) The card issues flagged on this leg (`dds_card_check: ON`).'
+          type: array
+          items: { $ref: '#/components/schemas/CardIssueView' }
 
     ResourceTimelineEntryView:
       type: object
@@ -4104,6 +4172,7 @@ components:
         - timing_metrics
         - explanation_available
         - released
+        - dds_participant_totals
       properties:
         session_id: { type: string, format: uuid }
         session: { $ref: '#/components/schemas/SessionDetail' }
@@ -4144,6 +4213,12 @@ components:
         timing_metrics: { $ref: '#/components/schemas/TimingMetricsView' }
         explanation_available: { type: boolean }
         released: { type: boolean }
+        dds_participant_totals:
+          description: |
+            (additive, I3 E5b) Per ДДС participant of the session, in participant order. Empty
+            when the viewer may not see the DDS sections.
+          type: array
+          items: { $ref: '#/components/schemas/DdsParticipantTotalsView' }
 
     RescoreRequest:
       type: object
@@ -4548,6 +4623,52 @@ components:
           type: [string, 'null']
           maxLength: 2000
           description: Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`.
+    CardIssueKind:
+      description: '(additive, I3 E5b) What the ДДС says is wrong with the received card (70 §70.7).'
+      type: string
+      enum: [MISSING, WRONG, CONTRADICTION, OTHER]
+    FlagCardIssueRequest:
+      description: '(additive, I3 E5b) «Отметить ошибку в карточке» (`dds_card_check: ON`).'
+      type: object
+      additionalProperties: false
+      required: [assignment_id, issue_kind, comment_ru]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        field_path: { type: [string, 'null'] }
+        issue_kind: { $ref: '#/components/schemas/CardIssueKind' }
+        comment_ru: { type: string, minLength: 1, maxLength: 2000 }
+    CardIssueView:
+      description: (additive, I3 E5b) One recorded card-issue flag (`DDS_CARD_ISSUE_FLAGGED`).
+      type: object
+      additionalProperties: false
+      required: [event_id, assignment_id, field_path, issue_kind, comment_ru, at_offset_ms]
+      properties:
+        event_id: { type: string, format: uuid }
+        assignment_id: { type: string, format: uuid }
+        field_path: { type: [string, 'null'] }
+        issue_kind: { $ref: '#/components/schemas/CardIssueKind' }
+        comment_ru: { type: string }
+        at_offset_ms: { type: integer }
+    DdsParticipantTotalsView:
+      description: |
+        (additive, I3 E5b) One ДДС participant's totals in the report (70 §70.4.5): the legs they
+        played (bound to them — or every trainee leg when nobody is bound), the statuses they set
+        (TRAINEE `DDS_SERVICE_STATUS_SET`), their primary decisions, refusals and completions, and
+        their card-issue flags. Scripted, system and picker-mirror steps count for nobody.
+      type: object
+      additionalProperties: false
+      required: [user_id, display_name_ru, assigned_service_id, legs, status_entries, accepted, not_accepted, refused, completed, card_issues]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name_ru: { type: string }
+        assigned_service_id: { type: [string, 'null'] }
+        legs: { type: integer, minimum: 0 }
+        status_entries: { type: integer, minimum: 0 }
+        accepted: { type: integer, minimum: 0 }
+        not_accepted: { type: integer, minimum: 0 }
+        refused: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        card_issues: { type: integer, minimum: 0 }
     Arrival:
       type: object
       additionalProperties: false

@@ -435,6 +435,11 @@ def participant_row_values(
             if participant.assigned_role_type is not None
             else None
         ),
+        "assigned_service_id": (
+            None
+            if participant.assigned_service_id is None
+            else str(participant.assigned_service_id)
+        ),
     }
 
 
@@ -520,10 +525,14 @@ def role_stage_from_row(row: Mapping[str, Any]) -> RoleStage:
 def participant_from_row(row: Mapping[str, Any]) -> SessionParticipant:
     """Read one `session_participants` row back into its domain type (§20.3)."""
     assigned_role_type = row["assigned_role_type"]
+    assigned_service_id = row.get("assigned_service_id")
     return SessionParticipant(
         user_id=UserId(UUID(str(row["user_id"]))),
         assigned_role_type=None if assigned_role_type is None else RoleType(assigned_role_type),
         participant_id=UUID(str(row["id"])),
+        assigned_service_id=(
+            None if assigned_service_id is None else ServiceId(str(assigned_service_id))
+        ),
     )
 
 

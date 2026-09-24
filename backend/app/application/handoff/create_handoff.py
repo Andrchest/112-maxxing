@@ -68,6 +68,7 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, RoleStageId, SessionId, UserId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment, handoff_received_keys
+from app.domain.dds.responders import assign_responders
 from app.domain.enums import (
     ActorType,
     Operator112StageState,
@@ -237,7 +238,11 @@ class CreateHandoff:
         legs = (
             ()
             if dds_stage_id is None
-            else snapshot_to_assignments(snapshot, dds_stage_id, ctx.now_ms)
+            # Who plays each leg: the bound ДДС participant, or the script (I3 E5b, §70.4.5).
+            else assign_responders(
+                snapshot_to_assignments(snapshot, dds_stage_id, ctx.now_ms),
+                ctx.session.dds_service_bindings,
+            )
         )
 
         await ctx.uow.handoffs.add(snapshot)

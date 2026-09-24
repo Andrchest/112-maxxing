@@ -64,11 +64,11 @@ def test_product_default_is_the_owner_default_from_e5() -> None:
     assert expected == PRODUCT_DEFAULT_VARIANTS
 
 
-def test_implemented_values_after_e5a() -> None:
+def test_implemented_values_after_e5b() -> None:
     expected = {
         "card_source": frozenset({"CALLER_VOICE", "GENERATED_CARD"}),
         "dds_mode": frozenset({"RESOURCE_PICKER", "MEMO_STATUSES"}),
-        "dds_card_check": frozenset({"OFF"}),
+        "dds_card_check": frozenset({"OFF", "ON"}),
         "dds_brigade_call": frozenset({"OFF"}),
     }
     assert expected == IMPLEMENTED_VARIANT_VALUES
@@ -134,18 +134,19 @@ def test_legacy_session_variants_read_off_the_stage_chain() -> None:
 def test_the_view_filters_unimplemented_values_and_keeps_an_implemented_default() -> None:
     view = available_scenario_variants(ALL_SUPPORTED)
     assert view.supported.dds_mode == (DdsMode.RESOURCE_PICKER, DdsMode.MEMO_STATUSES)
-    assert view.supported.dds_card_check == (DdsCardCheck.OFF,)
+    assert view.supported.dds_card_check == (DdsCardCheck.OFF, DdsCardCheck.ON)
     assert view.supported.dds_brigade_call == (DdsBrigadeCall.OFF,)
     assert view.supported.card_source == ALL_SUPPORTED.supported.card_source
     assert view.default.dds_mode is DdsMode.MEMO_STATUSES
-    check_default = ALL_SUPPORTED.model_copy(
+    brigade_default = ALL_SUPPORTED.model_copy(
         update={
             "default": PRODUCT_DEFAULT_VARIANTS.model_copy(
-                update={"dds_card_check": DdsCardCheck.ON}
+                update={"dds_brigade_call": DdsBrigadeCall.ON}
             )
         }
     )
-    assert available_scenario_variants(check_default).default.dds_card_check is DdsCardCheck.OFF
+    view = available_scenario_variants(brigade_default)
+    assert view.default.dds_brigade_call is DdsBrigadeCall.OFF
 
 
 # ---------------------------------------------------------------------------------------------
@@ -171,10 +172,15 @@ def test_memo_statuses_is_available_from_e5a() -> None:
     assert resolved.dds_mode is DdsMode.MEMO_STATUSES
 
 
+def test_card_check_on_is_available_from_e5b() -> None:
+    """`dds_card_check: ON` («Отметить ошибку в карточке») resolves where supported (§70.11)."""
+    resolved = resolve_variants(PartialVariants(dds_card_check=DdsCardCheck.ON), ALL_SUPPORTED)
+    assert resolved.dds_card_check is DdsCardCheck.ON
+
+
 @pytest.mark.parametrize(
     ("switch", "value"),
     [
-        ("dds_card_check", DdsCardCheck.ON),
         ("dds_brigade_call", DdsBrigadeCall.ON),
     ],
 )
@@ -210,15 +216,15 @@ def test_a_value_outside_supported_is_not_supported() -> None:
 
 
 def test_an_unimplemented_scenario_default_is_not_available() -> None:
-    check_default = ALL_SUPPORTED.model_copy(
+    brigade_default = ALL_SUPPORTED.model_copy(
         update={
             "default": PRODUCT_DEFAULT_VARIANTS.model_copy(
-                update={"dds_card_check": DdsCardCheck.ON}
+                update={"dds_brigade_call": DdsBrigadeCall.ON}
             )
         }
     )
     with pytest.raises(VariantNotAvailableError):
-        resolve_variants(PartialVariants(), check_default)
+        resolve_variants(PartialVariants(), brigade_default)
 
 
 # ---------------------------------------------------------------------------------------------

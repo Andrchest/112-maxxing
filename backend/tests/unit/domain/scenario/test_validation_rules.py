@@ -517,12 +517,89 @@ def test_r37_accepts_a_catalog_service_beyond_the_six_legacy_ids() -> None:
     assert validate_scenario_document(document, reference=reference) == []
 
 
-def test_r01_refuses_expected_response_responders() -> None:
-    """E1 leaves `expected_response.responders` (E5b) refused."""
+def test_r01_refuses_expected_response_responders_in_schema_1() -> None:
+    """`expected_response.responders` is a schema-2 key (I3 E5b, R01 extended)."""
     document = demo_document()
-    _schema_2(document)
     document["expected_response"]["responders"] = "DEFAULT"
-    assert _rule_numbers(validate_scenario_document(document)) == {1}
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {1}
+    assert any("expected_response.responders" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "responders",
+    [
+        "DEFAULT",
+        {
+            "FIRE_RESCUE": [
+                {"after_ms": 0, "status": "RECEIVED"},
+                {"after_ms": 5_000, "status": "ACCEPTED", "order_number": "Н-1"},
+                {"after_ms": 9_000, "status": "REFUSED", "comment_ru": "Нет расчётов"},
+            ],
+            "AMBULANCE": [{"after_ms": 3_000, "status": "COMPLETED"}],
+            "POLICE": [{"after_ms": 1_000, "status": "NOT_ACCEPTED", "comment_ru": "Не наше"}],
+        },
+    ],
+    ids=["DEFAULT", "per-service"],
+)
+def test_r36_is_satisfied_by_responders(responders: Any) -> None:
+    """R36 active (I3 E5b): `MEMO_STATUSES` supported with `responders` — `DEFAULT` or a playable
+    script per service (AMBULANCE's `COMPLETED` straight away is the 103 `NO_REFUSAL` shortcut)."""
+    document = demo_document()
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = responders
+    assert validate_scenario_document(document) == []
+
+
+@pytest.mark.parametrize(
+    ("script", "fragment"),
+    [
+        ([{"after_ms": 0, "status": "ARRIVED"}], "not one scripted step from ADDED"),
+        (
+            [{"after_ms": 0, "status": "RECEIVED"}, {"after_ms": 0, "status": "WORKING"}],
+            "not one scripted step from RECEIVED",
+        ),
+        ([{"after_ms": 0, "status": "NOT_ACCEPTED"}], "needs a non-blank comment_ru"),
+        (
+            [{"after_ms": 9_000, "status": "RECEIVED"}, {"after_ms": 1_000, "status": "ACCEPTED"}],
+            "earlier than the step before",
+        ),
+        ([], "is empty"),
+    ],
+    ids=["skips", "skips-later", "no-comment", "backwards", "empty"],
+)
+def test_r36_refuses_a_script_that_cannot_be_played(script: Any, fragment: str) -> None:
+    document = demo_document()
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = {"FIRE_RESCUE": script}
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {36}
+    assert any(fragment in violation for violation in violations), violations
+
+
+def test_r36_applies_the_service_policy_to_a_script() -> None:
+    """103 (`NO_REFUSAL`) cannot decline; a `DEFAULT` service cannot skip to «Работы завершены»."""
+    document = demo_document()
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = {
+        "AMBULANCE": [{"after_ms": 0, "status": "NOT_ACCEPTED", "comment_ru": "Нет"}],
+        "FIRE_RESCUE": [{"after_ms": 0, "status": "COMPLETED"}],
+    }
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {36}
+    assert sum("policy NO_REFUSAL" in violation for violation in violations) == 1
+    assert sum("policy DEFAULT" in violation for violation in violations) == 1
+
+
+def test_r37_checks_the_responders_service_ids() -> None:
+    document = demo_document()
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = {
+        "NO_SUCH_SERVICE": [{"after_ms": 0, "status": "RECEIVED"}]
+    }
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {37}
+    assert any("expected_response.responders['NO_SUCH_SERVICE']" in v for v in violations)
 
 
 def test_r32_reports_an_empty_and_a_duplicated_support_list() -> None:

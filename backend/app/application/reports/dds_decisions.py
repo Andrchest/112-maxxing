@@ -23,21 +23,44 @@ Three of the fields have no column and are folded out of `session_events`, which
 Every event is matched to its leg by `payload["assignment_id"]`, so a leg with no dispatch and no
 report renders with empty lists rather than being dropped: "the DDS did nothing for the police
 leg" is a finding, not an absence.
+
+**The memo statuses (I3 E5b, HLD 70 §70.4.3, D16).** Each leg also carries its final
+`response_status`, who played it (`responder`, `bound_user_id`), its whole status history —
+folded from `DDS_SERVICE_STATUS_SET`, the source the `dds_service_status_history` read model is
+itself materialised from, rendered as the leg block renders it (`ServiceStatusEntryView`: the author
+before the time, REQ-5295) — and the card issues its service flagged (`DDS_CARD_ISSUE_FLAGGED`,
+`dds_card_check: ON`). `dds_participant_totals` adds the per-ДДС-participant counts a review of
+several ДДС trainees needs: the legs each played, the statuses each set, their primary decisions,
+refusals and completions, and their card-issue flags. Both are pure folds over the legs and the log.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 from uuid import UUID
 
-from app.application.dds.views import StatusUpdateView
+from app.application.dds.views import CardIssueView, ServiceStatusEntryView, StatusUpdateView
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.card_issue import CardIssueKind
+from app.domain.dds.response import LegResponder, ServiceResponseStatus, StatusSource
 from app.domain.enums import ClosureReason, ServiceId, StatusUpdateKind
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 
-__all__ = ["DdsDecision", "DispatchEvent", "dds_decisions"]
+__all__ = [
+    "DdsDecision",
+    "DdsParticipant",
+    "DdsParticipantTotals",
+    "DispatchEvent",
+    "dds_decisions",
+    "dds_participant_totals",
+]
+
+_S = ServiceResponseStatus
+_SYSTEM_DISPLAY_RU = "Система"
+"""Who a SIMULATION entry is shown as (the leg block's word, `app.application.dds.views`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,20 +90,64 @@ class DdsDecision:
     comment_ru: str | None = None
     """ADDITIVE (E20-E R11): `DDS_INCIDENT_CLOSED.comment_ru` (E17 R2) — the trainee's free-text
     closure comment, `None` when none was given or the leg is not yet closed."""
+    response_status: ServiceResponseStatus = ServiceResponseStatus.ADDED
+    """ADDITIVE (I3 E5b): the leg's last memo status (picker legs: the mirrored one)."""
+    responder: LegResponder = LegResponder.TRAINEE
+    """ADDITIVE (I3 E5b): who played the leg — a ДДС trainee or the scenario's script."""
+    bound_user_id: UUID | None = None
+    """ADDITIVE (I3 E5b): the ДДС participant bound to the leg's service, if any."""
+    status_history: tuple[ServiceStatusEntryView, ...] = ()
+    """ADDITIVE (I3 E5b): every `DDS_SERVICE_STATUS_SET` of the leg, in log order."""
+    card_issues: tuple[CardIssueView, ...] = ()
+    """ADDITIVE (I3 E5b): every `DDS_CARD_ISSUE_FLAGGED` raised on the leg."""
+
+
+class DdsParticipant(NamedTuple):
+    """One ДДС participant of the session, as `dds_participant_totals` needs them."""
+
+    user_id: UUID
+    display_name_ru: str
+    assigned_service_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DdsParticipantTotals:
+    """`openapi.yaml`'s `DdsParticipantTotalsView` — one ДДС participant's totals (I3 E5b)."""
+
+    user_id: UUID
+    display_name_ru: str
+    assigned_service_id: str | None
+    legs: int
+    """The legs this participant played: bound to them, or every trainee leg when nobody is
+    bound (one trainee plays every leg, §70.4.5)."""
+    status_entries: int
+    """`DDS_SERVICE_STATUS_SET`s this participant authored (TRAINEE)."""
+    accepted: int
+    not_accepted: int
+    refused: int
+    completed: int
+    card_issues: int
 
 
 def dds_decisions(
-    legs: Sequence[DDSAssignment], events: Sequence[SessionEvent]
+    legs: Sequence[DDSAssignment],
+    events: Sequence[SessionEvent],
+    *,
+    display_names: Mapping[UUID, str] | None = None,
+    service_names: Mapping[str, str] | None = None,
 ) -> tuple[DdsDecision, ...]:
     """One `DdsDecision` per leg, in the order the legs were created (`received_at_offset_ms`).
 
     Pure: the legs and the event log are the only inputs, which is the same structural isolation
     `work_item.py` documents — nothing here can reach `WorldTruth`, `CallerBelief` or the live
-    `OperatorCard`, because it is never given one.
+    `OperatorCard`, because it is never given one. `display_names` (participant → name) and
+    `service_names` (service id → catalog name) only label the history's authors.
     """
     dispatches = _dispatch_events_by_assignment(events)
     updates = _status_updates_by_assignment(events)
     comments = _closure_comments_by_assignment(events)
+    history = _status_history_by_assignment(events, display_names or {}, service_names or {})
+    issues = _card_issues_by_assignment(events)
     ordered = sorted(legs, key=lambda leg: (leg.received_at_offset_ms, str(leg.assignment_id)))
     return tuple(
         DdsDecision(
@@ -92,9 +159,127 @@ def dds_decisions(
             closure_reason=leg.closure_reason,
             closed_at_offset_ms=leg.closed_at_offset_ms,
             comment_ru=comments.get(UUID(str(leg.assignment_id))),
+            response_status=leg.response_status,
+            responder=leg.responder,
+            bound_user_id=None if leg.bound_user_id is None else UUID(str(leg.bound_user_id)),
+            status_history=history.get(UUID(str(leg.assignment_id)), ()),
+            card_issues=issues.get(UUID(str(leg.assignment_id)), ()),
         )
         for leg in ordered
     )
+
+
+def dds_participant_totals(
+    participants: Sequence[DdsParticipant],
+    legs: Sequence[DDSAssignment],
+    events: Sequence[SessionEvent],
+) -> tuple[DdsParticipantTotals, ...]:
+    """One `DdsParticipantTotals` per ДДС participant, in `participants` order (I3 E5b).
+
+    Pure over the legs and the log. A status counts for the participant who authored it
+    (`DDS_SERVICE_STATUS_SET.actor_user_id`, TRAINEE source) — scripted, system and picker-mirror
+    steps count for nobody.
+    """
+    leg_ids = {UUID(str(leg.assignment_id)) for leg in legs}
+    authored: dict[UUID, list[str]] = {}
+    flagged: dict[UUID, int] = {}
+    for event in events:
+        if _uuid(event.payload.get("assignment_id")) not in leg_ids:
+            continue
+        actor = _uuid(event.payload.get("actor_user_id"))
+        if actor is None:
+            continue
+        if (
+            event.event_type is EventType.DDS_SERVICE_STATUS_SET
+            and event.payload.get("source") == StatusSource.TRAINEE.value
+        ):
+            authored.setdefault(actor, []).append(str(event.payload.get("new_status")))
+        elif event.event_type is EventType.DDS_CARD_ISSUE_FLAGGED:
+            flagged[actor] = flagged.get(actor, 0) + 1
+    return tuple(
+        DdsParticipantTotals(
+            user_id=participant.user_id,
+            display_name_ru=participant.display_name_ru,
+            assigned_service_id=participant.assigned_service_id,
+            legs=sum(1 for leg in legs if _plays(leg, participant.user_id)),
+            status_entries=len(authored.get(participant.user_id, ())),
+            accepted=authored.get(participant.user_id, []).count(_S.ACCEPTED.value),
+            not_accepted=authored.get(participant.user_id, []).count(_S.NOT_ACCEPTED.value),
+            refused=authored.get(participant.user_id, []).count(_S.REFUSED.value),
+            completed=authored.get(participant.user_id, []).count(_S.COMPLETED.value),
+            card_issues=flagged.get(participant.user_id, 0),
+        )
+        for participant in participants
+    )
+
+
+def _plays(leg: DDSAssignment, user_id: UUID) -> bool:
+    if leg.responder is LegResponder.SCRIPTED:
+        return False
+    return leg.bound_user_id is None or UUID(str(leg.bound_user_id)) == user_id
+
+
+def _status_history_by_assignment(
+    events: Sequence[SessionEvent],
+    display_names: Mapping[UUID, str],
+    service_names: Mapping[str, str],
+) -> Mapping[UUID, tuple[ServiceStatusEntryView, ...]]:
+    grouped: dict[UUID, list[ServiceStatusEntryView]] = {}
+    for event in events:
+        if event.event_type is not EventType.DDS_SERVICE_STATUS_SET:
+            continue
+        payload = event.payload
+        assignment_id = _uuid(payload.get("assignment_id"))
+        if assignment_id is None:
+            continue
+        source = StatusSource(str(payload["source"]))
+        actor = _uuid(payload.get("actor_user_id"))
+        service = str(payload.get("service_type") or "")
+        if source is StatusSource.SCRIPTED_RESPONDER:
+            author = service_names.get(service, service)
+        elif actor is not None and actor in display_names:
+            author = display_names[actor]
+        else:
+            author = _SYSTEM_DISPLAY_RU
+        grouped.setdefault(assignment_id, []).append(
+            ServiceStatusEntryView(
+                event_id=UUID(str(event.id)),
+                previous_status=ServiceResponseStatus(str(payload["previous_status"])),
+                new_status=ServiceResponseStatus(str(payload["new_status"])),
+                order_number=_optional_str(payload.get("order_number")),
+                comment_ru=_optional_str(payload.get("comment_ru")),
+                completion_reason=_optional_str(payload.get("completion_reason")),
+                source=source,
+                actor_user_id=actor,
+                actor_display_ru=author,
+                at_offset_ms=int(payload.get("at_offset_ms", event.monotonic_offset_ms)),
+            )
+        )
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _card_issues_by_assignment(
+    events: Sequence[SessionEvent],
+) -> Mapping[UUID, tuple[CardIssueView, ...]]:
+    grouped: dict[UUID, list[CardIssueView]] = {}
+    for event in events:
+        if event.event_type is not EventType.DDS_CARD_ISSUE_FLAGGED:
+            continue
+        payload = event.payload
+        assignment_id = _uuid(payload.get("assignment_id"))
+        if assignment_id is None:
+            continue
+        grouped.setdefault(assignment_id, []).append(
+            CardIssueView(
+                event_id=UUID(str(event.id)),
+                assignment_id=assignment_id,
+                field_path=_optional_str(payload.get("field_path")),
+                issue_kind=CardIssueKind(str(payload["issue_kind"])),
+                comment_ru=str(payload.get("comment_ru") or ""),
+                at_offset_ms=int(payload.get("at_offset_ms", event.monotonic_offset_ms)),
+            )
+        )
+    return {key: tuple(value) for key, value in grouped.items()}
 
 
 def _dispatch_events_by_assignment(

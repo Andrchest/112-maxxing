@@ -262,7 +262,8 @@ assigned_service_id IS NOT NULL` *(additive, I3 E5a)*.
 
 `assigned_service_id` (migration `0012_dds_response_status`, HLD 70 §70.4.5) is the ДДС participant →
 service binding of a `MULTI_TRAINEE` session with several ДДС trainees, distinct per session. E5a
-lands the column; E5b writes it.
+lands the column; E5b writes it (`createSession` / `createLesson` `ParticipantAssignment.assigned_service_id`)
+and reads it when the legs are created (`responder`, `bound_user_id`).
 
 ### `role_stages`
 | Column | PG type | Null | Default |

@@ -254,6 +254,7 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 51 | `RECIPIENTS_RESOLVED` | ✔ | — | ✔ | — (I3 E2b′: SIMULATION; the routing resolver's answer the 112 services panel marks as «авто», 70 §70.6.4; the DDS sees only the frozen union through `HANDOFF_RECEIVED`) |
 | 52 | `DDS_CARD_OPENED` | — | ✔ | ✔ | — (I3 E5a: TRAINEE; the ДДС opened the card on one leg, 70 §70.4.2) |
 | 53 | `DDS_SERVICE_STATUS_SET` | — | ✔ | ✔ | — (I3 E5a: TRAINEE or SIMULATION; one step of one leg's memo status — broadcast, every ДДС participant sees every leg, 70 §70.4.3) |
+| 54 | `DDS_CARD_ISSUE_FLAGGED` | — | ✔ | ✔ | — (I3 E5b: TRAINEE; the ДДС flagged an error in the received card under `dds_card_check: ON`, recorded against the frozen snapshot, 70 §70.7, C1) |
 
 Consistency rule for implementers: this table and `EVENT_PAYLOAD_CATALOG` are one fact expressed
 twice. A unit test iterates `EventType` and asserts that every member appears in both, with the same

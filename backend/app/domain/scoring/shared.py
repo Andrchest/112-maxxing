@@ -47,6 +47,12 @@ def payload_matches(event: SessionEvent, expected: Mapping[str, FactValue] | Non
 
     A subset match, not an equality: `to_payload_match`/`payload_match` name the few keys a rule
     cares about, and a payload that also carries offsets and correlation ids still matches.
+
+    **A list value means "any of" against a scalar payload value** (I3 E5b, additive): HLD 70
+    §70.4.4's memo rule `{new_status: [ACCEPTED, NOT_ACCEPTED]}` holds for either decision. A list
+    payload value is still compared as a sequence, and a scalar value as before, so every rule
+    written before E5b scores exactly as it did (`test_payload_match_any_of.py` rescores every
+    existing test log under the old matcher).
     """
     if not expected:
         return True
@@ -56,6 +62,10 @@ def payload_matches(event: SessionEvent, expected: Mapping[str, FactValue] | Non
         actual = event.payload[key]
         if isinstance(actual, list | tuple) and isinstance(wanted, list):
             if [str(item) for item in actual] != [str(item) for item in wanted]:
+                return False
+            continue
+        if isinstance(wanted, list):
+            if not any(actual == item or str(actual) == str(item) for item in wanted):
                 return False
             continue
         if actual != wanted and str(actual) != str(wanted):

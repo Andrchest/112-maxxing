@@ -17,15 +17,17 @@ deterministic_seed: "street-rubbish-fire-v1"
 role_chain: [DDS]
 reference_pack: v046_24-r1
 
+# The ДДС works in the memo's per-service statuses by default (I3 E5b, HLD 70 §70.11); the resource
+# picker stays selectable. Card check defaults OFF (customer answer 23.09) and may be switched ON.
 variants:
   supported:
     card_source: [GENERATED_CARD]
-    dds_mode: [RESOURCE_PICKER]
-    dds_card_check: ["OFF"]
+    dds_mode: [MEMO_STATUSES, RESOURCE_PICKER]
+    dds_card_check: ["OFF", "ON"]
     dds_brigade_call: ["OFF"]
   default:
     card_source: GENERATED_CARD
-    dds_mode: RESOURCE_PICKER
+    dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
     dds_brigade_call: "OFF"
 
@@ -102,6 +104,8 @@ expected_response:
       q.fire.access: ["no_access"]
       q.fire.street_object: ["мусор"]
       q.fire.threat_to_people: ["threat_to_people:no"]
+  # Services no ДДС participant is bound to answer by the default schedule (HLD 70 §70.4.5, R36).
+  responders: DEFAULT
 
 world_events: []
 
@@ -140,6 +144,7 @@ scoring_rules:
     critical: true
     evaluator_type: RESOURCE_SELECTION
     applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [RESOURCE_PICKER] }
     min_evidence: 1
     config: { required_capabilities: [FIRE_SUPPRESSION],
               min_units_by_service: { FIRE_RESCUE: 1 },

@@ -84,7 +84,7 @@ SERVICE_RESPONSE_LABELS_RU: Mapping[ServiceResponseStatus, str] = {
 
 
 class LegResponder(str, Enum):
-    """Who plays a leg (§70.4.3, §70.4.5). `SCRIPTED` legs arrive with E5b."""
+    """Who plays a leg (§70.4.3, §70.4.5; `SCRIPTED` since E5b, `dds/responders.py`)."""
 
     TRAINEE = "TRAINEE"
     SCRIPTED = "SCRIPTED"
@@ -133,7 +133,9 @@ class LegGuardSubject(BaseModel):
     status_policy: StatusPolicy = StatusPolicy.DEFAULT
     comment_ru: str | None = None
     bound_user_id: UserId | None = None
-    """`None` = any ДДС participant plays the leg (§70.4.5; the only case until E5b)."""
+    """`None` = any ДДС participant plays the leg (§70.4.5) — unless the leg is `SCRIPTED`."""
+    responder: LegResponder = LegResponder.TRAINEE
+    """A `SCRIPTED` leg is played by the scenario's script alone (§70.4.5, I3 E5b)."""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -261,10 +263,15 @@ def _subject(ctx: GuardContext) -> LegGuardSubject:
 def guard_leg_actor_bound(ctx: GuardContext) -> bool:
     """§70.4.5: a trainee command must come from the leg's `bound_user_id`, or — when the leg is
     unbound — from any ДДС participant (the application's gate has already checked that). A
-    SIMULATION actor (scripted responder, picker mirror) plays the leg by construction."""
+    `SCRIPTED` leg answers no trainee at all: its service has no bound participant, the scenario's
+    script plays it (I3 E5b). A SIMULATION actor (scripted responder, picker mirror) plays the leg
+    by construction."""
     if ctx.actor.actor_type is not ActorType.TRAINEE:
         return True
-    bound = _subject(ctx).bound_user_id
+    subject = _subject(ctx)
+    if subject.responder is LegResponder.SCRIPTED:
+        return False
+    bound = subject.bound_user_id
     return bound is None or ctx.actor.actor_id == bound
 
 

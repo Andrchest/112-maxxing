@@ -155,11 +155,11 @@ derived support allows it (`derive_scenario_variants`); schema 1 keeps `RESOURCE
 IMPLEMENTED_VARIANT_VALUES: Mapping[str, frozenset[str]] = {
     "card_source": frozenset({CardSource.CALLER_VOICE.value, CardSource.GENERATED_CARD.value}),
     "dds_mode": frozenset({DdsMode.RESOURCE_PICKER.value, DdsMode.MEMO_STATUSES.value}),
-    "dds_card_check": frozenset({DdsCardCheck.OFF.value}),
+    "dds_card_check": frozenset({DdsCardCheck.OFF.value, DdsCardCheck.ON.value}),
     "dds_brigade_call": frozenset({DdsBrigadeCall.OFF.value}),
 }
-"""What the product can run today; grows per epic (§70.11): E5a added `MEMO_STATUSES`; E5b adds
-card check `ON`, E6 brigade call `ON`."""
+"""What the product can run today; grows per epic (§70.11): E5a added `MEMO_STATUSES`, E5b card
+check `ON` («Отметить ошибку в карточке», `flagDdsCardIssue`); E6 adds brigade call `ON`."""
 
 
 class VariantNotAvailableError(DomainError):

@@ -75,6 +75,8 @@ class EventType(str, Enum):
     """A ДДС participant opened the card on one leg (§70.4.2 `receive`); TRAINEE (E5a)."""
     DDS_SERVICE_STATUS_SET = "DDS_SERVICE_STATUS_SET"
     """One leg's `ServiceResponseStatus` moved one step (§70.4.2); TRAINEE or SIMULATION (E5a)."""
+    DDS_CARD_ISSUE_FLAGGED = "DDS_CARD_ISSUE_FLAGGED"
+    """The ДДС flagged an error in the received card (`dds_card_check: ON`); TRAINEE (E5b)."""
 
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -137,6 +139,7 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.RECIPIENTS_RESOLVED,
         EventType.DDS_CARD_OPENED,
         EventType.DDS_SERVICE_STATUS_SET,
+        EventType.DDS_CARD_ISSUE_FLAGGED,
     }
 )
 

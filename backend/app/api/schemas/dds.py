@@ -23,6 +23,7 @@ from app.api.schemas.common import ApiModel
 from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.operator import ActionDescriptorSchema, action_schemas
 from app.application.dds.views import (
+    CardIssueView,
     DdsLegView,
     DdsStageView,
     DispatchResultView,
@@ -31,8 +32,10 @@ from app.application.dds.views import (
     NotificationView,
     RadioMessagePage,
     RadioMessageView,
+    ServiceStatusEntryView,
     StatusUpdateView,
 )
+from app.domain.dds.card_issue import CardIssueKind
 from app.domain.dds.resources import ResourceCapability
 from app.domain.dds.response import LegResponder, ServiceResponseStatus, StatusSource
 from app.domain.enums import (
@@ -48,6 +51,7 @@ from app.domain.enums import (
 )
 
 __all__ = [
+    "CardIssueViewSchema",
     "CloseIncidentRequestSchema",
     "DdsLegViewSchema",
     "DdsStageViewSchema",
@@ -55,6 +59,7 @@ __all__ = [
     "DispatchResultViewSchema",
     "EmergencyResourceViewSchema",
     "EtaProfileViewSchema",
+    "FlagCardIssueRequestSchema",
     "NotificationPageSchema",
     "NotificationViewSchema",
     "RadioMessagePageSchema",
@@ -65,12 +70,14 @@ __all__ = [
     "SetServiceStatusRequestSchema",
     "StatusUpdateRequestSchema",
     "StatusUpdateViewSchema",
+    "card_issue_schema",
     "dds_leg_schema",
     "dds_stage_schema",
     "dispatch_result_schema",
     "notification_schema",
     "radio_message_page_schema",
     "resource_schema",
+    "status_entry_schema",
     "status_update_schema",
 ]
 
@@ -114,9 +121,29 @@ class SetServiceStatusRequestSchema(ApiModel):
     comment_ru: str | None = Field(default=None, max_length=2000)
 
 
+class FlagCardIssueRequestSchema(ApiModel):
+    """`openapi.yaml`'s `FlagCardIssueRequest` — «Отметить ошибку в карточке» (I3 E5b)."""
+
+    assignment_id: UUID
+    field_path: str | None = None
+    issue_kind: CardIssueKind
+    comment_ru: str = Field(min_length=1, max_length=2000)
+
+
 # ---------------------------------------------------------------------------------------------
 # Responses
 # ---------------------------------------------------------------------------------------------
+
+
+class CardIssueViewSchema(ApiModel):
+    """`openapi.yaml`'s `CardIssueView` — one recorded card-issue flag (I3 E5b)."""
+
+    event_id: UUID
+    assignment_id: UUID
+    field_path: str | None
+    issue_kind: CardIssueKind
+    comment_ru: str
+    at_offset_ms: int
 
 
 class EtaProfileViewSchema(ApiModel):
@@ -397,22 +424,36 @@ def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
         responder=view.responder,
         bound_user_id=view.bound_user_id,
         is_mine=view.is_mine,
-        history=[
-            ServiceStatusEntryViewSchema(
-                event_id=entry.event_id,
-                previous_status=entry.previous_status,
-                new_status=entry.new_status,
-                order_number=entry.order_number,
-                comment_ru=entry.comment_ru,
-                completion_reason=(
-                    "WITHOUT_BRIGADE" if entry.completion_reason == "WITHOUT_BRIGADE" else None
-                ),
-                source=entry.source,
-                actor_user_id=entry.actor_user_id,
-                actor_display_ru=entry.actor_display_ru,
-                at_offset_ms=entry.at_offset_ms,
-            )
-            for entry in view.history
-        ],
+        history=[status_entry_schema(entry) for entry in view.history],
         available_actions=action_schemas(view.available_actions),
+    )
+
+
+def status_entry_schema(entry: ServiceStatusEntryView) -> ServiceStatusEntryViewSchema:
+    """One `ServiceStatusEntryView` -> the wire model (the leg block and the report share it)."""
+    return ServiceStatusEntryViewSchema(
+        event_id=entry.event_id,
+        previous_status=entry.previous_status,
+        new_status=entry.new_status,
+        order_number=entry.order_number,
+        comment_ru=entry.comment_ru,
+        completion_reason=(
+            "WITHOUT_BRIGADE" if entry.completion_reason == "WITHOUT_BRIGADE" else None
+        ),
+        source=entry.source,
+        actor_user_id=entry.actor_user_id,
+        actor_display_ru=entry.actor_display_ru,
+        at_offset_ms=entry.at_offset_ms,
+    )
+
+
+def card_issue_schema(view: CardIssueView) -> CardIssueViewSchema:
+    """`CardIssueView` -> the wire model (I3 E5b)."""
+    return CardIssueViewSchema(
+        event_id=view.event_id,
+        assignment_id=view.assignment_id,
+        field_path=view.field_path,
+        issue_kind=view.issue_kind,
+        comment_ru=view.comment_ru,
+        at_offset_ms=view.at_offset_ms,
     )

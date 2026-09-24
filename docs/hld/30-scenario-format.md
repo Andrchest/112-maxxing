@@ -36,9 +36,8 @@ Identifiers, keys and enum members are English. Only `*_ru` fields, `label_ru`, 
 Additional top-level keys are rejected (`extra="forbid"`). `schema_version` is `1` or `2`
 (`SUPPORTED_SCHEMA_VERSIONS`). A `schema_version: 1` document has exactly the SPEC §4 keys above;
 `schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2) and
-`reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1) and `timers` (I3 E4a, HLD 70 §70.3.4). The
-later schema-2 key `expected_response.responders` (HLD 70 §70.4.5) is not accepted yet — it stays
-refused until its epic (E5b).
+`reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1) and `timers` (I3 E4a, HLD 70 §70.3.4), and the
+nested `expected_response.responders` (I3 E5b, HLD 70 §70.4.5 — §30.5 below).
 
 ## 30.2 The three fact sections
 
@@ -167,7 +166,22 @@ expected_response:
     recipient_services: [FIRE_RESCUE, AMBULANCE]
     card_values:
       <card field_path>: <value>
+  responders: DEFAULT                      # schema 2 only (I3 E5b); or a script per service:
+  # responders:
+  #   POLICE:
+  #     - { after_ms: 0, status: RECEIVED }
+  #     - { after_ms: 20000, status: NOT_ACCEPTED, comment_ru: "Не наша компетенция" }
 ```
+
+`responders` (I3 E5b, HLD 70 §70.4.5) scripts the notified services no ДДС participant is bound to
+(`session_participants.assigned_service_id`): `DEFAULT` = `receive +0, ACCEPTED +15 000,
+RESPONSE_STARTED +60 000, ARRIVED +180 000, WORKING +200 000, COMPLETED +600 000` ms after the leg's
+`HANDOFF_RECEIVED`, or per service a list of `{after_ms, status, comment_ru, order_number}` entries;
+a service the map does not name walks `DEFAULT`. Each entry names the `ServiceResponseStatus` the
+leg moves to, one `SERVICE_RESPONSE_TRANSITIONS` step at a time (a leg still `ADDED` is first moved
+to `RECEIVED` at the same offset). Stage automation fires the steps in memo mode as SIMULATION
+(`source: SCRIPTED_RESPONDER`), each stamped with its due offset (INV 7); it is the only reader of
+the key at runtime (INV 3).
 
 `prefab_handoff.card_values` keys must be `field_path`s from `CARD_FIELDS`
 (`10-domain-model.md` §10.6). The prefab is deliberately imperfect where the exercise wants it to be —
@@ -495,15 +509,18 @@ are not re-checked (P5).
 
 1. *(extended)* `schema_version ∈ {1, 2}`; a key introduced by schema 2 (`variants`, `timers`,
    `reference_pack`, `expected_response.responders`) in a schema-1 document is refused
-   (`variants` from E1, `reference_pack` from E2a and `timers` from E4a are accepted in schema 2).
+   (`variants` from E1, `reference_pack` from E2a, `timers` from E4a and `responders` from E5b are
+   accepted in schema 2).
 32. `variants.default` ∈ `variants.supported`, every `supported` list non-empty and duplicate-free.
 33. `CALLER_VOICE` supported ⇒ `OPERATOR_112 ∈ role_chain` and the three fact sections non-empty.
 34. `GENERATED_CARD` supported ⇒ `expected_response.prefab_handoff` present (rule 29's check, reached
     through the variant).
 35. `RESOURCE_PICKER` supported ⇒ `available_resources` non-empty and `resolution_condition` present.
 36. `MEMO_STATUSES` supported ⇒ `expected_response.responders` present or the key `responders:
-    DEFAULT` written explicitly (E5) — until E5b no document can carry the key, so no scenario can
-    support `MEMO_STATUSES` yet.
+    DEFAULT` written explicitly (active from E5b). Every script in the map must be playable: each
+    entry one SIMULATION step of `SERVICE_RESPONSE_TRANSITIONS` from `ADDED` under the service's
+    catalog `status_policy`, `after_ms` non-decreasing, a non-blank `comment_ru` on `NOT_ACCEPTED`
+    / `REFUSED`, no empty list.
 40. Every `scoring_rules[*].applies_to_variants` key is a `SessionVariants` field and every value a
     member of that switch's enum.
 
@@ -518,8 +535,8 @@ the check the enum used to make at parse time.
     `min_units_by_service` keys, `prefab_handoff.recipient_services`),
     `available_resources[*].service_type` and the `SERVICE_SELECTION` / `RESOURCE_SELECTION` scoring
     configs (`required_services`, `forbidden_services`, `min_units_by_service` keys) exists in the
-    service catalog of the document's pack (`reference_pack`, `legacy-r1` when absent). The
-    `responders` keys join with E5.
+    service catalog of the document's pack (`reference_pack`, `legacy-r1` when absent), and so
+    does every key of `expected_response.responders` (E5b).
 38. `reference_pack` names a pack of `reference/manifest.json`. The card-path half — every path in
     rule 14's scope exists in *that pack's* card schema — is rule 14 itself since I3 E3a added card
     schema `v2` (pack `v046_24-r1`).
