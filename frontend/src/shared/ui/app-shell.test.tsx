@@ -38,3 +38,26 @@ describe('AppShell — user label vs role chip (D4 addendum)', () => {
     expect(document.querySelector('[data-slot="user-label"]')).not.toBeInTheDocument();
   });
 });
+
+// I3 E4b (manager follow-up): a page with no socket must not look like a page whose socket
+// dropped — `connectionIndicatorHidden` lets it opt out of the indicator entirely, without
+// changing any existing caller's default rendering.
+describe('AppShell — connection indicator (I3 E4b manager follow-up)', () => {
+  it('shows the connection indicator by default, unchanged for every existing caller', () => {
+    render(
+      <AppShell title="Тренажёр 112">
+        <div />
+      </AppShell>,
+    );
+    expect(document.querySelector('[data-slot="connection-indicator"]')).toBeInTheDocument();
+  });
+
+  it('hides the connection indicator when the page declares it has no socket', () => {
+    render(
+      <AppShell title="Тренажёр 112" connectionIndicatorHidden>
+        <div />
+      </AppShell>,
+    );
+    expect(document.querySelector('[data-slot="connection-indicator"]')).not.toBeInTheDocument();
+  });
+});

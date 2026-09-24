@@ -17,6 +17,9 @@ export const queryKeys = {
   scenarios: {
     list: () => ['scenarios'] as const,
     versions: (scenarioId: string) => ['scenarios', scenarioId, 'versions'] as const,
+    // I3 E4b (manager follow-up): the trainee-safe summary, keyed by version id directly (the
+    // lesson plan only carries `scenario_version_id`, not its parent scenario's id).
+    versionSummary: (scenarioVersionId: string) => ['scenarios', 'version-summary', scenarioVersionId] as const,
   },
   sessions: {
     list: (scope: 'MINE' | 'ALL' = 'MINE') => ['sessions', 'list', scope] as const,
@@ -41,5 +44,14 @@ export const queryKeys = {
   // -- E17-C: instructor live overview (openapi `instructor` tag, R4) ------------------------
   instructor: {
     overview: (sessionId: string) => ['instructor', sessionId, 'overview'] as const,
+  },
+  // -- I3 E4b: lessons and the cross-session incident list (70 §70.3.6) -----------------------
+  lessons: {
+    list: (scope: 'MINE' | 'ALL' = 'ALL') => ['lessons', 'list', scope] as const,
+    detail: (lessonId: string) => ['lessons', lessonId] as const,
+    report: (lessonId: string) => ['lessons', lessonId, 'report'] as const,
+  },
+  incidents: {
+    list: (roleType?: string, q?: string) => ['incidents', 'list', roleType ?? 'ANY', q ?? ''] as const,
   },
 } as const;

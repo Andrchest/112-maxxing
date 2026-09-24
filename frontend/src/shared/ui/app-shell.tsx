@@ -47,6 +47,15 @@ interface AppShellProps {
   connectionStatus?: ConnectionStatus;
   /** `GET /health/ready` overall status (SPEC §37); omitted while it has not loaded yet. */
   readiness?: HealthStatus;
+  /**
+   * Whether the connection indicator renders at all (default `true`, unchanged for every
+   * existing caller). `connectionStatus` and `connectionIndicatorHidden` are independent: a page
+   * that never opens a socket (a list/dashboard route, I3 E4b) sets this `false` instead of
+   * relying on the `idle` default, because `idle`'s label (`connectionPlaceholder`) and dot are
+   * visually identical to `closed` (a socket that really did drop) — showing either on a page
+   * with no socket at all reads as "lost connection" when nothing was ever connected.
+   */
+  connectionIndicatorHidden?: boolean;
   children: ReactNode;
 }
 
@@ -58,7 +67,15 @@ interface AppShellProps {
  * message thread. Purely presentational: every value it shows is passed in
  * by the caller, which is the layer allowed to fetch or subscribe to it.
  */
-export function AppShell({ title, role, userLabel, connectionStatus, readiness, children }: AppShellProps) {
+export function AppShell({
+  title,
+  role,
+  userLabel,
+  connectionStatus,
+  readiness,
+  connectionIndicatorHidden = false,
+  children,
+}: AppShellProps) {
   return (
     <div className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
@@ -90,16 +107,18 @@ export function AppShell({ title, role, userLabel, connectionStatus, readiness, 
               {t('readinessLabel')}: {t(READINESS_LABEL_KEY[readiness])}
             </Badge>
           ) : null}
-          <span
-            className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
-            data-slot="connection-indicator"
-          >
+          {connectionIndicatorHidden ? null : (
             <span
-              className={`size-2 rounded-full ${CONNECTION_DOT_CLASS[connectionStatus ?? 'idle']}`}
-              aria-hidden="true"
-            />
-            {t(CONNECTION_LABEL_KEY[connectionStatus ?? 'idle'])}
-          </span>
+              className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
+              data-slot="connection-indicator"
+            >
+              <span
+                className={`size-2 rounded-full ${CONNECTION_DOT_CLASS[connectionStatus ?? 'idle']}`}
+                aria-hidden="true"
+              />
+              {t(CONNECTION_LABEL_KEY[connectionStatus ?? 'idle'])}
+            </span>
+          )}
         </div>
       </header>
       <main className="flex-1 overflow-auto p-4">{children}</main>

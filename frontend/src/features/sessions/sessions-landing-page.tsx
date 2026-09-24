@@ -59,7 +59,20 @@ export function SessionsLandingPage() {
 
   return (
     <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
-      <h1 className="text-lg font-semibold tracking-tight">{t('sessionsTitle')}</h1>
+      <div className="flex items-start justify-between gap-4">
+        <h1 className="text-lg font-semibold tracking-tight">{t('sessionsTitle')}</h1>
+        {/* I3 E4b (manager follow-up): a trainee's role is per-session, not per-account (D6), so
+            both the 112 «реестр» and the ДДС «Список происшествий» are offered from the one
+            trainee home regardless of which role their next lesson assigns them. */}
+        <nav className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/operator/register">{t('navRegisterLink')}</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/dds/incidents">{t('navIncidentListLink')}</Link>
+          </Button>
+        </nav>
+      </div>
       {sessionsQuery.isLoading ? <p className="mt-2 text-sm text-muted-foreground">{t('sessionsLoading')}</p> : null}
       {sessionsQuery.isError ? (
         <p role="alert" className="mt-2 text-sm text-destructive">

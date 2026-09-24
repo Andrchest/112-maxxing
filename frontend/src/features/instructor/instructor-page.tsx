@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import { AppShell } from '@/shared/ui/app-shell';
+import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { getHealthReady, queryKeys } from '@/shared/api';
@@ -37,7 +39,12 @@ export function InstructorPage() {
     >
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-lg font-semibold tracking-tight">{t('instructorTitle')}</h1>
-        <LogoutButton />
+        <nav className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/instructor/lessons">{t('navLessonsLink')}</Link>
+          </Button>
+          <LogoutButton />
+        </nav>
       </div>
       <div className="mt-4 flex flex-col gap-4">
         <CreateSessionForm />

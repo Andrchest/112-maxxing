@@ -455,6 +455,14 @@ export function listScenarioVersions(
   return apiFetch(`/scenarios/${scenarioId}/versions`);
 }
 
+// -- I3 E4b (manager follow-up): the lesson plan/card rows show the scenario's Russian title,
+// not a bare position (D3: this is the trainee-safe projection, free of WorldTruth etc.).
+export type ScenarioVersionTraineeSummary = components['schemas']['ScenarioVersionTraineeSummary'];
+
+export function getScenarioVersionSummary(scenarioVersionId: string): Promise<ScenarioVersionTraineeSummary> {
+  return apiFetch(`/scenarios/versions/${encodeURIComponent(scenarioVersionId)}/summary`);
+}
+
 export function createSession(body: SessionCreateRequest): Promise<SessionDetail> {
   return apiFetch<SessionDetail>('/sessions', {
     method: 'POST',
@@ -498,6 +506,81 @@ export function listReferenceServices(
   return apiFetch(`/reference/services${qs ? `?${qs}` : ''}`);
 }
 
+// -- I3 E4b: lessons and the cross-session incident list (70 §70.3.6, D15) --------------------
+// A Lesson owns N ordinary sessions; it has no event log of its own (D15) — every function here
+// is a thin wrapper over `lessons`/`incidents`, same "typed helper over the generated schema"
+// discipline as the rest of this file (D12 design decision #1).
+export type LessonState = components['schemas']['LessonState'];
+export type ArrivalKind = components['schemas']['ArrivalKind'];
+export type CardStatus = components['schemas']['CardStatus'];
+export type Arrival = components['schemas']['Arrival'];
+export type LessonPlanEntry = components['schemas']['PlanEntry'];
+export type LessonCreateRequest = operations['createLesson']['requestBody']['content']['application/json'];
+export type LessonSessionView = components['schemas']['LessonSessionView'];
+export type LessonListItem = components['schemas']['LessonListItem'];
+export type LessonDetail = components['schemas']['LessonDetail'];
+export type LessonReport = components['schemas']['LessonReport'];
+export type IncidentListItem = components['schemas']['IncidentListItem'];
+
+export function createLesson(body: LessonCreateRequest): Promise<LessonDetail> {
+  return apiFetch('/lessons', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function listLessons(
+  params: { scope?: 'MINE' | 'ALL'; state?: LessonState; limit?: number; offset?: number } = {},
+): Promise<{ items: LessonListItem[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.scope) query.set('scope', params.scope);
+  if (params.state) query.set('state', params.state);
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.offset !== undefined) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiFetch(`/lessons${qs ? `?${qs}` : ''}`);
+}
+
+export function getLesson(lessonId: string): Promise<LessonDetail> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}`);
+}
+
+/** `CREATED -> ACTIVE`; the `LessonRunner` then starts each card's session by arrival (70 §70.3.3). */
+export function startLesson(lessonId: string): Promise<LessonDetail> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/start`, { method: 'POST' });
+}
+
+/** Aborts the lesson and every non-terminal card session (same `AbortSessionRequest` shape
+ * {@link abortSession} uses). */
+export function abortLesson(lessonId: string, body: AbortSessionRequest): Promise<LessonDetail> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/abort`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `409 REPORT_NOT_READY` until the lesson is `COMPLETED` or `ABORTED` (openapi.yaml). */
+export function getLessonReport(lessonId: string): Promise<LessonReport> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/report`);
+}
+
+/** Releases every card report of the lesson to its trainees (idempotent, no event, `instructor` tag). */
+export function releaseLessonReport(lessonId: string): Promise<LessonDetail> {
+  return apiFetch(`/instructor/lessons/${encodeURIComponent(lessonId)}/report/release`, { method: 'POST' });
+}
+
+/** The caller's cross-session incident list (ДДС «Список происшествий», 112 «реестр», 70 §70.3.6).
+ * `card_status` and the deadline offsets are read verbatim from the server — this file (and every
+ * caller of it) never derives a status from timers or offsets. */
+export function listMyIncidents(
+  params: { lessonId?: string; roleType?: RoleType; cardStatus?: CardStatus; q?: string } = {},
+): Promise<{ items: IncidentListItem[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.lessonId) query.set('lesson_id', params.lessonId);
+  if (params.roleType) query.set('role_type', params.roleType);
+  if (params.cardStatus) query.set('card_status', params.cardStatus);
+  if (params.q) query.set('q', params.q);
+  const qs = query.toString();
+  return apiFetch(`/incidents${qs ? `?${qs}` : ''}`);
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails
@@ -534,6 +617,9 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   REFERENCE_PACK_UNKNOWN: 'problemReferencePackUnknown',
   SERVICE_UNKNOWN: 'problemServiceUnknown',
   LESSON_NOT_ACTIVE: 'problemLessonNotActive',
+  // additive, I3 E3a (concurrent worker): kept the exhaustive table compiling against the
+  // regenerated `schema.d.ts` — not a card-schema feature of this task.
+  CARD_OPTION_UNKNOWN: 'problemCardOptionUnknown',
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

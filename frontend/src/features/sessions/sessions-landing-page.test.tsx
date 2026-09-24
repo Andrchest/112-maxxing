@@ -129,4 +129,21 @@ describe('SessionsLandingPage — lists only what listSessions returned', () => 
     expect(await screen.findByText(ru.sessionsEmpty)).toBeInTheDocument();
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
   });
+
+  // I3 E4b (manager follow-up): both trainee-side nav links live on this TRAINEE-only home page —
+  // a trainee's role is per-session (D6), so neither link is gated on which role a past/future
+  // session assigned.
+  it('links to the 112 register (/operator/register)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ items: [], total: 0 })));
+    renderPage();
+    const link = await screen.findByRole('link', { name: ru.navRegisterLink });
+    expect(link).toHaveAttribute('href', '/operator/register');
+  });
+
+  it('links to the DDS incident list (/dds/incidents)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ items: [], total: 0 })));
+    renderPage();
+    const link = await screen.findByRole('link', { name: ru.navIncidentListLink });
+    expect(link).toHaveAttribute('href', '/dds/incidents');
+  });
 });

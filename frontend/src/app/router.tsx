@@ -12,6 +12,10 @@ import { ReportPage } from '@/features/report/report-page';
 import { ReportIndexPage } from '@/features/report/report-index-page';
 import { SessionsLandingPage } from '@/features/sessions/sessions-landing-page';
 import { SessionOpenRedirect } from '@/features/sessions/session-open-redirect';
+import { RegisterPage } from '@/features/operator/register-page';
+import { DdsIncidentListPage } from '@/features/dds/incident-list-page';
+import { LessonsPage } from '@/features/lesson/lessons-page';
+import { LessonDetailPage } from '@/features/lesson/lesson-detail-page';
 import { NotFoundPage } from '@/app/not-found-page';
 import { useAuthStore, homeRouteForRole } from '@/entities/session';
 
@@ -53,14 +57,25 @@ export function AppRoutes() {
           {/* E8-B/E10: the per-session consoles. More specific than /operator/*, /dds/* below, so
               react-router ranks them first regardless of declaration order. */}
           <Route path="/operator/:sessionId" element={<OperatorConsolePage />} />
+          {/* I3 E4b (70 §70.3.6, ui-check D-2): the 112 «реестр» — a static segment, so
+              react-router ranks it ahead of the dynamic /operator/:sessionId above regardless of
+              declaration order. */}
+          <Route path="/operator/register" element={<RegisterPage />} />
           <Route path="/operator/*" element={<OperatorPage />} />
           <Route path="/dds/:sessionId" element={<DdsConsolePage />} />
+          {/* I3 E4b (70 §70.3.6, ui-check D-8): the ДДС «Список происшествий». */}
+          <Route path="/dds/incidents" element={<DdsIncidentListPage />} />
           <Route path="/dds/*" element={<DdsPage />} />
         </Route>
         <Route element={<RequireRole roles={['INSTRUCTOR', 'ADMIN']} />}>
           {/* E17-C: more specific than /instructor/*, so react-router ranks it first regardless
               of declaration order (same pattern /operator/:sessionId, /dds/:sessionId use). */}
           <Route path="/instructor/sessions/:sessionId" element={<InstructorLiveOverviewPage />} />
+          {/* I3 E4b (70 §70.3.1-§70.3.3): the lesson (занятие) plan editor, list and detail — the
+              instructor creates a lesson of N cards, starts/aborts/releases it and sees the N
+              card reports. More specific than /instructor/*, ranked first the same way. */}
+          <Route path="/instructor/lessons/:lessonId" element={<LessonDetailPage />} />
+          <Route path="/instructor/lessons" element={<LessonsPage />} />
           <Route path="/instructor/*" element={<InstructorPage />} />
         </Route>
         {/* E16: the report is trainee-visible too (SPEC §29, D12 design decision #4) — the
