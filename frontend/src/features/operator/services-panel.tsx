@@ -9,13 +9,13 @@
 // card nobody removes a service (memo p.14, REQ-5275): there is no remove control, and the server
 // answers `409 SERVICE_REMOVAL_FORBIDDEN` anyway. Under a v1 card the remove control stays.
 //
-// Markup is deliberately plain and semantic (a list, a dialog, a search box): E7a restyles it to
-// the reference look.
+// Markup is a bottom bar (I3 E3b manager review: no separate block, one «Службы:» bar with a
+// «+», matching the reference's bottom services bar) — deliberately plain and semantic beyond
+// that shape: E7a restyles it to the reference's exact look (orange bar, tab-style chips).
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -102,61 +102,63 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
     }
   }
 
+  // Manager review (I3 E3b): one bottom bar spanning the card — label, a compact «+» button and
+  // the notification list as chips — replacing the earlier separate «Службы-получатели» block
+  // (the reference has no such block; a bottom «Службы:» bar with a «+» is what it shows,
+  // `screenshot-card112/image1.png`/`image4.png`). Only this markup changed; every command, every
+  // query and the v1/v2 removal-allowed rule above are untouched.
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <h2 className="font-heading text-base leading-snug font-medium">{t('operatorServicesTitle')}</h2>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={!canSelect || pendingService !== null}
-          onClick={() => setPickerOpen(true)}
-        >
-          {t('operatorServicesAdd')}
-        </Button>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {listed.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('operatorServicesEmpty')}</p>
-        ) : (
-          <ul aria-label={t('operatorServicesTitle')} className="flex flex-col gap-1">
-            {listed.map((service) => {
-              const isAuto = auto.includes(service);
-              return (
-                <li key={service} className="flex items-center gap-2 text-sm">
-                  <span>{serviceLabelRu(service)}</span>
-                  <Badge variant={isAuto ? 'secondary' : 'outline'}>
-                    {isAuto ? t('operatorServicesAuto') : t('operatorServicesManual')}
-                  </Badge>
-                  {removalAllowed && !isAuto ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={!canSelect || pendingService !== null}
-                      aria-label={`${t('operatorServicesRemove')}: ${serviceLabelRu(service)}`}
-                      onClick={() => void run(service, true)}
-                    >
-                      {t('operatorServicesRemove')}
-                    </Button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {resolution && resolution.informed.length > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {t('operatorServicesInformed')}: {resolution.informed.map((service) => serviceLabelRu(service)).join(', ')}
-          </p>
-        ) : null}
-        {errorMessage ? (
-          <p role="alert" className="text-sm text-destructive">
-            {errorMessage}
-          </p>
-        ) : null}
-      </CardContent>
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" data-slot="services-bar">
+      <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('operatorServicesTitle')}</span>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        aria-label={t('operatorServicesAdd')}
+        disabled={!canSelect || pendingService !== null}
+        onClick={() => setPickerOpen(true)}
+      >
+        +
+      </Button>
+      {listed.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('operatorServicesEmpty')}</p>
+      ) : (
+        <ul aria-label={t('operatorServicesTitle')} className="flex flex-wrap items-center gap-1.5">
+          {listed.map((service) => {
+            const isAuto = auto.includes(service);
+            return (
+              <li key={service} className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs">
+                <span>{serviceLabelRu(service)}</span>
+                <Badge variant={isAuto ? 'secondary' : 'outline'} className="h-4 px-1 text-[10px]">
+                  {isAuto ? t('operatorServicesAuto') : t('operatorServicesManual')}
+                </Badge>
+                {removalAllowed && !isAuto ? (
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={!canSelect || pendingService !== null}
+                    aria-label={`${t('operatorServicesRemove')}: ${serviceLabelRu(service)}`}
+                    onClick={() => void run(service, true)}
+                  >
+                    ×
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {resolution && resolution.informed.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {t('operatorServicesInformed')}: {resolution.informed.map((service) => serviceLabelRu(service)).join(', ')}
+        </p>
+      ) : null}
+      {errorMessage ? (
+        <p role="alert" className="text-sm text-destructive">
+          {errorMessage}
+        </p>
+      ) : null}
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent>
@@ -199,6 +201,6 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
           ) : null}
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }

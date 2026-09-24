@@ -287,6 +287,10 @@ export function OperatorConsolePage() {
     );
   }
 
+  // I3 E3b (HLD 70 §70.5.2): a v2 schema is the one that gives fields an explicit layout `group`
+  // — the same test `card-form.tsx` uses to pick its own layout.
+  const isV2Card = snapshot.card.field_specs.some((spec) => spec.group !== null && spec.group !== undefined);
+
   return (
     <AppShell
       title={t('operatorTitle')}
@@ -301,13 +305,17 @@ export function OperatorConsolePage() {
         </div>
         <div>
           {stageState === 'HANDOFF_PREPARATION' ? (
-            <HandoffPreparationView sessionId={sessionId} />
+            <HandoffPreparationView sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
           ) : (
-            <CardForm sessionId={sessionId} />
+            <CardForm sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
           )}
         </div>
         <div className="flex flex-col gap-4">
-          <ServicesPanel sessionId={sessionId} />
+          {/* I3 E3b: a v2 card embeds `ServicesPanel` itself as the reference's bottom services
+              bar (`CardFormV2`) — rendering it again here would double-commit nothing (it is
+              read-only display plus its own commands) but would show the same list twice. A v1
+              card's `CardForm` never embeds it, so this sidebar keeps it exactly as before. */}
+          {isV2Card ? null : <ServicesPanel sessionId={sessionId} />}
           <TranscriptPanel sessionId={sessionId} />
           <NotificationsPlaceholder sessionId={sessionId} />
         </div>

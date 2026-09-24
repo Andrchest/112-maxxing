@@ -11,9 +11,12 @@ import { CardForm } from './card-form';
 
 interface HandoffPreparationViewProps {
   sessionId: string;
+  /** Threaded through to `CardForm` — the v2 header's `fill_within_ms` countdown ticks from this
+   * (I3 E3b), same as the operator console's own `CardForm` render. */
+  monotonicOffsetMs?: number;
 }
 
-export function HandoffPreparationView({ sessionId }: HandoffPreparationViewProps) {
+export function HandoffPreparationView({ sessionId, monotonicOffsetMs }: HandoffPreparationViewProps) {
   const card = useCardStore((state) => state.card);
   const missingFields = (card?.field_specs ?? []).filter(
     (spec) => spec.required_for_handoff && card !== null && !(spec.field_path in card.values),
@@ -38,7 +41,7 @@ export function HandoffPreparationView({ sessionId }: HandoffPreparationViewProp
           </CardContent>
         ) : null}
       </Card>
-      <CardForm sessionId={sessionId} />
+      <CardForm sessionId={sessionId} monotonicOffsetMs={monotonicOffsetMs} />
     </div>
   );
 }
