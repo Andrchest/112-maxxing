@@ -151,6 +151,23 @@ docstring documents the session-state trap (the call must already be RINGING or 
 it never prints the caller's literal words (HLD 40 §40.4 redacts them for the trainee role — this
 tool authenticates as the trainee and must not reopen that leak).
 
+### SIP gateway and software phone (optional; I3 E6a, `docs/hld/80-telephony.md`)
+
+Our own SIP server (ТЗ ¶302) and IP-phone emulation (ТЗ ¶175) — nothing downloaded, no hardware
+phone. Ports: **SIP 5060 udp+tcp, RTP 20000–20199/udp, health 8114** (loopback); none is one of the
+owner's 8000/8001/8011/8012/5000. `SIM_SIP_PASSWORD` must be set (`.env`, never committed).
+
+```
+docker compose -f infra/docker-compose.yml --env-file .env --profile sip up -d sip-gateway   # or:
+SIM_SIP_PASSWORD=... uv run python -m voice_agent.sip_gateway                                # host run
+SIM_SIP_PASSWORD=... uv run python -m voice_agent.tools.softphone --server 127.0.0.1:5060 \
+    --register trainee --dial 999 --duration 5 --capture echo.wav     # 999 = echo; --headset = sox
+uv run python benchmarks/benchmark_voip.py --path sip-loopback        # delay probe, docs/benchmarks/voip.md
+```
+
+Any SIP softphone registers as `sip:<username>@<SIM_SIP_REALM>` with the deployment password. In
+this epic only `999` (echo) answers; ДДС numbers arrive with E6e.
+
 ## Documentation
 
 - `docs/SPEC.md` — the owner's specification, verbatim. The law; never edit it.

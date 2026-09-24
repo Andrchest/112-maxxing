@@ -188,6 +188,16 @@ class CallTransport(Protocol):
 documented stub; see SPEC §15")` from `connect`, and exists so that the second implementation is a
 file, not a refactor.
 
+**I3 E6a note (HLD 80 §80.2, D22).** SIP now exists **without** touching this port: our own SIP
+gateway (`workers/voice_agent/voice_agent/transport/sip/`, process `python -m
+voice_agent.sip_gateway`) registers softphones and bridges each call into the call's LiveKit room
+as one more participant (`LiveKitRoomBridge`), so the agent's `LiveKitCallTransport` keeps
+subscribing to "the first remote audio track" and never learns whether it is a browser or a
+softphone. `SipCallTransport` therefore **stays the stub above** — it is 80 §80.2.4's reserved
+plan B (direct RTP into the agent, no SFU hop), built only if the §80.11 checkpoint fires on delay
+(it did not: `docs/benchmarks/voip.md`, `sip-livekit` p95 110–120 ms). The SIP leg is G.711 at
+8 kHz; the room side stays 48 kHz, resampled by `audioop.ratecv` in the gateway.
+
 ### 2.2 `VADProvider`
 
 Target file: `backend/app/application/ports/vad.py`

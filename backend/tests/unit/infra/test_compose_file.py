@@ -27,6 +27,8 @@ SPEC_36_SEVEN = {
     "voice-agent",
 }
 ADDITIVE_EIGHTH = "tts-qwen3"
+#: I3 E6a (HLD 80 §80.2, D22): the software SIP gateway, additive and profiled like the eighth.
+SIP_GATEWAY = "sip-gateway"
 
 # The GPU process PID 1082982's owner and everything on these ports belongs to another project on
 # the dev machine (this task's brief, MACHINE RULES) — never bound anywhere in this file.
@@ -49,7 +51,7 @@ def test_service_names_are_exactly_the_spec_seven_plus_the_additive_eighth(
     compose_doc: dict,
 ) -> None:
     services = set(compose_doc["services"])
-    assert services == SPEC_36_SEVEN | {ADDITIVE_EIGHTH}
+    assert services == SPEC_36_SEVEN | {ADDITIVE_EIGHTH, SIP_GATEWAY}
 
 
 def test_the_eighth_service_is_gated_behind_a_compose_profile_so_a_plain_up_is_the_seven(
@@ -129,3 +131,19 @@ def test_the_reference_pack_reaches_both_python_images(compose_doc: dict) -> Non
     assert backend["environment"]["SIM_REFERENCE_DIR"] == "/workspace/reference"
     voice_agent_volumes = compose_doc["services"]["voice-agent"]["volumes"]
     assert "../reference:/workspace/reference:ro" in voice_agent_volumes
+
+
+def test_the_sip_gateway_is_profiled_gpu_free_and_publishes_exactly_its_ports(
+    compose_doc: dict,
+) -> None:
+    """I3 E6a (HLD 80 §80.2.1): `profiles: ["sip"]`, SIP 5060 udp+tcp, RTP 20000-20199/udp; the
+    health port 8114 stays loopback inside the container; no GPU runtime (it loads no model)."""
+    gateway = compose_doc["services"][SIP_GATEWAY]
+    assert gateway.get("profiles") == ["sip"]
+    assert sorted(gateway["ports"]) == sorted(
+        ["5060:5060/udp", "5060:5060/tcp", "20000-20199:20000-20199/udp"]
+    )
+    assert "runtime" not in gateway and "deploy" not in gateway
+    assert gateway["command"] == ["python", "-m", "voice_agent.sip_gateway"]
+    assert gateway["environment"]["SIM_SIP_GATEWAY_HTTP_PORT"] == "8114"
+    assert "SIM_SIP_PASSWORD" not in gateway["environment"]  # from `.env` only (SPEC §41)

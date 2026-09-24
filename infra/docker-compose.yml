@@ -6,6 +6,8 @@
 # HLD 60 §9/§10.4 and E14-B's OWNER DECISION moved Qwen3-TTS into its own worker process/venv,
 # reached over loopback HTTP, never imported by `backend`/`voice-agent`), gated behind
 # `profiles: ["qwen3-tts"]` so it only starts with `docker compose --profile qwen3-tts up`.
+# `sip-gateway` (I3 E6a, HLD 80 §80.2) is a second additive service under `profiles: ["sip"]`
+# (`docker compose --profile sip up`): SIP 5060 udp+tcp and RTP 20000-20199/udp on the host.
 #
 # This file is for `make dev-infra-up` and the new `make up` (the seven, or all eight with
 # `TTS_COMPOSE_PROFILE=qwen3-tts make up` — see the Makefile). CORRECTED (E20-D2, 2026-09-22):
@@ -265,6 +267,51 @@ services:
       interval: 15s
       timeout: 5s
       start_period: 60s
+      retries: 5
+    restart: unless-stopped
+
+  sip-gateway:
+    # I3 E6a (docs/hld/80-telephony.md §80.2, D22): our own software SIP server — registrar with
+    # Digest, UAS for INVITE/ACK/BYE/CANCEL/OPTIONS, RTP G.711 — that bridges each call into the
+    # call's LiveKit room as one more participant. ADDITIVE and profiled, like `tts-qwen3`: only
+    # `docker compose --profile sip up` starts it; a plain `up` stays the SPEC §36 seven. Built from
+    # the voice-agent Dockerfile with ONLY the `transport-livekit` extra (no GPU stack, no
+    # `runtime: nvidia`): the gateway loads no model. It refuses to start without
+    # `SIM_SIP_PASSWORD` in `.env` (never committed, SPEC §41).
+    profiles: ["sip"]
+    build:
+      context: ..
+      dockerfile: workers/voice_agent/Dockerfile
+      args:
+        VOICE_AGENT_EXTRAS: transport-livekit
+    command: ["python", "-m", "voice_agent.sip_gateway"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      SIM_REDIS_URL: redis://redis:6379/0
+      SIM_LIVEKIT_URL: ws://livekit:7880
+      SIM_SIP_BIND_HOST: 0.0.0.0
+      SIM_SIP_PORT: "5060"
+      SIM_SIP_RTP_PORT_RANGE: "20000-20199"
+      # Loopback INSIDE this container (the healthcheck below); never published to the host.
+      SIM_SIP_GATEWAY_HTTP_PORT: "8114"
+    ports:
+      # SIP signalling (udp+tcp) and the RTP range, published so softphones on other
+      # workstations reach them; SDP advertises SIM_SIP_MEDIA_IP (the host's LAN address).
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "20000-20199:20000-20199/udp"
+    depends_on:
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8114/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
       retries: 5
     restart: unless-stopped
 

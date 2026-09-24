@@ -1258,6 +1258,24 @@ this task's report for the timed result)
   `voice:health:fatal` survives a container restart (§4.3), so a restarted agent comes back FATAL
   until a human clears it.
 
+### `sip-gateway` (I3 E6a — additive, `profiles: ["sip"]`; HLD 80 §80.2, D22; image not built in E6a)
+
+- Our own SIP/RTP gateway, `python -m voice_agent.sip_gateway`, built from
+  `workers/voice_agent/Dockerfile` with `VOICE_AGENT_EXTRAS=transport-livekit` only (no GPU stack,
+  no `runtime: nvidia` — it loads no model). Only `docker compose --profile sip up` starts it; a
+  plain `up` stays the SPEC §36 seven. `make compose-check` renders it (the YAML is validated with
+  every profile; `docker compose … --profile sip config -q` renders it explicitly).
+- Publishes SIP **5060/udp + 5060/tcp** and RTP **20000–20199/udp** on the host (100 concurrent
+  calls at one even port each); health `GET /health` on **8114**, loopback inside the container
+  (the compose healthcheck curls it), never published. None of these is an owner port.
+- Env: `SIM_SIP_PASSWORD` (the one deployment password, from `.env` only, never committed — the
+  process refuses to start without it), `SIM_SIP_REALM`, `SIM_SIP_MEDIA_IP` (the host's LAN
+  address advertised in SDP so a softphone on another workstation can send RTP), `SIM_SIP_JITTER_MS`
+  (40). Read by `SipGatewayConfig.from_env` (environment, then `.env`); not `Settings` fields in
+  E6a, same key names.
+- Depends on `livekit` (started) and `redis` (healthy; used from E6e on). In E6a it answers only the
+  echo extension `999` (the interop and latency probe); every other number is `404` until E6e.
+
 ### `tts-qwen3` worker (E14-B; now its own compose service, E18-E — additive eighth, `profiles:
 ["qwen3-tts"]`; Dockerfile written, UNVERIFIED-BUILD, same posture as `voice-agent` above)
 

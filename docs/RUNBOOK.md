@@ -140,6 +140,32 @@ does not override it.
    — `postgres`/`redis`/`livekit`/`backend`/`frontend` do not read the profile and need no restart.
 4. `make preflight` to confirm the new profile's checks 1-6 are green before starting a session.
 
+## SIP gateway (I3 E6a — `docs/hld/80-telephony.md` §80.2, §80.8)
+
+**Ports** (prove them free first: `ss -lntup | awk '$5 ~ /:(5060|8114|20[01][0-9][0-9])$/'`
+must print nothing): SIP **5060** udp+tcp, RTP **20000–20199**/udp, health **8114** on
+`127.0.0.1`. Never 8000/8001/8011/8012/5000 (the entry point refuses them). Settings, all from the
+environment or `.env`: `SIM_SIP_PASSWORD` (required, never committed; [credential redacted] in
+every document), `SIM_SIP_REALM` (default `sim112`), `SIM_SIP_PORT`, `SIM_SIP_RTP_PORT_RANGE`,
+`SIM_SIP_GATEWAY_HTTP_PORT`, `SIM_SIP_MEDIA_IP` (the LAN address advertised in SDP),
+`SIM_SIP_BIND_HOST` (default `0.0.0.0`; `127.0.0.1` for a bench-only run), `SIM_SIP_JITTER_MS` (40).
+
+- **Start:** `docker compose -f infra/docker-compose.yml --env-file .env --profile sip up -d
+  sip-gateway`, or a host run `uv run python -m voice_agent.sip_gateway`.
+- **Check:** `curl -s http://127.0.0.1:8114/health` → `{"status": "ok", "registrations": N,
+  "calls": M, …}` (inside the container under compose).
+- **Call the echo:** `uv run python -m voice_agent.tools.softphone --server <host>:5060 --register
+  <name> --dial 999 --duration 5 --capture echo.wav` prints REGISTER/INVITE status, codec, RTP
+  sent/received/lost, continuity and the echo round trip; `--headset` uses sox `rec`/`play` instead
+  of the test tone. A third-party softphone: account `sip:<name>@<realm>`, server `<host>:5060`,
+  the deployment password, codec G.711 A-law or μ-law.
+- **Stop:** SIGTERM (`docker compose … stop sip-gateway`, or Ctrl-C on a host run) — the gateway
+  sends BYE to every live call, then closes every port; re-run the `ss` line to confirm.
+- **Symptoms:** `403` on REGISTER = wrong password or a username binding someone else's address;
+  `403` on INVITE = the caller is not registered; `404` = a number other than `999` (ДДС numbers
+  come with E6e); `488` = the softphone offers no G.711; one-way audio across machines =
+  `SIM_SIP_MEDIA_IP` unset or the RTP range firewalled.
+
 ## §46 demo walk
 
 The full SPEC §46 Definition-of-Done walk (16 items, exercised for real against the stack) is

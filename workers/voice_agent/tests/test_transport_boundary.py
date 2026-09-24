@@ -107,9 +107,13 @@ def test_livekit_is_refused_everywhere_else(
 #:   livekit` drives (E19-E, HLD 60 §7.4). It is in the same package on purpose: the benchmark
 #:   imports this class and never the SDK, which is why `check_imports.py` still forbids `livekit`
 #:   under `benchmarks/**`.
+#: * `sip/bridge.py` — `LiveKitRoomBridge`, the SIP gateway's room participant (I3 E6a, HLD 80
+#:   §80.2.1, D22): a SIP call joins the call's room like the browser does. Same package, same
+#:   lazy in-method import; `benchmarks/benchmark_voip.py` drives it and never imports the SDK.
 LIVEKIT_IMPORTERS = {
     "workers/voice_agent/voice_agent/transport/livekit_transport.py",
     "workers/voice_agent/voice_agent/transport/headless_client.py",
+    "workers/voice_agent/voice_agent/transport/sip/bridge.py",
 }
 
 
