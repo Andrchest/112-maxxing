@@ -71,6 +71,10 @@ class EventType(str, Enum):
     """The card's derived status changed (§70.4.6); SIMULATION, deadline-stamped (E4a)."""
     RECIPIENTS_RESOLVED = "RECIPIENTS_RESOLVED"
     """The routing resolver's answer for the card (§70.6.4); SIMULATION, not a card write (E2b′)."""
+    DDS_CARD_OPENED = "DDS_CARD_OPENED"
+    """A ДДС participant opened the card on one leg (§70.4.2 `receive`); TRAINEE (E5a)."""
+    DDS_SERVICE_STATUS_SET = "DDS_SERVICE_STATUS_SET"
+    """One leg's `ServiceResponseStatus` moved one step (§70.4.2); TRAINEE or SIMULATION (E5a)."""
 
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -131,6 +135,8 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.INFERENCE_HEALTH_CHANGED,
         EventType.DDS_CARD_STATUS_CHANGED,
         EventType.RECIPIENTS_RESOLVED,
+        EventType.DDS_CARD_OPENED,
+        EventType.DDS_SERVICE_STATUS_SET,
     }
 )
 

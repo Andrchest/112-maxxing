@@ -621,6 +621,8 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   // regenerated `schema.d.ts` — not a card-schema feature of this task.
   CARD_OPTION_UNKNOWN: 'problemCardOptionUnknown',
   SERVICE_REMOVAL_FORBIDDEN: 'problemServiceRemovalForbidden', // additive, I3 E2b′
+  COMMENT_REQUIRED: 'problemCommentRequired', // additive, I3 E5a
+  FORBIDDEN_FOR_SERVICE: 'problemForbiddenForService', // additive, I3 E5a
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

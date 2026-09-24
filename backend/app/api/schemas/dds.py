@@ -14,6 +14,7 @@ test 3 structural, since there is no field here for a world-truth value to arriv
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -22,6 +23,7 @@ from app.api.schemas.common import ApiModel
 from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.operator import ActionDescriptorSchema, action_schemas
 from app.application.dds.views import (
+    DdsLegView,
     DdsStageView,
     DispatchResultView,
     EmergencyResourceView,
@@ -32,6 +34,7 @@ from app.application.dds.views import (
     StatusUpdateView,
 )
 from app.domain.dds.resources import ResourceCapability
+from app.domain.dds.response import LegResponder, ServiceResponseStatus, StatusSource
 from app.domain.enums import (
     ClosureReason,
     DDSStageState,
@@ -46,6 +49,7 @@ from app.domain.enums import (
 
 __all__ = [
     "CloseIncidentRequestSchema",
+    "DdsLegViewSchema",
     "DdsStageViewSchema",
     "DispatchRequestSchema",
     "DispatchResultViewSchema",
@@ -57,8 +61,11 @@ __all__ = [
     "RadioMessageViewSchema",
     "ResourcePageSchema",
     "ResourceSelectionRequestSchema",
+    "ServiceStatusEntryViewSchema",
+    "SetServiceStatusRequestSchema",
     "StatusUpdateRequestSchema",
     "StatusUpdateViewSchema",
+    "dds_leg_schema",
     "dds_stage_schema",
     "dispatch_result_schema",
     "notification_schema",
@@ -96,6 +103,14 @@ class CloseIncidentRequestSchema(ApiModel):
     """`openapi.yaml`'s `CloseIncidentRequest` — why the incident is being closed."""
 
     closure_reason: ClosureReason
+    comment_ru: str | None = Field(default=None, max_length=2000)
+
+
+class SetServiceStatusRequestSchema(ApiModel):
+    """`openapi.yaml`'s `SetServiceStatusRequest` — the memo's pencil form (I3 E5a)."""
+
+    status: ServiceResponseStatus
+    order_number: str | None = Field(default=None, max_length=64)
     comment_ru: str | None = Field(default=None, max_length=2000)
 
 
@@ -327,4 +342,77 @@ def radio_message_page_schema(page: RadioMessagePage) -> RadioMessagePageSchema:
     return RadioMessagePageSchema(
         items=[radio_message_schema(item) for item in page.items],
         last_seq_no=page.last_seq_no,
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# Legs (I3 E5a, HLD 70 §70.4.3)
+# ---------------------------------------------------------------------------------------------
+
+
+class ServiceStatusEntryViewSchema(ApiModel):
+    """`openapi.yaml`'s `ServiceStatusEntryView` — one entry of a leg's status history."""
+
+    event_id: UUID
+    previous_status: ServiceResponseStatus
+    new_status: ServiceResponseStatus
+    order_number: str | None
+    comment_ru: str | None
+    completion_reason: Literal["WITHOUT_BRIGADE"] | None
+    source: StatusSource
+    actor_user_id: UUID | None
+    actor_display_ru: str
+    at_offset_ms: int
+
+
+class DdsLegViewSchema(ApiModel):
+    """`openapi.yaml`'s `DdsLegView` — one notified service's block (REQ-5294)."""
+
+    assignment_id: UUID
+    service_type: ServiceId
+    service_name_ru: str
+    response_status: ServiceResponseStatus
+    response_status_at_offset_ms: int | None
+    order_number: str | None
+    last_comment_ru: str | None
+    accept_missed: bool
+    responder: LegResponder
+    bound_user_id: UUID | None
+    is_mine: bool
+    history: list[ServiceStatusEntryViewSchema]
+    available_actions: list[ActionDescriptorSchema]
+
+
+def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
+    """`DdsLegView` -> the wire model, field by field."""
+    return DdsLegViewSchema(
+        assignment_id=view.assignment_id,
+        service_type=view.service_type,
+        service_name_ru=view.service_name_ru,
+        response_status=view.response_status,
+        response_status_at_offset_ms=view.response_status_at_offset_ms,
+        order_number=view.order_number,
+        last_comment_ru=view.last_comment_ru,
+        accept_missed=view.accept_missed,
+        responder=view.responder,
+        bound_user_id=view.bound_user_id,
+        is_mine=view.is_mine,
+        history=[
+            ServiceStatusEntryViewSchema(
+                event_id=entry.event_id,
+                previous_status=entry.previous_status,
+                new_status=entry.new_status,
+                order_number=entry.order_number,
+                comment_ru=entry.comment_ru,
+                completion_reason=(
+                    "WITHOUT_BRIGADE" if entry.completion_reason == "WITHOUT_BRIGADE" else None
+                ),
+                source=entry.source,
+                actor_user_id=entry.actor_user_id,
+                actor_display_ru=entry.actor_display_ru,
+                at_offset_ms=entry.at_offset_ms,
+            )
+            for entry in view.history
+        ],
+        available_actions=action_schemas(view.available_actions),
     )

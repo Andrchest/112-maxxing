@@ -62,6 +62,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, IncidentId, RoleStageId
 from app.domain.common.values import FactValue
+from app.domain.dds.assignment import handoff_received_keys
 from app.domain.enums import ActorType, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
@@ -187,6 +188,7 @@ async def materialise_prefab_handoff(
                     "role_stage_id": UUID(str(leg.role_stage_id)),
                     "service_type": leg.service_type,
                     "at_offset_ms": now_ms,
+                    **handoff_received_keys(leg),
                 },
             )
             for leg in legs

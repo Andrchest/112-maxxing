@@ -1,8 +1,9 @@
-"""`dds` router — the DDS stage's thirteen operations (`DDSModule`, SPEC §11, §12; D3, D8).
+"""`dds` router — the DDS stage's sixteen operations (`DDSModule`, SPEC §11, §12; D3, D8).
 
 The eleven the `dds` tag has always had, plus the two E9 added additively so that
 `open_resource_selection` and `back_to_acknowledged` — `available_actions` entries §10.9 listed
-with no endpoint behind them — can actually be performed.
+with no endpoint behind them — can actually be performed, plus I3 E5a's three leg operations of
+memo mode (HLD 70 §70.4): `listDdsLegs`, `openDdsCard`, `setDdsServiceStatus`.
 
 Every endpoint is three lines of work: ask the container for the use case, call it, map the result
 — the authorisation, the transaction, the domain call and the event append all live in
@@ -41,6 +42,7 @@ from fastapi import APIRouter, Query
 from app.api.deps import ContainerDep, TickAfterCommandDep
 from app.api.schemas.dds import (
     CloseIncidentRequestSchema,
+    DdsLegViewSchema,
     DdsStageViewSchema,
     DispatchRequestSchema,
     DispatchResultViewSchema,
@@ -49,8 +51,10 @@ from app.api.schemas.dds import (
     RadioMessagePageSchema,
     ResourcePageSchema,
     ResourceSelectionRequestSchema,
+    SetServiceStatusRequestSchema,
     StatusUpdateRequestSchema,
     StatusUpdateViewSchema,
+    dds_leg_schema,
     dds_stage_schema,
     dispatch_result_schema,
     notification_schema,
@@ -62,7 +66,7 @@ from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
 from app.api.security import CurrentUserDep
 from app.application.handoff.complete_session import score_completed_session
-from app.domain.common.ids import ResourceId, SessionId
+from app.domain.common.ids import AssignmentId, ResourceId, SessionId
 from app.domain.enums import ResourceStatus, ServiceId, SessionState
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["dds"])
@@ -150,9 +154,74 @@ async def list_radio_messages(
     return radio_message_page_schema(page)
 
 
+@router.get(
+    "/{session_id}/dds/legs",
+    operation_id="listDdsLegs",
+    summary=(
+        "Every leg of the card with its status history — each notified service sees all of them."
+    ),
+    response_model=list[DdsLegViewSchema],
+    status_code=200,
+)
+async def list_dds_legs(
+    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> list[DdsLegViewSchema]:
+    """The legs in notification-list order (I3 E5a, HLD 70 §70.4.3)."""
+    views = await container.list_dds_legs()(SessionId(session_id), user)
+    return [dds_leg_schema(view) for view in views]
+
+
 # ---------------------------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------------------------
+
+
+@router.post(
+    "/{session_id}/dds/legs/{assignment_id}/open",
+    operation_id="openDdsCard",
+    summary="The ДДС opens the card on its leg (technical status «Получена службой»).",
+    response_model=DdsLegViewSchema,
+    status_code=200,
+)
+async def open_dds_card(
+    session_id: UUID,
+    assignment_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> DdsLegViewSchema:
+    """`ADDED --receive--> RECEIVED`; idempotent on a leg past `ADDED` (I3 E5a)."""
+    view = await container.open_dds_card()(SessionId(session_id), user, AssignmentId(assignment_id))
+    await tick(SessionId(session_id))
+    return dds_leg_schema(view)
+
+
+@router.post(
+    "/{session_id}/dds/legs/{assignment_id}/status",
+    operation_id="setDdsServiceStatus",
+    summary="Set the next response status of one service's leg (the memo's pencil form).",
+    response_model=DdsLegViewSchema,
+    status_code=200,
+)
+async def set_dds_service_status(
+    session_id: UUID,
+    assignment_id: UUID,
+    body: SetServiceStatusRequestSchema,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> DdsLegViewSchema:
+    """One `SERVICE_RESPONSE_TRANSITIONS` step (I3 E5a, HLD 70 §70.4.2)."""
+    view = await container.set_dds_service_status()(
+        SessionId(session_id),
+        user,
+        AssignmentId(assignment_id),
+        status=body.status,
+        order_number=body.order_number,
+        comment_ru=body.comment_ru,
+    )
+    await tick(SessionId(session_id))
+    return dds_leg_schema(view)
 
 
 @router.post(
@@ -334,7 +403,8 @@ async def close_dds_incident(
     user: CurrentUserDep,
     tick: TickAfterCommandDep,
 ) -> SessionDetailSchema:
-    """`RESOLVED --close--> CLOSED`, then the session machine (see the module docstring)."""
+    """`RESOLVED --close--> CLOSED` (memo: `ACKNOWLEDGED → RESOLVED → CLOSED`), then the session
+    machine (see the module docstring)."""
     view = await container.close_dds_incident()(
         SessionId(session_id),
         user,

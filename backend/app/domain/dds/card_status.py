@@ -8,11 +8,16 @@ Three things live here, all pure:
   `COMPLETED > REFUSED > NOT_COMPLETED > NOT_NOTIFIED > CHECKED > WORKED > REGISTERED`.
   `NOT_NOTIFIED` is sticky: a leg that missed its accept deadline stays missed, whatever happens
   to it afterwards.
-* **the leg mirror.** Until E5 gives the legs their own `ServiceResponseStatus` machine, a leg's
-  status is mirrored from the DDS stage by §70.4.4's picker map, and `ACCEPTED ≡ DDS_ACKNOWLEDGED`
-  (the E4a row of HLD 90): the stage's one acknowledgement is every leg's primary decision.
-  Statuses are the memo's vocabulary as strings (`"RECEIVED"`, `"ACCEPTED"`, …) — the enum is
-  E5a's `ServiceResponseStatus`, and a string keeps this module free of a type it does not own.
+* **the legs' statuses (leg-aware since I3 E5a).** Under `dds_mode: MEMO_STATUSES` (read off
+  `SESSION_CREATED.variants`) a leg's status is its own `ServiceResponseStatus`, folded from the
+  `DDS_SERVICE_STATUS_SET` events of that leg, and its primary decision is the first
+  `ACCEPTED`/`NOT_ACCEPTED` it reached — the stage's `DDS_ACKNOWLEDGED` decides nothing. Under
+  `RESOURCE_PICKER` (and in every log written before E1) the leg status *is* §70.4.4's picker map
+  of the DDS stage, so the fold applies that map at the stage event itself; the `PICKER_MIRROR`
+  `DDS_SERVICE_STATUS_SET`s stage automation records afterwards carry the same values and are not
+  re-read, which keeps the picker projection exactly E4a's (`ACCEPTED ≡ DDS_ACKNOWLEDGED` is the
+  picker map's own `ACKNOWLEDGED → ACCEPTED`). Statuses are the memo's vocabulary as strings
+  (`"RECEIVED"`, `"ACCEPTED"`, …), which keeps this module free of `dds/response.py`'s enum.
 * **the flush-before-append planner** (§70.3.5). `CardStatusFold` is the projection's state,
   folded from a session's log; `plan_append` takes a batch of events a Unit of Work is about to
   append and returns the batch with every due `DDS_CARD_STATUS_CHANGED` merged in:
@@ -133,6 +138,9 @@ DEFAULT_CARD_TIMERS = CardTimers()
 
 _COMPLETED = "COMPLETED"
 _REFUSALS = frozenset({"NOT_ACCEPTED", "REFUSED"})
+_PRIMARY_DECISIONS = frozenset({"ACCEPTED", "NOT_ACCEPTED"})
+_ADDED = "ADDED"
+_MEMO = "MEMO_STATUSES"
 
 PICKER_MIRROR: Mapping[DDSStageState, str] = {
     DDSStageState.RECEIVED: "RECEIVED",
@@ -167,9 +175,10 @@ class CardLeg(BaseModel):
     service_type: str
     received_at_offset_ms: int
     status: str = "RECEIVED"
-    """The memo status (mirrored from the stage until E5)."""
+    """The memo status: the leg's own (memo mode) or the picker map of the stage (picker mode)."""
     decided_at_offset_ms: int | None = None
-    """When the primary decision (`ACCEPTED`/`NOT_ACCEPTED`) was taken — `DDS_ACKNOWLEDGED`."""
+    """When the primary decision (`ACCEPTED`/`NOT_ACCEPTED`) was taken: the leg's own first one
+    (memo mode) or the stage's `DDS_ACKNOWLEDGED` (picker mode)."""
 
     def accept_deadline_ms(self, timers: CardTimers) -> int:
         """`received + accept_within_ms` (A-10: counted from the leg's `HANDOFF_RECEIVED`)."""
@@ -254,6 +263,7 @@ RELEVANT_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.DDS_CARD_STATUS_CHANGED,
         EventType.SESSION_COMPLETED,
         EventType.SESSION_ABORTED,
+        EventType.DDS_SERVICE_STATUS_SET,
     }
 )
 """The event types the projection reads; a reader may pass the whole log, others are ignored."""
@@ -278,6 +288,9 @@ class CardStatusFold:
     """The highest offset among the relevant events seen; `None` before the first one."""
     notified_services: tuple[str, ...] | None = None
     """`HANDOFF_CREATED.recipient_services`; `None` when the legs are the list (a prefab)."""
+    memo: bool = False
+    """`SESSION_CREATED.variants.dds_mode` is `MEMO_STATUSES` (I3 E5a): the legs move by their own
+    `DDS_SERVICE_STATUS_SET`s, not by the stage."""
 
     def status_at(self, now_offset_ms: int, *, report_released: bool = False) -> CardStatus:
         """`card_status` over this fold at `now_offset_ms`."""
@@ -303,7 +316,9 @@ class CardStatusFold:
         if event_type is EventType.SESSION_CREATED:
             raw = payload.get("timers")
             timers = CardTimers.model_validate(raw) if isinstance(raw, Mapping) else self.timers
-            return replace(moved, timers=timers)
+            variants = payload.get("variants")
+            memo = isinstance(variants, Mapping) and variants.get("dds_mode") == _MEMO
+            return replace(moved, timers=timers, memo=memo)
         if event_type is EventType.SESSION_STARTED:
             return replace(moved, started=True)
         if event_type in _CLOSING:
@@ -323,7 +338,11 @@ class CardStatusFold:
             )
         if event_type is EventType.HANDOFF_RECEIVED:
             return self._received(moved, payload, offset_ms)
+        if event_type is EventType.DDS_SERVICE_STATUS_SET:
+            return self._status_set(moved, payload, offset_ms)
         if event_type is EventType.DDS_ACKNOWLEDGED:
+            if self.memo:
+                return moved
             legs = tuple(
                 leg
                 if leg.decided_at_offset_ms is not None
@@ -345,6 +364,8 @@ class CardStatusFold:
                 state = DDSStageState(str(payload.get("new_state")))
             except ValueError:
                 return moved
+            if self.memo:
+                return replace(moved, dds_state=state)
             legs = tuple(
                 leg.model_copy(
                     update={"status": mirror_leg_status(state, self.closure_reason, leg.status)}
@@ -357,6 +378,33 @@ class CardStatusFold:
             return replace(moved, status=CardStatus(str(payload.get("new_status"))))
         except ValueError:
             return moved
+
+    @staticmethod
+    def _status_set(
+        moved: CardStatusFold, payload: Mapping[str, Any], offset_ms: int
+    ) -> CardStatusFold:
+        """A memo leg's `DDS_SERVICE_STATUS_SET`: its new status and its first primary decision.
+        Ignored in picker mode, where the stage event already applied the same mirrored value."""
+        if not moved.memo:
+            return moved
+        assignment_id = str(payload.get("assignment_id"))
+        new_status = str(payload.get("new_status"))
+        legs = tuple(
+            leg
+            if leg.assignment_id != assignment_id
+            else leg.model_copy(
+                update={
+                    "status": new_status,
+                    "decided_at_offset_ms": (
+                        offset_ms
+                        if leg.decided_at_offset_ms is None and new_status in _PRIMARY_DECISIONS
+                        else leg.decided_at_offset_ms
+                    ),
+                }
+            )
+            for leg in moved.legs
+        )
+        return replace(moved, legs=legs)
 
     @staticmethod
     def _received(
@@ -373,7 +421,11 @@ class CardStatusFold:
             assignment_id=assignment_id,
             service_type=str(payload.get("service_type", "")),
             received_at_offset_ms=offset_ms,
-            status=mirror_leg_status(state, moved.closure_reason, "RECEIVED"),
+            status=(
+                str(payload.get("initial_response_status") or _ADDED)
+                if moved.memo
+                else mirror_leg_status(state, moved.closure_reason, "RECEIVED")
+            ),
         )
         handoff = moved.handoff_offset_ms
         # A prefab handoff (GENERATED_CARD) has no `HANDOFF_CREATED`: the card is handed off

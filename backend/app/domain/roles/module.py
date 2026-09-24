@@ -25,7 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; `roles` must not initialise
 
 
 class Permission(str, Enum):
-    """§10.9, exact."""
+    """§10.9, plus I3's two additive members (HLD 70 §70.4.4)."""
 
     ANSWER_CALL = "ANSWER_CALL"
     END_CALL = "END_CALL"
@@ -41,6 +41,9 @@ class Permission(str, Enum):
     ACKNOWLEDGE_NOTIFICATION = "ACKNOWLEDGE_NOTIFICATION"
     VIEW_RESOURCE_BOARD = "VIEW_RESOURCE_BOARD"
     VIEW_TRANSCRIPT = "VIEW_TRANSCRIPT"
+    # Additive, I3 E5a (HLD 70 §70.4.4): the leg triggers of the memo's pencil, and the card check.
+    SET_SERVICE_STATUS = "SET_SERVICE_STATUS"
+    FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"
 
 
 class ActionDescriptor(BaseModel):
@@ -70,6 +73,12 @@ class RoleModule(Protocol):
     ) -> tuple[ActionDescriptor, ...]:
         """The actions of `stage_state`. `variants` is the session's (HLD 70 §70.2.4): `None`
         keeps today's behaviour, and a module whose actions no switch changes ignores it."""
+        ...
+
+    def state_machine_for(self, variants: SessionVariants | None = None) -> StateMachine[Any]:
+        """The stage machine a session with `variants` runs (HLD 70 §70.2.4). `None` and every
+        module no switch changes answer `state_machine`; `DDSModule` answers its memo machine
+        for `dds_mode: MEMO_STATUSES` (I3 E5a)."""
         ...
 
     def initial_state(self) -> Enum: ...

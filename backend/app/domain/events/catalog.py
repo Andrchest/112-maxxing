@@ -312,6 +312,11 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "role_stage_id": "uuid",
             "service_type": "ServiceId",
             "at_offset_ms": "int",
+            # Additive, I3 E5a (HLD 70 §70.4.3, §70.7): who plays the leg and its first memo
+            # status; optional so a pre-E5 log still validates.
+            "responder": "LegResponder | null",
+            "bound_user_id": "uuid | null",
+            "initial_response_status": "ServiceResponseStatus | null",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
@@ -775,6 +780,37 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_OP, _INSTRUCTOR}),
+    ),
+    EventType.DDS_CARD_OPENED: EventSpec(
+        # I3 E5a (HLD 70 §70.4.2, §70.7): the ДДС opened the card on one leg.
+        event_type=EventType.DDS_CARD_OPENED,
+        actor_types=frozenset({ActorType.TRAINEE}),
+        payload_keys={
+            "assignment_id": "uuid",
+            "service_type": "ServiceId",
+            "actor_user_id": "uuid",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    EventType.DDS_SERVICE_STATUS_SET: EventSpec(
+        # I3 E5a (HLD 70 §70.4.2, §70.7): one step of one leg's response status.
+        event_type=EventType.DDS_SERVICE_STATUS_SET,
+        actor_types=frozenset({ActorType.TRAINEE, ActorType.SIMULATION}),
+        payload_keys={
+            "assignment_id": "uuid",
+            "service_type": "ServiceId",
+            "previous_status": "ServiceResponseStatus",
+            "new_status": "ServiceResponseStatus",
+            "trigger": "str",
+            "order_number": "str | null",
+            "comment_ru": "str | null",
+            "completion_reason": '"WITHOUT_BRIGADE" | null',
+            "source": "StatusSource",
+            "actor_user_id": "uuid | null",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
 }
 

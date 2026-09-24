@@ -247,4 +247,4 @@ def _available_actions(
     module = ROLE_MODULES.get(stage.role_type)
     if module is None:
         return ()
-    return action_views(module.available_actions(stage.state))
+    return action_views(module.available_actions(stage.state, variants=session.variants))

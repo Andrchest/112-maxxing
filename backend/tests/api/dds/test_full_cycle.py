@@ -266,6 +266,35 @@ async def test_close_is_refused_before_the_incident_is_resolved(
     assert response.json()["code"] == "ACTION_NOT_AVAILABLE"
 
 
+async def test_picker_legs_mirror_the_memo_statuses_from_the_stage(
+    resolved: OperatorFlow,
+) -> None:
+    """I3 E5a (HLD 70 §70.4.4): in picker mode stage automation mirrors every leg's response
+    status from the stage by the picker map, one step at a time, SIMULATION `PICKER_MIRROR` —
+    `RECEIVED`, `ACKNOWLEDGED → ACCEPTED`, `EN_ROUTE → RESPONSE_STARTED`, `ARRIVED`, `WORKING`,
+    `RESOLVED → COMPLETED` — and the trainee is offered no leg action."""
+    response = await dds_get(resolved, "/dds/legs")
+    assert response.status_code == 200, response.text
+    legs = response.json()
+    assert {leg["service_type"] for leg in legs} == {"FIRE_RESCUE", "AMBULANCE"}
+    for leg in legs:
+        assert leg["response_status"] == "COMPLETED"
+        assert leg["is_mine"] is False
+        assert leg["available_actions"] == []
+        assert [entry["new_status"] for entry in leg["history"]] == [
+            "RECEIVED",
+            "ACCEPTED",
+            "RESPONSE_STARTED",
+            "ARRIVED",
+            "WORKING",
+            "COMPLETED",
+        ]
+        assert {entry["source"] for entry in leg["history"]} == {"PICKER_MIRROR"}
+    status_events = await events_of(resolved, "DDS_SERVICE_STATUS_SET")
+    assert len(status_events) == 12
+    assert {event["actor_type"] for event in status_events} == {"SIMULATION"}
+
+
 async def test_the_completed_session_reports_a_real_total_events(
     resolved: OperatorFlow,
 ) -> None:

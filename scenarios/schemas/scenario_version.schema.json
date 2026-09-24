@@ -1143,7 +1143,9 @@
         "TRANSPORT_RECONNECTED",
         "INFERENCE_HEALTH_CHANGED",
         "DDS_CARD_STATUS_CHANGED",
-        "RECIPIENTS_RESOLVED"
+        "RECIPIENTS_RESOLVED",
+        "DDS_CARD_OPENED",
+        "DDS_SERVICE_STATUS_SET"
       ],
       "title": "EventType",
       "type": "string"

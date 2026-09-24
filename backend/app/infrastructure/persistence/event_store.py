@@ -59,7 +59,9 @@ is the same flush with an empty batch (stage automation, every tick). The runnin
 caps a batch's bound comes from the session row and the store's `Clock`, through
 `app.application.simulation.sim_time.running_offset_ms` — the one implementation of that number.
 A session without an incident row (only the lowest-level store tests write one) has no card and
-is appended to unchanged.
+is appended to unchanged. The same flush also sets each leg's sticky `dds_assignments.accept_missed`
+(I3 E5a, HLD 70 §70.4.3) once its accept deadline has passed without a primary decision — the one
+writer of that column.
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports.clock import Clock
 from app.application.simulation.sim_time import running_offset_ms
+from app.db.models.dds import DDSAssignment as DDSAssignmentRow
 from app.db.models.events import SessionEvent as SessionEventRow
 from app.db.models.session import Incident as IncidentRow
 from app.db.models.session import SimulationSession as SessionRow
@@ -270,6 +273,12 @@ class SqlAlchemyEventStore:
         )
         if after.status is not fold.status:
             await self._materialise(session_id, after.status)
+        bound = min(
+            running_now, max((event.monotonic_offset_ms for event in planned), default=running_now)
+        )
+        await self._mark_accept_missed(
+            [leg.assignment_id for leg in after.legs if leg.accept_missed(after.timers, bound)]
+        )
         return planned
 
     async def _relevant_events(self, session_id: SessionId) -> list[_FoldedEvent]:
@@ -286,6 +295,21 @@ class SqlAlchemyEventStore:
             _FoldedEvent(EventType(row.event_type), dict(row.payload), int(row.monotonic_offset_ms))
             for row in result.all()
         ]
+
+    async def _mark_accept_missed(self, assignment_ids: Sequence[str]) -> None:
+        """Set the legs' sticky `accept_missed` flag (HLD 70 §70.3.5, §70.4.3; I3 E5a) in the
+        same transaction as the flush that decided it; a flag already set is left alone."""
+        if not assignment_ids:
+            return
+        assignments = DDSAssignmentRow.__table__
+        await self._session.execute(
+            sa.update(assignments)
+            .where(
+                assignments.c.id.in_([UUID(item) for item in assignment_ids]),
+                assignments.c.accept_missed.is_(False),
+            )
+            .values(accept_missed=True)
+        )
 
     async def _materialise(self, session_id: SessionId, status: CardStatus) -> None:
         incidents = IncidentRow.__table__

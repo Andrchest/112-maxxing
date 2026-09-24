@@ -67,7 +67,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, RoleStageId, SessionId, UserId
 from app.domain.common.values import FactValue
-from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.assignment import DDSAssignment, handoff_received_keys
 from app.domain.enums import (
     ActorType,
     Operator112StageState,
@@ -369,6 +369,7 @@ def _handoff_received(
             "role_stage_id": UUID(str(leg.role_stage_id)),
             "service_type": leg.service_type,
             "at_offset_ms": ctx.now_ms,
+            **handoff_received_keys(leg),
         },
     )
 

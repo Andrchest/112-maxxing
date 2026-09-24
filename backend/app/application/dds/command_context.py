@@ -15,7 +15,8 @@ D5's single Unit of Work transaction and D8's two-gate authorisation in the same
    `RoleStage` **and** that stage's role is `DDS`, else `403 FORBIDDEN_FOR_ROLE`. An instructor
    may read the work item and the board; they may never issue a command here (SPEC §7);
 5. the command's action id — `openapi.yaml`'s `x-action` — is a member of
-   `DDSModule.available_actions(stage_state)`, else `409 ACTION_NOT_AVAILABLE`;
+   `DDSModule.available_actions(stage_state, variants=session.variants)`, else
+   `409 ACTION_NOT_AVAILABLE` — the memo table under `dds_mode: MEMO_STATUSES` (I3 E5a);
 6. the use case runs: it calls the domain, persists only what changed and appends its
    `DomainEvent`s through this context;
 7. `commit()`. Publishing happens inside the Unit of Work, after the commit (§20.8, §40.6).
@@ -40,7 +41,13 @@ epic had to distinguish them.
 test 3): the gate is constructed from a Unit of Work factory, a clock and the reference pack, and no
 module in this package names any of those layers, their ports or their adapters. The reference pack
 gives the work item its `field_specs` (I3 E3a, HLD 70 §70.5.4): the card schema of the pack
-`SESSION_CREATED.reference_pack` recorded — the log, never the `ScenarioVersion`.
+`SESSION_CREATED.reference_pack` recorded — the log, never the `ScenarioVersion`. The same pack's
+service catalog gives each leg its name and its status policy (`NO_REFUSAL` for 103; I3 E5a).
+
+**Leg statuses (I3 E5a, HLD 70 §70.4).** `append_status_events` is how a command records
+`DDS_SERVICE_STATUS_SET`s: the events are appended and the matching `dds_service_status_history`
+rows are written from the *stored* events (their ids and `seq_no`s) in the same transaction.
+`guard_runtime` projects `all_legs_terminal` from the legs for `memo_all_legs_terminal`.
 """
 
 from __future__ import annotations
@@ -62,6 +69,7 @@ from app.application.handoff.work_item import (
 )
 from app.application.operator.command_context import SessionNotActiveError
 from app.application.ports.clock import Clock
+from app.application.ports.dds_assignment_repository import StatusHistoryEntry
 from app.application.ports.reference import ReferencePort
 from app.application.ports.resource_repository import (
     DispatchRecord,
@@ -70,7 +78,7 @@ from app.application.ports.resource_repository import (
 )
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import UserRole
-from app.application.reference.card_schemas import pack_card_schema
+from app.application.reference.card_schemas import pack_card_schema, session_pack_id
 from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.guard_context import build_guard_runtime
@@ -82,7 +90,13 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, SessionId
 from app.domain.common.state_machine import GuardContext, GuardRuntime
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.policy import StatusPolicy, policy_of
 from app.domain.dds.resources import RESOURCE_STATE_MACHINE, EmergencyResource
+from app.domain.dds.response import (
+    CLOSABLE_RESPONSE_STATUSES,
+    ServiceResponseStatus,
+    StatusSource,
+)
 from app.domain.enums import ActorType, DDSStageState, ResourceStatus, RoleType, SessionState
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
@@ -90,17 +104,22 @@ from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import CARD_SCHEMA_V1
 from app.domain.roles.dds import DDSModule
+from app.domain.routing.catalog import ServiceCatalog
 from app.domain.session.session import RoleStage, SimulationSession
+from app.domain.session.variants import DdsMode
 
 __all__ = [
     "ActionNotAvailableError",
     "DdsCommandContext",
     "DdsCommandGate",
+    "LegNotFoundError",
     "ResourceNotFoundError",
     "ResourceUnavailableError",
     "WorkItemNotFoundError",
     "dds_stage_of",
     "fire_resource_transition",
+    "history_entries",
+    "is_memo",
     "load_legs",
     "state_change_row",
     "status_changed_event",
@@ -136,6 +155,53 @@ class WorkItemNotFoundError(DomainError):
     def __init__(self, session_id: SessionId) -> None:
         self.session_id = session_id
         super().__init__(f"session {session_id} has no DDS work item yet")
+
+
+class LegNotFoundError(DomainError):
+    """No leg with this `assignment_id` in this session's DDS stage (`404`)."""
+
+    code = "NOT_FOUND"
+
+    def __init__(self, assignment_id: AssignmentId) -> None:
+        self.assignment_id = assignment_id
+        super().__init__(f"assignment {assignment_id} is not a leg of this session's DDS stage")
+
+
+def is_memo(session: SimulationSession) -> bool:
+    """The session runs `dds_mode: MEMO_STATUSES` (HLD 70 §70.4.4)."""
+    return session.variants.dds_mode is DdsMode.MEMO_STATUSES
+
+
+def history_entries(
+    session_id: SessionId, stored: Sequence[SessionEvent]
+) -> list[StatusHistoryEntry]:
+    """The `dds_service_status_history` rows of the stored `DDS_SERVICE_STATUS_SET`s among
+    `stored` (HLD 70 §70.4.3) — each carries its event's id and `seq_no`."""
+    rows: list[StatusHistoryEntry] = []
+    for event in stored:
+        if event.event_type is not EventType.DDS_SERVICE_STATUS_SET:
+            continue
+        payload = event.payload
+        actor_user_id = payload.get("actor_user_id")
+        completion = payload.get("completion_reason")
+        rows.append(
+            StatusHistoryEntry(
+                session_id=session_id,
+                assignment_id=AssignmentId(UUID(str(payload["assignment_id"]))),
+                event_id=UUID(str(event.id)),
+                seq_no=event.seq_no,
+                previous_status=ServiceResponseStatus(str(payload["previous_status"])),
+                new_status=ServiceResponseStatus(str(payload["new_status"])),
+                order_number=payload.get("order_number"),
+                comment_ru=payload.get("comment_ru"),
+                completion_reason=None if completion is None else str(completion),
+                source=StatusSource(str(payload["source"])),
+                actor_type=event.actor_type,
+                actor_user_id=None if actor_user_id is None else UUID(str(actor_user_id)),
+                at_offset_ms=int(payload.get("at_offset_ms", event.monotonic_offset_ms)),
+            )
+        )
+    return rows
 
 
 class ResourceNotFoundError(DomainError):
@@ -207,6 +273,8 @@ class DdsCommandContext:
     board: tuple[StoredResource, ...]
     dispatched: tuple[DispatchRecord, ...]
     card_schema: CardSchema = CARD_SCHEMA_V1
+    service_catalog: ServiceCatalog | None = None
+    """The service catalog of the session's recorded reference pack (names, status policies)."""
     _appended: list[SessionEvent] = field(default_factory=list)
 
     # -- projections ---------------------------------------------------------------------------
@@ -249,6 +317,22 @@ class DdsCommandContext:
         """The leg one trainee event carries the `assignment_id` of (R5)."""
         return primary_leg(self.legs, self.snapshot)
 
+    @property
+    def memo(self) -> bool:
+        """`dds_mode: MEMO_STATUSES` (I3 E5a)."""
+        return is_memo(self.session)
+
+    def leg(self, assignment_id: AssignmentId) -> DDSAssignment:
+        """One leg of this stage by id; `404` when the id is not one of them."""
+        for leg in self.legs:
+            if leg.assignment_id == assignment_id:
+                return leg
+        raise LegNotFoundError(assignment_id)
+
+    def status_policy(self, leg: DDSAssignment) -> StatusPolicy:
+        """The leg's service status policy, from the pack's catalog (§70.6.3)."""
+        return policy_of(self.service_catalog, leg.service_type)
+
     def resource(self, resource_id: ResourceId) -> StoredResource:
         """One unit of the board; `404` when the id is not this session's."""
         for stored in self.board:
@@ -280,11 +364,17 @@ class DdsCommandContext:
         is `False` for every trainee command — `incident_resolved` is a SIMULATION trigger and
         only `stage_automation` supplies a real verdict for it.
         """
-        return build_guard_runtime(
+        runtime = build_guard_runtime(
             self.full_log,
             scenario_valid=True,
             inference_ready=True,
             resolution_condition_met=resolution_condition_met,
+        )
+        return runtime.model_copy(
+            update={
+                "all_legs_terminal": bool(self.legs)
+                and all(leg.response_status in CLOSABLE_RESPONSE_STATUSES for leg in self.legs)
+            }
         )
 
     # -- writes --------------------------------------------------------------------------------
@@ -316,6 +406,21 @@ class DdsCommandContext:
             await self.uow.dds_assignments.save(moved)
             updated.append(moved)
         self.legs = tuple(updated)
+
+    async def save_leg(self, leg: DDSAssignment) -> DDSAssignment:
+        """Persist one moved leg and put it back on this context's leg list."""
+        await self.uow.dds_assignments.save(leg)
+        self.legs = tuple(
+            leg if item.assignment_id == leg.assignment_id else item for item in self.legs
+        )
+        return leg
+
+    async def append_status_events(self, events: Sequence[DomainEvent]) -> list[SessionEvent]:
+        """Append events and write the history row of every `DDS_SERVICE_STATUS_SET` among them
+        (HLD 70 §70.4.3), in this transaction."""
+        stored = await self.append(events)
+        await self.uow.dds_assignments.add_history(history_entries(self.session_id, stored))
+        return stored
 
     async def save_resource(
         self, stored: StoredResource, resource: EmergencyResource
@@ -412,7 +517,10 @@ class DdsCommandGate:
             stage_state = stage.state
             assert isinstance(stage_state, DDSStageState)
             wanted = (action_id,) if isinstance(action_id, str) else tuple(action_id)
-            available = {action.action_id for action in _DDS_MODULE.available_actions(stage_state)}
+            available = {
+                action.action_id
+                for action in _DDS_MODULE.available_actions(stage_state, variants=session.variants)
+            }
             if not available & set(wanted):
                 raise ActionNotAvailableError(wanted[0], stage_state)
 
@@ -420,6 +528,7 @@ class DdsCommandGate:
             wall_now = self._clock.now()
             now_ms = running_ms(session, wall_now)
             log = tuple(await uow.events.read(session_id))
+            catalog = reference_catalog(self._reference)
             context = DdsCommandContext(
                 uow=uow,
                 session=session,
@@ -432,7 +541,8 @@ class DdsCommandGate:
                 legs=legs,
                 board=tuple(await uow.resources.list_for_session(session_id)),
                 dispatched=tuple(await uow.resources.dispatch_history(session_id)),
-                card_schema=pack_card_schema(reference_catalog(self._reference), log),
+                card_schema=pack_card_schema(catalog, log),
+                service_catalog=catalog.services(session_pack_id(log)),
             )
             yield context
             await uow.commit()

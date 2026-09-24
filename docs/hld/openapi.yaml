@@ -1351,6 +1351,97 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/sessions/{session_id}/dds/legs:
+    get:
+      tags: [dds]
+      operationId: listDdsLegs
+      summary: Every leg of the card with its status history — each notified service sees all of them.
+      description: |
+        (additive, I3 E5a — 70 §70.4.3) The notified services' blocks of the ДДС memo
+        (REQ-5294/5295): every leg with its current `ServiceResponseStatus` and its whole history.
+        Broadcast — every ДДС participant and the instructor read every leg; only `is_mine` and
+        `available_actions` depend on the caller. Sourced from `dds_assignments`,
+        `dds_service_status_history` and the reference pack only (INV 3).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The legs, in notification-list order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds/legs/{assignment_id}/open:
+    post:
+      tags: [dds]
+      operationId: openDdsCard
+      summary: The ДДС opens the card on its leg (technical status «Получена службой»).
+      description: |
+        (additive, I3 E5a — 70 §70.4.2) `ADDED --receive--> RECEIVED`: `DDS_CARD_OPENED`
+        (TRAINEE) and the leg's `DDS_SERVICE_STATUS_SET` (SIMULATION, `source: SYSTEM`).
+        Idempotent: a second call on a leg past `ADDED` appends nothing and returns the leg.
+        Offered in memo mode (`open_card` in `RECEIVED`; in `ACKNOWLEDGED` through
+        `set_service_status`, whose first step on an `ADDED` leg is this `receive`); picker mode
+        ⇒ `409 ACTION_NOT_AVAILABLE`.
+      x-action: open_card
+      x-emits: [DDS_CARD_OPENED, DDS_SERVICE_STATUS_SET]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/AssignmentIdParam'
+      responses:
+        '200':
+          description: The leg.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/legs/{assignment_id}/status:
+    post:
+      tags: [dds]
+      operationId: setDdsServiceStatus
+      summary: Set the next response status of one service's leg (the memo's pencil form).
+      description: |
+        (additive, I3 E5a) Fires one `SERVICE_RESPONSE_TRANSITIONS` trigger (70 §70.4.2). An
+        `ADDED` leg is first moved to `RECEIVED`. Out-of-sequence status ⇒ `409
+        INVALID_TRANSITION`; missing comment on `NOT_ACCEPTED` / `REFUSED` ⇒ `422
+        COMMENT_REQUIRED`; a leg bound to another participant ⇒ `403 FORBIDDEN_FOR_SERVICE`;
+        `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. The trainee's first primary
+        decision also fires the stage's `acknowledge`; no other stage trigger is fired (memo mode
+        never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline events are
+        appended first (flush-before-append).
+      x-action: set_service_status
+      x-emits: [DDS_CARD_STATUS_CHANGED, DDS_SERVICE_STATUS_SET, DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/AssignmentIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceStatusRequest' }
+      responses:
+        '200':
+          description: The leg after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsLegView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
   /api/v1/sessions/{session_id}/dds/close:
     post:
       tags: [dds]
@@ -1360,8 +1451,14 @@ paths:
         Permission `CLOSE_INCIDENT`; fires `close` (`RESOLVED → CLOSED`). The stage then
         completes and, being the last `role_chain` entry in the primary flow, the session
         machine fires `complete` and deterministic scoring runs over the event log.
+        (I3 E5a — 70 §70.4.4) Picker mode unchanged (`RESOLVED --close--> CLOSED`). Memo mode:
+        fires `close` from `ACKNOWLEDGED` (additive `DDS_TRANSITIONS` row, guard
+        `memo_all_legs_terminal` — every leg `COMPLETED`, `NOT_ACCEPTED` or `REFUSED`) and then
+        from `RESOLVED`, in one Unit of Work; a leg still open ⇒ `409 INVALID_TRANSITION`. In
+        picker mode the new guard always denies. `x-emits` lists the memo order; picker mode
+        appends the same events without the first `STAGE_STATE_CHANGED`.
       x-action: close
-      x-emits: [DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED, SCORING_RULE_EVALUATED, SESSION_COMPLETED]
+      x-emits: [STAGE_STATE_CHANGED, DDS_INCIDENT_CLOSED, ROLE_STAGE_COMPLETED, STAGE_STATE_CHANGED, SCORING_RULE_EVALUATED, SESSION_COMPLETED]
       parameters:
         - $ref: '#/components/parameters/SessionIdParam'
       requestBody:
@@ -2063,6 +2160,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    AssignmentIdParam:
+      name: assignment_id
+      in: path
+      required: true
+      description: (additive, I3 E5a) One `dds_assignments` leg of the session's DDS stage.
+      schema: { type: string, format: uuid }
     LessonIdParam:
       name: lesson_id
       in: path
@@ -2084,7 +2187,8 @@ components:
     Forbidden:
       description: |
         `FORBIDDEN_FOR_ROLE` — the caller's user role, or the participant assignment to the
-        active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`.
+        active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`;
+        (additive, I3 E5a) `FORBIDDEN_FOR_SERVICE` — the leg is bound to another ДДС participant.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2112,7 +2216,8 @@ components:
         `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
         `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
         I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog; (additive,
-        I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes.
+        I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes;
+        (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2163,6 +2268,8 @@ components:
         - LESSON_NOT_ACTIVE            # additive, I3 E4a
         - CARD_OPTION_UNKNOWN          # additive, I3 E3a
         - SERVICE_REMOVAL_FORBIDDEN    # additive, I3 E2b′
+        - COMMENT_REQUIRED             # additive, I3 E5a
+        - FORBIDDEN_FOR_SERVICE        # additive, I3 E5a
 
     Problem:
       type: object
@@ -2381,6 +2488,8 @@ components:
         - ACKNOWLEDGE_NOTIFICATION
         - VIEW_RESOURCE_BOARD
         - VIEW_TRANSCRIPT
+        - SET_SERVICE_STATUS           # additive, I3 E5a
+        - FLAG_CARD_ISSUE              # additive, I3 E5a
     EventType:
       type: string
       description: |
@@ -2438,6 +2547,8 @@ components:
         - INFERENCE_HEALTH_CHANGED
         - DDS_CARD_STATUS_CHANGED      # additive, I3 E4a
         - RECIPIENTS_RESOLVED          # additive, I3 E2b′
+        - DDS_CARD_OPENED              # additive, I3 E5a
+        - DDS_SERVICE_STATUS_SET       # additive, I3 E5a
 
     # ------------------------------------------------------ value objects ----
     FactValue:
@@ -4376,6 +4487,67 @@ components:
       description: 'Card status of the memo p.27 (70 §70.4.6). Labels: Зарегистрирована, Отработана, Проверена, Не оповещено, Отказ, Не завершено, Завершена.'
       type: string
       enum: [REGISTERED, WORKED, CHECKED, NOT_NOTIFIED, REFUSED, NOT_COMPLETED, COMPLETED]
+    ServiceResponseStatus:
+      description: '(additive, I3 E5a) Per-leg status of the memo p.21–22 (70 §70.4.1). Labels: Добавлена, Получена службой, Принята, Не принята, Начало реагирования, Прибытие, Проведение работ, Работы завершены, Отказ от выполнения работ.'
+      type: string
+      enum: [ADDED, RECEIVED, ACCEPTED, NOT_ACCEPTED, RESPONSE_STARTED, ARRIVED, WORKING, COMPLETED, REFUSED]
+    ServiceStatusEntryView:
+      description: (additive, I3 E5a) One entry of a leg's status history (`dds_service_status_history`).
+      type: object
+      additionalProperties: false
+      required: [event_id, previous_status, new_status, order_number, comment_ru, completion_reason, source, actor_user_id, actor_display_ru, at_offset_ms]
+      properties:
+        event_id: { type: string, format: uuid }
+        previous_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        new_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        order_number: { type: [string, 'null'], description: '«Номер наряда», free text (assumption A-2).' }
+        comment_ru: { type: [string, 'null'] }
+        completion_reason: { type: [string, 'null'], enum: [WITHOUT_BRIGADE, null] }
+        source: { type: string, enum: [TRAINEE, SCRIPTED_RESPONDER, PICKER_MIRROR, SYSTEM] }
+        actor_user_id: { type: [string, 'null'], format: uuid }
+        actor_display_ru: { type: string, description: 'Shown before the time (REQ-5295).' }
+        at_offset_ms: { type: integer }
+    DdsLegView:
+      description: (additive, I3 E5a) One notified service's block — collapsed = last status + time; expanded = history (REQ-5294).
+      type: object
+      additionalProperties: false
+      required: [assignment_id, service_type, service_name_ru, response_status, response_status_at_offset_ms, order_number, last_comment_ru, accept_missed, responder, bound_user_id, is_mine, history, available_actions]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        service_type: { $ref: '#/components/schemas/ServiceType' }
+        service_name_ru: { type: string }
+        response_status: { $ref: '#/components/schemas/ServiceResponseStatus' }
+        response_status_at_offset_ms: { type: [integer, 'null'] }
+        order_number: { type: [string, 'null'] }
+        last_comment_ru: { type: [string, 'null'] }
+        accept_missed: { type: boolean }
+        responder: { type: string, enum: [TRAINEE, SCRIPTED] }
+        bound_user_id: { type: [string, 'null'], format: uuid }
+        is_mine:
+          type: boolean
+          description: The caller may set statuses on this leg (the pencil is shown).
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceStatusEntryView' }
+        available_actions:
+          type: array
+          description: The legal next triggers of this leg for the caller (empty when `is_mine` is false).
+          items: { $ref: '#/components/schemas/ActionDescriptor' }
+    SetServiceStatusRequest:
+      description: (additive, I3 E5a) The memo's pencil form.
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          description: The target status; `COMPLETED` under policy `NO_REFUSAL` from a non-`WORKING` status means `complete_without_brigade`.
+          allOf:
+            - $ref: '#/components/schemas/ServiceResponseStatus'
+        order_number: { type: [string, 'null'], maxLength: 64 }
+        comment_ru:
+          type: [string, 'null']
+          maxLength: 2000
+          description: Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`.
     Arrival:
       type: object
       additionalProperties: false

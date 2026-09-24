@@ -49,6 +49,12 @@ class EDDSModule:
     ) -> tuple[ActionDescriptor, ...]:
         return ()
 
+    def state_machine_for(
+        self, variants: SessionVariants | None = None
+    ) -> StateMachine[DDSStageState]:
+        """No switch changes this module's machine (HLD 70 §70.2.4)."""
+        return self.state_machine
+
     def initial_state(self) -> Enum:
         return DDSStageState.RECEIVED
 

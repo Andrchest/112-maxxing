@@ -66,6 +66,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "FORBIDDEN_FOR_ROLE": 403,
     "PARTICIPANT_NOT_ASSIGNED": 403,
     "REPORT_NOT_RELEASED": 403,
+    # 403 — I3 addition to Forbidden (`i3-openapi-delta.yaml` `ForbiddenI3`, E5a)
+    "FORBIDDEN_FOR_SERVICE": 403,
     # 404 — components/responses/NotFound
     "NOT_FOUND": 404,
     # 409 — components/responses/Conflict
@@ -98,6 +100,7 @@ STATUS_BY_CODE: Mapping[str, int] = {
     # 422 — I3 additions to UnprocessableEntity (`i3-openapi-delta.yaml` `UnprocessableEntityI3`)
     "SERVICE_UNKNOWN": 422,
     "CARD_OPTION_UNKNOWN": 422,
+    "COMMENT_REQUIRED": 422,
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,

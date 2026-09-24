@@ -110,12 +110,24 @@ async def test_acknowledge_moves_the_stage_and_answers_with_the_new_view(
 
 
 async def test_acknowledge_emits_exactly_its_x_emits_list(dds_active: OperatorFlow) -> None:
-    """`x-emits: [DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]` — one trainee event, whatever N is."""
+    """`x-emits: [DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]` — one trainee event, whatever N is.
+
+    I3 E5a: the tick D7 runs right after the command lets stage automation mirror each leg's
+    response status from its new `state` (`RECEIVED → ACCEPTED`, SIMULATION, `source:
+    PICKER_MIRROR`, HLD 70 §70.4.4) in its own transaction — after the command's own events,
+    never between them.
+    """
     before = await event_types(dds_active)
     await acknowledge(dds_active)
     after = await event_types(dds_active)
 
-    assert after[len(before) :] == ["DDS_ACKNOWLEDGED", "STAGE_STATE_CHANGED"]
+    emitted = after[len(before) :]
+    assert emitted[:2] == ["DDS_ACKNOWLEDGED", "STAGE_STATE_CHANGED"]
+    assert emitted[2:] == ["DDS_SERVICE_STATUS_SET"] * len(emitted[2:])
+    mirrored = (await events_of(dds_active, "DDS_SERVICE_STATUS_SET"))[-len(emitted[2:]) :]
+    assert {event["payload"]["source"] for event in mirrored} == {"PICKER_MIRROR"}
+    last_by_leg = {event["payload"]["assignment_id"]: event["payload"] for event in mirrored}
+    assert {payload["new_status"] for payload in last_by_leg.values()} == {"ACCEPTED"}
 
 
 async def test_the_acknowledgement_names_the_primary_leg_and_its_latency(

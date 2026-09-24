@@ -49,24 +49,25 @@ ALL_SUPPORTED = ScenarioVariants(
 
 
 # ---------------------------------------------------------------------------------------------
-# The switch matrix (§70.11) after E1
+# The switch matrix (§70.11) after E5a
 # ---------------------------------------------------------------------------------------------
 
 
-def test_product_default_is_the_owner_default_before_e5() -> None:
+def test_product_default_is_the_owner_default_from_e5() -> None:
+    """§70.11 "Product default from E5": `MEMO_STATUSES` (schema 2); was `RESOURCE_PICKER`."""
     expected = SessionVariants(
         card_source=CardSource.GENERATED_CARD,
-        dds_mode=DdsMode.RESOURCE_PICKER,
+        dds_mode=DdsMode.MEMO_STATUSES,
         dds_card_check=DdsCardCheck.OFF,
         dds_brigade_call=DdsBrigadeCall.OFF,
     )
     assert expected == PRODUCT_DEFAULT_VARIANTS
 
 
-def test_implemented_values_after_e1() -> None:
+def test_implemented_values_after_e5a() -> None:
     expected = {
         "card_source": frozenset({"CALLER_VOICE", "GENERATED_CARD"}),
-        "dds_mode": frozenset({"RESOURCE_PICKER"}),
+        "dds_mode": frozenset({"RESOURCE_PICKER", "MEMO_STATUSES"}),
         "dds_card_check": frozenset({"OFF"}),
         "dds_brigade_call": frozenset({"OFF"}),
     }
@@ -104,10 +105,14 @@ def test_schema_1_dds_only_chain_defaults_to_the_generated_card() -> None:
 
 
 def test_schema_2_without_the_key_takes_the_product_default_where_supported() -> None:
+    """The derived `dds_mode` support is `{RESOURCE_PICKER}` (no responders section), so the E5
+    flip to `MEMO_STATUSES` cannot apply to a document without `variants` (§70.2.2)."""
     with_prefab = derive_scenario_variants(
         schema_version=2, role_chain=(OP, DDS), has_prefab_handoff=True
     )
-    assert with_prefab.default == PRODUCT_DEFAULT_VARIANTS
+    assert with_prefab.default == PRODUCT_DEFAULT_VARIANTS.model_copy(
+        update={"dds_mode": DdsMode.RESOURCE_PICKER}
+    )
     without_prefab = derive_scenario_variants(
         schema_version=2, role_chain=(OP, DDS), has_prefab_handoff=False
     )
@@ -128,18 +133,19 @@ def test_legacy_session_variants_read_off_the_stage_chain() -> None:
 
 def test_the_view_filters_unimplemented_values_and_keeps_an_implemented_default() -> None:
     view = available_scenario_variants(ALL_SUPPORTED)
-    assert view.supported.dds_mode == (DdsMode.RESOURCE_PICKER,)
+    assert view.supported.dds_mode == (DdsMode.RESOURCE_PICKER, DdsMode.MEMO_STATUSES)
     assert view.supported.dds_card_check == (DdsCardCheck.OFF,)
     assert view.supported.dds_brigade_call == (DdsBrigadeCall.OFF,)
     assert view.supported.card_source == ALL_SUPPORTED.supported.card_source
-    memo_default = ALL_SUPPORTED.model_copy(
+    assert view.default.dds_mode is DdsMode.MEMO_STATUSES
+    check_default = ALL_SUPPORTED.model_copy(
         update={
             "default": PRODUCT_DEFAULT_VARIANTS.model_copy(
-                update={"dds_mode": DdsMode.MEMO_STATUSES}
+                update={"dds_card_check": DdsCardCheck.ON}
             )
         }
     )
-    assert available_scenario_variants(memo_default).default.dds_mode is DdsMode.RESOURCE_PICKER
+    assert available_scenario_variants(check_default).default.dds_card_check is DdsCardCheck.OFF
 
 
 # ---------------------------------------------------------------------------------------------
@@ -154,13 +160,20 @@ def test_an_empty_request_takes_the_scenario_default() -> None:
 def test_a_request_value_overrides_the_scenario_default() -> None:
     resolved = resolve_variants(PartialVariants(card_source=CardSource.CALLER_VOICE), ALL_SUPPORTED)
     assert resolved.card_source is CardSource.CALLER_VOICE
-    assert resolved.dds_mode is DdsMode.RESOURCE_PICKER
+    assert resolved.dds_mode is DdsMode.MEMO_STATUSES
+    picker = resolve_variants(PartialVariants(dds_mode=DdsMode.RESOURCE_PICKER), ALL_SUPPORTED)
+    assert picker.dds_mode is DdsMode.RESOURCE_PICKER
+
+
+def test_memo_statuses_is_available_from_e5a() -> None:
+    """`MEMO_STATUSES` resolves wherever the scenario supports it (§70.11)."""
+    resolved = resolve_variants(PartialVariants(dds_mode=DdsMode.MEMO_STATUSES), ALL_SUPPORTED)
+    assert resolved.dds_mode is DdsMode.MEMO_STATUSES
 
 
 @pytest.mark.parametrize(
     ("switch", "value"),
     [
-        ("dds_mode", DdsMode.MEMO_STATUSES),
         ("dds_card_check", DdsCardCheck.ON),
         ("dds_brigade_call", DdsBrigadeCall.ON),
     ],
@@ -197,15 +210,15 @@ def test_a_value_outside_supported_is_not_supported() -> None:
 
 
 def test_an_unimplemented_scenario_default_is_not_available() -> None:
-    memo_default = ALL_SUPPORTED.model_copy(
+    check_default = ALL_SUPPORTED.model_copy(
         update={
             "default": PRODUCT_DEFAULT_VARIANTS.model_copy(
-                update={"dds_mode": DdsMode.MEMO_STATUSES}
+                update={"dds_card_check": DdsCardCheck.ON}
             )
         }
     )
     with pytest.raises(VariantNotAvailableError):
-        resolve_variants(PartialVariants(), memo_default)
+        resolve_variants(PartialVariants(), check_default)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -251,7 +264,7 @@ def test_generated_card_runs_the_dds_suffix_and_records_both_chains() -> None:
     assert payload["scenario_role_chain"] == ["OPERATOR_112", "DDS"]
     assert payload["variants"] == {
         "card_source": "GENERATED_CARD",
-        "dds_mode": "RESOURCE_PICKER",
+        "dds_mode": "MEMO_STATUSES",
         "dds_card_check": "OFF",
         "dds_brigade_call": "OFF",
     }

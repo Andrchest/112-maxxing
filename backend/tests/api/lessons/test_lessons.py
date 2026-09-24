@@ -106,7 +106,8 @@ async def test_a_refused_entry_rolls_the_whole_lesson_back_and_names_its_positio
     response = await lessons.create(
         [
             plan_entry(1, demo_version_id),
-            plan_entry(2, demo_version_id, variants={"dds_mode": "MEMO_STATUSES"}),
+            # I3 E5a implemented MEMO_STATUSES; brigade call ON stays unimplemented until E6.
+            plan_entry(2, demo_version_id, variants={"dds_brigade_call": "ON"}),
         ]
     )
     assert response.status_code == 409, response.text

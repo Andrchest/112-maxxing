@@ -621,10 +621,20 @@ def test_guard_at_least_one_selected_available_on_dispatch_additional(
 # ---------------------------------------------------------------------------------------------
 
 
-def test_registered_guards_are_callables() -> None:
-    from app.domain.session.guards import DDS_GUARDS, OPERATOR_112_GUARDS, SESSION_GUARDS
+#: The one guard HLD 70 §70.4.4 names without the `guard_` prefix (I3 E5a); its name is copied
+#: literally from the HLD, as every other guard name is.
+_HLD_NAMED_GUARDS = frozenset({"memo_all_legs_terminal"})
 
-    for mapping in (SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS):
+
+def test_registered_guards_are_callables() -> None:
+    from app.domain.session.guards import (
+        DDS_GUARDS,
+        DDS_GUARDS_MEMO,
+        OPERATOR_112_GUARDS,
+        SESSION_GUARDS,
+    )
+
+    for mapping in (SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS, DDS_GUARDS_MEMO):
         for name, guard in mapping.items():
             assert isinstance(guard, Callable)  # type: ignore[arg-type]
-            assert name.startswith("guard_")
+            assert name.startswith("guard_") or name in _HLD_NAMED_GUARDS

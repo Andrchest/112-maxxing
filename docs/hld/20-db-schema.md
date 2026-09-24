@@ -48,6 +48,7 @@ Conventions used throughout:
 | 26 | `world_engine_states` | additive (E6; D7) | 1 row / incident, engine-written bookkeeping |
 | 27 | `report_explanations` | additive (E16; D11, SPEC §2, §29) | the optional LLM prose about a stored `ScoreReport` |
 | 28 | `lessons` | additive (I3 E4a; D15, `70-i3-alignment.md` §70.3) | scheduling of N ordinary sessions; no event log of its own |
+| 29 | `dds_service_status_history` | additive (I3 E5a; D16, `70-i3-alignment.md` §70.4.3) | append-only, materialized from `DDS_SERVICE_STATUS_SET` |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -249,11 +250,19 @@ on the row so that a sim-time read costs no log scan; the same number is in the 
 | `user_id` | `uuid` | no | |
 | `assigned_role_type` | `text` | yes | |
 | `joined_at` | `timestamptz` | no | `now()` |
+| `assigned_service_id` *(additive, I3 E5a)* | `text` | yes | |
 
 PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`;
 FK `user_id → users(id) ON DELETE RESTRICT`.
-Unique `uq_participants_session_user (session_id, user_id)`.
-`CHECK (assigned_role_type IS NULL OR assigned_role_type IN ('OPERATOR_112','DDS','EDDS'))`.
+Unique `uq_participants_session_user (session_id, user_id)`;
+unique partial index `uq_participants_session_service (session_id, assigned_service_id) WHERE
+assigned_service_id IS NOT NULL` *(additive, I3 E5a)*.
+`CHECK (assigned_role_type IS NULL OR assigned_role_type IN ('OPERATOR_112','DDS','EDDS'))`,
+`CHECK (assigned_service_id IS NULL OR assigned_service_id <> '')` *(additive, I3 E5a)*.
+
+`assigned_service_id` (migration `0012_dds_response_status`, HLD 70 §70.4.5) is the ДДС participant →
+service binding of a `MULTI_TRAINEE` session with several ДДС trainees, distinct per session. E5a
+lands the column; E5b writes it.
 
 ### `role_stages`
 | Column | PG type | Null | Default |
@@ -498,14 +507,33 @@ omission must be able to propagate (SPEC §10).
 | `dispatched_at_offset_ms` | `integer` | yes | |
 | `closed_at_offset_ms` | `integer` | yes | |
 | `closure_reason` | `text` | yes | |
+| `response_status` *(additive, I3 E5a)* | `text` | no | `'ADDED'` |
+| `response_status_at_offset_ms` *(additive, I3 E5a)* | `integer` | yes | |
+| `order_number` *(additive, I3 E5a)* | `text` | yes | |
+| `last_comment_ru` *(additive, I3 E5a)* | `text` | yes | |
+| `accept_missed` *(additive, I3 E5a)* | `boolean` | no | `false` |
+| `responder` *(additive, I3 E5a)* | `text` | no | `'TRAINEE'` |
+| `bound_user_id` *(additive, I3 E5a)* | `uuid` | yes | |
 
 PK `(id)`. FK `incident_id → incidents(id) ON DELETE CASCADE`;
 FK `role_stage_id → role_stages(id) ON DELETE CASCADE`;
-FK `snapshot_id → handoff_snapshots(id) ON DELETE RESTRICT`.
+FK `snapshot_id → handoff_snapshots(id) ON DELETE RESTRICT`;
+FK `bound_user_id → users(id) ON DELETE RESTRICT` *(additive, I3 E5a)*.
 Unique `uq_dds_assignments_stage_service (role_stage_id, service_type)`.
 Index `ix_dds_assignments_incident (incident_id)`.
 `CHECK (service_type <> '')` *(changed, I3 E2a — was `service_type IN ('FIRE_RESCUE','POLICE','AMBULANCE','GAS_SERVICE','UTILITY_EMERGENCY','EDDS')`)*,
-`CHECK (state IN ('RECEIVED','ACKNOWLEDGED','RESOURCE_SELECTION','DISPATCHED','EN_ROUTE','ARRIVED','WORKING','RESOLVED','CLOSED'))`.
+`CHECK (state IN ('RECEIVED','ACKNOWLEDGED','RESOURCE_SELECTION','DISPATCHED','EN_ROUTE','ARRIVED','WORKING','RESOLVED','CLOSED'))`,
+`CHECK (response_status IN ('ADDED','RECEIVED','ACCEPTED','NOT_ACCEPTED','RESPONSE_STARTED','ARRIVED','WORKING','COMPLETED','REFUSED'))` *(additive, I3 E5a)*,
+`CHECK (responder IN ('TRAINEE','SCRIPTED'))` *(additive, I3 E5a)*.
+
+The seven response columns are additive in I3 E5a (migration `0012_dds_response_status`, HLD 70
+§70.4.3): the leg's `ServiceResponseStatus` in the ДДС memo's vocabulary, the offset it was entered
+at, the last entry's «Номер наряда» and comment, the sticky `accept_missed` flag (written only by the
+event store's card-status flush, in the same transaction as the deadline that set it), and who plays
+the leg (`responder`, `bound_user_id` — E5b binds). In picker mode stage automation mirrors
+`response_status` from `state` by the §70.4.4 picker map; the migration backfills every existing leg
+by the same map (`CLOSED` with a closure reason → `COMPLETED`; an aborted leg → `ACCEPTED` when it
+was acknowledged, else `RECEIVED`).
 
 `service_type` is a service-catalog id (`ServiceId`, HLD 70 §70.6.3, D18). Migration
 `0010_service_id_open` (I3 E2a) drops the six-member CHECK and adds `CHECK (service_type <> '')` under
@@ -516,6 +544,37 @@ reference pack `reference/` (HLD 70 §70.6.1), loaded by the composition root.
 
 There is no FK from `dds_assignments` to `incident_cards`: the DDS side reaches the trainee's data
 only through `snapshot_id` (SPEC §10, §42 test 3). Materialized from the event log.
+
+### `dds_service_status_history` (additive, I3 E5a)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `session_id` | `uuid` | no | |
+| `assignment_id` | `uuid` | no | |
+| `event_id` | `uuid` | no | |
+| `seq_no` | `bigint` | no | |
+| `previous_status` | `text` | no | |
+| `new_status` | `text` | no | |
+| `order_number` | `text` | yes | |
+| `comment_ru` | `text` | yes | |
+| `completion_reason` | `text` | yes | |
+| `source` | `text` | no | |
+| `actor_type` | `text` | no | |
+| `actor_user_id` | `uuid` | yes | |
+| `at_offset_ms` | `integer` | no | |
+
+PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`;
+FK `assignment_id → dds_assignments(id) ON DELETE CASCADE`;
+FK `event_id → session_events(id) ON DELETE RESTRICT`.
+Unique `uq_dds_service_status_history_event (event_id)`.
+Index `ix_dds_service_status_history_assignment (assignment_id, seq_no)`.
+UPDATE/DELETE rejected by the §20.9 trigger `dds_service_status_history_append_only`.
+
+One row per `DDS_SERVICE_STATUS_SET` (HLD 70 §70.4.3, §70.8), written in the same Unit of Work as
+the event it materialises and carrying that event's id and `seq_no` — the history every ДДС
+participant reads for every leg (broadcast, REQ-5294/5295). A read model: `score()` never reads it
+(D5); the log alone reproduces it. Rows exist only for status events appended since E5a; a leg the
+migration backfilled has none.
 
 ### `emergency_resources`
 Per-session instances created from `scenario_versions.content.available_resources` when the incident
@@ -904,6 +963,11 @@ CREATE TRIGGER handoff_snapshots_immutable
 
 CREATE TRIGGER incident_card_revisions_append_only
   BEFORE UPDATE OR DELETE ON incident_card_revisions
+  FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
+
+-- additive, I3 E5a (migration 0012_dds_response_status)
+CREATE TRIGGER dds_service_status_history_append_only
+  BEFORE UPDATE OR DELETE ON dds_service_status_history
   FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
 ```
 

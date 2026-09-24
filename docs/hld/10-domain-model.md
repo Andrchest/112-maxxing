@@ -50,8 +50,10 @@ backend/app/domain/
 │   ├── session.py           SimulationSession, Incident, RoleStage, SessionParticipant,
 │   │                        create_session
 │   ├── policy.py            SessionPolicy, SESSION_POLICIES
-│   ├── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS
-│   ├── guards.py            SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS
+│   ├── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS,
+│   │                        MEMO_DDS_TRANSITIONS (additive, I3 E5a)
+│   ├── guards.py            SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS,
+│   │                        DDS_GUARDS_MEMO (additive, I3 E5a)
 │   ├── machine.py           SESSION_STATE_MACHINE
 │   └── variants.py          SessionVariants, VariantSupport, ScenarioVariants, resolve_variants,
 │                            IMPLEMENTED_VARIANT_VALUES (additive, I3 E1 — HLD 70 §70.2)
@@ -63,7 +65,10 @@ backend/app/domain/
 │   ├── dds.py               DDSModule
 │   └── edds.py              EDDSModule
 ├── dds/
-│   ├── assignment.py        DDSAssignment
+│   ├── assignment.py        DDSAssignment, fire_response_trigger (I3 E5a)
+│   ├── response.py          (additive, I3 E5a — HLD 70 §70.4.1–2) ServiceResponseStatus,
+│   │                        SERVICE_RESPONSE_TRANSITIONS, LegResponder, StatusSource
+│   ├── policy.py            (additive, I3 E5a) StatusPolicy, NO_REFUSAL, allows_refusal
 │   ├── card_status.py       (additive, I3 E4a — HLD 70 §70.4.6) CardStatus, CardStatusReason,
 │   │                        CardTimers, CardLeg, card_status, CardStatusFold, plan_append
 │   ├── resources.py         ResourceCapability, EtaProfile, EmergencyResource,
@@ -574,6 +579,13 @@ Frozen (`model_config = ConfigDict(frozen=True)`); the DB trigger enforces the s
 | `closure_reason` | `ClosureReason \| None` |
 | `selected_resource_ids` | `tuple[ResourceId, ...]` |
 | `dispatched_resource_ids` | `tuple[ResourceId, ...]` |
+| `response_status` *(additive, I3 E5a)* | `ServiceResponseStatus` (default `ADDED`) |
+| `response_status_at_offset_ms` *(additive, I3 E5a)* | `int \| None` |
+| `order_number` *(additive, I3 E5a)* | `str \| None` — «Номер наряда» of the last entry (A-2) |
+| `last_comment_ru` *(additive, I3 E5a)* | `str \| None` |
+| `accept_missed` *(additive, I3 E5a)* | `bool` — sticky once the accept deadline passed without a decision |
+| `responder` *(additive, I3 E5a)* | `LegResponder` (`TRAINEE` \| `SCRIPTED`; `TRAINEE` until E5b) |
+| `bound_user_id` *(additive, I3 E5a)* | `UserId \| None` (bound by E5b; `None` = any ДДС participant) |
 
 One assignment per recipient service. The assignment exposes **no** accessor to `WorldTruth`; per D3
 the DDS application service is constructed without a world-truth repository.
@@ -638,6 +650,38 @@ back to `RESOURCE_SELECTION` is from `DISPATCHED` and only before the first unit
 `{RESOURCE_SELECTION, EN_ROUTE, ARRIVED, WORKING}`. Nothing else changes: `deselect` keeps its
 "not yet dispatched" guard, so reinforcement never un-sends a unit that is already moving.
 
+### Service response status machine — `SERVICE_RESPONSE_TRANSITIONS` (additive, I3 E5a)
+
+`backend/app/domain/dds/response.py` (HLD `70-i3-alignment.md` §70.4.1–§70.4.2, D16). Each leg's
+`ServiceResponseStatus` in the ДДС memo's vocabulary — `ADDED` Добавлена, `RECEIVED` Получена
+службой, `ACCEPTED` Принята, `NOT_ACCEPTED` Не принята, `RESPONSE_STARTED` Начало реагирования,
+`ARRIVED` Прибытие, `WORKING` Проведение работ, `COMPLETED` Работы завершены, `REFUSED` Отказ от
+выполнения работ — one step at a time (REQ-5293, A-8):
+
+| From | Trigger | To | Who may fire | Guard |
+|:--|:--|:--|:--|:--|
+| `ADDED` | `receive` | `RECEIVED` | SIMULATION | — (the ДДС opened the card, or a trainee status on an `ADDED` leg fires it first) |
+| `RECEIVED` | `accept` | `ACCEPTED` | TRAINEE, SIMULATION | `guard_leg_actor_bound` |
+| `RECEIVED` | `decline` | `NOT_ACCEPTED` | TRAINEE, SIMULATION | `guard_comment_present_and_policy_allows_refusal` |
+| `NOT_ACCEPTED` | `accept` | `ACCEPTED` | TRAINEE | — (correction, REQ-5327) |
+| `ACCEPTED` | `start_response` | `RESPONSE_STARTED` | TRAINEE, SIMULATION | — |
+| `RESPONSE_STARTED` | `arrive` | `ARRIVED` | TRAINEE, SIMULATION | — |
+| `ARRIVED` | `start_work` | `WORKING` | TRAINEE, SIMULATION | — |
+| `WORKING` | `complete` | `COMPLETED` | TRAINEE, SIMULATION | — |
+| `ACCEPTED`, `RESPONSE_STARTED`, `ARRIVED`, `WORKING` | `refuse` | `REFUSED` | TRAINEE, SIMULATION | `guard_comment_present_and_policy_allows_refusal` |
+| `RECEIVED`, `ACCEPTED`, `RESPONSE_STARTED`, `ARRIVED`, `WORKING` | `complete_without_brigade` | `COMPLETED` | TRAINEE, SIMULATION | `guard_policy_is_no_refusal` |
+
+`COMPLETED` and `REFUSED` are terminal. HLD 70's cell "`guard_comment_present`;
+`guard_policy_allows_refusal`" is one conjunction guard here (`Transition` holds one name); the
+application checks the comment first and answers `422 COMMENT_REQUIRED`. The status policy is the
+reference pack's catalog field `status_policy` (`dds/policy.py`): `NO_REFUSAL` (103) replaces
+`decline` / `refuse` with `complete_without_brigade` (reason `WITHOUT_BRIGADE`, REQ-5290). The guards
+read `LegGuardSubject` (policy, the command's comment, the leg's `bound_user_id`) from
+`GuardContext.assignment`. Every fired step appends one `DDS_SERVICE_STATUS_SET` and one
+`dds_service_status_history` row; `fire_response_trigger` (`dds/assignment.py`) is the one way a
+leg's status moves. In `RESOURCE_PICKER` mode stage automation mirrors the status from the leg's
+`state` by §70.4.4's picker map (SIMULATION, `source: PICKER_MIRROR`), one step at a time.
+
 ### `Notification` — `backend/app/domain/dds/notification.py`
 `{notification_id, incident_id, audience_role: RoleType, severity: NotificationSeverity,
 title_ru: str, body_ru: str, created_at_offset_ms: int, source_world_event_id: str | None,
@@ -684,14 +728,16 @@ need (`card`, `assignment`, `resources`, `world_flags`). It never carries a repo
 carries `runtime: GuardRuntime` — the frozen projection of the facts a pure guard cannot derive from
 the aggregate, which the application layer computes from the event log, the inference health
 registry and the transport ports: `scenario_valid`, `inference_ready`, `transport_ready`,
-`first_finalized_turn`, `call_connected`, `call_ended`, `resolution_condition_met` (all `bool`,
-default `false`) and `transition_started_ms: int | None` (default `null`). The defaults deny, so a
+`first_finalized_turn`, `call_connected`, `call_ended`, `resolution_condition_met`,
+`all_legs_terminal` (additive, I3 E5a) (all `bool`, default `false`) and `transition_started_ms:
+int | None` (default `null`). The defaults deny, so a
 guard whose runtime facts were never projected blocks its transition rather than allowing it.
 
 The guard *callables* named by `Transition.guard_name` live in `session/guards.py` as the three
 registries `SESSION_GUARDS`, `OPERATOR_112_GUARDS` and `DDS_GUARDS`, one per table above;
 `session/machine.py` wires the first into `SESSION_STATE_MACHINE` and each `RoleModule` wires its
-own (`EDDSModule`'s transition-less stub has no guard names to register).
+own (`EDDSModule`'s transition-less stub has no guard names to register). I3 E5a adds a fourth,
+`DDS_GUARDS_MEMO`, for the DDS stage in memo mode (below).
 
 ### Session state machine — `SESSION_TRANSITIONS`
 
@@ -771,6 +817,7 @@ name says — the media plane can take a call — and is read through
 | `ARRIVED` | `work_started` | `WORKING` | SIMULATION | `guard_any_dispatched_reached(WORKING)` |
 | `WORKING` | `incident_resolved` | `RESOLVED` | SIMULATION | `guard_resolution_condition`: the scenario's `expected_response.resolution_condition` evaluates true |
 | `RESOLVED` | `close` | `CLOSED` | TRAINEE (DDS) | — |
+| `ACKNOWLEDGED` | `close` | `RESOLVED` | TRAINEE (DDS) | `memo_all_legs_terminal`: `dds_mode = MEMO_STATUSES` **and** every leg's `ServiceResponseStatus` is `COMPLETED`, `NOT_ACCEPTED` or `REFUSED` (additive, I3 E5a — HLD 70 §70.4.4, manager decision O-1) |
 | `EN_ROUTE`, `ARRIVED`, `WORKING` | `dispatch_additional` | *(self)* | TRAINEE (DDS) | `guard_at_least_one_selected_available` — a self-transition: extra units may be added without losing progress |
 | `RECEIVED`…`RESOLVED` | `abort_stage` | `CLOSED` | INSTRUCTOR, SYSTEM | fired only as part of session `abort`; sets `closure_reason = CANCELLED_BY_CALLER` only if the scenario says so, otherwise leaves it `None` |
 | `CLOSED` | — | — | — | terminal |
@@ -779,6 +826,18 @@ name says — the media plane can take a call — and is read through
 `RESOURCE_DISPATCHED`, `close` emits `DDS_INCIDENT_CLOSED` then `ROLE_STAGE_COMPLETED`; every
 transition additionally emits `STAGE_STATE_CHANGED`. Simulation-fired triggers pass through the same
 machine and are rejected the same way when invalid (D6).
+
+**Memo mode (additive, I3 E5a — HLD 70 §70.4.4, D16).** The `ACKNOWLEDGED --close--> RESOLVED` row is
+the only additive row; its guard denies in picker mode, so picker sessions are unchanged. Under
+`dds_mode: MEMO_STATUSES` the stage path is `RECEIVED --acknowledge--> ACKNOWLEDGED --close
+[memo_all_legs_terminal]--> RESOLVED --close--> CLOSED`: `acknowledge` fires inside the trainee's
+first primary decision on a leg (or first `open_card` when they own no leg), and `closeDdsIncident`
+fires `close` twice in one Unit of Work, so `RESOLVED` is never at rest. `RESOURCE_SELECTION` …
+`WORKING` are never entered. The memo machine runs over `MEMO_DDS_TRANSITIONS` — `DDS_TRANSITIONS`
+restricted to `acknowledge`, `close` and `abort_stage` (a view, not a second table) — with
+`DDS_GUARDS_MEMO`: `guard_participant_assigned_to_stage` read as "any ДДС participant of the
+session", and `memo_all_legs_terminal`. Every resource trigger is therefore "no such transition" in
+memo mode (INV 8); the resource-driven guards are not needed there because their rows are absent.
 
 ## 10.9 Roles (SPEC §14, D6, D3)
 
@@ -800,6 +859,8 @@ class Permission(str, Enum):
     ACKNOWLEDGE_NOTIFICATION = "ACKNOWLEDGE_NOTIFICATION"
     VIEW_RESOURCE_BOARD = "VIEW_RESOURCE_BOARD"
     VIEW_TRANSCRIPT = "VIEW_TRANSCRIPT"
+    SET_SERVICE_STATUS = "SET_SERVICE_STATUS"   # additive, I3 E5a
+    FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"         # additive, I3 E5a (used from E5b)
 
 class ActionDescriptor(BaseModel):
     action_id: str          # equals the state-machine trigger where one exists
@@ -815,7 +876,10 @@ class RoleModule(Protocol):
     visibility_policy: DataVisibilityPolicy
     ui_schema: Mapping[str, Any]
 
-    def available_actions(self, stage_state: Enum) -> tuple[ActionDescriptor, ...]: ...
+    def available_actions(
+        self, stage_state: Enum, *, variants: SessionVariants | None = None  # I3 E1
+    ) -> tuple[ActionDescriptor, ...]: ...
+    def state_machine_for(self, variants: SessionVariants | None = None) -> StateMachine[Any]: ...  # I3 E5a
     def initial_state(self) -> Enum: ...
     def terminal_states(self) -> frozenset[Enum]: ...
 
@@ -869,10 +933,12 @@ constructed without a world-truth repository, so the data cannot be reached even
 | `STAGE_COMPLETED` | — |
 
 ### `DDSModule` — `backend/app/domain/roles/dds.py`
-- `role_type = DDS`, `implemented = True`, `state_machine = StateMachine(DDS_TRANSITIONS, …)`
-- `permissions` = `{VIEW_HANDOFF, ACKNOWLEDGE_ASSIGNMENT, SELECT_RESOURCES, DISPATCH_RESOURCES, SEND_STATUS_UPDATE, CLOSE_INCIDENT, VIEW_RESOURCE_BOARD, ACKNOWLEDGE_NOTIFICATION}`
+- `role_type = DDS`, `implemented = True`, `state_machine = StateMachine(DDS_TRANSITIONS, DDS_GUARDS)`;
+  (additive, I3 E5a) `memo_state_machine = StateMachine(MEMO_DDS_TRANSITIONS, DDS_GUARDS_MEMO)`, and
+  `state_machine_for(variants)` answers it under `dds_mode: MEMO_STATUSES`
+- `permissions` = `{VIEW_HANDOFF, ACKNOWLEDGE_ASSIGNMENT, SELECT_RESOURCES, DISPATCH_RESOURCES, SEND_STATUS_UPDATE, CLOSE_INCIDENT, VIEW_RESOURCE_BOARD, ACKNOWLEDGE_NOTIFICATION, SET_SERVICE_STATUS}` (`SET_SERVICE_STATUS` additive, I3 E5a)
 - `visibility_policy.sources` = `{HANDOFF_SNAPSHOT, DDS_ASSIGNMENT, RESOURCE_BOARD, NOTIFICATIONS, RADIO_MESSAGES}` — **no** `OPERATOR_CARD`, **no** `WORLD_TRUTH`, **no** `TRANSCRIPT` (SPEC §10, §42 test 3)
-- `available_actions(state)`:
+- `available_actions(state, variants)` — **`dds_mode: RESOURCE_PICKER`** (and `variants=None`):
 
 | State | Actions |
 |:--|:--|
@@ -885,6 +951,27 @@ constructed without a world-truth repository, so the data cannot be reached even
 | `WORKING` | `select_resource` (added, E9); `deselect_resource` (added, E9); `dispatch_additional`; `send_status_update` |
 | `RESOLVED` | `close` / Закрыть происшествие; `send_status_update` |
 | `CLOSED` | — |
+
+- `available_actions(state, variants)` — **`dds_mode: MEMO_STATUSES`** (additive, I3 E5a — HLD 70 §70.4.4):
+
+| State | Actions |
+|:--|:--|
+| `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус |
+| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `close` / Закрыть происшествие |
+| `RESOURCE_SELECTION` | — (never entered in memo mode) |
+| `DISPATCHED` | — (never entered in memo mode) |
+| `EN_ROUTE` | — (never entered in memo mode) |
+| `ARRIVED` | — (never entered in memo mode) |
+| `WORKING` | — (never entered in memo mode) |
+| `RESOLVED` | `close` (transient inside the memo `close` command) |
+| `CLOSED` | — |
+
+No resource action is offered in memo mode. `close` in `ACKNOWLEDGED` is decided by its guard
+`memo_all_legs_terminal` (a leg still open is the ordinary `409 INVALID_TRANSITION`). HLD 70's
+`flag_card_issue` / Отметить ошибку в карточке joins `ACKNOWLEDGED` with E5b, only under
+`dds_card_check: ON`. `open_card` uses `VIEW_HANDOFF`; `set_service_status` and the leg triggers
+use `SET_SERVICE_STATUS`. The legs' own dropdown is each leg's legal next triggers (§10.7
+`SERVICE_RESPONSE_TRANSITIONS`), served as `DdsLegView.available_actions`.
 
 Two of the stage triggers above had **no endpoint** in `openapi.yaml` — `open_resource_selection`
 and `back_to_acknowledged` were available actions the console could not perform. E9 closes the gap
@@ -1022,8 +1109,12 @@ card's log), through `start_session` as `ActorRef(INSTRUCTOR, created_by_user_id
 `NOT_NOTIFIED` (Не оповещено), `REFUSED` (Отказ), `NOT_COMPLETED` (Не завершено), `COMPLETED`
 (Завершена). `card_status(legs, handoff_offset_ms, timers, now_offset_ms, report_released)` is pure
 and evaluates HLD 70 §70.4.6 in the precedence `COMPLETED > REFUSED > NOT_COMPLETED > NOT_NOTIFIED >
-CHECKED > WORKED > REGISTERED` (A-5); `NOT_NOTIFIED` is sticky. Until E5 the legs' statuses are
-mirrored from the DDS stage by the picker map (§70.4.4) and `ACCEPTED ≡ DDS_ACKNOWLEDGED`.
+CHECKED > WORKED > REGISTERED` (A-5); `NOT_NOTIFIED` is sticky. Leg-aware since I3 E5a: under
+`dds_mode: MEMO_STATUSES` a leg's status is its own `ServiceResponseStatus` (folded from
+`DDS_SERVICE_STATUS_SET`) and its primary decision its own first `ACCEPTED`/`NOT_ACCEPTED`; under
+`RESOURCE_PICKER` the leg status is the picker map of the stage (§70.4.4), applied at the stage event
+itself (`ACCEPTED ≡` the stage's `ACKNOWLEDGED`), which is what the `PICKER_MIRROR` status events
+record. The same flush sets each leg's sticky `accept_missed`.
 `CardTimers` is the schema-2 key `timers` (HLD 30 §30.12). The status is a read model
 (`incidents.card_status`); each change is one SIMULATION `DDS_CARD_STATUS_CHANGED`. The
 **flush-before-append** rule (§70.3.5) is `plan_append`, run by the event store on every append
@@ -1340,7 +1431,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `CARD_FIELD_CHANGED` | `TRAINEE`, `INSTRUCTOR` | `card_id: uuid`, `revision_id: uuid`, `revision_no: int`, `field_path: str`, `previous_value: FactValue`, `new_value: FactValue`, `value_type: ValueType`, `actor_user_id: uuid`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `SERVICE_SELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceId`, `selected_services: list[ServiceId]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `HANDOFF_CREATED` | `TRAINEE` (`SIMULATION` for a schema-2 prefab handoff, I3 E2b′) | `snapshot_id: uuid`, `incident_id: uuid`, `card_id: uuid`, `card_revision_id: uuid`, `recipient_services: list[ServiceId]`, `card_values: object` (the complete frozen card), `content_sha256: str`, `at_offset_ms: int`; additive, I3 E2b′ (HLD 70 §70.6.4, §70.7) — `auto_recipient_services: list[ServiceId] \| null`, `manual_recipient_services: list[ServiceId] \| null`, `informed_services: list[ServiceId] \| null` (`recipient_services` is then the union auto ∪ manual; absent in a pre-I3 log) | OPERATOR_112, INSTRUCTOR |
-| `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceId`, `at_offset_ms: int` | DDS, INSTRUCTOR |
+| `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceId`, `at_offset_ms: int`; additive, I3 E5a: `responder: TRAINEE \| SCRIPTED`, `bound_user_id: uuid \| null`, `initial_response_status: "ADDED"` | DDS, INSTRUCTOR |
 | `DDS_ACKNOWLEDGED` | `TRAINEE` | `assignment_id: uuid`, `at_offset_ms: int`, `latency_from_handoff_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceId`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `service_type_by_resource: object` (additive, E9), `at_offset_ms: int`, `is_additional: bool`, `note_ru: str \| null` (additive, E17 R2) | DDS, INSTRUCTOR |
@@ -1389,6 +1480,8 @@ property name, does remain `CallerProfile.identity_ru`.
 | `INFERENCE_HEALTH_CHANGED` | `SYSTEM` | `component: str`, `previous_status: HealthStatus`, `new_status: HealthStatus`, `detail: str` | INSTRUCTOR |
 | `DDS_CARD_STATUS_CHANGED` (additive, I3 E4a) | `SIMULATION` | `incident_id: uuid`, `previous_status: CardStatus`, `new_status: CardStatus`, `reason: CardStatusReason`, `assignment_id: uuid \| null`, `service_type: ServiceId \| null`, `deadline_offset_ms: int \| null`, `at_offset_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
 | `RECIPIENTS_RESOLVED` (additive, I3 E2b′) | `SIMULATION` | `card_id: uuid`, `card_revision_id: uuid \| null`, `pack_id: str`, `classifier_code: str \| null`, `candidate_codes: list[str]`, `main_service: ServiceId \| null`, `auto_services: list[ServiceId]`, `informed_services: list[ServiceId]`, `manual_services: list[ServiceId]`, `notification_list: list[ServiceId]`, `reasons: list[{service_id: ServiceId, source: CLASSIFIER \| TERRITORIAL \| DEPARTMENT, column: str, sub_column: str \| null, row_code: str, row_match: CLASSIFIER_CODE \| COVERED \| GROUP_FALLBACK}]` (`row_code` / `row_match` additive to HLD 70 §70.7: which classifier row a reason came from and whether step 1 found it by the «Класс.:» pick, full coverage, or the group fallback), `final: bool`, `at_offset_ms: int`. Appended after a routing-relevant `CARD_FIELD_CHANGED` and, `final: true`, immediately before `HANDOFF_CREATED` (70 §70.6.4); never a card write (INV 4) | OPERATOR_112, INSTRUCTOR |
+| `DDS_CARD_OPENED` (additive, I3 E5a) | `TRAINEE` | `assignment_id: uuid`, `service_type: ServiceId`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС opened the card on one leg (HLD 70 §70.4.2) | DDS, INSTRUCTOR |
+| `DDS_SERVICE_STATUS_SET` (additive, I3 E5a) | `TRAINEE`, `SIMULATION` | `assignment_id: uuid`, `service_type: ServiceId`, `previous_status: ServiceResponseStatus`, `new_status: ServiceResponseStatus`, `trigger: str`, `order_number: str \| null`, `comment_ru: str \| null`, `completion_reason: "WITHOUT_BRIGADE" \| null`, `source: TRAINEE \| SCRIPTED_RESPONDER \| PICKER_MIRROR \| SYSTEM`, `actor_user_id: uuid \| null`, `at_offset_ms: int` — one step of one leg's response status (HLD 70 §70.4.2); materialised into `dds_service_status_history` | DDS, INSTRUCTOR |
 
 ### Turn record (materialized, not a domain type)
 

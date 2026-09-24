@@ -41,12 +41,15 @@ from app.application.dds.command_context import DdsCommandGate
 from app.application.dds.deselect_resource import DeselectDdsResource
 from app.application.dds.dispatch import DispatchDdsResources
 from app.application.dds.get_work_item import GetDdsWorkItem
+from app.application.dds.list_legs import ListDdsLegs
 from app.application.dds.list_notifications import ListNotifications
 from app.application.dds.list_radio_messages import ListRadioMessages
 from app.application.dds.list_resources import ListDdsResources
+from app.application.dds.open_card import OpenDdsCard
 from app.application.dds.open_resource_selection import OpenDdsResourceSelection
 from app.application.dds.select_resource import SelectDdsResource
 from app.application.dds.send_status_update import SendDdsStatusUpdate
+from app.application.dds.set_service_status import SetDdsServiceStatus
 from app.application.dds.stage_automation import DdsStageAutomation
 from app.application.handoff.complete_operator_stage import CompleteOperatorStage
 from app.application.handoff.continue_to_next_stage import ContinueToNextStage
@@ -742,6 +745,18 @@ class Container:
     def list_radio_messages(self) -> ListRadioMessages:
         """`listRadioMessages`."""
         return ListRadioMessages(self.unit_of_work)
+
+    def list_dds_legs(self) -> ListDdsLegs:
+        """`listDdsLegs` (I3 E5a)."""
+        return ListDdsLegs(self.unit_of_work, self.reference)
+
+    def open_dds_card(self) -> OpenDdsCard:
+        """`openDdsCard` (I3 E5a)."""
+        return OpenDdsCard(self.dds_command_gate())
+
+    def set_dds_service_status(self) -> SetDdsServiceStatus:
+        """`setDdsServiceStatus` (I3 E5a)."""
+        return SetDdsServiceStatus(self.dds_command_gate())
 
     def close_dds_incident(self) -> CloseDdsIncident:
         """`closeDdsIncident`."""

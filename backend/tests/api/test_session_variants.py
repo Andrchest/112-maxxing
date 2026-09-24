@@ -253,10 +253,33 @@ async def test_caller_voice_keeps_the_full_chain_and_no_prefab(
 # ---------------------------------------------------------------------------------------------
 
 
+async def test_memo_statuses_on_a_schema_1_scenario_is_409_variant_not_supported(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    users: dict[str, UserId],
+    demo_version_id: ScenarioVersionId,
+    unit_of_work: Callable[[], SqlAlchemyUnitOfWork],
+) -> None:
+    """I3 E5a implemented `MEMO_STATUSES`; a schema-1 scenario still supports only the picker
+    (P5, HLD 70 §70.2.2), so the request is now refused as unsupported rather than unavailable."""
+    before = await _session_count(unit_of_work)
+    response = await _create(
+        client,
+        tokens["instructor1"],
+        demo_version_id,
+        [participant(users["trainee2"], "DDS")],
+        session_mode="SINGLE_ROLE",
+        variants={"card_source": "GENERATED_CARD", "dds_mode": "MEMO_STATUSES"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "VARIANT_NOT_SUPPORTED"
+    assert await _session_count(unit_of_work) == before
+
+
 @pytest.mark.parametrize(
     "variants",
     [
-        {"dds_mode": "MEMO_STATUSES"},
         {"dds_card_check": "ON"},
         {"dds_brigade_call": "ON"},
     ],

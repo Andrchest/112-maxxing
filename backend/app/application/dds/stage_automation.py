@@ -41,6 +41,16 @@ legs are not all completed `timers.not_completed_after_ms` after the handoff tur
 a trainee command in between flushes the same events through the same rule before its own. The
 flush runs for every ACTIVE session — a lesson card waiting in a queue times like any other — and
 writes nothing when no deadline changes the status.
+
+**Leg statuses (I3 E5a, HLD 70 §70.4.4).** In `RESOURCE_PICKER` mode the same hook mirrors every
+leg's `ServiceResponseStatus` from its `state` by the picker map (`mirror_leg_status`: `RECEIVED →
+RECEIVED`, `ACKNOWLEDGED`/`RESOURCE_SELECTION`/`DISPATCHED → ACCEPTED`, `EN_ROUTE →
+RESPONSE_STARTED`, …, `RESOLVED → COMPLETED`), one `SERVICE_RESPONSE_TRANSITIONS` step at a time,
+as SIMULATION with `source: PICKER_MIRROR`, each step one `DDS_SERVICE_STATUS_SET` and one history
+row — after every stage trigger it fires and once per run to catch up with the trainee's commands,
+so the report and the lists speak one vocabulary in both modes. In `MEMO_STATUSES` mode it fires
+**no** stage trigger and mirrors nothing: the legs move by the trainee (and, from E5b, by scripted
+responders), and the stage leaves `ACKNOWLEDGED` only through the trainee's `close`.
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from app.application.dds.command_context import dds_stage_of
+from app.application.dds.command_context import dds_stage_of, history_entries, is_memo
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.sessions.guard_context import build_guard_runtime
@@ -56,7 +66,9 @@ from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import InvalidTransitionError
 from app.domain.common.ids import SessionId
-from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.assignment import DDSAssignment, fire_response_trigger
+from app.domain.dds.card_status import mirror_leg_status
+from app.domain.dds.response import ServiceResponseStatus, StatusSource
 from app.domain.enums import ActorType, DDSStageState, SessionState
 
 __all__ = ["SIMULATION_TRIGGER_BY_STATE", "DdsStageAutomation", "ResolutionProbe"]
@@ -110,9 +122,12 @@ class DdsStageAutomation:
                 return bool(flushed)
 
             legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
-            if not legs:
+            if not legs or is_memo(session):
+                # Memo mode: stage automation drives legs only, never the stage (§70.4.4); the
+                # scripted responders that will drive them arrive with E5b.
                 await uow.commit()
                 return bool(flushed)
+            legs, mirrored = await _mirror_responses(uow, session_id, legs, now_ms)
 
             board = await uow.resources.list_for_session(session_id)
             leg_ids = {leg.assignment_id for leg in legs}
@@ -123,7 +138,7 @@ class DdsStageAutomation:
             }
             log = await uow.events.read(session_id)
 
-            fired = bool(flushed)
+            fired = bool(flushed) or mirrored
             while True:
                 state = session.stage(stage.role_stage_id).state
                 assert isinstance(state, DDSStageState)
@@ -158,6 +173,7 @@ class DdsStageAutomation:
                 moved_state = session.stage(stage.role_stage_id).state
                 assert isinstance(moved_state, DDSStageState)
                 legs = await _mirror(uow, legs, moved_state)
+                legs, _mirrored = await _mirror_responses(uow, session_id, legs, now_ms)
                 fired = True
 
             await uow.commit()
@@ -177,3 +193,63 @@ async def _mirror(
         await uow.dds_assignments.save(moved)
         updated.append(moved)
     return updated
+
+
+_PICKER_PATH: tuple[ServiceResponseStatus, ...] = (
+    ServiceResponseStatus.ADDED,
+    ServiceResponseStatus.RECEIVED,
+    ServiceResponseStatus.ACCEPTED,
+    ServiceResponseStatus.RESPONSE_STARTED,
+    ServiceResponseStatus.ARRIVED,
+    ServiceResponseStatus.WORKING,
+    ServiceResponseStatus.COMPLETED,
+)
+"""The statuses the picker map reaches, in `SERVICE_RESPONSE_TRANSITIONS` order."""
+
+_PICKER_STEP: dict[ServiceResponseStatus, str] = {
+    ServiceResponseStatus.ADDED: "receive",
+    ServiceResponseStatus.RECEIVED: "accept",
+    ServiceResponseStatus.ACCEPTED: "start_response",
+    ServiceResponseStatus.RESPONSE_STARTED: "arrive",
+    ServiceResponseStatus.ARRIVED: "start_work",
+    ServiceResponseStatus.WORKING: "complete",
+}
+"""The one trigger that moves a picker leg one step along `_PICKER_PATH`."""
+
+
+async def _mirror_responses(
+    uow: UnitOfWork, session_id: SessionId, legs: list[DDSAssignment], now_ms: int
+) -> tuple[list[DDSAssignment], bool]:
+    """Walk every leg's response status up to the picker map of its `state` (see the module
+    docstring); `True` when any step was taken. A status the map is behind (never the case for a
+    monotonic stage) is left alone."""
+    events = []
+    moved_by_id: dict[object, DDSAssignment] = {}
+    # A stable order — the legs share `received_at_offset_ms` and their ids are random — so the
+    # mirrored stream is the same in every run of the same actions (INV 7).
+    for leg in sorted(legs, key=lambda item: (item.received_at_offset_ms, item.service_type)):
+        target = ServiceResponseStatus(
+            mirror_leg_status(leg.state, leg.closure_reason, leg.response_status.value)
+        )
+        moved = leg
+        while (
+            moved.response_status in _PICKER_PATH
+            and target in _PICKER_PATH
+            and _PICKER_PATH.index(moved.response_status) < _PICKER_PATH.index(target)
+        ):
+            moved, event = fire_response_trigger(
+                moved,
+                _PICKER_STEP[moved.response_status],
+                actor=_SIMULATION,
+                now_ms=now_ms,
+                source=StatusSource.PICKER_MIRROR,
+            )
+            events.append(event)
+        if moved is not leg:
+            await uow.dds_assignments.save(moved)
+        moved_by_id[leg.assignment_id] = moved
+    updated = [moved_by_id[leg.assignment_id] for leg in legs]
+    if events:
+        stored = await uow.events.append(session_id, events)
+        await uow.dds_assignments.add_history(history_entries(session_id, stored))
+    return updated, bool(events)

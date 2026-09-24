@@ -168,6 +168,12 @@ class Operator112Module:
         assert isinstance(stage_state, Operator112StageState)
         return _AVAILABLE_ACTIONS[stage_state]
 
+    def state_machine_for(
+        self, variants: SessionVariants | None = None
+    ) -> StateMachine[Operator112StageState]:
+        """No switch changes this module's machine (HLD 70 §70.2.4)."""
+        return self.state_machine
+
     def initial_state(self) -> Enum:
         return Operator112StageState.WAITING_FOR_CALL
 

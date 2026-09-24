@@ -1,5 +1,6 @@
-"""The guard callables named by `session/transitions.py`, and the three guard registries
-`SESSION_GUARDS`, `OPERATOR_112_GUARDS`, `DDS_GUARDS` (HLD `10-domain-model.md` §10.8, SPEC §7).
+"""The guard callables named by `session/transitions.py`, and the guard registries
+`SESSION_GUARDS`, `OPERATOR_112_GUARDS`, `DDS_GUARDS` and — I3 E5a — `DDS_GUARDS_MEMO` (HLD
+`10-domain-model.md` §10.8, SPEC §7; HLD 70 §70.4.4).
 
 Every `guard_name` appearing in `SESSION_TRANSITIONS`, `OPERATOR_112_TRANSITIONS` and
 `DDS_TRANSITIONS` is registered in exactly one of the three mappings below; `StateMachine` denies
@@ -24,7 +25,13 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from app.domain.common.state_machine import GuardContext
-from app.domain.enums import DDSStageState, Operator112StageState, ResourceStatus, SessionState
+from app.domain.enums import (
+    DDSStageState,
+    Operator112StageState,
+    ResourceStatus,
+    RoleType,
+    SessionState,
+)
 from app.domain.session.policy import ParticipantAssignmentRule
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
@@ -319,8 +326,47 @@ def guard_resolution_condition(ctx: GuardContext) -> bool:
     return ctx.runtime.resolution_condition_met
 
 
+def _memo_mode(session: SimulationSession | None) -> bool:
+    """The session runs `dds_mode: MEMO_STATUSES` (HLD 70 §70.2.4) — read off the aggregate."""
+    if session is None:
+        return False
+    variants = getattr(session, "variants", None)
+    mode = getattr(variants, "dds_mode", None)
+    return getattr(mode, "value", mode) == "MEMO_STATUSES"
+
+
+def memo_all_legs_terminal(ctx: GuardContext) -> bool:
+    """`ACKNOWLEDGED --close--> RESOLVED` (I3 E5a, HLD 70 §70.4.4, D16): `dds_mode =
+    MEMO_STATUSES` **and** every leg is `COMPLETED`, `NOT_ACCEPTED` or `REFUSED`.
+
+    Registered in the picker registry too, where it always denies — which is what keeps the
+    additive row invisible to picker sessions. The legs' verdict arrives as
+    `GuardRuntime.all_legs_terminal`, projected by the application from the legs it loaded.
+    """
+    return _memo_mode(_session(ctx)) and ctx.runtime.all_legs_terminal
+
+
+def guard_any_dds_participant(ctx: GuardContext) -> bool:
+    """The memo reading of `guard_participant_assigned_to_stage` (HLD 70 §70.4.4): the firing
+    actor is **any** ДДС participant of the session — the stage's own, or one assigned `DDS`
+    (several ДДС trainees share the one DDS stage, §70.4.5)."""
+    stage, session = _stage(ctx), _session(ctx)
+    actor_id = ctx.actor.actor_id
+    if actor_id is None:
+        return False
+    if stage is not None and stage.participant_user_id == actor_id:
+        return True
+    if session is None:
+        return False
+    return any(
+        participant.user_id == actor_id and participant.assigned_role_type is RoleType.DDS
+        for participant in session.participants
+    )
+
+
 DDS_GUARDS: Mapping[str, Callable[[GuardContext], bool]] = {
     "guard_participant_assigned_to_stage": guard_participant_assigned_to_stage,
+    "memo_all_legs_terminal": memo_all_legs_terminal,
     "guard_at_least_one_selected_available": guard_at_least_one_selected_available,
     "guard_no_resource_selected": guard_no_resource_selected,
     "guard_additional_dispatch_allowed": guard_additional_dispatch_allowed,
@@ -329,3 +375,14 @@ DDS_GUARDS: Mapping[str, Callable[[GuardContext], bool]] = {
     "guard_any_dispatched_reached_working": guard_any_dispatched_reached_working,
     "guard_resolution_condition": guard_resolution_condition,
 }
+
+DDS_GUARDS_MEMO: Mapping[str, Callable[[GuardContext], bool]] = {
+    "guard_participant_assigned_to_stage": guard_any_dds_participant,
+    "memo_all_legs_terminal": memo_all_legs_terminal,
+}
+"""The memo registry (HLD 70 §70.4.4), for the machine over `MEMO_DDS_TRANSITIONS`.
+
+It holds exactly the guards that view's rows name. The resource-driven guards §70.4.4 says "deny
+there" are absent because their rows are: the memo machine has no `dispatch`, `first_en_route`,
+`incident_resolved`, … row to fire, so each is refused before any guard is asked.
+"""

@@ -57,6 +57,7 @@ from app.application.reports.timeline_labels_ru import (
     stage_state_label_ru,
 )
 from app.domain.dds.card_status import CARD_STATUS_LABELS_RU
+from app.domain.dds.response import SERVICE_RESPONSE_LABELS_RU
 from app.domain.enums import ActorType
 from app.domain.events.types import EventType
 
@@ -225,6 +226,10 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.RECIPIENTS_RESOLVED: SummaryTemplate(
         "Определён список оповещения", ("notification_list",)
     ),
+    EventType.DDS_CARD_OPENED: SummaryTemplate("ДДС открыла карточку", ("service_type",)),
+    EventType.DDS_SERVICE_STATUS_SET: SummaryTemplate(
+        "Статус службы изменён", ("service_type", "new_status")
+    ),
 }
 
 
@@ -325,6 +330,11 @@ _CARD_STATUS_LABELS_RU: Mapping[str, str] = {
     status.value: label for status, label in CARD_STATUS_LABELS_RU.items()
 }
 
+#: `DDS_SERVICE_STATUS_SET.new_status` (I3 E5a) — the memo's per-service labels (HLD 70 §70.4.1).
+_RESPONSE_STATUS_LABELS_RU: Mapping[str, str] = {
+    status.value: label for status, label in SERVICE_RESPONSE_LABELS_RU.items()
+}
+
 
 def _render_detail_value(
     event_type: EventType, key: str, value: object, payload: Mapping[str, Any]
@@ -348,6 +358,8 @@ def _render_detail_value(
             status_table = HEALTH_STATUS_LABELS_RU
         elif event_type is EventType.DDS_CARD_STATUS_CHANGED:
             status_table = _CARD_STATUS_LABELS_RU
+        elif event_type is EventType.DDS_SERVICE_STATUS_SET:
+            status_table = _RESPONSE_STATUS_LABELS_RU
         return status_table.get(str(value), _render(value))
     simple_table = _SIMPLE_KEY_TABLES.get(key)
     if simple_table is not None:

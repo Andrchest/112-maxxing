@@ -17,6 +17,14 @@ guards to match. `deselect` keeps its "not yet dispatched" guard, so reinforceme
 un-send a unit that is already moving. `10-domain-model.md` §10.7 and §10.9 carry the same
 tables, and `tests/unit/domain/roles/test_dds_tables_match_the_hld.py` parses them at test time
 so the two halves cannot drift apart again.
+
+**Memo mode (I3 E5a, HLD 70 §70.4.4, D16).** The module is variant-aware. Under `dds_mode:
+MEMO_STATUSES` it offers `_MEMO_AVAILABLE_ACTIONS` — no resource action at all; per-service
+progress lives on the legs (`dds/response.py`) — and fires its stage triggers through
+`memo_state_machine`: `MEMO_DDS_TRANSITIONS` (the memo triggers' rows of the one
+`DDS_TRANSITIONS`) with `DDS_GUARDS_MEMO`. `RESOURCE_SELECTION` … `WORKING` are never entered, and
+the stage leaves `ACKNOWLEDGED` only through the additive `close` row. `RESOURCE_PICKER` (and a
+session with no variants) keeps the picker table and machine verbatim.
 """
 
 from __future__ import annotations
@@ -30,8 +38,8 @@ from app.domain.enums import DDSStageState, RoleType
 from app.domain.events.types import EventType
 from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
-from app.domain.session.guards import DDS_GUARDS
-from app.domain.session.transitions import DDS_TRANSITIONS
+from app.domain.session.guards import DDS_GUARDS, DDS_GUARDS_MEMO
+from app.domain.session.transitions import DDS_TRANSITIONS, MEMO_DDS_TRANSITIONS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.domain.session.variants import SessionVariants
@@ -127,6 +135,39 @@ _AVAILABLE_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
 }
 
 
+# -- memo mode (I3 E5a, HLD 70 §70.4.4) ------------------------------------------------------
+
+_OPEN_CARD = ActionDescriptor(
+    action_id="open_card",
+    label_ru="Открыть карточку",
+    permission=Permission.VIEW_HANDOFF,
+)
+_SET_SERVICE_STATUS = ActionDescriptor(
+    action_id="set_service_status",
+    label_ru="Изменить статус",
+    permission=Permission.SET_SERVICE_STATUS,
+)
+
+_MEMO_AVAILABLE_ACTIONS: Mapping[DDSStageState, tuple[ActionDescriptor, ...]] = {
+    DDSStageState.RECEIVED: (_OPEN_CARD, _SET_SERVICE_STATUS),
+    DDSStageState.ACKNOWLEDGED: (_SET_SERVICE_STATUS, _SEND_STATUS_UPDATE, _CLOSE),
+    DDSStageState.RESOURCE_SELECTION: (),
+    DDSStageState.DISPATCHED: (),
+    DDSStageState.EN_ROUTE: (),
+    DDSStageState.ARRIVED: (),
+    DDSStageState.WORKING: (),
+    DDSStageState.RESOLVED: (_CLOSE,),
+    DDSStageState.CLOSED: (),
+}
+"""§70.4.4's memo table. `flag_card_issue` joins `ACKNOWLEDGED` with E5b (only under
+`dds_card_check: ON`, which is not implemented before it); `close` is offered in `ACKNOWLEDGED`
+and its guard `memo_all_legs_terminal` decides — a leg still open is the ordinary `409`."""
+
+
+def _is_memo(variants: SessionVariants | None) -> bool:
+    return variants is not None and variants.dds_mode.value == "MEMO_STATUSES"
+
+
 class DDSModule:
     """§10.9 `DDSModule`. `visibility_policy.sources` has no `OPERATOR_CARD`, no `WORLD_TRUTH`,
     no `TRANSCRIPT` (SPEC §10, §42 test 3)."""
@@ -149,6 +190,9 @@ class DDSModule:
             }
         )
         self.state_machine: StateMachine[DDSStageState] = StateMachine(DDS_TRANSITIONS, DDS_GUARDS)
+        self.memo_state_machine: StateMachine[DDSStageState] = StateMachine(
+            MEMO_DDS_TRANSITIONS, DDS_GUARDS_MEMO
+        )
         self.visibility_policy = DataVisibilityPolicy(
             role_type=RoleType.DDS,
             sources=frozenset(
@@ -185,6 +229,8 @@ class DDSModule:
                     EventType.NOTIFICATION_ACKNOWLEDGED,
                     EventType.RADIO_MESSAGE_CREATED,
                     EventType.DDS_CARD_STATUS_CHANGED,  # I3 E4a (HLD 70 §70.7)
+                    EventType.DDS_CARD_OPENED,  # I3 E5a (HLD 70 §70.7)
+                    EventType.DDS_SERVICE_STATUS_SET,  # I3 E5a (HLD 70 §70.7)
                 }
             ),
         )
@@ -192,10 +238,18 @@ class DDSModule:
     def available_actions(
         self, stage_state: Enum, *, variants: SessionVariants | None = None
     ) -> tuple[ActionDescriptor, ...]:
-        """§10.9's picker table. `variants` selects the table per `dds_mode` (HLD 70 §70.4.4);
-        `RESOURCE_PICKER` is the only implemented mode until E5, so every session gets it."""
+        """§10.9's table for the session's `dds_mode` (HLD 70 §70.4.4): the memo table under
+        `MEMO_STATUSES`, the picker table otherwise (and for `variants=None`)."""
         assert isinstance(stage_state, DDSStageState)
+        if _is_memo(variants):
+            return _MEMO_AVAILABLE_ACTIONS[stage_state]
         return _AVAILABLE_ACTIONS[stage_state]
+
+    def state_machine_for(
+        self, variants: SessionVariants | None = None
+    ) -> StateMachine[DDSStageState]:
+        """`memo_state_machine` under `MEMO_STATUSES`, the picker `state_machine` otherwise."""
+        return self.memo_state_machine if _is_memo(variants) else self.state_machine
 
     def initial_state(self) -> Enum:
         return DDSStageState.RECEIVED

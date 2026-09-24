@@ -958,6 +958,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{session_id}/dds/legs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every leg of the card with its status history — each notified service sees all of them.
+         * @description (additive, I3 E5a — 70 §70.4.3) The notified services' blocks of the ДДС memo
+         *     (REQ-5294/5295): every leg with its current `ServiceResponseStatus` and its whole history.
+         *     Broadcast — every ДДС participant and the instructor read every leg; only `is_mine` and
+         *     `available_actions` depend on the caller. Sourced from `dds_assignments`,
+         *     `dds_service_status_history` and the reference pack only (INV 3).
+         */
+        get: operations["listDdsLegs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds/legs/{assignment_id}/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The ДДС opens the card on its leg (technical status «Получена службой»).
+         * @description (additive, I3 E5a — 70 §70.4.2) `ADDED --receive--> RECEIVED`: `DDS_CARD_OPENED`
+         *     (TRAINEE) and the leg's `DDS_SERVICE_STATUS_SET` (SIMULATION, `source: SYSTEM`).
+         *     Idempotent: a second call on a leg past `ADDED` appends nothing and returns the leg.
+         *     Offered in memo mode (`open_card` in `RECEIVED`; in `ACKNOWLEDGED` through
+         *     `set_service_status`, whose first step on an `ADDED` leg is this `receive`); picker mode
+         *     ⇒ `409 ACTION_NOT_AVAILABLE`.
+         */
+        post: operations["openDdsCard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds/legs/{assignment_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set the next response status of one service's leg (the memo's pencil form).
+         * @description (additive, I3 E5a) Fires one `SERVICE_RESPONSE_TRANSITIONS` trigger (70 §70.4.2). An
+         *     `ADDED` leg is first moved to `RECEIVED`. Out-of-sequence status ⇒ `409
+         *     INVALID_TRANSITION`; missing comment on `NOT_ACCEPTED` / `REFUSED` ⇒ `422
+         *     COMMENT_REQUIRED`; a leg bound to another participant ⇒ `403 FORBIDDEN_FOR_SERVICE`;
+         *     `dds_mode: RESOURCE_PICKER` ⇒ `409 ACTION_NOT_AVAILABLE`. The trainee's first primary
+         *     decision also fires the stage's `acknowledge`; no other stage trigger is fired (memo mode
+         *     never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline events are
+         *     appended first (flush-before-append).
+         */
+        post: operations["setDdsServiceStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{session_id}/dds/close": {
         parameters: {
             query?: never;
@@ -972,6 +1048,12 @@ export interface paths {
          * @description Permission `CLOSE_INCIDENT`; fires `close` (`RESOLVED → CLOSED`). The stage then
          *     completes and, being the last `role_chain` entry in the primary flow, the session
          *     machine fires `complete` and deterministic scoring runs over the event log.
+         *     (I3 E5a — 70 §70.4.4) Picker mode unchanged (`RESOLVED --close--> CLOSED`). Memo mode:
+         *     fires `close` from `ACKNOWLEDGED` (additive `DDS_TRANSITIONS` row, guard
+         *     `memo_all_legs_terminal` — every leg `COMPLETED`, `NOT_ACCEPTED` or `REFUSED`) and then
+         *     from `RESOLVED`, in one Unit of Work; a leg still open ⇒ `409 INVALID_TRANSITION`. In
+         *     picker mode the new guard always denies. `x-emits` lists the memo order; picker mode
+         *     appends the same events without the first `STAGE_STATE_CHANGED`.
          */
         post: operations["closeDdsIncident"];
         delete?: never;
@@ -1469,7 +1551,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "FORBIDDEN_FOR_SERVICE";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1579,13 +1661,13 @@ export interface components {
         /** @enum {string} */
         EvaluatorType: "FACT_OBTAINED" | "CARD_FIELD_CORRECT" | "CARD_FIELD_PRESENT" | "CARD_CONTRADICTION" | "SERVICE_SELECTION" | "DEADLINE" | "WORKFLOW_ACTION" | "RESOURCE_SELECTION" | "REQUIRED_STATUS_UPDATE" | "HANDOFF_COMPLETENESS";
         /** @enum {string} */
-        Permission: "ANSWER_CALL" | "END_CALL" | "EDIT_CARD" | "SELECT_SERVICES" | "CREATE_HANDOFF" | "VIEW_HANDOFF" | "ACKNOWLEDGE_ASSIGNMENT" | "SELECT_RESOURCES" | "DISPATCH_RESOURCES" | "SEND_STATUS_UPDATE" | "CLOSE_INCIDENT" | "ACKNOWLEDGE_NOTIFICATION" | "VIEW_RESOURCE_BOARD" | "VIEW_TRANSCRIPT";
+        Permission: "ANSWER_CALL" | "END_CALL" | "EDIT_CARD" | "SELECT_SERVICES" | "CREATE_HANDOFF" | "VIEW_HANDOFF" | "ACKNOWLEDGE_ASSIGNMENT" | "SELECT_RESOURCES" | "DISPATCH_RESOURCES" | "SEND_STATUS_UPDATE" | "CLOSE_INCIDENT" | "ACKNOWLEDGE_NOTIFICATION" | "VIEW_RESOURCE_BOARD" | "VIEW_TRANSCRIPT" | "SET_SERVICE_STATUS" | "FLAG_CARD_ISSUE";
         /**
          * @description All members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by the
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -2854,6 +2936,59 @@ export interface components {
          * @enum {string}
          */
         CardStatus: "REGISTERED" | "WORKED" | "CHECKED" | "NOT_NOTIFIED" | "REFUSED" | "NOT_COMPLETED" | "COMPLETED";
+        /**
+         * @description (additive, I3 E5a) Per-leg status of the memo p.21–22 (70 §70.4.1). Labels: Добавлена, Получена службой, Принята, Не принята, Начало реагирования, Прибытие, Проведение работ, Работы завершены, Отказ от выполнения работ.
+         * @enum {string}
+         */
+        ServiceResponseStatus: "ADDED" | "RECEIVED" | "ACCEPTED" | "NOT_ACCEPTED" | "RESPONSE_STARTED" | "ARRIVED" | "WORKING" | "COMPLETED" | "REFUSED";
+        /** @description (additive, I3 E5a) One entry of a leg's status history (`dds_service_status_history`). */
+        ServiceStatusEntryView: {
+            /** Format: uuid */
+            event_id: string;
+            previous_status: components["schemas"]["ServiceResponseStatus"];
+            new_status: components["schemas"]["ServiceResponseStatus"];
+            /** @description «Номер наряда», free text (assumption A-2). */
+            order_number: string | null;
+            comment_ru: string | null;
+            /** @enum {string|null} */
+            completion_reason: "WITHOUT_BRIGADE" | null;
+            /** @enum {string} */
+            source: "TRAINEE" | "SCRIPTED_RESPONDER" | "PICKER_MIRROR" | "SYSTEM";
+            /** Format: uuid */
+            actor_user_id: string | null;
+            /** @description Shown before the time (REQ-5295). */
+            actor_display_ru: string;
+            at_offset_ms: number;
+        };
+        /** @description (additive, I3 E5a) One notified service's block — collapsed = last status + time; expanded = history (REQ-5294). */
+        DdsLegView: {
+            /** Format: uuid */
+            assignment_id: string;
+            service_type: components["schemas"]["ServiceType"];
+            service_name_ru: string;
+            response_status: components["schemas"]["ServiceResponseStatus"];
+            response_status_at_offset_ms: number | null;
+            order_number: string | null;
+            last_comment_ru: string | null;
+            accept_missed: boolean;
+            /** @enum {string} */
+            responder: "TRAINEE" | "SCRIPTED";
+            /** Format: uuid */
+            bound_user_id: string | null;
+            /** @description The caller may set statuses on this leg (the pencil is shown). */
+            is_mine: boolean;
+            history: components["schemas"]["ServiceStatusEntryView"][];
+            /** @description The legal next triggers of this leg for the caller (empty when `is_mine` is false). */
+            available_actions: components["schemas"]["ActionDescriptor"][];
+        };
+        /** @description (additive, I3 E5a) The memo's pencil form. */
+        SetServiceStatusRequest: {
+            /** @description The target status; `COMPLETED` under policy `NO_REFUSAL` from a non-`WORKING` status means `complete_without_brigade`. */
+            status: components["schemas"]["ServiceResponseStatus"];
+            order_number?: string | null;
+            /** @description Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`. */
+            comment_ru?: string | null;
+        };
         Arrival: {
             kind: components["schemas"]["ArrivalKind"];
             /** @description Required for `AT_OFFSET` (lesson wall ms since start), forbidden otherwise. */
@@ -2975,7 +3110,8 @@ export interface components {
         };
         /**
          * @description `FORBIDDEN_FOR_ROLE` — the caller's user role, or the participant assignment to the
-         *     active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`.
+         *     active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`;
+         *     (additive, I3 E5a) `FORBIDDEN_FOR_SERVICE` — the leg is bound to another ДДС participant.
          */
         Forbidden: {
             headers: {
@@ -3017,7 +3153,8 @@ export interface components {
          * @description `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
          *     `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
          *     I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog; (additive,
-         *     I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes.
+         *     I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes;
+         *     (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment.
          */
         UnprocessableEntity: {
             headers: {
@@ -3045,6 +3182,8 @@ export interface components {
         SessionIdParam: string;
         ScenarioIdParam: string;
         ScenarioVersionIdParam: string;
+        /** @description (additive, I3 E5a) One `dds_assignments` leg of the session's DDS stage. */
+        AssignmentIdParam: string;
         LessonIdParam: string;
         /** @description (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest. */
         PackQueryParam: string;
@@ -4262,6 +4401,92 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listDdsLegs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The legs, in notification-list order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsLegView"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    openDdsCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                /** @description (additive, I3 E5a) One `dds_assignments` leg of the session's DDS stage. */
+                assignment_id: components["parameters"]["AssignmentIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The leg. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsLegView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setDdsServiceStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                /** @description (additive, I3 E5a) One `dds_assignments` leg of the session's DDS stage. */
+                assignment_id: components["parameters"]["AssignmentIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetServiceStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description The leg after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsLegView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     closeDdsIncident: {

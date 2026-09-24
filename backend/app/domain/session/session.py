@@ -483,7 +483,9 @@ class SimulationSession(BaseModel):
             stage_ctx = self._ctx(
                 actor=actor, role_type=stage.role_type, now_ms=now_ms, runtime=runtime, stage=stage
             )
-            target = module.state_machine.fire(stage.state, "abort_stage", stage_ctx)
+            target = module.state_machine_for(self.variants).fire(
+                stage.state, "abort_stage", stage_ctx
+            )
             aborted = stage.model_copy(update={"state": target, "completed_at_offset_ms": now_ms})
             stages = tuple(aborted if s.role_stage_id == stage.role_stage_id else s for s in stages)
             events.append(
@@ -697,7 +699,7 @@ class SimulationSession(BaseModel):
             assignment=assignment,
             resources=resources,
         )
-        target: StageState = module.state_machine.fire(stage.state, trigger, ctx)
+        target: StageState = module.state_machine_for(self.variants).fire(stage.state, trigger, ctx)
         is_terminal = target in TERMINAL_STAGE_STATES
         moved = stage.model_copy(
             update={

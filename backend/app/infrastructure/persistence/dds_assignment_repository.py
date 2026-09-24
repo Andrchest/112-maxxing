@@ -15,9 +15,13 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.dds_assignment_repository import StatusHistoryEntry
 from app.db.models.dds import DDSAssignment as DDSAssignmentRow
-from app.domain.common.ids import RoleStageId
+from app.db.models.dds import DDSServiceStatusHistory as HistoryRow
+from app.domain.common.ids import AssignmentId, RoleStageId, SessionId
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.response import ServiceResponseStatus, StatusSource
+from app.domain.enums import ActorType
 from app.infrastructure.persistence.mappers import (
     dds_assignment_from_row,
     dds_assignment_row_values,
@@ -26,6 +30,7 @@ from app.infrastructure.persistence.mappers import (
 __all__ = ["SqlAlchemyDDSAssignmentRepository"]
 
 _ASSIGNMENTS = DDSAssignmentRow.__table__
+_HISTORY = HistoryRow.__table__
 
 
 class SqlAlchemyDDSAssignmentRepository:
@@ -57,8 +62,67 @@ class SqlAlchemyDDSAssignmentRepository:
         values = dds_assignment_row_values(assignment)
         for immutable in ("id", "incident_id", "role_stage_id", "snapshot_id", "service_type"):
             values.pop(immutable)
+        # The event store's card-status flush owns `accept_missed` (sticky): a command's copy of
+        # the leg may predate it, so writing it back could only ever clear it.
+        values.pop("accept_missed")
         await self._session.execute(
             sa.update(_ASSIGNMENTS)
             .where(_ASSIGNMENTS.c.id == UUID(str(assignment.assignment_id)))
             .values(**values)
         )
+
+    async def add_history(self, entries: Sequence[StatusHistoryEntry]) -> None:
+        """Append the `dds_service_status_history` rows of this Unit of Work's status events."""
+        if not entries:
+            return
+        await self._session.execute(
+            sa.insert(_HISTORY),
+            [
+                {
+                    "session_id": UUID(str(entry.session_id)),
+                    "assignment_id": UUID(str(entry.assignment_id)),
+                    "event_id": entry.event_id,
+                    "seq_no": entry.seq_no,
+                    "previous_status": entry.previous_status.value,
+                    "new_status": entry.new_status.value,
+                    "order_number": entry.order_number,
+                    "comment_ru": entry.comment_ru,
+                    "completion_reason": entry.completion_reason,
+                    "source": entry.source.value,
+                    "actor_type": entry.actor_type.value,
+                    "actor_user_id": entry.actor_user_id,
+                    "at_offset_ms": entry.at_offset_ms,
+                }
+                for entry in entries
+            ],
+        )
+
+    async def list_history(
+        self, assignment_ids: Sequence[AssignmentId]
+    ) -> list[StatusHistoryEntry]:
+        """Every history row of these legs, oldest first (`seq_no`)."""
+        if not assignment_ids:
+            return []
+        result = await self._session.execute(
+            sa.select(_HISTORY)
+            .where(_HISTORY.c.assignment_id.in_([UUID(str(item)) for item in assignment_ids]))
+            .order_by(_HISTORY.c.seq_no)
+        )
+        return [
+            StatusHistoryEntry(
+                session_id=SessionId(row.session_id),
+                assignment_id=AssignmentId(row.assignment_id),
+                event_id=row.event_id,
+                seq_no=int(row.seq_no),
+                previous_status=ServiceResponseStatus(row.previous_status),
+                new_status=ServiceResponseStatus(row.new_status),
+                order_number=row.order_number,
+                comment_ru=row.comment_ru,
+                completion_reason=row.completion_reason,
+                source=StatusSource(row.source),
+                actor_type=ActorType(row.actor_type),
+                actor_user_id=row.actor_user_id,
+                at_offset_ms=int(row.at_offset_ms),
+            )
+            for row in result.all()
+        ]

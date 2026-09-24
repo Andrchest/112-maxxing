@@ -167,11 +167,25 @@ class SessionParticipant(Base):
     user_id = sa.Column(UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     assigned_role_type = sa.Column(sa.Text(), nullable=True)
     joined_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    # `0012_dds_response_status` (I3 E5a, HLD 70 §70.4.5, §70.8): ДДС participant → service
+    # binding; distinct per session. Written by E5b; E5a lands the column.
+    assigned_service_id = sa.Column(sa.Text(), nullable=True)
 
     __table_args__ = (
         sa.UniqueConstraint("session_id", "user_id", name="uq_participants_session_user"),
         sa.CheckConstraint(
             enum_check("assigned_role_type", RoleType, nullable=True), name="assigned_role_type"
+        ),
+        sa.CheckConstraint(
+            "assigned_service_id IS NULL OR assigned_service_id <> ''",
+            name="assigned_service_id",
+        ),
+        sa.Index(
+            "uq_participants_session_service",
+            "session_id",
+            "assigned_service_id",
+            unique=True,
+            postgresql_where=sa.text("assigned_service_id IS NOT NULL"),
         ),
     )
 

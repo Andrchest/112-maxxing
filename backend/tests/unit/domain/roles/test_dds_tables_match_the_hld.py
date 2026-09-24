@@ -16,6 +16,12 @@ compares it with `app.domain.dds.resources` and `app.domain.roles.dds`:
 
 Nothing here restates either table. Changing the document without changing the code fails this
 test, and changing the code without changing the document fails it too.
+
+I3 E5a (HLD 70 §70.4.4) taught it two more tables: §10.9 is **variant-labelled** now — the picker
+table under "**`dds_mode: RESOURCE_PICKER`**" and the memo table under "**`dds_mode:
+MEMO_STATUSES`**", each compared with `DDSModule.available_actions(state, variants=…)` of its mode —
+and §10.7's new `SERVICE_RESPONSE_TRANSITIONS` table is compared row for row with
+`app.domain.dds.response`, like the resource table above it.
 """
 
 from __future__ import annotations
@@ -28,8 +34,16 @@ from app.domain.dds.resources import (
     RESOURCE_STATUS_TRANSITIONS,
     SELECTION_OPEN_STATES,
 )
+from app.domain.dds.response import SERVICE_RESPONSE_TRANSITIONS, ServiceResponseStatus
 from app.domain.enums import ActorType, DDSStageState, ResourceStatus
 from app.domain.roles.dds import DDSModule
+from app.domain.session.variants import (
+    CardSource,
+    DdsBrigadeCall,
+    DdsCardCheck,
+    DdsMode,
+    SessionVariants,
+)
 
 DOMAIN_MODEL_PATH = Path(__file__).resolve().parents[5] / "docs" / "hld" / "10-domain-model.md"
 
@@ -134,12 +148,32 @@ def test_the_widened_guard_cells_name_exactly_the_code_s_selection_states(trigge
 # ---------------------------------------------------------------------------------------------
 
 _DDS_MODULE_SECTION = _section("### `DDSModule`")
+_MEMO_LABEL = "**`dds_mode: MEMO_STATUSES`**"
+_PICKER_LABEL = "**`dds_mode: RESOURCE_PICKER`**"
 
 
-def _documented_actions() -> dict[DDSStageState, tuple[str, ...]]:
-    """`state -> the action ids §10.9 lists for it`, in the document's order."""
+def _variant_part(mode: DdsMode) -> str:
+    """The part of §10.9's `DDSModule` section that holds `mode`'s table (I3 E5a)."""
+    assert _PICKER_LABEL in _DDS_MODULE_SECTION and _MEMO_LABEL in _DDS_MODULE_SECTION
+    picker, memo = _DDS_MODULE_SECTION.split(_MEMO_LABEL, 1)
+    return memo if mode is DdsMode.MEMO_STATUSES else picker
+
+
+def _variants(mode: DdsMode) -> SessionVariants:
+    return SessionVariants(
+        card_source=CardSource.GENERATED_CARD,
+        dds_mode=mode,
+        dds_card_check=DdsCardCheck.OFF,
+        dds_brigade_call=DdsBrigadeCall.OFF,
+    )
+
+
+def _documented_actions(
+    mode: DdsMode = DdsMode.RESOURCE_PICKER,
+) -> dict[DDSStageState, tuple[str, ...]]:
+    """`state -> the action ids §10.9 lists for it` in `mode`'s table, in the document's order."""
     table: dict[DDSStageState, tuple[str, ...]] = {}
-    for cells in _rows(_DDS_MODULE_SECTION, 2):
+    for cells in _rows(_variant_part(mode), 2):
         names = _BACKTICKED.findall(cells[0])
         if not names or names[0] not in DDSStageState.__members__:
             continue
@@ -154,6 +188,7 @@ def _documented_actions() -> dict[DDSStageState, tuple[str, ...]]:
 
 
 DOCUMENTED_ACTIONS = _documented_actions()
+DOCUMENTED_MEMO_ACTIONS = _documented_actions(DdsMode.MEMO_STATUSES)
 
 
 def test_the_parser_saw_every_dds_stage_state() -> None:
@@ -167,6 +202,84 @@ def test_available_actions_match_the_documented_table(state: DDSStageState) -> N
     """`DDSModule.available_actions(state)` is §10.9's row, ids and order."""
     actual = tuple(action.action_id for action in DDSModule().available_actions(state))
     assert actual == DOCUMENTED_ACTIONS[state]
+
+
+@pytest.mark.parametrize("state", list(DDSStageState))
+def test_picker_variant_is_the_picker_table(state: DDSStageState) -> None:
+    """`variants` with `RESOURCE_PICKER` answers exactly what `variants=None` does."""
+    actual = DDSModule().available_actions(state, variants=_variants(DdsMode.RESOURCE_PICKER))
+    assert tuple(action.action_id for action in actual) == DOCUMENTED_ACTIONS[state]
+
+
+def test_the_parser_saw_every_state_of_the_memo_table() -> None:
+    """A guard on the guard for the variant-labelled memo table (I3 E5a)."""
+    assert set(DOCUMENTED_MEMO_ACTIONS) == set(DDSStageState)
+    assert "set_service_status" in DOCUMENTED_MEMO_ACTIONS[DDSStageState.ACKNOWLEDGED]
+
+
+@pytest.mark.parametrize("state", list(DDSStageState))
+def test_memo_available_actions_match_the_documented_table(state: DDSStageState) -> None:
+    """`DDSModule.available_actions(state, variants=memo)` is §10.9's memo row (HLD 70 §70.4.4)."""
+    actual = DDSModule().available_actions(state, variants=_variants(DdsMode.MEMO_STATUSES))
+    assert tuple(action.action_id for action in actual) == DOCUMENTED_MEMO_ACTIONS[state]
+
+
+def test_no_resource_action_is_offered_in_memo_mode() -> None:
+    """§70.4.4: `select_resource`, `dispatch`, … never appear in the memo table."""
+    resource_actions = {
+        "open_resource_selection",
+        "select_resource",
+        "deselect_resource",
+        "dispatch",
+        "dispatch_additional",
+        "back_to_acknowledged",
+    }
+    for actions in DOCUMENTED_MEMO_ACTIONS.values():
+        assert not resource_actions & set(actions)
+
+
+# ---------------------------------------------------------------------------------------------
+# §10.7 — SERVICE_RESPONSE_TRANSITIONS (I3 E5a)
+# ---------------------------------------------------------------------------------------------
+
+_RESPONSE_SECTION = _section("### Service response status machine")
+
+
+def _documented_response_rows() -> dict[tuple[ServiceResponseStatus, str], tuple[str, str, str]]:
+    """`(source, trigger) -> (target, who, guard)`, read off the §10.7 five-column table."""
+    table: dict[tuple[ServiceResponseStatus, str], tuple[str, str, str]] = {}
+    for cells in _rows(_RESPONSE_SECTION, 5):
+        sources = _BACKTICKED.findall(cells[0])
+        trigger = _BACKTICKED.findall(cells[1])[0]
+        target = _BACKTICKED.findall(cells[2])[0]
+        guards = [name for name in _BACKTICKED.findall(cells[4]) if name.startswith("guard_")]
+        for source in sources:
+            table[(ServiceResponseStatus(source), trigger)] = (
+                target,
+                cells[3],
+                guards[0] if guards else "",
+            )
+    return table
+
+
+DOCUMENTED_RESPONSE_ROWS = _documented_response_rows()
+
+
+def test_the_parser_saw_the_whole_response_table() -> None:
+    assert len(DOCUMENTED_RESPONSE_ROWS) == len(SERVICE_RESPONSE_TRANSITIONS) >= 15
+
+
+@pytest.mark.parametrize(
+    "key", sorted(DOCUMENTED_RESPONSE_ROWS, key=lambda item: (item[0].value, item[1]))
+)
+def test_each_response_row_matches_the_document(key: tuple[ServiceResponseStatus, str]) -> None:
+    """Target, firing actors and guard name, per row."""
+    target, who, guard = DOCUMENTED_RESPONSE_ROWS[key]
+    row = SERVICE_RESPONSE_TRANSITIONS[key]
+    assert row.target is ServiceResponseStatus(target)
+    expected = {actor for actor in ActorType if actor.value in who}
+    assert row.allowed_actors == expected
+    assert (row.guard_name or "") == guard
 
 
 def test_select_is_available_wherever_dispatch_additional_is() -> None:

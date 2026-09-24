@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.db.base import Base
 from app.db.models.dds import (
     DDSAssignment,
+    DDSServiceStatusHistory,
     EmergencyResource,
     Notification,
     ResourceStateChange,
@@ -49,6 +50,7 @@ __all__ = [
     "AudioSegment",
     "Base",
     "DDSAssignment",
+    "DDSServiceStatusHistory",
     "DialogueTurn",
     "EmergencyResource",
     "HandoffSnapshot",

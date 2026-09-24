@@ -75,6 +75,10 @@ class GuardRuntime(BaseModel):
     transition_started_ms: int | None = None
     """`monotonic_offset_ms` of the `ROLE_TRANSITION_STARTED` currently in effect, else `None`."""
 
+    all_legs_terminal: bool = False
+    """Every `DDSAssignment` leg of the DDS stage is `COMPLETED`, `NOT_ACCEPTED` or `REFUSED`
+    (HLD 70 §70.4.4 `memo_all_legs_terminal`; I3 E5a). The application projects it from the legs."""
+
 
 class GuardContext(BaseModel):
     """Read-only context passed to guard callables and to every `StateMachine` method (§10.8).

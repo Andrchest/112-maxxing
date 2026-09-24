@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from app.domain.session.guards import (
     DDS_GUARDS,
+    DDS_GUARDS_MEMO,
     OPERATOR_112_GUARDS,
     SESSION_GUARDS,
     TERMINAL_STAGE_STATES,
@@ -39,6 +40,7 @@ from app.domain.session.transitions import (
 
 __all__ = [
     "DDS_GUARDS",
+    "DDS_GUARDS_MEMO",
     "DDS_TRANSITIONS",
     "OPERATOR_112_GUARDS",
     "OPERATOR_112_TRANSITIONS",

@@ -143,21 +143,23 @@ class ScenarioVariants(BaseModel):
 
 PRODUCT_DEFAULT_VARIANTS = SessionVariants(
     card_source=CardSource.GENERATED_CARD,
-    dds_mode=DdsMode.RESOURCE_PICKER,
+    dds_mode=DdsMode.MEMO_STATUSES,
     dds_card_check=DdsCardCheck.OFF,
     dds_brigade_call=DdsBrigadeCall.OFF,
 )
-"""The switch matrix's product default before E5 (§70.11): `GENERATED_CARD` for schema 2, the
-effective `RESOURCE_PICKER`, card check `OFF`, brigade call `OFF`."""
+"""The switch matrix's product default from E5 (§70.11): `GENERATED_CARD` and `MEMO_STATUSES` for
+schema 2, card check `OFF`, brigade call `OFF`. It applies only where a schema-2 document's
+derived support allows it (`derive_scenario_variants`); schema 1 keeps `RESOURCE_PICKER` forever
+(P5)."""
 
 IMPLEMENTED_VARIANT_VALUES: Mapping[str, frozenset[str]] = {
     "card_source": frozenset({CardSource.CALLER_VOICE.value, CardSource.GENERATED_CARD.value}),
-    "dds_mode": frozenset({DdsMode.RESOURCE_PICKER.value}),
+    "dds_mode": frozenset({DdsMode.RESOURCE_PICKER.value, DdsMode.MEMO_STATUSES.value}),
     "dds_card_check": frozenset({DdsCardCheck.OFF.value}),
     "dds_brigade_call": frozenset({DdsBrigadeCall.OFF.value}),
 }
-"""What the product can run today; grows per epic (§70.11): E5 adds `MEMO_STATUSES` and card
-check `ON`, E6 adds brigade call `ON`."""
+"""What the product can run today; grows per epic (§70.11): E5a added `MEMO_STATUSES`; E5b adds
+card check `ON`, E6 brigade call `ON`."""
 
 
 class VariantNotAvailableError(DomainError):

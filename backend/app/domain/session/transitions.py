@@ -312,6 +312,17 @@ _DDS_ROWS: tuple[Transition[DDSStageState], ...] = (
         allowed_roles=_DDS_ROLE,
         emits=EventType.DDS_INCIDENT_CLOSED,
     ),
+    # I3 E5a (HLD 70 §70.4.4, D16, manager decision O-1): the one additive row — memo mode's only
+    # way out of ACKNOWLEDGED. Its guard denies in picker mode, so picker sessions are unchanged.
+    Transition(
+        source=DDSStageState.ACKNOWLEDGED,
+        trigger="close",
+        target=DDSStageState.RESOLVED,
+        allowed_actors=_TRAINEE,
+        allowed_roles=_DDS_ROLE,
+        guard_name="memo_all_legs_terminal",
+        emits=None,
+    ),
     *(
         Transition(
             source=state,
@@ -339,3 +350,16 @@ _DDS_ROWS: tuple[Transition[DDSStageState], ...] = (
 DDS_TRANSITIONS: TransitionTable[DDSStageState] = {
     (row.source, row.trigger): row for row in _DDS_ROWS
 }
+
+MEMO_DDS_TRIGGERS: frozenset[str] = frozenset({"acknowledge", "close", "abort_stage"})
+"""The stage triggers memo mode fires (HLD 70 §70.4.4): `RESOURCE_SELECTION` … `WORKING` are never
+entered, so no resource trigger belongs to it."""
+
+MEMO_DDS_TRANSITIONS: TransitionTable[DDSStageState] = {
+    key: row for key, row in DDS_TRANSITIONS.items() if row.trigger in MEMO_DDS_TRIGGERS
+}
+"""`DDS_TRANSITIONS` restricted to `MEMO_DDS_TRIGGERS` — a view of the one table, not a second one.
+
+The memo `DDSModule` machine runs over it, so every resource trigger (`open_resource_selection`,
+`dispatch`, the four SIMULATION rows, …) is refused in memo mode as the ordinary "no such
+transition" (INV 8), including `open_resource_selection`, whose row has no guard to deny it."""

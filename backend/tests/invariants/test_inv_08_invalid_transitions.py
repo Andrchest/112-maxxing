@@ -2,7 +2,8 @@
 
 Table-driven and exhaustive: for each of the four SPEC §7 / §10.7 machines (`SESSION_TRANSITIONS`,
 `OPERATOR_112_TRANSITIONS`, `DDS_TRANSITIONS`, `RESOURCE_STATUS_TRANSITIONS`) — and I3 E4a's
-`LESSON_TRANSITIONS` (HLD 70 §70.3.2) — every `(state,
+`LESSON_TRANSITIONS` (HLD 70 §70.3.2) and I3 E5a's `SERVICE_RESPONSE_TRANSITIONS` (HLD 70
+§70.4.2) — every `(state,
 trigger)` pair is tried. The set of states comes from the matching enum (`list(SessionState)`,
 etc.); the set of triggers comes from the table itself (`{trigger for (_, trigger) in table}`) —
 neither is retyped here. A pair present in the table must succeed (`fire` returns the row's
@@ -45,6 +46,12 @@ from app.domain.common.state_machine import (
     TransitionTable,
 )
 from app.domain.dds.resources import RESOURCE_STATUS_TRANSITIONS
+from app.domain.dds.response import (
+    SERVICE_RESPONSE_MACHINE,
+    SERVICE_RESPONSE_TRANSITIONS,
+    LegGuardSubject,
+    ServiceResponseStatus,
+)
 from app.domain.enums import (
     ActorType,
     DDSStageState,
@@ -54,12 +61,16 @@ from app.domain.enums import (
     SessionState,
 )
 from app.domain.lesson.lesson import LESSON_TRANSITIONS, LessonState
+from app.domain.roles.dds import DDSModule
+from app.domain.routing.catalog import StatusPolicy
 from app.domain.session.session import SimulationSession
 from app.domain.session.transitions import (
     DDS_TRANSITIONS,
+    MEMO_DDS_TRANSITIONS,
     OPERATOR_112_TRANSITIONS,
     SESSION_TRANSITIONS,
 )
+from app.domain.session.variants import DdsMode
 from app.infrastructure.ids import Uuid4Generator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -138,6 +149,120 @@ def test_lesson_transitions_exhaustive() -> None:
     _assert_exhaustive("LESSON_TRANSITIONS", LESSON_TRANSITIONS, list(LessonState))
 
 
+def test_service_response_transitions_exhaustive() -> None:
+    """I3 E5a (HLD 70 §70.4.2): every non-listed leg transition fails."""
+    _assert_exhaustive(
+        "SERVICE_RESPONSE_TRANSITIONS", SERVICE_RESPONSE_TRANSITIONS, list(ServiceResponseStatus)
+    )
+
+
+def test_memo_dds_transitions_exhaustive() -> None:
+    """I3 E5a (HLD 70 §70.4.4): the memo view of `DDS_TRANSITIONS`, cross-product like the rest."""
+    _assert_exhaustive("MEMO_DDS_TRANSITIONS", MEMO_DDS_TRANSITIONS, list(DDSStageState))
+
+
+# ---------------------------------------------------------------------------------------------
+# I3 E5a: the leg machine skips nothing, and the memo stage has no resource trigger
+# ---------------------------------------------------------------------------------------------
+
+_S = ServiceResponseStatus
+_ORDER = (_S.RECEIVED, _S.ACCEPTED, _S.RESPONSE_STARTED, _S.ARRIVED, _S.WORKING, _S.COMPLETED)
+
+
+@pytest.mark.parametrize(
+    "source,target",
+    [(source, target) for index, source in enumerate(_ORDER) for target in _ORDER[index + 2 :]]
+    + [
+        (_S.ADDED, _S.ACCEPTED),
+        (_S.ADDED, _S.NOT_ACCEPTED),
+        (_S.NOT_ACCEPTED, _S.RESPONSE_STARTED),
+    ],
+    ids=lambda value: value.value,
+)
+def test_skipping_a_leg_status_fails(source: ServiceResponseStatus, target: Any) -> None:
+    """A-8: no trigger of `SERVICE_RESPONSE_TRANSITIONS` jumps over a status, whoever fires it
+    and whatever the policy (`complete_without_brigade` is the one documented shortcut, 103 only,
+    and it is refused here under `DEFAULT`)."""
+    shortcuts = [
+        trigger
+        for (state, trigger), row in SERVICE_RESPONSE_TRANSITIONS.items()
+        if state is source and row.target is target
+    ]
+    assert set(shortcuts) <= {"complete_without_brigade"}, (source, target, shortcuts)
+    triggers = sorted({trigger for (_state, trigger) in SERVICE_RESPONSE_TRANSITIONS})
+    ctx = GuardContext(
+        actor=ActorRef(actor_type=ActorType.TRAINEE),
+        role_type=RoleType.DDS,
+        assignment=LegGuardSubject(status_policy=StatusPolicy.DEFAULT, comment_ru="x"),
+    )
+    for trigger in triggers:
+        try:
+            reached = SERVICE_RESPONSE_MACHINE.fire(source, trigger, ctx)
+        except InvalidTransitionError:
+            continue
+        assert reached is not target, f"{source.value} -{trigger}-> {target.value} skips a step"
+
+
+def test_the_leg_machine_refuses_every_trigger_from_a_terminal_status() -> None:
+    triggers = sorted({trigger for (_state, trigger) in SERVICE_RESPONSE_TRANSITIONS})
+    for terminal in (_S.COMPLETED, _S.REFUSED):
+        for trigger in triggers:
+            assert (terminal, trigger) not in SERVICE_RESPONSE_TRANSITIONS
+
+
+_RESOURCE_TRIGGERS = (
+    "open_resource_selection",
+    "dispatch",
+    "back_to_acknowledged",
+    "first_en_route",
+    "first_arrived",
+    "work_started",
+    "incident_resolved",
+    "dispatch_additional",
+)
+
+
+@pytest.mark.parametrize("trigger", _RESOURCE_TRIGGERS)
+def test_every_resource_trigger_is_rejected_in_memo_mode(trigger: str) -> None:
+    """HLD 70 §70.4.4: `RESOURCE_SELECTION` … `WORKING` are never entered in memo mode — every
+    resource trigger is "no such transition" on the memo machine, from every state, even with an
+    actor the picker row would allow and every guard permissive."""
+    machine: StateMachine[Any] = StateMachine(
+        MEMO_DDS_TRANSITIONS, _permissive_guards(DDS_TRANSITIONS)
+    )
+    for state in DDSStageState:
+        for actor_type in (ActorType.TRAINEE, ActorType.SIMULATION):
+            ctx = GuardContext(actor=ActorRef(actor_type=actor_type), role_type=RoleType.DDS)
+            with pytest.raises(InvalidTransitionError):
+                machine.fire(state, trigger, ctx)
+
+
+def test_the_memo_module_machine_is_the_memo_view() -> None:
+    module = DDSModule()
+    memo = b_variants(DdsMode.MEMO_STATUSES)
+    picker = b_variants(DdsMode.RESOURCE_PICKER)
+    assert module.state_machine_for(memo) is module.memo_state_machine
+    assert module.state_machine_for(picker) is module.state_machine
+    assert module.state_machine_for(None) is module.state_machine
+    assert module.memo_state_machine._table is MEMO_DDS_TRANSITIONS
+
+
+def b_variants(mode: DdsMode) -> Any:
+    from app.domain.session.variants import (
+        CardSource,
+        DdsBrigadeCall,
+        DdsCardCheck,
+        SessionVariants,
+    )
+
+    return SessionVariants(
+        card_source=CardSource.GENERATED_CARD,
+        dds_mode=mode,
+        dds_card_check=DdsCardCheck.OFF,
+        dds_brigade_call=DdsBrigadeCall.OFF,
+    )
+
+
 # ---------------------------------------------------------------------------------------------
 # Pinned illegal transitions (SPEC §7 / the HLD tables make these illegal by omission)
 # ---------------------------------------------------------------------------------------------
@@ -152,6 +277,25 @@ _PINNED_ILLEGAL: tuple[tuple[str, TransitionTable[Any], Any, str], ...] = (
         "create_handoff",
     ),
     ("DDS_TRANSITIONS", DDS_TRANSITIONS, DDSStageState.RECEIVED, "dispatch"),
+    ("MEMO_DDS_TRANSITIONS", MEMO_DDS_TRANSITIONS, DDSStageState.ACKNOWLEDGED, "dispatch"),
+    (
+        "MEMO_DDS_TRANSITIONS",
+        MEMO_DDS_TRANSITIONS,
+        DDSStageState.ACKNOWLEDGED,
+        "open_resource_selection",
+    ),
+    (
+        "SERVICE_RESPONSE_TRANSITIONS",
+        SERVICE_RESPONSE_TRANSITIONS,
+        ServiceResponseStatus.ACCEPTED,
+        "arrive",
+    ),
+    (
+        "SERVICE_RESPONSE_TRANSITIONS",
+        SERVICE_RESPONSE_TRANSITIONS,
+        ServiceResponseStatus.ADDED,
+        "accept",
+    ),
     ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.COMPLETED, "abort"),
     ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.CREATED, "complete"),
     ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.ABORTED, "start"),

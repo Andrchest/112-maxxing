@@ -103,6 +103,10 @@ DDS_CONTAINER_FACTORIES: tuple[str, ...] = (
     "list_radio_messages",
     "close_dds_incident",
     "dds_stage_automation",
+    # I3 E5a (HLD 70 §70.1 INV 3): the leg read and the two leg commands.
+    "list_dds_legs",
+    "open_dds_card",
+    "set_dds_service_status",
 )
 
 #: The module that projects the DDS work item — the one place a repair could be smuggled in.

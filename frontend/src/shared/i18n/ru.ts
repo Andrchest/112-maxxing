@@ -227,6 +227,8 @@ export const ru = {
   problemLessonNotActive: 'Занятие не идёт.',
   problemCardOptionUnknown: 'Недопустимое значение поля карточки.',
   problemServiceRemovalForbidden: 'Службу нельзя убрать из списка оповещения: службы можно только добавлять.',
+  problemCommentRequired: 'Для статусов «Не принята» и «Отказ от выполнения работ» комментарий обязателен.',
+  problemForbiddenForService: 'Статусы этой службы ведёт другой диспетчер ДДС.',
   problemUnknown: 'Неизвестная ошибка. Попробуйте ещё раз.',
 
   // -- operator 112: handoff dialog + role transition (E10; SPEC §10, §10.10) ----------------
@@ -648,6 +650,8 @@ export const ru = {
   eventTypeInferenceHealthChanged: 'Изменилась готовность моделей',
   eventTypeDdsCardStatusChanged: 'Изменился статус карточки',
   eventTypeRecipientsResolved: 'Определён список оповещения',
+  eventTypeDdsCardOpened: 'ДДС открыла карточку',
+  eventTypeDdsServiceStatusSet: 'Изменён статус службы',
 
   // -- I3 E4b: card status (memo p.27, 70 §70.4.6) — server-derived only, never computed here --
   lessonCardStatusRegistered: 'Зарегистрирована',
@@ -751,4 +755,10 @@ export const ru = {
   navLessonsLink: 'Занятия',
   navRegisterLink: 'Реестр',
   navIncidentListLink: 'Список происшествий',
+
+  // -- I3 E3b: the v2 card layout (70 §70.5.2–§70.5.4; ui-check D-3…D-7) ----------------------
+  operatorCardNumberLabel: 'Происшествие',
+  operatorCardAddIncidentType: 'добавить тип происшествия',
+  operatorCardIncidentTypeSearchPlaceholder: 'Введите тип происшествия / что случилось?',
+  operatorCardChipRemove: 'Убрать тип происшествия',
 } as const;

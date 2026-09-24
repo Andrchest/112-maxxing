@@ -44,6 +44,7 @@ from app.domain.dds.resources import (
     ResourceAvailability,
     ResourceCapability,
 )
+from app.domain.dds.response import LegResponder, ServiceResponseStatus
 from app.domain.enums import (
     ActorType,
     ClosureReason,
@@ -802,6 +803,16 @@ def dds_assignment_row_values(assignment: DDSAssignment) -> dict[str, Any]:
         "closure_reason": (
             assignment.closure_reason.value if assignment.closure_reason is not None else None
         ),
+        # I3 E5a (HLD 70 §70.4.3)
+        "response_status": assignment.response_status.value,
+        "response_status_at_offset_ms": assignment.response_status_at_offset_ms,
+        "order_number": assignment.order_number,
+        "last_comment_ru": assignment.last_comment_ru,
+        "accept_missed": assignment.accept_missed,
+        "responder": assignment.responder.value,
+        "bound_user_id": (
+            None if assignment.bound_user_id is None else UUID(str(assignment.bound_user_id))
+        ),
     }
 
 
@@ -823,6 +834,15 @@ def dds_assignment_from_row(row: Mapping[str, Any]) -> DDSAssignment:
         dispatched_at_offset_ms=_optional_int(row["dispatched_at_offset_ms"]),
         closed_at_offset_ms=_optional_int(row["closed_at_offset_ms"]),
         closure_reason=None if closure_reason is None else ClosureReason(closure_reason),
+        response_status=ServiceResponseStatus(row["response_status"]),
+        response_status_at_offset_ms=_optional_int(row["response_status_at_offset_ms"]),
+        order_number=row["order_number"],
+        last_comment_ru=row["last_comment_ru"],
+        accept_missed=bool(row["accept_missed"]),
+        responder=LegResponder(row["responder"]),
+        bound_user_id=(
+            None if row["bound_user_id"] is None else UserId(UUID(str(row["bound_user_id"])))
+        ),
     )
 
 

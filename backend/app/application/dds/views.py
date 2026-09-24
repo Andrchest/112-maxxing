@@ -13,6 +13,12 @@ they project `RoleModule.available_actions(state)`, which is a role-module fact 
 do with either role's data. Importing them brings no card, no repository and no world-truth path
 with it (INV 3 scans the names this module mentions).
 
+**Legs (I3 E5a, HLD 70 §70.4.3).** `DdsLegView` / `ServiceStatusEntryView` are `openapi.yaml`'s
+shapes of one notified service's block: its current memo status and its whole history. Every ДДС
+participant reads every leg (broadcast, REQ-5294/5295); `is_mine` and `available_actions` are the
+caller's own — the legal next triggers of the leg (the pencil's dropdown, REQ-5292/5293), empty
+when the caller may not set statuses on it.
+
 **Radio messages have no table.** `radio_message_views` folds them out of `session_events`
 (`RADIO_MESSAGE_CREATED`), which `20-db-schema.md` §20.1 and `openapi.yaml` both state is the only
 source. `incident_id` is the session's, because the event payload — correctly — does not repeat it.
@@ -28,8 +34,11 @@ from pydantic import BaseModel, ConfigDict
 
 from app.application.handoff.work_item import DdsWorkItemView
 from app.application.operator.views import ActionView, action_views
+from app.application.ports.dds_assignment_repository import StatusHistoryEntry
 from app.application.ports.notification_repository import StoredNotification
 from app.application.ports.resource_repository import StoredResource
+from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.policy import StatusPolicy, allows_refusal
 from app.domain.dds.resources import (
     SELECTION_OPEN_STATES,
     EmergencyResource,
@@ -37,7 +46,15 @@ from app.domain.dds.resources import (
     ResourceCapability,
     within_availability_window,
 )
+from app.domain.dds.response import (
+    SERVICE_RESPONSE_TRANSITIONS,
+    TRIGGER_LABELS_RU,
+    LegResponder,
+    ServiceResponseStatus,
+    StatusSource,
+)
 from app.domain.enums import (
+    ActorType,
     DDSStageState,
     NotificationSeverity,
     ResourceStatus,
@@ -49,10 +66,12 @@ from app.domain.enums import (
 )
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
+from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.session.session import RoleStage, SimulationSession
 
 __all__ = [
+    "DdsLegView",
     "DdsStageView",
     "DispatchResultView",
     "EmergencyResourceView",
@@ -60,9 +79,12 @@ __all__ = [
     "NotificationView",
     "RadioMessagePage",
     "RadioMessageView",
+    "ServiceStatusEntryView",
     "StatusUpdateView",
     "dds_stage_view",
     "eta_view",
+    "leg_actions",
+    "leg_view",
     "notification_view",
     "radio_message_views",
     "resource_view",
@@ -172,6 +194,39 @@ class DdsStageView(DdsView):
     unacknowledged_notification_count: int
     session_state: SessionState
     last_seq_no: int
+
+
+class ServiceStatusEntryView(DdsView):
+    """`openapi.yaml`'s `ServiceStatusEntryView` — one history entry of one leg (I3 E5a)."""
+
+    event_id: UUID
+    previous_status: ServiceResponseStatus
+    new_status: ServiceResponseStatus
+    order_number: str | None
+    comment_ru: str | None
+    completion_reason: str | None
+    source: StatusSource
+    actor_user_id: UUID | None
+    actor_display_ru: str
+    at_offset_ms: int
+
+
+class DdsLegView(DdsView):
+    """`openapi.yaml`'s `DdsLegView` — one notified service's block (I3 E5a, REQ-5294)."""
+
+    assignment_id: UUID
+    service_type: ServiceId
+    service_name_ru: str
+    response_status: ServiceResponseStatus
+    response_status_at_offset_ms: int | None
+    order_number: str | None
+    last_comment_ru: str | None
+    accept_missed: bool
+    responder: LegResponder
+    bound_user_id: UUID | None
+    is_mine: bool
+    history: tuple[ServiceStatusEntryView, ...]
+    available_actions: tuple[ActionView, ...]
 
 
 class DispatchResultView(DdsView):
@@ -321,13 +376,106 @@ def dds_stage_view(
     return DdsStageView(
         role_stage_id=UUID(str(stage.role_stage_id)),
         stage_state=state,
-        available_actions=action_views(module.available_actions(state)),
+        available_actions=action_views(module.available_actions(state, variants=session.variants)),
         work_item=work_item,
         resources=resource_views(board, stage_state=state, now_ms=now_ms),
         unacknowledged_notification_count=unacknowledged_notification_count,
         session_state=session.state,
         last_seq_no=last_seq_no,
     )
+
+
+_SYSTEM_DISPLAY_RU = "Система"
+"""`actor_display_ru` of an entry no person made (the system's `receive`, the picker mirror)."""
+
+
+def leg_actions(leg: DDSAssignment, policy: StatusPolicy) -> tuple[ActionDescriptor, ...]:
+    """The legal next triggers of `leg` for a trainee (§70.4.2; REQ-5292/5293).
+
+    An `ADDED` leg offers what `RECEIVED` offers: a trainee status on it fires `receive` first
+    (§70.4.2). Guards that depend on the policy are applied here (`decline`/`refuse` only where
+    refusal is allowed, `complete_without_brigade` only under `NO_REFUSAL`); the comment guard is
+    not — the comment arrives with the command.
+    """
+    current = (
+        ServiceResponseStatus.RECEIVED
+        if leg.response_status is ServiceResponseStatus.ADDED
+        else leg.response_status
+    )
+    refusal = allows_refusal(policy)
+    actions: list[ActionDescriptor] = []
+    for (source, trigger), row in SERVICE_RESPONSE_TRANSITIONS.items():
+        if source is not current or ActorType.TRAINEE not in row.allowed_actors:
+            continue
+        if trigger in ("decline", "refuse") and not refusal:
+            continue
+        if trigger == "complete_without_brigade" and refusal:
+            continue
+        actions.append(
+            ActionDescriptor(
+                action_id=trigger,
+                label_ru=TRIGGER_LABELS_RU[trigger],
+                permission=Permission.SET_SERVICE_STATUS,
+                trigger=trigger,
+            )
+        )
+    return tuple(actions)
+
+
+def leg_view(
+    leg: DDSAssignment,
+    *,
+    service_name_ru: str,
+    policy: StatusPolicy,
+    history: Sequence[StatusHistoryEntry],
+    display_names: Mapping[UUID, str],
+    is_mine: bool,
+    may_act: bool,
+) -> DdsLegView:
+    """Project one leg and its history (`DdsLegView`). `may_act` is whether the stage offers
+    `set_service_status` right now; the dropdown is empty unless the leg `is_mine` too."""
+    entries = tuple(
+        ServiceStatusEntryView(
+            event_id=entry.event_id,
+            previous_status=entry.previous_status,
+            new_status=entry.new_status,
+            order_number=entry.order_number,
+            comment_ru=entry.comment_ru,
+            completion_reason=entry.completion_reason,
+            source=entry.source,
+            actor_user_id=entry.actor_user_id,
+            actor_display_ru=_actor_display_ru(entry, service_name_ru, display_names),
+            at_offset_ms=entry.at_offset_ms,
+        )
+        for entry in history
+        if entry.assignment_id == leg.assignment_id
+    )
+    return DdsLegView(
+        assignment_id=UUID(str(leg.assignment_id)),
+        service_type=leg.service_type,
+        service_name_ru=service_name_ru,
+        response_status=leg.response_status,
+        response_status_at_offset_ms=leg.response_status_at_offset_ms,
+        order_number=leg.order_number,
+        last_comment_ru=leg.last_comment_ru,
+        accept_missed=leg.accept_missed,
+        responder=leg.responder,
+        bound_user_id=None if leg.bound_user_id is None else UUID(str(leg.bound_user_id)),
+        is_mine=is_mine,
+        history=entries,
+        available_actions=(action_views(leg_actions(leg, policy)) if is_mine and may_act else ()),
+    )
+
+
+def _actor_display_ru(
+    entry: StatusHistoryEntry, service_name_ru: str, display_names: Mapping[UUID, str]
+) -> str:
+    """Who is shown before the entry's time (REQ-5295)."""
+    if entry.source is StatusSource.SCRIPTED_RESPONDER:
+        return service_name_ru
+    if entry.actor_user_id is not None and entry.actor_user_id in display_names:
+        return display_names[entry.actor_user_id]
+    return _SYSTEM_DISPLAY_RU
 
 
 def _matches_role(value: Any, role: RoleType) -> bool:

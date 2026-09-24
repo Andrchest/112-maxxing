@@ -20,6 +20,15 @@ once its commit is already durable (epic E15-B; see that module's docstring for 
 share this command's own transaction). `backend/tests/api/dds/test_full_cycle.py` now asserts the
 emitted list **plus** the router-appended `SCORING_RULE_EVALUATED` rows equals `x-emits` in full.
 
+**Memo mode (I3 E5a, HLD 70 §70.4.4, D16).** Under `dds_mode: MEMO_STATUSES` the stage rests in
+`ACKNOWLEDGED` and this command fires `close` **twice** in its one Unit of Work: first the
+additive row `ACKNOWLEDGED --close--> RESOLVED`, guarded by `memo_all_legs_terminal` (every leg
+Работы завершены, Не принята or Отказ от выполнения работ — a leg still open is the ordinary
+`409 INVALID_TRANSITION`), then `RESOLVED --close--> CLOSED`. `RESOLVED` is therefore never
+observed at rest in memo mode, and the events are that operation's memo `x-emits`:
+`STAGE_STATE_CHANGED`, `DDS_INCIDENT_CLOSED`, `ROLE_STAGE_COMPLETED`, `STAGE_STATE_CHANGED`. The
+legs' response statuses are theirs and are left as they are.
+
 **Release (HLD gap, analyst §7 #13).** §10.13 gives `DDS_INCIDENT_CLOSED` a
 `released_resource_ids` key without saying what "released" does. The reading closest to SPEC §11
 is taken: the units still attached to any leg are named in the payload and **detached**
@@ -39,7 +48,7 @@ from app.application.handoff.complete_session import SYSTEM_ACTOR, complete_sess
 from app.application.ports.clock import Clock
 from app.application.sessions.queries import SessionDetailView, assemble_session_detail
 from app.domain.common.ids import ResourceId, SessionId
-from app.domain.enums import ClosureReason
+from app.domain.enums import ClosureReason, DDSStageState
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 
@@ -50,7 +59,8 @@ ACTION_ID = "close"
 
 
 class CloseDdsIncident:
-    """`closeDdsIncident` (`openapi.yaml`): `RESOLVED -> CLOSED`, then the session machine."""
+    """`closeDdsIncident` (`openapi.yaml`): `RESOLVED -> CLOSED` (memo: from `ACKNOWLEDGED`
+    through `RESOLVED`), then the session machine."""
 
     def __init__(self, gate: DdsCommandGate, clock: Clock) -> None:
         self._gate = gate
@@ -74,6 +84,18 @@ class CloseDdsIncident:
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
             released = _attached_units(ctx)
 
+            resolved_events: list[DomainEvent] = []
+            if ctx.memo and ctx.stage_state is DDSStageState.ACKNOWLEDGED:
+                session, resolved_events = ctx.session.fire_stage_trigger(
+                    ctx.stage.role_stage_id,
+                    ACTION_ID,
+                    actor=ctx.actor,
+                    now_ms=ctx.now_ms,
+                    runtime=ctx.guard_runtime(),
+                    assignment=ctx.primary,
+                )
+                await ctx.save_session(session)
+
             session, stage_events = ctx.session.fire_stage_trigger(
                 ctx.stage.role_stage_id,
                 ACTION_ID,
@@ -90,6 +112,7 @@ class CloseDdsIncident:
 
             await ctx.append(
                 [
+                    *resolved_events,
                     _closed(ctx, closure_reason, released, comment_ru),
                     *_in_contract_order(stage_events),
                 ]

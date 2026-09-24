@@ -295,3 +295,158 @@ def test_the_defaults_are_the_memos() -> None:
         "fill_within_ms": 180_000,
         "not_completed_after_ms": 172_800_000,
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# Leg-aware (I3 E5a): in memo mode the legs move by their own DDS_SERVICE_STATUS_SET
+# ---------------------------------------------------------------------------------------------
+
+MEMO_VARIANTS = {
+    "card_source": "GENERATED_CARD",
+    "dds_mode": "MEMO_STATUSES",
+    "dds_card_check": "OFF",
+    "dds_brigade_call": "OFF",
+}
+
+
+def _status_set(offset: int, assignment_id: str, previous: str, new: str) -> DomainEvent:
+    return _event(
+        EventType.DDS_SERVICE_STATUS_SET,
+        offset,
+        assignment_id=assignment_id,
+        previous_status=previous,
+        new_status=new,
+    )
+
+
+def _memo_started() -> CardStatusFold:
+    """A started memo session: two legs `ADDED` at 0, status `WORKED`."""
+    return fold_card_status(
+        [
+            _event(
+                EventType.SESSION_CREATED, 0, timers=TIMERS.model_dump(), variants=MEMO_VARIANTS
+            ),
+            _event(EventType.SESSION_STARTED, 0),
+            _event(
+                EventType.HANDOFF_RECEIVED,
+                0,
+                assignment_id="a1",
+                service_type="FIRE_RESCUE",
+                initial_response_status="ADDED",
+            ),
+            _event(
+                EventType.HANDOFF_RECEIVED,
+                0,
+                assignment_id="a2",
+                service_type="POLICE",
+                initial_response_status="ADDED",
+            ),
+            _event(
+                EventType.DDS_CARD_STATUS_CHANGED,
+                0,
+                previous_status="REGISTERED",
+                new_status="WORKED",
+            ),
+        ]
+    )
+
+
+def test_memo_legs_start_added_and_the_stage_moves_none_of_them() -> None:
+    fold = _memo_started()
+    assert fold.memo
+    assert [leg.status for leg in fold.legs] == ["ADDED", "ADDED"]
+    moved = fold.apply(
+        EventType.STAGE_STATE_CHANGED,
+        {"role_type": "DDS", "new_state": "ACKNOWLEDGED"},
+        5_000,
+    ).apply(EventType.DDS_ACKNOWLEDGED, {"assignment_id": "a1"}, 5_000)
+    assert [leg.status for leg in moved.legs] == ["ADDED", "ADDED"]
+    assert [leg.decided_at_offset_ms for leg in moved.legs] == [None, None]
+    assert moved.dds_state is DDSStageState.ACKNOWLEDGED
+
+
+def test_a_memo_leg_takes_its_own_status_and_its_first_decision() -> None:
+    fold = _memo_started()
+    for event in (
+        _status_set(3_000, "a1", "ADDED", "RECEIVED"),
+        _status_set(4_000, "a1", "RECEIVED", "NOT_ACCEPTED"),
+        _status_set(9_000, "a1", "NOT_ACCEPTED", "ACCEPTED"),
+    ):
+        fold = fold.apply(event.event_type, event.payload, event.monotonic_offset_ms)
+    first, second = fold.legs
+    assert (first.status, first.decided_at_offset_ms) == ("ACCEPTED", 4_000)
+    assert (second.status, second.decided_at_offset_ms) == ("ADDED", None)
+
+
+def test_a_memo_decision_is_accepted_from_the_leg_not_from_the_acknowledgement() -> None:
+    """ACCEPTED comes from the leg status (E5a), so only the leg that decided is in time; the
+    other misses its deadline even though the stage was acknowledged."""
+    batch = [
+        _status_set(10_000, "a1", "ADDED", "RECEIVED"),
+        _status_set(10_000, "a1", "RECEIVED", "ACCEPTED"),
+        _event(EventType.DDS_ACKNOWLEDGED, 10_000, assignment_id="a1"),
+    ]
+    _planned, after = plan_append(
+        _memo_started(), batch, incident_id=INCIDENT, running_now_ms=10_000
+    )
+    flushed, after = plan_append(after, [], incident_id=INCIDENT, running_now_ms=40_000)
+    [missed] = _status_events(flushed)
+    assert missed.payload["new_status"] == "NOT_NOTIFIED"
+    assert missed.payload["assignment_id"] == "a2"
+    assert missed.monotonic_offset_ms == 30_000
+
+
+def test_memo_card_status_follows_decline_correction_and_completion() -> None:
+    fold = _memo_started()
+    declined, fold = plan_append(
+        fold,
+        [
+            _status_set(5_000, "a1", "ADDED", "RECEIVED"),
+            _status_set(5_000, "a1", "RECEIVED", "NOT_ACCEPTED"),
+        ],
+        incident_id=INCIDENT,
+        running_now_ms=5_000,
+    )
+    assert [(e.payload["new_status"], e.payload["reason"]) for e in _status_events(declined)] == [
+        ("REFUSED", "LEG_DECLINED_OR_REFUSED")
+    ]
+    corrected, fold = plan_append(
+        fold,
+        [_status_set(6_000, "a1", "NOT_ACCEPTED", "ACCEPTED")],
+        incident_id=INCIDENT,
+        running_now_ms=6_000,
+    )
+    assert [(e.payload["new_status"], e.payload["reason"]) for e in _status_events(corrected)] == [
+        ("WORKED", "LEG_STATUS_CORRECTED")
+    ]
+    completing = [
+        _status_set(7_000, "a2", "ADDED", "RECEIVED"),
+        _status_set(7_000, "a2", "RECEIVED", "ACCEPTED"),
+        *(
+            _status_set(8_000, leg, previous, new)
+            for leg in ("a1", "a2")
+            for previous, new in (
+                ("ACCEPTED", "RESPONSE_STARTED"),
+                ("RESPONSE_STARTED", "ARRIVED"),
+                ("ARRIVED", "WORKING"),
+                ("WORKING", "COMPLETED"),
+            )
+        ),
+    ]
+    completed, fold = plan_append(fold, completing, incident_id=INCIDENT, running_now_ms=8_000)
+    assert [(e.payload["new_status"], e.payload["reason"]) for e in _status_events(completed)] == [
+        ("COMPLETED", "ALL_LEGS_COMPLETED")
+    ]
+
+
+def test_picker_mode_ignores_the_mirrored_status_events() -> None:
+    """In picker mode the stage event already applied the picker map; the `PICKER_MIRROR` status
+    events that follow carry the same values and are not re-read (E4a's projection, unchanged)."""
+    fold = _started_with_legs()
+    assert not fold.memo
+    after = fold.apply(
+        EventType.DDS_SERVICE_STATUS_SET,
+        {"assignment_id": "a1", "previous_status": "RECEIVED", "new_status": "REFUSED"},
+        1_000,
+    )
+    assert [leg.status for leg in after.legs] == [leg.status for leg in fold.legs]
