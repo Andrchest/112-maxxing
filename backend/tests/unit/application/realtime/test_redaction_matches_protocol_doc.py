@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 from app.application.realtime.effective_role import INSTRUCTOR
-from app.application.realtime.redaction import SourceEvent, redact
+from app.application.realtime.redaction import CALL_SCOPED_EVENT_TYPES, SourceEvent, redact
 from app.domain.enums import ActorType, RoleType, SessionMode
 from app.domain.events.catalog import EVENT_PAYLOAD_CATALOG
 from app.domain.events.types import EventType
@@ -154,7 +154,14 @@ def test_trainee_verdict_matches_the_protocol_table(event_type: EventType, role:
     row = ROWS[event_type]
     cell = row.cells[role]
     payload = _payload(event_type, role)
-    envelope = redact(_event(event_type, payload), role, _PARTIALS_ON)
+    # I3 E6b (HLD 80 §80.6.2): a call-scoped row reaches the ДДС only for a ДДС call's `call_id`,
+    # so the DDS verdict is observed on an event of a ДДС call (the negative is asserted below).
+    dds_call_ids = (
+        frozenset({str(payload["call_id"]).lower()})
+        if role is RoleType.DDS and event_type in CALL_SCOPED_EVENT_TYPES
+        else frozenset()
+    )
+    envelope = redact(_event(event_type, payload), role, _PARTIALS_ON, dds_call_ids=dds_call_ids)
 
     if cell == "—":
         assert envelope is None, f"§40.4 withholds {event_type} from {role.value}"
@@ -271,3 +278,34 @@ def test_voice_id_native_reaches_the_instructor() -> None:
     assert envelope is not None
     assert envelope.payload["voice_id_native"] == "Serena"
     assert list(envelope.redacted_keys) == []
+
+
+# -- I3 E6b: call-scoped delivery of the per-turn events (HLD 80 §80.6.2) ------------------------
+
+
+def test_the_call_scoped_rows_are_the_documented_nine() -> None:
+    """§40.4's call-scoped `▲` rows are exactly the per-turn events HLD 80 §80.6.2 names."""
+    ticked_for_dds = {
+        event_type
+        for event_type in EventType
+        if ROWS[event_type].cells[RoleType.DDS] != "—"
+        and ROWS[event_type].cells[RoleType.OPERATOR_112] != "—"
+        and "call_id" in EVENT_PAYLOAD_CATALOG[event_type].payload_keys
+    }
+    assert ticked_for_dds == CALL_SCOPED_EVENT_TYPES
+
+
+@pytest.mark.parametrize("event_type", sorted(CALL_SCOPED_EVENT_TYPES, key=lambda item: item.value))
+def test_a_dds_calls_turn_never_reaches_the_operator_socket(event_type: EventType) -> None:
+    """A ДДС call's turn event goes to DDS and never to OPERATOR_112; the 112 call's the reverse."""
+    dds_call = "0b7a4d0e-0000-4000-8000-00000000d0d5"
+    payload = _payload(event_type, RoleType.DDS) | {"call_id": dds_call}
+    event = _event(event_type, payload)
+    ids = frozenset({dds_call})
+    assert redact(event, RoleType.OPERATOR_112, _PARTIALS_ON, dds_call_ids=ids) is None
+    assert redact(event, RoleType.DDS, _PARTIALS_ON, dds_call_ids=ids) is not None
+    assert redact(event, INSTRUCTOR, _PARTIALS_ON, dds_call_ids=ids) is not None
+
+    the_112_call = _event(event_type, payload | {"call_id": "a-112-call"})
+    assert redact(the_112_call, RoleType.DDS, _PARTIALS_ON, dds_call_ids=ids) is None
+    assert redact(the_112_call, RoleType.OPERATOR_112, _PARTIALS_ON, dds_call_ids=ids) is not None

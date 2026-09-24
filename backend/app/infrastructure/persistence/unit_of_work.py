@@ -22,6 +22,7 @@ from app.application.ports.audio_segment_repository import AudioSegmentRepositor
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.clock import Clock
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
+from app.application.ports.dds_call_repository import DdsCallRepository
 from app.application.ports.dialogue_turn_repository import DialogueTurnRepository
 from app.application.ports.event_publisher import EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
@@ -36,6 +37,7 @@ from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.trainee_group_repository import TraineeGroupRepository
 from app.application.ports.transcript_segment_repository import TranscriptSegmentRepository
 from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
@@ -51,6 +53,7 @@ from app.infrastructure.persistence.caller_belief_repository import (
 from app.infrastructure.persistence.dds_assignment_repository import (
     SqlAlchemyDDSAssignmentRepository,
 )
+from app.infrastructure.persistence.dds_call_repository import SqlAlchemyDdsCallRepository
 from app.infrastructure.persistence.dialogue_turn_repository import (
     SqlAlchemyDialogueTurnRepository,
 )
@@ -76,6 +79,9 @@ from app.infrastructure.persistence.resource_repository import SqlAlchemyResourc
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
 from app.infrastructure.persistence.score_repository import SqlAlchemyScoreRepository
 from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
+from app.infrastructure.persistence.trainee_group_repository import (
+    SqlAlchemyTraineeGroupRepository,
+)
 from app.infrastructure.persistence.transcript_segment_repository import (
     SqlAlchemyTranscriptSegmentRepository,
 )
@@ -121,11 +127,13 @@ class SqlAlchemyUnitOfWork:
         self._handoffs: SqlAlchemyHandoffRepository | None = None
         self._resources: SqlAlchemyResourceRepository | None = None
         self._dds_assignments: SqlAlchemyDDSAssignmentRepository | None = None
+        self._dds_calls: SqlAlchemyDdsCallRepository | None = None
         self._notifications: SqlAlchemyNotificationRepository | None = None
         self._world_engine_states: SqlAlchemyWorldEngineStateRepository | None = None
         self._scores: SqlAlchemyScoreRepository | None = None
         self._report_explanations: SqlAlchemyReportExplanationRepository | None = None
         self._recording_purge: SqlAlchemyRecordingPurgeRepository | None = None
+        self._trainee_groups: SqlAlchemyTraineeGroupRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -149,11 +157,13 @@ class SqlAlchemyUnitOfWork:
         self._handoffs = SqlAlchemyHandoffRepository(session)
         self._resources = SqlAlchemyResourceRepository(session)
         self._dds_assignments = SqlAlchemyDDSAssignmentRepository(session)
+        self._dds_calls = SqlAlchemyDdsCallRepository(session)
         self._notifications = SqlAlchemyNotificationRepository(session)
         self._world_engine_states = SqlAlchemyWorldEngineStateRepository(session)
         self._scores = SqlAlchemyScoreRepository(session)
         self._report_explanations = SqlAlchemyReportExplanationRepository(session)
         self._recording_purge = SqlAlchemyRecordingPurgeRepository(session)
+        self._trainee_groups = SqlAlchemyTraineeGroupRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -185,11 +195,13 @@ class SqlAlchemyUnitOfWork:
             self._handoffs = None
             self._resources = None
             self._dds_assignments = None
+            self._dds_calls = None
             self._notifications = None
             self._world_engine_states = None
             self._scores = None
             self._report_explanations = None
             self._recording_purge = None
+            self._trainee_groups = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -237,6 +249,12 @@ class SqlAlchemyUnitOfWork:
         if self._lessons is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._lessons
+
+    @property
+    def trainee_groups(self) -> TraineeGroupRepository:
+        if self._trainee_groups is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._trainee_groups
 
     @property
     def scenarios(self) -> ScenarioRepository:
@@ -291,6 +309,12 @@ class SqlAlchemyUnitOfWork:
         if self._dds_assignments is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._dds_assignments
+
+    @property
+    def dds_calls(self) -> DdsCallRepository:
+        if self._dds_calls is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._dds_calls
 
     @property
     def notifications(self) -> NotificationRepository:

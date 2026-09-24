@@ -1146,7 +1146,10 @@
         "RECIPIENTS_RESOLVED",
         "DDS_CARD_OPENED",
         "DDS_SERVICE_STATUS_SET",
-        "DDS_CARD_ISSUE_FLAGGED"
+        "DDS_CARD_ISSUE_FLAGGED",
+        "DDS_CALL_STARTED",
+        "DDS_CALL_ANSWERED",
+        "DDS_CALL_ENDED"
       ],
       "title": "EventType",
       "type": "string"

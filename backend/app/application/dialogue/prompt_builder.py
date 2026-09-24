@@ -49,6 +49,8 @@ from app.domain.caller.profile import CallerProfile
 from app.domain.facts.gate import AllowedFact, AllowedFactsPackage
 
 __all__ = [
+    "DISPATCHER_LABEL_RU",
+    "OPERATOR_LABEL_RU",
     "CallerPromptBuilder",
     "CallerPromptConfig",
     "PromptBudgetExceededError",
@@ -96,11 +98,34 @@ def caller_prompt_config_from_settings(settings: Settings) -> CallerPromptConfig
     )
 
 
-class CallerPromptBuilder:
-    """`build(...) -> list[ChatMessage]` — §5.2's two messages, budgeted by §5.3."""
+OPERATOR_LABEL_RU = _SPEAKER_LABELS_RU["OPERATOR"]
+"""Who the caller is talking to on the 112 call — «ОПЕРАТОР» (§5.2)."""
+DISPATCHER_LABEL_RU = "ДИСПЕТЧЕР"
+"""Who the claimant is talking to on a ДДС call-back (I3 E6b, HLD 80 §80.3.4)."""
+_OPERATOR_SAYS_RU = f"{OPERATOR_LABEL_RU} ГОВОРИТ:"
 
-    def __init__(self, config: CallerPromptConfig | None = None) -> None:
+
+class CallerPromptBuilder:
+    """`build(...) -> list[ChatMessage]` — §5.2's two messages, budgeted by §5.3.
+
+    `operator_label_ru` (additive, I3 E6b — HLD 80 §80.3.4's one change to the frozen chain) names
+    the other party in the turn window and the last line: «ОПЕРАТОР» by default, which leaves the
+    112 call's prompt byte for byte what it was; «ДИСПЕТЧЕР» when the ДДС calls the claimant back.
+    It is a constructor argument, not a `build()` one: `build()`'s signature is the information
+    boundary R3's test scans, and a label is not information about the scenario.
+    """
+
+    def __init__(
+        self,
+        config: CallerPromptConfig | None = None,
+        *,
+        operator_label_ru: str = OPERATOR_LABEL_RU,
+    ) -> None:
         self._config = config or CallerPromptConfig()
+        self._operator_label_ru = operator_label_ru
+        self._user_template = USER_TEMPLATE_RU.replace(
+            _OPERATOR_SAYS_RU, f"{operator_label_ru} ГОВОРИТ:"
+        )
 
     @property
     def config(self) -> CallerPromptConfig:
@@ -124,7 +149,7 @@ class CallerPromptBuilder:
 
         turns = list(window)[-self._config.max_window_turns :]
         while True:
-            user = USER_TEMPLATE_RU.format(
+            user = self._user_template.format(
                 persona_block=persona,
                 allowed_facts_block=allowed_block,
                 already_revealed_block=revealed_block,
@@ -194,7 +219,8 @@ class CallerPromptBuilder:
     def _render_window(self, turns: Sequence[DialogueTurn]) -> str:
         if not turns:
             return _EMPTY_WINDOW_RU
-        return "\n".join(f"{_SPEAKER_LABELS_RU[turn.speaker]}: {turn.text}" for turn in turns)
+        labels = {**_SPEAKER_LABELS_RU, "OPERATOR": self._operator_label_ru}
+        return "\n".join(f"{labels[turn.speaker]}: {turn.text}" for turn in turns)
 
     def _fit_utterance(self, utterance: str) -> str:
         """§5.3: the operator's turn is capped at `utterance_token_budget`, start kept."""

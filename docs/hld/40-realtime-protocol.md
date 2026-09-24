@@ -196,15 +196,15 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 3 | `ROLE_STAGE_STARTED` | ✔ | ✔ | ✔ | — |
 | 4 | `CALL_RINGING` | ✔ | — | ✔ | — |
 | 5 | `CALL_ANSWERED` | ✔ | — | ✔ | — |
-| 6 | `USER_SPEECH_STARTED` | ✔ | — | ✔ | — |
-| 7 | `USER_SPEECH_ENDED` | ✔ | — | ✔ | — |
-| 8 | `ASR_PARTIAL` | ◆ | — | ✔ | `vad_provider`/`asr_model` kept; nothing hidden — the whole event is withheld in `ASSESSMENT` |
-| 9 | `ASR_FINAL` | ▲ | — | ✔ | drop `asr_provider`, `asr_model`, `confidence`: provider internals are not trainee data |
+| 6 | `USER_SPEECH_STARTED` | ✔ | ▲ | ✔ | — (DDS: call-scoped, I3 E6b — see below the I3 table) |
+| 7 | `USER_SPEECH_ENDED` | ✔ | ▲ | ✔ | — (DDS: call-scoped, I3 E6b) |
+| 8 | `ASR_PARTIAL` | ◆ | ▲ | ✔ | `vad_provider`/`asr_model` kept; nothing hidden — the whole event is withheld in `ASSESSMENT` (DDS: call-scoped, I3 E6b) |
+| 9 | `ASR_FINAL` | ▲ | ▲ | ✔ | drop `asr_provider`, `asr_model`, `confidence`: provider internals are not trainee data |
 | 10 | `CALLER_RESPONSE_PLANNED` | — | — | ✔ | names `allowed_fact_ids`, `unavailable_fact_ids`, `withheld_count` — gate internals (D3) |
 | 11 | `CALLER_RESPONSE_GENERATED` | — | — | ✔ | model internals and the validator verdict |
-| 12 | `CALLER_TTS_STARTED` | ▲ | — | ✔ | trainee receives only `{call_id, turn_index, at_offset_ms}` — enough to animate the phone widget; `text_sent_to_tts`, `tts_provider`, `tts_model`, `voice_id`, `voice_id_native` dropped (the last is a caller detail, same rule as `planned_text` on row 14, E20-G) |
-| 13 | `CALLER_TTS_ENDED` | ▲ | — | ✔ | trainee receives only `{call_id, turn_index, at_offset_ms, completed}`; `total_audio_ms` and `audio_segment_id` dropped |
-| 14 | `CALLER_UTTERANCE_INTERRUPTED` | ▲ | — | ✔ | drop `planned_text` — what the caller *would* have said is unrevealed information (SPEC §21); keep `delivered_text`, `delivered_audio_ms`, `cutoff_latency_ms` |
+| 12 | `CALLER_TTS_STARTED` | ▲ | ▲ | ✔ | trainee receives only `{call_id, turn_index, at_offset_ms}` — enough to animate the phone widget; `text_sent_to_tts`, `tts_provider`, `tts_model`, `voice_id`, `voice_id_native` dropped (the last is a caller detail, same rule as `planned_text` on row 14, E20-G) |
+| 13 | `CALLER_TTS_ENDED` | ▲ | ▲ | ✔ | trainee receives only `{call_id, turn_index, at_offset_ms, completed}`; `total_audio_ms` and `audio_segment_id` dropped |
+| 14 | `CALLER_UTTERANCE_INTERRUPTED` | ▲ | ▲ | ✔ | drop `planned_text` — what the caller *would* have said is unrevealed information (SPEC §21); keep `delivered_text`, `delivered_audio_ms`, `cutoff_latency_ms` |
 | 15 | `CARD_FIELD_CHANGED` | ✔ | — | ✔ | never pushed to DDS: the live card is outside `DDSModule`'s sources (SPEC §10) |
 | 16 | `SERVICE_SELECTED` | ✔ | — | ✔ | — |
 | 17 | `HANDOFF_CREATED` | ✔ | — | ✔ | DDS learns of the handoff through `HANDOFF_RECEIVED`, whose payload is snapshot-scoped |
@@ -242,8 +242,8 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 44 | `DIALOGUE_INTERPRETED` | — | — | ✔ | interpreter internals |
 | 45 | `FACT_GATE_EVALUATED` | — | — | ✔ | **never** to a trainee — gate internals name withheld facts (D3, D10) |
 | 46 | `FACTS_DELIVERED` | — | — | ✔ | naming which facts "counted" would hand the trainee the scoring key (D10, §42 test 10) |
-| 47 | `TRANSPORT_DISCONNECTED` | ✔ | — | ✔ | — |
-| 48 | `TRANSPORT_RECONNECTED` | ✔ | — | ✔ | — |
+| 47 | `TRANSPORT_DISCONNECTED` | ✔ | ▲ | ✔ | — (DDS: call-scoped, I3 E6b) |
+| 48 | `TRANSPORT_RECONNECTED` | ✔ | ▲ | ✔ | — (DDS: call-scoped, I3 E6b) |
 | 49 | `INFERENCE_HEALTH_CHANGED` | — | — | ✔ | operational health belongs to the instructor console (SPEC §37) |
 
 ### I3 event types (additive, `70-i3-alignment.md` §70.7)
@@ -255,11 +255,30 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 52 | `DDS_CARD_OPENED` | — | ✔ | ✔ | — (I3 E5a: TRAINEE; the ДДС opened the card on one leg, 70 §70.4.2) |
 | 53 | `DDS_SERVICE_STATUS_SET` | — | ✔ | ✔ | — (I3 E5a: TRAINEE or SIMULATION; one step of one leg's memo status — broadcast, every ДДС participant sees every leg, 70 §70.4.3) |
 | 54 | `DDS_CARD_ISSUE_FLAGGED` | — | ✔ | ✔ | — (I3 E5b: TRAINEE; the ДДС flagged an error in the received card under `dds_card_check: ON`, recorded against the frozen snapshot, 70 §70.7, C1) |
+| 55 | `DDS_CALL_STARTED` | — | ✔ | ✔ | — (I3 E6b: TRAINEE or SIMULATION; a ДДС call started, 80 §80.6.1 — broadcast to every ДДС participant) |
+| 56 | `DDS_CALL_ANSWERED` | — | ✔ | ✔ | — (I3 E6b: SIMULATION (AI callee) or TRAINEE (INBOUND)) |
+| 57 | `DDS_CALL_ENDED` | — | ✔ | ✔ | — (I3 E6b: TRAINEE, SIMULATION or SYSTEM) |
+
+**Call-scoped rows (I3 E6b, `80-telephony.md` §80.6.2).** Rows 6, 7, 8, 9, 12, 13, 14, 47 and 48
+(`USER_SPEECH_*`, `ASR_*`, `CALLER_TTS_*`, `CALLER_UTTERANCE_INTERRUPTED`, `TRANSPORT_*`) carry `▲`
+in the DDS column: an event of one of those types whose `call_id` is a ДДС call id — the `call_id`s
+of the session's `DDS_CALL_STARTED` events, a pure function of the log — is pushed to DDS with the
+same payload whitelist OPERATOR_112 gets and is **not** pushed to OPERATOR_112; one whose `call_id` is
+not a ДДС call id is pushed exactly as before (OPERATOR_112 only). `redact` takes the ДДС call id set
+as an input (`Connection.dds_call_ids`, folded from `DDS_CALL_STARTED` and seeded from the log's head
+on `resume`); the instructor sees everything. `STAGE_STATE_CHANGED`'s "only the stage's own role" is
+the precedent.
 
 Consistency rule for implementers: this table and `EVENT_PAYLOAD_CATALOG` are one fact expressed
 twice. A unit test iterates `EventType` and asserts that every member appears in both, with the same
 role set — a new event type that is added to one and not the other must fail the gate, not default to
 visible.
+
+I3 E9a (trainee groups, per-workstation cards, difficulty-weight proposals, 70 §70.3.7) adds **no**
+event type and no channel: groups and weight proposals are account-side and lesson-side rows (a
+lesson has no event log, D15), read over REST. What a trainee's WebSocket delivers is unchanged — a
+card's session events reach only that session's participants, and `PlanEntry.participants` decides
+who they are.
 
 ### How redaction is applied
 
@@ -338,7 +357,8 @@ two; implementers substitute the UUID and never emit the braces.
 |:--|:--|:--|:--|:--|
 | `session:{session_id}:events` | one JSON envelope per event: `{seq_no, event_type, timestamp_utc, monotonic_offset_ms, actor_type, actor_id, correlation_id, payload}` — **unredacted**; each socket applies its own role filter (§40.4) | backend and voice-agent, **after** the Unit of Work commits (D5) | every WebSocket handler for that session; the `SimulationRunner` tick loop | Live fan-out. Loss ⇒ clients fall back to replay from PostgreSQL on the next heartbeat gap or resume. |
 | `voice:join` | `{session_id, room, call_id}` | backend, at `CALL_RINGING` (D9) | the voice-agent process | Tells the agent which room to join. Loss ⇒ the agent never joins; the backend re-publishes every `VOICE_JOIN_RETRY_MS` (default 2000) **while the call phase is `RINGING` or `CONNECTED` and no agent has joined it**, so the signal is self-healing. What ends the retry is the first event the voice agent itself appended for that `call_id` (it appends nothing at the moment it joins, so its first turn/transport event is the ack), or the call reaching `ENDED` — never the trainee's answer: a trainee who answers before the agent has arrived would otherwise leave the call `CONNECTED` with an empty room and no further signal (E20 R2, E19-E3). Re-publishing at an agent that is already in the room is a no-op: `VoiceAgent._on_join` returns early for a session it already serves. |
-| `voice:cancel:{session_id}` | `{call_id, reason: "HANGUP" \| "ABORT" \| "TRANSPORT_LOST", at_offset_ms}` | backend, on `endCall`, `abortSession` or a transport grace timeout | the voice-agent's `_control` task (`50-voice-pipeline.md` §6) | Cross-process barge-in/cancellation signal (D9). Loss ⇒ the caller finishes one utterance into a closed call; no state is corrupted. |
+| `voice:cancel:{session_id}` | `{call_id, reason: "HANGUP" \| "ABORT" \| "TRANSPORT_LOST", at_offset_ms}` | backend, on `endCall`, `abortSession` or a transport grace timeout; (additive, I3 E6b) on `hangUpDdsCall` and on a SYSTEM `ABORT` of a ДДС call | the voice-agent's `_control` task (`50-voice-pipeline.md` §6); a ДДС call's pipeline acts only on its own `call_id` | Cross-process barge-in/cancellation signal (D9). Loss ⇒ the caller finishes one utterance into a closed call; no state is corrupted. |
+| `voice:join` — a ДДС call (additive, I3 E6b, `80-telephony.md` §80.3.6) | `{session_id, room, call_id}` plus `call_kind: CALLER \| SERVICE_HEAD \| CLAIMANT \| OPERATOR_112` (absent ⇒ `CALLER`, the 112 call), `assignment_id`, `persona_id`, `endpoint` (`sip_user` joins in E6e) | backend, after the commit that `ring`s the `DdsCall` (`startDdsCall` or the `AdvanceDdsCalls` tick) | the voice-agent process — `_calls` keyed by `(session_id, call_id)`; `CLAIMANT` runs the frozen caller pipeline | The same self-healing rule as the 112 call, per `call_id`: re-published every `VOICE_JOIN_RETRY_MS` while the `DdsCall` is `RINGING` or `CONNECTED` and the agent has appended nothing of its own for that `call_id`. A ДДС call never writes `session:{id}:call_state` (that key is the 112 call's); the ДДС widget reads `GET …/dds-calls`. |
 | `voice:health` | `{service, from, to, detail, at}` | voice-agent, on every health transition | backend health aggregator | Turned into `INFERENCE_HEALTH_CHANGED` on every ACTIVE session (`60-inference-ops.md` §4.3). Loss ⇒ the next `voice:health:{service}` heartbeat re-establishes the state within 5 s. |
 
 Channel naming is fixed: `session:{session_id}:events` uses the session UUID in canonical lowercase

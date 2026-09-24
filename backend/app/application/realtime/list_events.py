@@ -36,6 +36,7 @@ from app.application.sessions.authorisation import ParticipantNotAssignedError
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import SessionId
+from app.domain.dds.call import dds_call_ids
 from app.domain.events.types import EventType
 from app.domain.session.session import SimulationSession
 
@@ -112,6 +113,10 @@ class ListSessionEvents:
             if session is None:
                 raise SessionNotFoundError(session_id)
             connection = connection_for_read(session, viewer)
+            if after_seq_no > 0:
+                # I3 E6b (HLD 80 §80.6.2): the ДДС calls started before the page's cursor.
+                head = await uow.events.read(session_id, 0, after_seq_no)
+                connection = connection.with_dds_call_ids(dds_call_ids(head))
 
             items: list[RealtimeEnvelope] = []
             cursor = after_seq_no
@@ -123,7 +128,12 @@ class ListSessionEvents:
                 exhausted = len(rows) < chunk
                 for row in rows:
                     cursor = row.seq_no
-                    envelope = redact(source_of_row(row), connection.role, connection.policy)
+                    envelope = redact(
+                        source_of_row(row),
+                        connection.role,
+                        connection.policy,
+                        dds_call_ids=connection.dds_call_ids,
+                    )
                     connection = fold_role(connection, row.event_type, row.payload)
                     if envelope is None or (wanted is not None and row.event_type not in wanted):
                         continue

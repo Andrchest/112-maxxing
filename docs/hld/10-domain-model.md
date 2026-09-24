@@ -78,7 +78,9 @@ backend/app/domain/
 ├── lesson/                  (additive, I3 E4a — HLD 70 §70.3)
 │   ├── plan.py              ArrivalKind, Arrival, LessonParticipant, PlanEntry, PreviousCard,
 │   │                        validate_plan, arrival_due_offset_ms, arrival_holds
-│   └── lesson.py            LessonState, Lesson, LESSON_TRANSITIONS, create_lesson
+│   ├── lesson.py            LessonState, Lesson, LESSON_TRANSITIONS, create_lesson
+│   └── weights.py           (I3 E9a) CardMetadata, card_metadata, heuristic_weight,
+│                            ProposedWeight, ProposalSource, WeightProposal, WeightProposalSet
 ├── routing/                 (additive, I3 E2a — HLD 70 §70.6)
 │   ├── catalog.py           ServiceCatalogEntry, ServiceCatalog, ReferencePack,
 │   │                        ReferencePackRecord, ReferenceCatalog, LEGACY_REFERENCE
@@ -875,6 +877,7 @@ class Permission(str, Enum):
     VIEW_TRANSCRIPT = "VIEW_TRANSCRIPT"
     SET_SERVICE_STATUS = "SET_SERVICE_STATUS"   # additive, I3 E5a
     FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"         # additive, I3 E5a (used by flag_card_issue, E5b)
+    PLACE_DDS_CALL = "PLACE_DDS_CALL"           # additive, I3 E6b (the ДДС phone, 80 §80.5)
 
 class ActionDescriptor(BaseModel):
     action_id: str          # equals the state-machine trigger where one exists
@@ -950,7 +953,7 @@ constructed without a world-truth repository, so the data cannot be reached even
 - `role_type = DDS`, `implemented = True`, `state_machine = StateMachine(DDS_TRANSITIONS, DDS_GUARDS)`;
   (additive, I3 E5a) `memo_state_machine = StateMachine(MEMO_DDS_TRANSITIONS, DDS_GUARDS_MEMO)`, and
   `state_machine_for(variants)` answers it under `dds_mode: MEMO_STATUSES`
-- `permissions` = `{VIEW_HANDOFF, ACKNOWLEDGE_ASSIGNMENT, SELECT_RESOURCES, DISPATCH_RESOURCES, SEND_STATUS_UPDATE, CLOSE_INCIDENT, VIEW_RESOURCE_BOARD, ACKNOWLEDGE_NOTIFICATION, SET_SERVICE_STATUS}` (`SET_SERVICE_STATUS` additive, I3 E5a)
+- `permissions` = `{VIEW_HANDOFF, ACKNOWLEDGE_ASSIGNMENT, SELECT_RESOURCES, DISPATCH_RESOURCES, SEND_STATUS_UPDATE, CLOSE_INCIDENT, VIEW_RESOURCE_BOARD, ACKNOWLEDGE_NOTIFICATION, SET_SERVICE_STATUS, PLACE_DDS_CALL}` (`SET_SERVICE_STATUS` additive, I3 E5a; `PLACE_DDS_CALL` additive, I3 E6b — used only under `dds_brigade_call: ON`)
 - `visibility_policy.sources` = `{HANDOFF_SNAPSHOT, DDS_ASSIGNMENT, RESOURCE_BOARD, NOTIFICATIONS, RADIO_MESSAGES}` — **no** `OPERATOR_CARD`, **no** `WORLD_TRUTH`, **no** `TRANSCRIPT` (SPEC §10, §42 test 3)
 - `available_actions(state, variants)` — **`dds_mode: RESOURCE_PICKER`** (and `variants=None`):
 
@@ -970,8 +973,8 @@ constructed without a world-truth repository, so the data cannot be reached even
 
 | State | Actions |
 |:--|:--|
-| `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус |
-| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b); `close` / Закрыть происшествие |
+| `RECEIVED` | `open_card` / Открыть карточку; `set_service_status` / Изменить статус; `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b) |
+| `ACKNOWLEDGED` | `set_service_status`; `send_status_update` / Отправить статус; `flag_card_issue` / Отметить ошибку в карточке (only `dds_card_check: ON`, I3 E5b); `close` / Закрыть происшествие; `call_claimant` / Позвонить заявителю (only `dds_brigade_call: ON`, I3 E6b) |
 | `RESOURCE_SELECTION` | — (never entered in memo mode) |
 | `DISPATCHED` | — (never entered in memo mode) |
 | `EN_ROUTE` | — (never entered in memo mode) |
@@ -979,6 +982,15 @@ constructed without a world-truth repository, so the data cannot be reached even
 | `WORKING` | — (never entered in memo mode) |
 | `RESOLVED` | `close` (transient inside the memo `close` command) |
 | `CLOSED` | — |
+
+**The ДДС phone (additive, I3 E6b — `80-telephony.md` §80.5, D25).** Under `dds_brigade_call: ON`
+(memo mode only, R41) `call_claimant` / Позвонить заявителю (`PLACE_DDS_CALL`, `startDdsCall {kind:
+CLAIMANT}`) closes the `RECEIVED` and `ACKNOWLEDGED` rows, the two states the ДДС holds the card in;
+`call_service_head` (E6c) and `call_112` (E6d) join those rows when their kinds land. `hang_up` /
+Положить трубку (`PLACE_DDS_CALL`, trigger `hang_up`) is an action of a live `DdsCall`, not of the
+stage — it is served as `DdsCallView.available_actions`, to the trainee on the line only. Under `OFF`
+no call action is offered anywhere. The call's own machine is `DDS_CALL_TRANSITIONS`
+(`backend/app/domain/dds/call.py`, 80 §80.3.2); the DDS stage machine is untouched.
 
 No resource action is offered in memo mode. `close` in `ACKNOWLEDGED` is decided by its guard
 `memo_all_legs_terminal` (a leg still open is the ordinary `409 INVALID_TRANSITION`). HLD 70's
@@ -1120,6 +1132,34 @@ Lessons have no event log. The `LessonRunner` (`application/lessons/lesson_runne
 `READY` card when its arrival holds (lesson wall ms since `started_at`; `AFTER_*` read the previous
 card's log), through `start_session` as `ActorRef(INSTRUCTOR, created_by_user_id)`, recording
 `SESSION_STARTED.lesson_arrival`.
+
+**Groups, per-workstation cards and difficulty weights** *(additive, I3 E9a, HLD 70 §70.3.7)*.
+`Lesson` gains `group_id: TraineeGroupId | None` (the trainee group it was created for, recorded
+only — `participants` stay authoritative) and `weight_proposals: WeightProposalSet | None`.
+A trainee group is account-side data (`application/ports/trainee_group_repository.py`,
+`StoredTraineeGroup`), like `users`, not a domain aggregate. `PlanEntry.participants` is the
+per-workstation checkbox matrix: `createLesson` gives each card's session only the ticked
+participants, so the incident list and `getLesson` show a trainee their own cards only.
+
+```python
+class CardMetadata:        position, title, difficulty (1..5), card_source (default), role_chain,
+                           required/optional_service_count, accept/fill/not_completed timers,
+                           has_competence_decline, has_card_check, provenance_* — nothing else
+card_metadata(position, version) -> CardMetadata        # names each field; no world truth
+heuristic_weight(card) -> ProposedWeight                # 2 × difficulty, +1 per factor, 1..10
+class ProposalSource(str, Enum):  LLM, HEURISTIC
+class WeightProposal:      position, proposed_weight (int 1..10), reason_ru, accepted_at
+class WeightProposalSet:   source, model_name, fallback_reason, requested_at,
+                           requested_by_user_id, proposals; accept(positions, at)
+Lesson.with_weight_proposals(set) -> Lesson             # stores; no weight changes
+Lesson.accept_weights(positions, at) -> Lesson          # the only proposal -> weight path
+```
+
+Proposals come from the `WeightProposer` port (`application/ports/weight_proposer.py`): the LLM
+adapter (`infrastructure/weights/llm_proposer.py`, one JSON-schema-constrained call per lesson over
+`application/lessons/weight_prompt.build_messages(cards: Sequence[CardMetadata])`) answers the
+deterministic heuristic on any failure. The lesson report reads only `PlanEntry.weight`, so
+scoring stays deterministic (SPEC §2, D11); the lesson state machine and the runner are unchanged.
 
 ### Card status — `backend/app/domain/dds/card_status.py` (additive, I3 E4a)
 
@@ -1500,7 +1540,20 @@ property name, does remain `CallerProfile.identity_ru`.
 | `RECIPIENTS_RESOLVED` (additive, I3 E2b′) | `SIMULATION` | `card_id: uuid`, `card_revision_id: uuid \| null`, `pack_id: str`, `classifier_code: str \| null`, `candidate_codes: list[str]`, `main_service: ServiceId \| null`, `auto_services: list[ServiceId]`, `informed_services: list[ServiceId]`, `manual_services: list[ServiceId]`, `notification_list: list[ServiceId]`, `reasons: list[{service_id: ServiceId, source: CLASSIFIER \| TERRITORIAL \| DEPARTMENT, column: str, sub_column: str \| null, row_code: str, row_match: CLASSIFIER_CODE \| COVERED \| GROUP_FALLBACK, sub_column_role: BASE \| FLAG \| null, reading: BASE_PLUS_FLAGS \| null}]` (`row_code` / `row_match` additive to HLD 70 §70.7: which classifier row a reason came from and whether step 1 found it by the «Класс.:» pick, full coverage, or the group fallback; `sub_column_role` / `reading` additive, I3 E8, D26: whether the service came from the org's base sub-column or from a flag sub-column, under reading R2 «base plus flags» — ~~an org is notified iff a *holding* sub-column's cell counts~~ (R1, superseded 2026-09-24: both readings reproduce every screenshot and memo fixture, R2 won the tie per the manager ruling); `null` on a reason written before E8), `final: bool`, `at_offset_ms: int`. Appended after a routing-relevant `CARD_FIELD_CHANGED` and, `final: true`, immediately before `HANDOFF_CREATED` (70 §70.6.4); never a card write (INV 4) | OPERATOR_112, INSTRUCTOR |
 | `DDS_CARD_OPENED` (additive, I3 E5a) | `TRAINEE` | `assignment_id: uuid`, `service_type: ServiceId`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС opened the card on one leg (HLD 70 §70.4.2) | DDS, INSTRUCTOR |
 | `DDS_SERVICE_STATUS_SET` (additive, I3 E5a) | `TRAINEE`, `SIMULATION` | `assignment_id: uuid`, `service_type: ServiceId`, `previous_status: ServiceResponseStatus`, `new_status: ServiceResponseStatus`, `trigger: str`, `order_number: str \| null`, `comment_ru: str \| null`, `completion_reason: "WITHOUT_BRIGADE" \| null`, `source: TRAINEE \| SCRIPTED_RESPONDER \| PICKER_MIRROR \| SYSTEM`, `actor_user_id: uuid \| null`, `at_offset_ms: int` — one step of one leg's response status (HLD 70 §70.4.2); materialised into `dds_service_status_history` | DDS, INSTRUCTOR |
+| `DDS_CALL_STARTED` (additive, I3 E6b) | `TRAINEE` (OUTBOUND), `SIMULATION` (INBOUND) | `call_id: uuid`, `kind: DdsCallKind`, `direction: DdsCallDirection`, `assignment_id: uuid \| null`, `service_type: ServiceId \| null`, `dialed: str`, `endpoint: CallEndpoint`, `room: str`, `persona_id: str \| null`, `actor_user_id: uuid \| null`, `selection_reason: BROWSER_BUTTON \| LAST_OPENED_CARD \| OLDEST_ACTIVE \| INBOUND_SCRIPT`, `at_offset_ms: int` — `[*] --start--> DIALING` of a ДДС call (80 §80.3.2, §80.6.1) | DDS, INSTRUCTOR |
+| `DDS_CALL_ANSWERED` (additive, I3 E6b) | `SIMULATION` (AI callee), `TRAINEE` (INBOUND) | `call_id: uuid`, `answered_by: AI \| TRAINEE`, `at_offset_ms: int` | DDS, INSTRUCTOR |
+| `DDS_CALL_ENDED` (additive, I3 E6b) | `TRAINEE`, `SIMULATION`, `SYSTEM` | `call_id: uuid`, `reason: HANGUP \| NO_ANSWER \| BUSY \| ABORT \| TRANSPORT_LOST`, `duration_ms: int` (0 when never connected), `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_CARD_ISSUE_FLAGGED` (additive, I3 E5b) | `TRAINEE` | `assignment_id: uuid`, `field_path: str \| null`, `issue_kind: MISSING \| WRONG \| CONTRADICTION \| OTHER`, `comment_ru: str`, `actor_user_id: uuid`, `at_offset_ms: int` — the ДДС flagged an error in the received card (`dds_card_check: ON`, «Отметить ошибку в карточке»), against the frozen snapshot only (HLD 70 §70.7, C1); the comparison to truth happens only in scoring (INV 3) | DDS, INSTRUCTOR |
+
+**The per-turn events of a ДДС call (additive, I3 E6b — 80 §80.6).** `USER_SPEECH_*`, `ASR_*`,
+`CALLER_TTS_*`, `CALLER_UTTERANCE_INTERRUPTED`, `DIALOGUE_INTERPRETED`, `CALLER_RESPONSE_*`,
+`FACT_GATE_EVALUATED`, `FACTS_DELIVERED`, `MODEL_*` and `TRANSPORT_*` are appended **unchanged**
+under a ДДС call's `call_id` (a claimant call-back runs the frozen caller chain). "CALLER" in those
+names is "the AI party of the call"; the party is read from `DDS_CALL_STARTED.kind` of the same
+`call_id`. No `RESPONDER_*` twins. The session's ДДС call ids — the `call_id`s of its
+`DDS_CALL_STARTED` — make their delivery call-scoped (HLD 40 §40.4: to DDS, never to OPERATOR_112)
+and keep them out of the 112 `FACT_OBTAINED` score (`ScoringContext.deliveries_of`, §10.14). A ДДС
+call writes no `CALL_*` event and no `session:{id}:call_state`: those are the 112 call's.
 
 ### Turn record (materialized, not a domain type)
 
@@ -1628,8 +1681,13 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 
 #### 1. `FACT_OBTAINED` — `fact_obtained.py`
 - Config keys: `fact_id: str`, `within_ms: int | null`, `points: float`,
-  `penalty_if_missing: float = 0.0`.
+  `penalty_if_missing: float = 0.0`, `on_call: CALLER_112 | DDS_CLAIMANT = CALLER_112` (additive,
+  I3 E6b — `80-telephony.md` §80.6.2).
 - Reads: `FACTS_DELIVERED` (only — D10), bounded by `SESSION_COMPLETED`/`ROLE_STAGE_COMPLETED`.
+  (I3 E6b) `ScoringContext.deliveries_of` excludes every `FACTS_DELIVERED` whose `call_id` is a ДДС
+  call id (the `call_id`s of the log's `DDS_CALL_STARTED`), so a claimant call-back never moves a
+  112 score; `on_call: DDS_CLAIMANT` counts only a claimant call-back's deliveries (ДДС-side rules).
+  `CARD_CONTRADICTION`'s `require_fact_delivered` reads the same `CALLER_112` view.
 - Points: `points` if some `FACTS_DELIVERED` contains `fact_id` and (`within_ms` is null or
   `at_offset_ms ≤ within_ms`); otherwise `penalty_if_missing`.
 - Evidence: the matching `FACTS_DELIVERED` event; on failure the bounding `ROLE_STAGE_COMPLETED`

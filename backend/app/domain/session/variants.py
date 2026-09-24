@@ -156,10 +156,11 @@ IMPLEMENTED_VARIANT_VALUES: Mapping[str, frozenset[str]] = {
     "card_source": frozenset({CardSource.CALLER_VOICE.value, CardSource.GENERATED_CARD.value}),
     "dds_mode": frozenset({DdsMode.RESOURCE_PICKER.value, DdsMode.MEMO_STATUSES.value}),
     "dds_card_check": frozenset({DdsCardCheck.OFF.value, DdsCardCheck.ON.value}),
-    "dds_brigade_call": frozenset({DdsBrigadeCall.OFF.value}),
+    "dds_brigade_call": frozenset({DdsBrigadeCall.OFF.value, DdsBrigadeCall.ON.value}),
 }
 """What the product can run today; grows per epic (§70.11): E5a added `MEMO_STATUSES`, E5b card
-check `ON` («Отметить ошибку в карточке», `flagDdsCardIssue`); E6 adds brigade call `ON`."""
+check `ON` («Отметить ошибку в карточке», `flagDdsCardIssue`), E6b brigade call `ON` — "the ДДС
+has a phone", memo mode only (HLD 80 §80.5, D25, R41). The product default stays `OFF` (C7)."""
 
 
 class VariantNotAvailableError(DomainError):
@@ -292,7 +293,8 @@ def resolve_variants(
     """Resolve per switch: request value → scenario default (§70.2.2 home 2).
 
     The implemented-values check runs over all four switches before the support check, so an
-    unimplemented value never reaches content validation.
+    unimplemented value never reaches content validation. A resolution to `dds_brigade_call: ON`
+    with `dds_mode: RESOURCE_PICKER` is `VARIANT_NOT_SUPPORTED` (R41, I3 E6b).
     """
     chosen: dict[str, Enum] = {}
     for switch in SWITCHES:
@@ -304,6 +306,12 @@ def resolve_variants(
     for switch in SWITCHES:
         if chosen[switch] not in getattr(scenario.supported, switch):
             raise VariantNotSupportedError(switch, chosen[switch].value)
+    if (
+        chosen["dds_brigade_call"] is DdsBrigadeCall.ON
+        and chosen["dds_mode"] is DdsMode.RESOURCE_PICKER
+    ):
+        # R41 (I3 E6b, HLD 80 §80.5): the ДДС phone exists in memo mode only.
+        raise VariantNotSupportedError("dds_brigade_call", DdsBrigadeCall.ON.value)
     return SessionVariants.model_validate(chosen)
 
 

@@ -4,7 +4,7 @@
 Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
-  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, and R43, HLD 30 §30.13)
+  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41, HLD 80 §80.5, and R43)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -62,6 +62,7 @@ from app.domain.session.variants import (
     SWITCH_ENUMS,
     SWITCHES,
     CardSource,
+    DdsBrigadeCall,
     DdsMode,
     ScenarioVariants,
 )
@@ -713,6 +714,30 @@ def _check_responders(
             out.append(f"R36: expected_response.responders['{service_id}']{problem}")
 
 
+def _check_brigade_call(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R41 (I3 E6b, HLD 80 §80.5, D25): `dds_brigade_call: ON` — "the ДДС has a phone" — is a
+    memo-mode variant. A schema-2 document supporting it must support `dds_mode: MEMO_STATUSES`
+    and carry `expected_response.responders` (the script the phone's brigade voices, E6c).
+
+    The session half — `ON` resolved with `dds_mode: RESOURCE_PICKER` ⇒ `409
+    VARIANT_NOT_SUPPORTED` — is `resolve_variants`'."""
+    if version.schema_version < 2:
+        return
+    supported = version.scenario_variants.supported
+    if DdsBrigadeCall.ON not in supported.dds_brigade_call:
+        return
+    if DdsMode.MEMO_STATUSES not in supported.dds_mode:
+        out.append(
+            "R41: variants.supported.dds_brigade_call has ON, so variants.supported.dds_mode must "
+            "contain MEMO_STATUSES (the ДДС phone exists in memo mode only)"
+        )
+    if version.expected_response.responders is None:
+        out.append(
+            "R41: variants.supported.dds_brigade_call has ON, so expected_response.responders "
+            "(or responders: DEFAULT) is required"
+        )
+
+
 def _check_variant_support(variants: ScenarioVariants, out: list[str]) -> None:
     """Rule R32: `default` ∈ `supported`; every `supported` tuple non-empty, duplicate-free."""
     for switch in SWITCHES:
@@ -906,6 +931,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
     ),
     ((39,), lambda version, _modules, _reference, out: _check_timers(version, out)),
     ((40,), lambda version, _modules, _reference, out: _check_applies_to_variants(version, out)),
+    ((41,), lambda version, _modules, _reference, out: _check_brigade_call(version, out)),
     ((43,), lambda version, _modules, _reference, out: _check_provenance(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
@@ -915,8 +941,8 @@ it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_N
 VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
-"""Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, and R43 after I3 E8;
-R41/R42 are reserved by the telephony HLD, `80-telephony.md`)."""
+"""Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, R43 after I3 E8, R41
+after I3 E6b; R42 is reserved by the telephony HLD, `80-telephony.md`, for E6c)."""
 
 
 def scenario_version_violations(

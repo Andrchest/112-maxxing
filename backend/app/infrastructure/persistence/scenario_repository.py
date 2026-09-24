@@ -124,6 +124,15 @@ class SqlAlchemyScenarioRepository:
         )
         total = int(total_result.scalar_one())
 
+        # I3 E9a: the latest version's difficulty, one correlated read per listed scenario.
+        latest = _VERSIONS.alias("latest")
+        latest_difficulty = (
+            sa.select(latest.c.difficulty)
+            .where(latest.c.scenario_id == _SCENARIOS.c.id)
+            .order_by(latest.c.version.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         result = await self._session.execute(
             sa.select(
                 _SCENARIOS.c.id,
@@ -131,6 +140,7 @@ class SqlAlchemyScenarioRepository:
                 _SCENARIOS.c.title_ru,
                 sa.func.count(_VERSIONS.c.id).label("version_count"),
                 sa.func.max(_VERSIONS.c.version).label("latest_version"),
+                latest_difficulty.label("latest_difficulty"),
             )
             .select_from(
                 _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
@@ -147,6 +157,9 @@ class SqlAlchemyScenarioRepository:
                 title_ru=row.title_ru,
                 version_count=int(row.version_count),
                 latest_version=None if row.latest_version is None else int(row.latest_version),
+                latest_difficulty=(
+                    None if row.latest_difficulty is None else int(row.latest_difficulty)
+                ),
             )
             for row in result.all()
         ]

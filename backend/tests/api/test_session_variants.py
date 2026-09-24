@@ -19,6 +19,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid4
 
+import app.domain.session.variants as variants_module
 import httpx
 import pytest
 import sqlalchemy as sa
@@ -26,6 +27,7 @@ from app.application.scenarios.import_scenarios import canonical_content, conten
 from app.domain.common.ids import ScenarioId, ScenarioVersionId, SessionId, UserId
 from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS
 from app.domain.scenario.version import ScenarioVersion
+from app.domain.session.variants import IMPLEMENTED_VARIANT_VALUES
 from app.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.api.conftest import auth, participant
@@ -280,6 +282,8 @@ async def test_memo_statuses_on_a_schema_1_scenario_is_409_variant_not_supported
 @pytest.mark.parametrize(
     "variants",
     [
+        # I3 E6b implemented the last unimplemented value (`dds_brigade_call: ON`); the test keeps
+        # the mechanism covered by restoring the pre-E6b set (`BEFORE_E6B`).
         {"dds_brigade_call": "ON"},
     ],
 )
@@ -290,7 +294,15 @@ async def test_every_unimplemented_value_is_409_variant_not_available(
     demo_version_id: ScenarioVersionId,
     unit_of_work: Callable[[], SqlAlchemyUnitOfWork],
     variants: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    before_e6b = {**IMPLEMENTED_VARIANT_VALUES, "dds_brigade_call": frozenset({"OFF"})}
+    monkeypatch.setattr(
+        "app.domain.session.variants.IMPLEMENTED_VARIANT_VALUES", before_e6b, raising=True
+    )
+    monkeypatch.setattr(
+        variants_module.resolve_variants, "__defaults__", (before_e6b,), raising=True
+    )
     before = await _session_count(unit_of_work)
     response = await _create(
         client,

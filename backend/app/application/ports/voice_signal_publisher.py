@@ -21,6 +21,7 @@ would make a hang-up fail because a cache is unreachable.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -36,8 +37,19 @@ CANCEL_REASONS: tuple[str, ...] = ("HANGUP", "ABORT", "TRANSPORT_LOST")
 class VoiceSignalPublisher(Protocol):
     """Publishes `voice:join` and `voice:cancel:{session_id}` (§40.6, D9)."""
 
-    async def publish_join(self, session_id: SessionId, *, room: str, call_id: UUID) -> None:
-        """`voice:join` — `{session_id, room, call_id}`. Never raises."""
+    async def publish_join(
+        self,
+        session_id: SessionId,
+        *,
+        room: str,
+        call_id: UUID,
+        extra: Mapping[str, str | None] | None = None,
+    ) -> None:
+        """`voice:join` — `{session_id, room, call_id}`. Never raises.
+
+        `extra` carries HLD 80 §80.3.6's additive keys of a ДДС call (`call_kind`,
+        `assignment_id`, `persona_id`, `endpoint`; I3 E6b). Absent ⇒ `call_kind: CALLER`, the 112
+        call — today's payload, byte for byte."""
         ...
 
     async def publish_cancel(

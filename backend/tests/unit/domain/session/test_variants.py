@@ -64,14 +64,23 @@ def test_product_default_is_the_owner_default_from_e5() -> None:
     assert expected == PRODUCT_DEFAULT_VARIANTS
 
 
-def test_implemented_values_after_e5b() -> None:
+def test_implemented_values_after_e6b() -> None:
+    """I3 E6b implements brigade call `ON` — "the ДДС has a phone" (HLD 80 §80.5)."""
     expected = {
         "card_source": frozenset({"CALLER_VOICE", "GENERATED_CARD"}),
         "dds_mode": frozenset({"RESOURCE_PICKER", "MEMO_STATUSES"}),
         "dds_card_check": frozenset({"OFF", "ON"}),
-        "dds_brigade_call": frozenset({"OFF"}),
+        "dds_brigade_call": frozenset({"OFF", "ON"}),
     }
     assert expected == IMPLEMENTED_VARIANT_VALUES
+
+
+BEFORE_E6B: dict[str, frozenset[str]] = {
+    **IMPLEMENTED_VARIANT_VALUES,
+    "dds_brigade_call": frozenset({"OFF"}),
+}
+"""The implemented values before E6b — kept to exercise `VARIANT_NOT_AVAILABLE` now that every
+declared value is implemented (the mechanism outlives the last unimplemented value)."""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -135,7 +144,7 @@ def test_the_view_filters_unimplemented_values_and_keeps_an_implemented_default(
     view = available_scenario_variants(ALL_SUPPORTED)
     assert view.supported.dds_mode == (DdsMode.RESOURCE_PICKER, DdsMode.MEMO_STATUSES)
     assert view.supported.dds_card_check == (DdsCardCheck.OFF, DdsCardCheck.ON)
-    assert view.supported.dds_brigade_call == (DdsBrigadeCall.OFF,)
+    assert view.supported.dds_brigade_call == (DdsBrigadeCall.OFF, DdsBrigadeCall.ON)
     assert view.supported.card_source == ALL_SUPPORTED.supported.card_source
     assert view.default.dds_mode is DdsMode.MEMO_STATUSES
     brigade_default = ALL_SUPPORTED.model_copy(
@@ -145,8 +154,12 @@ def test_the_view_filters_unimplemented_values_and_keeps_an_implemented_default(
             )
         }
     )
-    view = available_scenario_variants(brigade_default)
-    assert view.default.dds_brigade_call is DdsBrigadeCall.OFF
+    assert available_scenario_variants(brigade_default).default.dds_brigade_call is (
+        DdsBrigadeCall.ON
+    )
+    before = available_scenario_variants(brigade_default, BEFORE_E6B)
+    assert before.supported.dds_brigade_call == (DdsBrigadeCall.OFF,)
+    assert before.default.dds_brigade_call is DdsBrigadeCall.OFF
 
 
 # ---------------------------------------------------------------------------------------------
@@ -186,7 +199,7 @@ def test_card_check_on_is_available_from_e5b() -> None:
 )
 def test_every_unimplemented_value_is_not_available(switch: str, value: Any) -> None:
     with pytest.raises(VariantNotAvailableError) as excinfo:
-        resolve_variants(PartialVariants(**{switch: value}), ALL_SUPPORTED)
+        resolve_variants(PartialVariants(**{switch: value}), ALL_SUPPORTED, BEFORE_E6B)
     assert excinfo.value.code == "VARIANT_NOT_AVAILABLE"
     assert (excinfo.value.switch, excinfo.value.value) == (switch, value.value)
 
@@ -198,6 +211,15 @@ def test_not_available_is_checked_before_not_supported() -> None:
         schema_version=1, role_chain=(OP, DDS), has_prefab_handoff=False
     )
     with pytest.raises(VariantNotAvailableError):
+        resolve_variants(
+            PartialVariants(
+                card_source=CardSource.GENERATED_CARD, dds_brigade_call=DdsBrigadeCall.ON
+            ),
+            schema_1,
+            BEFORE_E6B,
+        )
+    # From E6b the value is implemented, so the same request is now the support refusal.
+    with pytest.raises(VariantNotSupportedError):
         resolve_variants(
             PartialVariants(
                 card_source=CardSource.GENERATED_CARD, dds_brigade_call=DdsBrigadeCall.ON
@@ -224,7 +246,26 @@ def test_an_unimplemented_scenario_default_is_not_available() -> None:
         }
     )
     with pytest.raises(VariantNotAvailableError):
-        resolve_variants(PartialVariants(), brigade_default)
+        resolve_variants(PartialVariants(), brigade_default, BEFORE_E6B)
+
+
+def test_brigade_call_on_resolves_in_memo_mode_from_e6b() -> None:
+    """`dds_brigade_call: ON` resolves where supported, with `MEMO_STATUSES` (HLD 80 §80.5)."""
+    resolved = resolve_variants(
+        PartialVariants(dds_brigade_call=DdsBrigadeCall.ON, dds_mode=DdsMode.MEMO_STATUSES),
+        ALL_SUPPORTED,
+    )
+    assert resolved.dds_brigade_call is DdsBrigadeCall.ON
+
+
+def test_brigade_call_on_with_the_picker_is_not_supported() -> None:
+    """R41's session half: `ON` with `RESOURCE_PICKER` ⇒ `409 VARIANT_NOT_SUPPORTED`."""
+    with pytest.raises(VariantNotSupportedError) as excinfo:
+        resolve_variants(
+            PartialVariants(dds_brigade_call=DdsBrigadeCall.ON, dds_mode=DdsMode.RESOURCE_PICKER),
+            ALL_SUPPORTED,
+        )
+    assert (excinfo.value.switch, excinfo.value.value) == ("dds_brigade_call", "ON")
 
 
 # ---------------------------------------------------------------------------------------------

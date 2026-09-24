@@ -8,11 +8,19 @@ echoed into a problem detail and never cached (SPEC §41).
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from app.api.schemas.common import ApiModel
 from app.application.ports.voice_token_service import MintedVoiceToken
 
-__all__ = ["VoiceTokenResponseSchema", "voice_token_response_schema"]
+__all__ = ["VoiceTokenRequestSchema", "VoiceTokenResponseSchema", "voice_token_response_schema"]
+
+
+class VoiceTokenRequestSchema(ApiModel):
+    """`openapi.yaml`'s `VoiceTokenRequest` (additive, I3 E6b): the ДДС call whose room to join;
+    absent ⇒ the session's 112 call, as before."""
+
+    call_id: UUID | None = None
 
 
 class VoiceTokenResponseSchema(ApiModel):

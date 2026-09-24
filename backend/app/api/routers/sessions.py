@@ -42,7 +42,11 @@ from app.api.schemas.sessions import (
     session_detail_schema,
     session_list_item_schema,
 )
-from app.api.schemas.voice import VoiceTokenResponseSchema, voice_token_response_schema
+from app.api.schemas.voice import (
+    VoiceTokenRequestSchema,
+    VoiceTokenResponseSchema,
+    voice_token_response_schema,
+)
 from app.api.security import AdminOrInstructorDep, CurrentUserDep, actor_of
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.sessions.create_session import CreateSessionCommand
@@ -208,7 +212,10 @@ async def _detail(
     status_code=200,
 )
 async def create_voice_token(
-    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+    session_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    body: VoiceTokenRequestSchema | None = None,
 ) -> VoiceTokenResponseSchema:
     """One room-scoped LiveKit token for this session's live call (D9).
 
@@ -218,8 +225,12 @@ async def create_voice_token(
     `CONNECTED` with `409 ACTION_NOT_AVAILABLE`.
 
     The minted token is never logged (SPEC §41): it goes into this response body and nowhere else.
+
+    (Additive, I3 E6b) With `{call_id}` the token is for that ДДС call's room — the caller's own,
+    non-`ENDED` `DdsCall` (re-join after a refresh, INV 13).
     """
-    minted = await container.create_voice_token()(SessionId(session_id), user)
+    call_id = None if body is None else body.call_id
+    minted = await container.create_voice_token()(SessionId(session_id), user, call_id)
     return voice_token_response_schema(minted)
 
 

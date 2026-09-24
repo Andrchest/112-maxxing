@@ -367,6 +367,13 @@ class Settings(BaseSettings):
     #: than improvising a persona, so R8 asks for a more deterministic register (DO item 1).
     explanation_temperature: float = 0.2
     explanation_timeout_ms: int = 8000
+    # -- I3 E9a: difficulty-weight proposals for a lesson (HLD 70 §70.3.7) ------------------------
+    # Over the same backend `LLMClient` as the explanation (`SIM_EXPLANATION_LLM_*`): one
+    # JSON-schema-constrained call per lesson; any failure answers the deterministic heuristic.
+    #: One short reason per card; a lesson of a dozen cards fits comfortably.
+    weight_proposal_max_tokens: int = 1200
+    weight_proposal_temperature: float = 0.2
+    weight_proposal_timeout_ms: int = 20000
 
     @property
     def livekit_browser_url(self) -> str:

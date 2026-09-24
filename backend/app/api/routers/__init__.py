@@ -7,7 +7,8 @@ WebSocket), `reports` (the whole `reports` tag — `getSessionReport`, `rescoreS
 `getAudioSegment`, `listInferenceMetrics` and the explanation pair) and `instructor`
 (`releaseReportToTrainee`, `getInstructorSessionOverview`), plus I3's `reference` (the reference
 pack reads, HLD 70 §70.6), `lessons` (HLD 70 §70.3; two routers — `releaseLessonReport` is pathed
-under `/api/v1/instructor`) and `incidents` (`listMyIncidents`). Every one of them is included by
+under `/api/v1/instructor`), `incidents` (`listMyIncidents`) and `groups` (I3 E9a's trainee
+groups, HLD 70 §70.3.7). Every one of them is included by
 `create_app`, and the contract test walks the registered routes, so an operation added to an
 existing module needs no change to `create_app` and is checked against the contract
 automatically.
@@ -26,6 +27,7 @@ from __future__ import annotations
 from app.api.routers import (
     auth,
     dds,
+    groups,
     health,
     incidents,
     instructor,
@@ -43,6 +45,7 @@ from app.api.routers import (
 __all__ = [
     "auth",
     "dds",
+    "groups",
     "health",
     "incidents",
     "instructor",

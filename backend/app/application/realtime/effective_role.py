@@ -20,6 +20,11 @@ carries the result. A socket therefore costs one read of the session, ever.
 trainee is still looking at the stage they just finished, and `ROLE_TRANSITION_COMPLETED` (or the
 next `ROLE_STAGE_STARTED`, whichever the runner emits first) is what hands the socket the next
 role's visibility.
+
+**The session's ДДС call ids (I3 E6b, HLD 80 §80.6.2).** Call-scoped visibility needs one more fact
+the stream folds as it goes: the `call_id`s of the `DDS_CALL_STARTED` events seen so far. Every
+connection folds them, fixed-role or not, and a resumed connection is seeded with the ones before
+its cursor (`with_dds_call_ids`), so `redact` can tell a ДДС call's turn from the 112 call's.
 """
 
 from __future__ import annotations
@@ -67,10 +72,20 @@ class Connection:
     role: EffectiveRole
     policy: SessionPolicy
     dynamic: bool
+    dds_call_ids: frozenset[str] = frozenset()
+    """The session's ДДС call ids seen so far, lowercase (I3 E6b, HLD 80 §80.6.2)."""
 
     def with_role(self, role: EffectiveRole) -> Connection:
         """The same connection at a new effective role (the fold's result)."""
-        return self if role == self.role else Connection(role, self.policy, self.dynamic)
+        if role == self.role:
+            return self
+        return Connection(role, self.policy, self.dynamic, self.dds_call_ids)
+
+    def with_dds_call_ids(self, call_ids: frozenset[str]) -> Connection:
+        """The same connection knowing `call_ids` as ДДС calls too (I3 E6b)."""
+        if call_ids <= self.dds_call_ids:
+            return self
+        return Connection(self.role, self.policy, self.dynamic, self.dds_call_ids | call_ids)
 
 
 def connection_of(session: SimulationSession, user: AuthenticatedUser) -> Connection:
@@ -104,8 +119,14 @@ def fold_role(connection: Connection, event_type: EventType, payload: Any) -> Co
     """Re-derive the effective role from one pushed event (§40.1, "re-derived on every push").
 
     A no-op for a fixed-role connection and for every event type that does not move the active
-    stage, so the stream calls it unconditionally and pays a dictionary lookup per event.
+    stage, so the stream calls it unconditionally and pays a dictionary lookup per event. A
+    `DDS_CALL_STARTED` adds its `call_id` to `dds_call_ids` on every connection (I3 E6b).
     """
+    if event_type is EventType.DDS_CALL_STARTED:
+        call_id = payload.get("call_id") if hasattr(payload, "get") else None
+        if call_id:
+            return connection.with_dds_call_ids(frozenset({str(call_id).lower()}))
+        return connection
     if not connection.dynamic:
         return connection
     key = _ROLE_MOVING_EVENTS.get(event_type)

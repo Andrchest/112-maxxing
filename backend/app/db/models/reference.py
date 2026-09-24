@@ -1,6 +1,8 @@
 """Reference data tables (HLD `20-db-schema.md` §20.2).
 
-`users`, `scenarios`, `scenario_versions`, `scoring_rules`.
+`users`, `scenarios`, `scenario_versions`, `scoring_rules`, and I3 E9a's `trainee_groups` /
+`trainee_group_members` (HLD 70 §70.3.7, `0013_trainee_groups`) — account-side lists, beside
+`users`.
 """
 
 from __future__ import annotations
@@ -41,6 +43,34 @@ class User(Base):
         sa.UniqueConstraint("username", name="uq_users_username"),
         sa.CheckConstraint(enum_check("role", USER_ROLES), name="role"),
     )
+
+
+class TraineeGroup(Base):
+    """`trainee_groups` — a named list of trainees an instructor builds lessons for (I3 E9a)."""
+
+    __tablename__ = "trainee_groups"
+
+    id = sa.Column(UUID_T, primary_key=True)
+    name_ru = sa.Column(sa.Text(), nullable=False)
+    created_by_user_id = sa.Column(
+        UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+
+    __table_args__ = (sa.CheckConstraint("name_ru <> ''", name="name_ru_not_empty"),)
+
+
+class TraineeGroupMember(Base):
+    """`trainee_group_members` — one row per (group, trainee) (I3 E9a)."""
+
+    __tablename__ = "trainee_group_members"
+
+    group_id = sa.Column(
+        UUID_T, sa.ForeignKey("trainee_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id = sa.Column(UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+
+    __table_args__ = (sa.Index("ix_trainee_group_members_user", "user_id"),)
 
 
 class Scenario(Base):

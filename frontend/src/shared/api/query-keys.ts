@@ -37,6 +37,8 @@ export const queryKeys = {
     // I3 E5c: the memo's per-service legs list (`listDdsLegs`) — one cache entry per session,
     // shared by every component that reads or invalidates it.
     legs: (sessionId: string) => ['dds', sessionId, 'legs'] as const,
+    // I3 E6b: the ДДС phone line (`listDdsCalls`), refreshed on every `DDS_CALL_*` event.
+    calls: (sessionId: string) => ['dds', sessionId, 'calls'] as const,
   },
   // -- E16: post-session report and replay (SPEC §29; openapi `reports` tag) ------------------
   reports: {
@@ -56,5 +58,15 @@ export const queryKeys = {
   },
   incidents: {
     list: (roleType?: string, q?: string) => ['incidents', 'list', roleType ?? 'ANY', q ?? ''] as const,
+  },
+  // -- I3 E9a: trainee groups and difficulty-weight proposals (70 §70.3.7) --------------------
+  traineeGroups: {
+    list: () => ['trainee-groups', 'list'] as const,
+  },
+  weightProposals: {
+    detail: (lessonId: string) => ['lessons', lessonId, 'weight-proposals'] as const,
+  },
+  scenarioPicker: {
+    list: () => ['scenarios', 'picker'] as const,
   },
 } as const;

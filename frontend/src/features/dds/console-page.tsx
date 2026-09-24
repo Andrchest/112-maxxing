@@ -32,6 +32,8 @@ import { LegsPanel } from './legs-panel';
 import { CardIssueButton } from './card-issue-button';
 import { DdsHeaderStrip } from './dds-header-strip';
 import { DdsSideDrawer } from './dds-side-drawer';
+import { DdsPhoneWidget } from './phone-widget';
+import { DDS_CALL_EVENT_TYPES, useDdsCallStore } from '@/entities/call';
 import { ddsStageStateLabelRu } from './dds-labels';
 
 // I3 E5c: events that mean "the legs list (or a leg's history) may have changed elsewhere" —
@@ -129,6 +131,11 @@ export function DdsConsolePage() {
         if (LEGS_REFRESH_EVENT_TYPES.has(event.event_type)) {
           void queryClient.invalidateQueries({ queryKey: queryKeys.dds.legs(snapshot.session.id) });
         }
+        // I3 E6b: the ДДС phone line — fold the event at once, then re-read the server's view.
+        if (DDS_CALL_EVENT_TYPES.has(event.event_type)) {
+          useDdsCallStore.getState().applyEvent(event);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.dds.calls(snapshot.session.id) });
+        }
       },
       onStatusChange: setConnectionStatus,
     });
@@ -198,6 +205,9 @@ export function DdsConsolePage() {
   // "kept behind dds_mode = RESOURCE_PICKER"). `dds_mode` is immutable per session (D16), so
   // reading it off the snapshot's own `SessionVariants` needs no store of its own.
   const isMemoMode = snapshot.session.variants.dds_mode === 'MEMO_STATUSES';
+  // I3 E6b (80 §80.5, D25): `dds_brigade_call: ON` — the ДДС workstation has a phone (memo mode
+  // only, R41). Under `OFF` the widget does not exist at all.
+  const hasPhone = snapshot.session.variants.dds_brigade_call === 'ON';
 
   // I3 E5c (manager review): the memo layout follows the reference's shape (header strip on top,
   // a two-column card summary, the services tab bar spanning the bottom, product-only panels in a
@@ -223,6 +233,11 @@ export function DdsConsolePage() {
                 <CardIssueButton sessionId={sessionId} />
                 <DdsSideDrawer sessionId={sessionId} />
               </div>
+            </div>
+          ) : null}
+          {hasPhone ? (
+            <div className="mb-3">
+              <DdsPhoneWidget sessionId={sessionId} />
             </div>
           ) : null}
           <div className="flex flex-col gap-4">

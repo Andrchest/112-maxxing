@@ -7,6 +7,9 @@ A separate process, not a backend thread. It:
    `SessionEvent`s through the same `seq_no` row lock and never via REST;
 2. subscribes to `voice:join` (§40.6, `{session_id, room, call_id}`) and starts one `TurnPipeline`
    per call, plus a `voice:cancel:{session_id}` subscription for that call's hang-up/abort;
+   calls are keyed by `(session_id, call_id)` (I3 E6b, HLD 80 §80.3.6): a ДДС call-back to the
+   claimant (`call_kind: CLAIMANT`) runs beside the session's 112 call, on the same frozen caller
+   pipeline, and never writes the 112 call's `CALL_ENDED` or `session:{id}:call_state`;
 3. warms the inference components up in `60-inference-ops.md` §4.2's **sequential** order — VAD,
    then ASR, then the LLM, then TTS — and heartbeats one `voice:health:{service}` key per warmed
    component with `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A
@@ -41,6 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.application.dialogue.prompt_builder import DISPATCHER_LABEL_RU
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
 from app.application.ports.llm import LLMClient
@@ -50,6 +54,7 @@ from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
 from app.application.voice.events import VoiceEventAppender, call_ended_event
 from app.config.settings import Settings, get_settings
 from app.domain.common.ids import SessionId
+from app.domain.dds.call import DdsCallKind
 from app.inference.errors import InferenceOutOfMemoryError, ModelNotAvailableError
 from app.infrastructure.clock import SystemClock
 from app.infrastructure.transport.redis_voice_signals import JOIN_CHANNEL, cancel_channel
@@ -102,6 +107,12 @@ LLM_SERVICE = "llm"
 TTS_SERVICE = "tts"
 #: The components this process warms up and heartbeats, in §4.2's warm-up order.
 HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_SERVICE)
+
+#: `voice:join.call_kind` of the session's 112 call — absent from the payload means this (§80.3.6).
+CALL_KIND_CALLER = "CALLER"
+#: The ДДС call kinds this build runs (I3 E6b): the claimant call-back on the frozen caller chain.
+#: `SERVICE_HEAD` (E6c) and `OPERATOR_112` (E6d) need the responder chain; ignored until then.
+SUPPORTED_DDS_CALL_KINDS: frozenset[str] = frozenset({DdsCallKind.CLAIMANT.value})
 
 #: `CALL_ENDED.reason` when the call's transport could not be built at all (E19-E3). A free `str`
 #: like the pipeline's own `TRANSPORT_CLOSED` / `TRANSPORT_LOST` / `CANCELLED`, and deliberately
@@ -188,7 +199,9 @@ class VoiceAgent:
         self._redis = redis
         #: Injectable so a test can drive the whole agent against `FakeCallTransport` (D13).
         self._transport_factory = transport_factory or self._default_transport
-        self._calls: dict[SessionId, asyncio.Task[None]] = {}
+        #: One pipeline per call, keyed by `(session_id, call_id)` (I3 E6b, HLD 80 §80.3.6): the
+        #: 112 call and a ДДС call of the same session are two entries.
+        self._calls: dict[tuple[SessionId, uuid.UUID], asyncio.Task[None]] = {}
         self._stopping = asyncio.Event()
         #: Built once per process, warmed once, shared by every call (§4.2).
         self._vad: VADProvider | None = None
@@ -240,7 +253,12 @@ class VoiceAgent:
 
     @property
     def active_sessions(self) -> tuple[SessionId, ...]:
-        """Sessions with a live pipeline."""
+        """Sessions with a live pipeline (each once, however many calls it has)."""
+        return tuple(dict.fromkeys(session_id for session_id, _call_id in self._calls))
+
+    @property
+    def active_calls(self) -> tuple[tuple[SessionId, uuid.UUID], ...]:
+        """`(session_id, call_id)` of every live pipeline (I3 E6b)."""
         return tuple(self._calls)
 
     def _default_transport(
@@ -682,21 +700,31 @@ class VoiceAgent:
         """Start a pipeline for `{session_id, room, call_id}`; a repeat join is a no-op (§40.6).
 
         `voice:join` is re-published every `VOICE_JOIN_RETRY_MS` while the call is RINGING, so
-        idempotence here is not an optimisation — it is what makes the retry safe.
+        idempotence here is not an optimisation — it is what makes the retry safe. Idempotence is
+        per `(session_id, call_id)` (I3 E6b): the additive `call_kind` key (absent ⇒ `CALLER`, the
+        112 call) says whose call it is, and a ДДС kind this build does not run is ignored.
         """
         try:
             payload = json.loads(raw)
             session_id = SessionId(uuid.UUID(str(payload["session_id"])))
             call_id = uuid.UUID(str(payload["call_id"]))
             room = str(payload["room"])
+            call_kind = str(payload.get("call_kind") or CALL_KIND_CALLER)
         except (KeyError, ValueError, TypeError, json.JSONDecodeError):
             logger.warning("ignoring malformed voice:join payload %r", raw)
             return
-        if session_id in self._calls:
+        if call_kind != CALL_KIND_CALLER and call_kind not in SUPPORTED_DDS_CALL_KINDS:
+            logger.warning("ignoring voice:join for a %s call: not run by this build", call_kind)
             return
-        self._calls[session_id] = asyncio.create_task(
-            self._run_call(session_id, call_id, room), name=f"voice-call-{session_id}"
+        key = (session_id, call_id)
+        if key in self._calls:
+            return
+        run = (
+            self._run_call(session_id, call_id, room)
+            if call_kind == CALL_KIND_CALLER
+            else self._run_call(session_id, call_id, room, dds_call=True)
         )
+        self._calls[key] = asyncio.create_task(run, name=f"voice-call-{session_id}-{call_id}")
 
     async def _cancel_signals(self, session_id: SessionId) -> AsyncIterator[str]:
         """`voice:cancel:{session_id}` → the pipeline's `_control` task."""
@@ -718,7 +746,56 @@ class VoiceAgent:
                 await pubsub.unsubscribe(channel)
                 await pubsub.aclose()
 
-    async def _run_call(self, session_id: SessionId, call_id: uuid.UUID, room: str) -> None:
+    async def _watch_cancel(self, session_id: SessionId, call_id: uuid.UUID, pipeline: Any) -> None:
+        """`voice:cancel:{session_id}` for THIS call only → `pipeline.stop(reason)` (I3 E6b).
+
+        The channel is per session and names the call; a ДДС call's pipeline must not stop on the
+        112 call's hang-up, nor the other way round, so every message is filtered on `call_id`.
+        """
+        wanted = str(call_id).lower()
+        pubsub = self._redis.pubsub()
+        await pubsub.subscribe(cancel_channel(session_id))
+        try:
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                try:
+                    data = json.loads(message["data"])
+                    if str(data.get("call_id", "")).lower() != wanted:
+                        continue
+                    reason = str(data["reason"])
+                except (KeyError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+                    continue
+                logger.info("voice:cancel for ДДС call %s: %s", call_id, reason)
+                await pipeline.stop(reason)
+                return
+        finally:
+            with contextlib.suppress(Exception):
+                await pubsub.unsubscribe(cancel_channel(session_id))
+                await pubsub.aclose()
+
+    async def _next_turn_index(self, session_id: SessionId) -> int:
+        """Where a ДДС call's turn numbering starts: after the session's last turn (I3 E6b).
+
+        `dialogue_turns` is unique on `(session_id, turn_index)` and a new `TurnDetector` counts
+        from 0, so a call-back after the 112 call would otherwise overwrite that call's turn rows.
+        """
+        try:
+            async with self._deps.uow_factory() as uow:
+                events = await uow.events.read(session_id)
+        except Exception:
+            logger.exception("could not read the turn numbering of session %s", session_id)
+            return 0
+        indices = [
+            int(event.payload["turn_index"])
+            for event in events
+            if isinstance(event.payload.get("turn_index"), int)
+        ]
+        return max(indices) + 1 if indices else 0
+
+    async def _run_call(
+        self, session_id: SessionId, call_id: uuid.UUID, room: str, *, dds_call: bool = False
+    ) -> None:
         """One call: build the transport, build the pipeline, run until the media plane goes away.
 
         **Everything that can fail is inside the `try`** (E19-E3). Building the transport used to
@@ -729,9 +806,22 @@ class VoiceAgent:
         media-plane failure ends it, with `CALL_ENDED` carrying an explicit reason.
         """
         transport: CallTransport | None = None
+        watcher: asyncio.Task[None] | None = None
         try:
             started_at = await self._session_started_at(session_id)
             transport = self._transport_factory(session_id, call_id, room, started_at)
+            # I3 E6b (HLD 80 §80.3.4, §80.3.6): a claimant call-back is this same pipeline with
+            # three additive arguments — no `CALL_ENDED`, the session's turn numbering continued,
+            # and the prompt's speaker label «ДИСПЕТЧЕР».
+            dds_options: dict[str, Any] = (
+                {
+                    "dds_call": True,
+                    "first_turn_index": await self._next_turn_index(session_id),
+                    "operator_label_ru": DISPATCHER_LABEL_RU,
+                }
+                if dds_call
+                else {}
+            )
             pipeline = build_pipeline(
                 self._deps,
                 session_id=session_id,
@@ -753,23 +843,34 @@ class VoiceAgent:
                 # retry has a warmed provider to fall back on.
                 tts_fallback=self._tts_fallback,
                 guard=self._guard,
+                **dds_options,
             )
             await transport.connect(call_id)
+            if dds_call:
+                watcher = asyncio.create_task(
+                    self._watch_cancel(session_id, call_id, pipeline),
+                    name=f"voice-cancel-{session_id}-{call_id}",
+                )
             await pipeline.run()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("voice pipeline failed for session %s", session_id)
-            if transport is None:
+            if transport is None and not dds_call:
                 # The pipeline never existed, so nothing else will ever write `CALL_ENDED` for this
                 # call and the trainee-facing timeline would simply stop. Say why (SPEC §39, "never
-                # silently reset the simulation").
+                # silently reset the simulation"). A ДДС call writes no `CALL_ENDED` (I3 E6b): the
+                # trainee still holds «Положить трубку», and the line is theirs to put down.
                 await self._end_call_unavailable(session_id, call_id)
         finally:
+            if watcher is not None:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await watcher
             if transport is not None:
                 with contextlib.suppress(Exception):
                     await transport.disconnect()
-            self._calls.pop(session_id, None)
+            self._calls.pop((session_id, call_id), None)
 
     async def _session_started_at(self, session_id: SessionId) -> datetime | None:
         """The session's `started_at` — the origin every offset of this call is measured from.

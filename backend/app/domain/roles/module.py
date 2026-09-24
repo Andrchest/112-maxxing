@@ -25,7 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; `roles` must not initialise
 
 
 class Permission(str, Enum):
-    """§10.9, plus I3's two additive members (HLD 70 §70.4.4)."""
+    """§10.9, plus I3's additive members (HLD 70 §70.4.4, HLD 80 §80.5)."""
 
     ANSWER_CALL = "ANSWER_CALL"
     END_CALL = "END_CALL"
@@ -44,6 +44,8 @@ class Permission(str, Enum):
     # Additive, I3 E5a (HLD 70 §70.4.4): the leg triggers of the memo's pencil, and the card check.
     SET_SERVICE_STATUS = "SET_SERVICE_STATUS"
     FLAG_CARD_ISSUE = "FLAG_CARD_ISSUE"
+    # Additive, I3 E6b (HLD 80 §80.5): the ДДС phone line under `dds_brigade_call: ON`.
+    PLACE_DDS_CALL = "PLACE_DDS_CALL"
 
 
 class ActionDescriptor(BaseModel):

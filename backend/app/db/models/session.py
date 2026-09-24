@@ -76,6 +76,12 @@ class Lesson(Base):
     report_released_by_user_id = sa.Column(
         UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
+    #: I3 E9a (`0013_trainee_groups`): the group the lesson was created for, for the record.
+    group_id = sa.Column(
+        UUID_T, sa.ForeignKey("trainee_groups.id", ondelete="SET NULL"), nullable=True
+    )
+    #: I3 E9a: the latest `WeightProposalSet`, never applied until the instructor accepts it.
+    weight_proposals = sa.Column(JSONB_T, nullable=True)
 
     __table_args__ = (
         sa.Index("ix_lessons_state", "state"),

@@ -686,12 +686,22 @@ class InMemoryVoiceSignals:
     def __init__(self) -> None:
         #: `(session_id, room, call_id)` per `voice:join`, in order.
         self.joins: list[tuple[SessionId, str, UUID]] = []
+        #: The additive keys of each `voice:join` (I3 E6b; `{}` for the 112 call), same order.
+        self.join_extras: list[dict[str, str | None]] = []
         #: `(session_id, call_id, reason, at_offset_ms)` per `voice:cancel`, in order.
         self.cancels: list[tuple[SessionId, UUID, str, int]] = []
 
-    async def publish_join(self, session_id: SessionId, *, room: str, call_id: UUID) -> None:
+    async def publish_join(
+        self,
+        session_id: SessionId,
+        *,
+        room: str,
+        call_id: UUID,
+        extra: Mapping[str, str | None] | None = None,
+    ) -> None:
         """Record one `voice:join`."""
         self.joins.append((session_id, room, call_id))
+        self.join_extras.append(dict(extra or {}))
 
     async def publish_cancel(
         self, session_id: SessionId, *, call_id: UUID, reason: str, at_offset_ms: int

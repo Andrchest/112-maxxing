@@ -39,6 +39,7 @@ from app.api.routers import (
     admin,
     auth,
     dds,
+    groups,
     health,
     incidents,
     instructor,
@@ -112,6 +113,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(lessons.router)
     app.include_router(lessons.instructor_router)
     app.include_router(incidents.router)
+    app.include_router(groups.router)
 
     return app
 

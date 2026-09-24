@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -43,14 +44,23 @@ class RedisVoiceSignals:
     def __init__(self, client: Redis) -> None:
         self._client = client
 
-    async def publish_join(self, session_id: SessionId, *, room: str, call_id: UUID) -> None:
-        """`voice:join` — `{session_id, room, call_id}`."""
+    async def publish_join(
+        self,
+        session_id: SessionId,
+        *,
+        room: str,
+        call_id: UUID,
+        extra: Mapping[str, str | None] | None = None,
+    ) -> None:
+        """`voice:join` — `{session_id, room, call_id}`, plus a ДДС call's additive keys (I3 E6b,
+        HLD 80 §80.3.6: `call_kind`, `assignment_id`, `persona_id`, `endpoint`)."""
         await self._publish(
             JOIN_CHANNEL,
             {
                 "session_id": str(session_id).lower(),
                 "room": room,
                 "call_id": str(call_id).lower(),
+                **(extra or {}),
             },
         )
 

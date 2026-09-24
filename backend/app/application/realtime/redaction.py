@@ -27,6 +27,15 @@ Three gates, applied in this order:
 
 `redacted_keys` is always `[]` for `INSTRUCTOR` (§40.2).
 
+**Call-scoped delivery (I3 E6b, HLD 80 §80.6.2).** The per-turn pipeline events are reused under a
+ДДС call's `call_id` (`CALL_SCOPED_EVENT_TYPES`: `USER_SPEECH_*`, `ASR_*`, `CALLER_TTS_*`,
+`CALLER_UTTERANCE_INTERRUPTED`, `TRANSPORT_*`). Their delivery is decided by one more input, the
+session's ДДС call ids (the `call_id`s of its `DDS_CALL_STARTED`, a pure function of the log): an
+event of a ДДС call is pushed to DDS — with the same key whitelist OPERATOR_112 gets — and **never**
+to OPERATOR_112; any other is pushed exactly as before, to OPERATOR_112 and never to DDS. The
+instructor sees everything. `STAGE_STATE_CHANGED`'s "only the stage's own role" rule is the
+precedent: a delivery filter on a payload key, applied before the key whitelist.
+
 HLD gap, closed additively by E9: §40.4 row 38 asks for `NOTIFICATION_ACKNOWLEDGED` to be
 "pushed only to the notification's `audience_role`", and neither §10.13's catalog entry nor
 `openapi.yaml` carried an audience key in that payload — the discriminator the filter needs did
@@ -54,6 +63,7 @@ from app.domain.roles.registry import ROLE_MODULES
 from app.domain.session.policy import SessionPolicy
 
 __all__ = [
+    "CALL_SCOPED_EVENT_TYPES",
     "PAYLOAD_KEY_WHITELIST",
     "RealtimeEnvelope",
     "SourceEvent",
@@ -186,6 +196,32 @@ _ROLE_DISCRIMINATOR: Mapping[EventType, str] = {
 }
 
 
+CALL_SCOPED_EVENT_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.USER_SPEECH_STARTED,
+        EventType.USER_SPEECH_ENDED,
+        EventType.ASR_PARTIAL,
+        EventType.ASR_FINAL,
+        EventType.CALLER_TTS_STARTED,
+        EventType.CALLER_TTS_ENDED,
+        EventType.CALLER_UTTERANCE_INTERRUPTED,
+        EventType.TRANSPORT_DISCONNECTED,
+        EventType.TRANSPORT_RECONNECTED,
+    }
+)
+"""§40.4's call-scoped `▲` rows (I3 E6b): delivered to DDS iff their `call_id` is a ДДС call's,
+and then never to OPERATOR_112."""
+
+
+def _call_scope_allows(event: SourceEvent, role: RoleType, dds_call_ids: frozenset[str]) -> bool:
+    """HLD 80 §80.6.2: a ДДС call's turn goes to DDS only, any other turn to OPERATOR_112 only."""
+    raw = event.payload.get("call_id")
+    of_dds_call = raw is not None and str(raw).lower() in dds_call_ids
+    if role is RoleType.DDS:
+        return of_dds_call
+    return not of_dds_call
+
+
 def visible_event_types(role: EffectiveRole) -> frozenset[EventType] | None:
     """The role's `visible_event_types`; `None` for `INSTRUCTOR`, which sees every type (§40.1).
 
@@ -199,13 +235,20 @@ def visible_event_types(role: EffectiveRole) -> frozenset[EventType] | None:
 
 
 def redact(
-    event: SourceEvent, role: EffectiveRole, policy: SessionPolicy
+    event: SourceEvent,
+    role: EffectiveRole,
+    policy: SessionPolicy,
+    *,
+    dds_call_ids: frozenset[str] = frozenset(),
 ) -> RealtimeEnvelope | None:
     """The §40.4 verdict for one event and one connection.
 
     `None` means "never serialised for this role" — the caller drops the event entirely and does
     not advance anything the client can see. Otherwise the returned envelope's `payload` holds
     exactly the keys this role may see and `redacted_keys` names, sorted, what was removed.
+
+    `dds_call_ids` is the session's ДДС call ids known at this event (`Connection.dds_call_ids`,
+    I3 E6b); it decides the call-scoped rows (`CALL_SCOPED_EVENT_TYPES`).
     """
     if not isinstance(role, RoleType):  # INSTRUCTOR: every type, every key, `redacted_keys == []`
         return _envelope(event, dict(event.payload), ())
@@ -217,6 +260,11 @@ def redact(
     # §40.4's one `◆` row: `ASSESSMENT` sets `show_asr_partials` false (§10.10), and the *whole*
     # event is withheld then — not merely its text.
     if event.event_type is EventType.ASR_PARTIAL and not policy.show_asr_partials:
+        return None
+
+    if event.event_type in CALL_SCOPED_EVENT_TYPES and not _call_scope_allows(
+        event, role, dds_call_ids
+    ):
         return None
 
     discriminator = _ROLE_DISCRIMINATOR.get(event.event_type)

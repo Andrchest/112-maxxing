@@ -68,6 +68,8 @@ class StoredScenarioListing(BaseModel):
     title_ru: str
     version_count: int
     latest_version: int | None = None
+    latest_difficulty: int | None = None
+    """I3 E9a: the latest version's `difficulty` (1–5), so a picker can show and filter it."""
 
 
 class StoredScenarioVersionDetail(BaseModel):

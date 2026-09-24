@@ -621,6 +621,110 @@ export function listMyIncidents(
   return apiFetch(`/incidents${qs ? `?${qs}` : ''}`);
 }
 
+// -- I3 E9a: trainee groups, per-workstation cards and difficulty weights (70 §70.3.7) ---------
+// Groups are named lists of trainees a lesson may be created for; weight proposals are stored
+// by the server and never applied until `acceptWeightProposals` (scoring stays deterministic,
+// SPEC §2, D11). Thin wrappers only — nothing here computes a weight.
+export type TraineeGroup = components['schemas']['TraineeGroup'];
+export type TraineeGroupRequest = components['schemas']['TraineeGroupRequest'];
+export type ProposalSource = components['schemas']['ProposalSource'];
+export type WeightProposalSet = components['schemas']['WeightProposalSet'];
+export type WeightProposalLine = components['schemas']['WeightProposalLine'];
+
+/** `listScenarios` with an explicit page size — the lesson plan's picker lists every ticket
+ * scenario (the catalog is larger than the default page of 50). */
+export function listScenarioPage(
+  params: { limit?: number; offset?: number } = {},
+): Promise<{ items: ScenarioSummary[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.offset !== undefined) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiFetch(`/scenarios${qs ? `?${qs}` : ''}`);
+}
+
+export function listTraineeGroups(): Promise<{ items: TraineeGroup[]; total: number }> {
+  return apiFetch('/trainee-groups?limit=200');
+}
+
+export function createTraineeGroup(body: TraineeGroupRequest): Promise<TraineeGroup> {
+  return apiFetch('/trainee-groups', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateTraineeGroup(groupId: string, body: TraineeGroupRequest): Promise<TraineeGroup> {
+  return apiFetch(`/trainee-groups/${encodeURIComponent(groupId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteTraineeGroup(groupId: string): Promise<void> {
+  return apiFetch(`/trainee-groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+}
+
+/** Asks the server for proposals (LLM, or the heuristic on any LLM failure); changes no weight. */
+export function requestWeightProposals(lessonId: string): Promise<WeightProposalSet> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/weight-proposals`, { method: 'POST' });
+}
+
+/** `404 NOT_FOUND` until proposals have been requested. */
+export function getWeightProposals(lessonId: string): Promise<WeightProposalSet> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/weight-proposals`);
+}
+
+/** The chosen positions' proposals become the plan's weights — the only such path. */
+export function acceptWeightProposals(lessonId: string, positions: number[]): Promise<WeightProposalSet> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/weight-proposals/accept`, {
+    method: 'POST',
+    body: JSON.stringify({ positions }),
+  });
+}
+
+// -- I3 E6b: the ДДС phone line (HLD 80 §80.3; openapi `dds-calls`) -----------------------------
+export type DdsCallView = components['schemas']['DdsCallView'];
+export type DdsCallKind = components['schemas']['DdsCallKind'];
+export type DdsCallState = components['schemas']['DdsCallState'];
+export type DdsCallEndReason = components['schemas']['DdsCallEndReason'];
+export type StartDdsCallRequest = components['schemas']['StartDdsCallRequest'];
+export type StartDdsCallResponse = components['schemas']['StartDdsCallResponse'];
+
+/** `POST /dds-calls` (`startDdsCall`) — the ДДС trainee places a call; only under
+ * `dds_brigade_call: ON` (`409 ACTION_NOT_AVAILABLE` otherwise, `409 DDS_LINE_BUSY` while the
+ * trainee's line is taken). The answer carries the browser endpoint's room-scoped token. */
+export function startDdsCall(sessionId: string, body: StartDdsCallRequest): Promise<StartDdsCallResponse> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds-calls`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `GET /dds-calls` (`listDdsCalls`) — every ДДС call of the session, newest first; what restores
+ * the phone widget after a refresh (INV 13). */
+export function listDdsCalls(sessionId: string): Promise<DdsCallView[]> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds-calls`);
+}
+
+/** `GET /dds-calls/{call_id}` (`getDdsCall`). */
+export function getDdsCall(sessionId: string, callId: string): Promise<DdsCallView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds-calls/${encodeURIComponent(callId)}`);
+}
+
+/** `POST /dds-calls/{call_id}/hang-up` (`hangUpDdsCall`) — «Положить трубку». */
+export function hangUpDdsCall(sessionId: string, callId: string): Promise<DdsCallView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds-calls/${encodeURIComponent(callId)}/hang-up`, {
+    method: 'POST',
+  });
+}
+
+/** `createVoiceToken {call_id}` (additive, I3 E6b) — the token of a live ДДС call's room, for the
+ * line's own trainee (re-join after a refresh, INV 13). The 112 call keeps `createVoiceToken`. */
+export function createDdsCallVoiceToken(sessionId: string, callId: string): Promise<VoiceTokenResponse> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/voice-token`, {
+    method: 'POST',
+    body: JSON.stringify({ call_id: callId }),
+  });
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails
@@ -663,6 +767,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   SERVICE_REMOVAL_FORBIDDEN: 'problemServiceRemovalForbidden', // additive, I3 E2b′
   COMMENT_REQUIRED: 'problemCommentRequired', // additive, I3 E5a
   FORBIDDEN_FOR_SERVICE: 'problemForbiddenForService', // additive, I3 E5a
+  DDS_LINE_BUSY: 'problemDdsLineBusy', // additive, I3 E6b
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

@@ -78,6 +78,14 @@ class EventType(str, Enum):
     DDS_CARD_ISSUE_FLAGGED = "DDS_CARD_ISSUE_FLAGGED"
     """The ДДС flagged an error in the received card (`dds_card_check: ON`); TRAINEE (E5b)."""
 
+    # Additive per D5, I3 H2 telephony (HLD 80 §80.6.1).
+    DDS_CALL_STARTED = "DDS_CALL_STARTED"
+    """A ДДС call started (`[*] --start--> DIALING`, §80.3.2); TRAINEE or SIMULATION (E6b)."""
+    DDS_CALL_ANSWERED = "DDS_CALL_ANSWERED"
+    """A ДДС call was answered (`RINGING --answer--> CONNECTED`); SIMULATION or TRAINEE (E6b)."""
+    DDS_CALL_ENDED = "DDS_CALL_ENDED"
+    """A ДДС call ended — hang-up, no answer, busy, abort, transport lost (E6b)."""
+
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
     {
@@ -140,6 +148,9 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.DDS_CARD_OPENED,
         EventType.DDS_SERVICE_STATUS_SET,
         EventType.DDS_CARD_ISSUE_FLAGGED,
+        EventType.DDS_CALL_STARTED,
+        EventType.DDS_CALL_ANSWERED,
+        EventType.DDS_CALL_ENDED,
     }
 )
 

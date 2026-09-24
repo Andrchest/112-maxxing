@@ -553,6 +553,14 @@ Rule 43 is added by I3 E8 (§30.13); numbers 41 and 42 are reserved by the telep
 (`80-telephony.md`, E6b/E6c). Rule 1 is extended once more: `provenance` in a schema-1 document is
 refused.
 
+Rule 41 is added by I3 E6b (`80-telephony.md` §80.5, D25): `dds_brigade_call: ON` — "the ДДС has a
+phone" — is a memo-mode variant. Its session half is `resolve_variants`': a session resolving to
+`ON` with `dds_mode: RESOURCE_PICKER` is refused with `409 VARIANT_NOT_SUPPORTED`. Rule 42 (the
+persona override and a script step's `report`) stays reserved for E6c.
+
+41. `variants.supported.dds_brigade_call` contains `ON` ⇒ `variants.supported.dds_mode` contains
+    `MEMO_STATUSES` and `expected_response.responders` is present (or `responders: DEFAULT`).
+
 43. `provenance`, when present, is well formed — exactly the keys `source` (`TICKET`), `ticket`
     (integer), `call` (integer) and `generation_candidate` (boolean), strictly typed; a malformed key
     is reported as rule 43, not rule 1 — and names a call that exists: for `source: TICKET`,

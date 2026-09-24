@@ -38,8 +38,11 @@ from app.application.dds.acknowledge_notification import AcknowledgeNotification
 from app.application.dds.back_to_acknowledged import BackToDdsAcknowledged
 from app.application.dds.close_incident import CloseDdsIncident
 from app.application.dds.command_context import DdsCommandGate
+from app.application.dds.dds_call_flow import AdvanceDdsCalls
+from app.application.dds.dds_call_views import GetDdsCall, ListDdsCalls
 from app.application.dds.deselect_resource import DeselectDdsResource
 from app.application.dds.dispatch import DispatchDdsResources
+from app.application.dds.end_dds_call import HangUpDdsCall
 from app.application.dds.flag_card_issue import FlagDdsCardIssue
 from app.application.dds.get_work_item import GetDdsWorkItem
 from app.application.dds.list_legs import ListDdsLegs
@@ -52,6 +55,14 @@ from app.application.dds.select_resource import SelectDdsResource
 from app.application.dds.send_status_update import SendDdsStatusUpdate
 from app.application.dds.set_service_status import SetDdsServiceStatus
 from app.application.dds.stage_automation import DdsStageAutomation
+from app.application.dds.start_dds_call import StartDdsCall
+from app.application.groups.trainee_groups import (
+    CreateTraineeGroup,
+    DeleteTraineeGroup,
+    GetTraineeGroup,
+    ListTraineeGroups,
+    UpdateTraineeGroup,
+)
 from app.application.handoff.complete_operator_stage import CompleteOperatorStage
 from app.application.handoff.continue_to_next_stage import ContinueToNextStage
 from app.application.handoff.create_handoff import CreateHandoff
@@ -65,6 +76,11 @@ from app.application.lessons.lesson_runner import LessonRunner
 from app.application.lessons.queries import GetLesson, ListLessons, ListMyIncidents
 from app.application.lessons.release import ReleaseLessonReport
 from app.application.lessons.start_lesson import StartLesson
+from app.application.lessons.weight_proposals import (
+    AcceptWeightProposals,
+    GetWeightProposals,
+    RequestWeightProposals,
+)
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
 from app.application.operator.begin_handoff_preparation import BeginHandoffPreparation
@@ -161,6 +177,8 @@ from app.infrastructure.transport.livekit_transport_status import LiveKitTranspo
 from app.infrastructure.transport.local_call_transport_status import LocalCallTransportStatus
 from app.infrastructure.transport.redis_call_state_cache import RedisCallStateCache
 from app.infrastructure.transport.redis_voice_signals import RedisVoiceSignals
+from app.infrastructure.weights.heuristic_proposer import HeuristicWeightProposer
+from app.infrastructure.weights.llm_proposer import LlmWeightProposer
 
 __all__ = ["Container", "build_container"]
 
@@ -262,7 +280,11 @@ class Container:
                 tick_ms=settings.sim_tick_ms,
                 lock_ttl_s=settings.sim_runner_lock_ttl_s,
                 lock_refresh_s=settings.sim_runner_lock_refresh_s,
-                after_tick=(self._advance_call_flow, self._dds_stage_automation),
+                after_tick=(
+                    self._advance_call_flow,
+                    self._dds_stage_automation,
+                    self._advance_dds_calls,
+                ),
             )
         )
         self.hasher: PasswordHasher = hasher if hasher is not None else Argon2PasswordHasher()
@@ -452,6 +474,54 @@ class Container:
     def list_my_incidents(self) -> ListMyIncidents:
         """`listMyIncidents`."""
         return ListMyIncidents(self.unit_of_work, self.clock)
+
+    # -- I3 E9a: trainee groups and difficulty-weight proposals (HLD 70 §70.3.7) ---------------
+
+    def create_trainee_group(self) -> CreateTraineeGroup:
+        """`createTraineeGroup`."""
+        return CreateTraineeGroup(self.unit_of_work, self.ids, self.clock)
+
+    def list_trainee_groups(self) -> ListTraineeGroups:
+        """`listTraineeGroups`."""
+        return ListTraineeGroups(self.unit_of_work)
+
+    def get_trainee_group(self) -> GetTraineeGroup:
+        """`getTraineeGroup`."""
+        return GetTraineeGroup(self.unit_of_work)
+
+    def update_trainee_group(self) -> UpdateTraineeGroup:
+        """`updateTraineeGroup`."""
+        return UpdateTraineeGroup(self.unit_of_work)
+
+    def delete_trainee_group(self) -> DeleteTraineeGroup:
+        """`deleteTraineeGroup`."""
+        return DeleteTraineeGroup(self.unit_of_work)
+
+    def weight_proposer(self) -> LlmWeightProposer:
+        """The LLM proposer over the backend's own `LLMClient` (`SIM_EXPLANATION_LLM_*`), with
+        the deterministic heuristic as its fallback on any failure. Under the gate's `fake`
+        provider the empty-script `FakeLLM` answers nothing parseable, so the heuristic answers."""
+        return LlmWeightProposer(
+            self.explanation_llm_client(),
+            HeuristicWeightProposer(),
+            max_tokens=self.settings.weight_proposal_max_tokens,
+            temperature=self.settings.weight_proposal_temperature,
+            timeout_ms=self.settings.weight_proposal_timeout_ms,
+        )
+
+    def request_weight_proposals(self) -> RequestWeightProposals:
+        """`requestWeightProposals` — stored as proposals, never applied."""
+        return RequestWeightProposals(
+            self.unit_of_work, self.weight_proposer(), self.clock, self.ids
+        )
+
+    def get_weight_proposals(self) -> GetWeightProposals:
+        """`getWeightProposals`."""
+        return GetWeightProposals(self.unit_of_work)
+
+    def accept_weight_proposals(self) -> AcceptWeightProposals:
+        """`acceptWeightProposals` — the only path from a proposal to `PlanEntry.weight`."""
+        return AcceptWeightProposals(self.unit_of_work, self.clock)
 
     def _adopt_started_card(self, session_id: SessionId) -> None:
         """A card the `LessonRunner` started is ticked like any session (D7)."""
@@ -789,6 +859,53 @@ class Container:
     async def _dds_stage_automation(self, session_id: SessionId) -> bool:
         """The `SimulationRunner`'s second `after_tick` hook, beside `_advance_call_flow`."""
         return await self.dds_stage_automation()(session_id)
+
+    # -- I3 E6b: the ДДС phone line (HLD 80 §80.3) --------------------------------------------
+    #
+    # None of these is given a world-truth, caller-belief or operator-card repository (SPEC §42
+    # test 3): the claimant's frozen caller chain runs in the voice agent, never here.
+
+    def start_dds_call(self) -> StartDdsCall:
+        """`startDdsCall` (I3 E6b)."""
+        return StartDdsCall(
+            self.dds_command_gate(),
+            self.ids,
+            self.call_transport_status,
+            self.voice_tokens,
+            self.voice_signals,
+        )
+
+    def list_dds_calls(self) -> ListDdsCalls:
+        """`listDdsCalls` (I3 E6b)."""
+        return ListDdsCalls(self.unit_of_work)
+
+    def get_dds_call(self) -> GetDdsCall:
+        """`getDdsCall` (I3 E6b)."""
+        return GetDdsCall(self.unit_of_work)
+
+    def hang_up_dds_call(self) -> HangUpDdsCall:
+        """`hangUpDdsCall` (I3 E6b)."""
+        return HangUpDdsCall(self.unit_of_work, self.clock, self.voice_signals)
+
+    def advance_dds_calls(self) -> AdvanceDdsCalls:
+        """The SIMULATION side of the ДДС phone line (`ring` / `busy` / `answer`, per-call
+        `voice:join` retry). Cached for the same reason `advance_call_flow` is: the retry timer."""
+        cached: AdvanceDdsCalls | None = getattr(self, "_advance_dds_calls_use_case", None)
+        if cached is not None:
+            return cached
+        built = AdvanceDdsCalls(
+            self.unit_of_work,
+            self.clock,
+            self.call_transport_status,
+            self.voice_signals,
+            join_retry_ms=self.settings.voice_join_retry_ms,
+        )
+        self._advance_dds_calls_use_case: AdvanceDdsCalls = built
+        return built
+
+    async def _advance_dds_calls(self, session_id: SessionId) -> bool:
+        """The `SimulationRunner`'s third `after_tick` hook (I3 E6b)."""
+        return await self.advance_dds_calls()(session_id)
 
     # -- E16-B: the optional score-explanation LLM call (SPEC §2, §29, D11) -------------------
     #

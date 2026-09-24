@@ -36,7 +36,14 @@ async def test_list_scenarios_returns_identity_only(
     item = next(entry for entry in body["items"] if entry["slug"] == "apartment-fire")
     assert item["version_count"] == 1
     assert item["latest_version"] == 1
-    assert set(item) == {"scenario_id", "slug", "title_ru", "version_count", "latest_version"}
+    assert set(item) == {
+        "scenario_id",
+        "slug",
+        "title_ru",
+        "version_count",
+        "latest_version",
+        "latest_difficulty",
+    }
 
 
 async def test_list_scenario_versions(

@@ -26,11 +26,20 @@ for an action id that does not exist here). It opens one read transaction for th
 log, and mints outside it — signing a JWT is CPU work that has no business holding a transaction.
 
 The minted token is never logged (SPEC §41).
+
+**A ДДС call's room (additive, I3 E6b — HLD 80 §80.3, `openapi.yaml` `VoiceTokenRequest`).** With
+a `call_id`, the token is for that `DdsCall`'s room instead: the call must be this session's
+(`404`), the caller must be the trainee on its line (`actor_user_id`, else `403
+FORBIDDEN_FOR_ROLE`) and it must not be `ENDED` (`409 ACTION_NOT_AVAILABLE`). This is how the ДДС
+phone widget re-joins a live call after a refresh (INV 13). Without a `call_id` nothing changes.
 """
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.dds.dds_call_views import DdsCallNotFoundError
 from app.application.operator.command_context import (
     ActionNotAvailableError,
     SessionNotActiveError,
@@ -41,16 +50,27 @@ from app.application.ports.voice_token_service import MintedVoiceToken, VoiceTok
 from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
+from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
 from app.domain.enums import Operator112StageState, RoleType, SessionState
 
-__all__ = ["ACTION_ID", "JOINABLE_PHASES", "CreateVoiceToken"]
+__all__ = ["ACTION_ID", "JOINABLE_PHASES", "CreateVoiceToken", "DdsCallEndedError"]
 
 ACTION_ID = "create_voice_token"
 """Not an `x-action` (`openapi.yaml` says `'-'`); the name the `409` problem detail reports."""
 
 JOINABLE_PHASES: frozenset[CallPhase] = frozenset({CallPhase.RINGING, CallPhase.CONNECTED})
 """The two phases in which a room exists and is still live."""
+
+
+class DdsCallEndedError(DomainError):
+    """The ДДС call has ended — there is no room left to join (`409`, I3 E6b)."""
+
+    code = "ACTION_NOT_AVAILABLE"
+
+    def __init__(self, call_id: UUID) -> None:
+        self.call_id = call_id
+        super().__init__(f"ДДС call {call_id} has ended; there is no room to join")
 
 
 class CreateVoiceToken:
@@ -60,8 +80,12 @@ class CreateVoiceToken:
         self._unit_of_work = unit_of_work
         self._tokens = tokens
 
-    async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> MintedVoiceToken:
+    async def __call__(
+        self, session_id: SessionId, user: AuthenticatedUser, call_id: UUID | None = None
+    ) -> MintedVoiceToken:
         """Check the five conditions of the module docstring, then mint."""
+        if call_id is not None:
+            return await self._for_dds_call(session_id, user, call_id)
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get(session_id)
             if session is None:
@@ -93,3 +117,24 @@ class CreateVoiceToken:
         # `answered_by_user_id` records, so a LiveKit participant maps onto the event log with no
         # second naming scheme (SPEC §8).
         return self._tokens.mint(room_name=call.room_name, participant_identity=str(user.user_id))
+
+    async def _for_dds_call(
+        self, session_id: SessionId, user: AuthenticatedUser, call_id: UUID
+    ) -> MintedVoiceToken:
+        """The token of a ДДС call's room (I3 E6b; see the module docstring)."""
+        async with self._unit_of_work() as uow:
+            session = await uow.sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            if session.state is not SessionState.ACTIVE:
+                raise SessionNotActiveError(session_id, session.state)
+            resolve_participant(session, user)
+            call = await uow.dds_calls.get(session_id, call_id)
+            await uow.commit()
+        if call is None:
+            raise DdsCallNotFoundError(call_id)
+        if call.actor_user_id is None or call.actor_user_id != user.user_id:
+            raise ForbiddenForRoleError(f"ДДС call {call_id} is not the caller's line")
+        if not call.live:
+            raise DdsCallEndedError(call_id)
+        return self._tokens.mint(room_name=call.room, participant_identity=str(user.user_id))

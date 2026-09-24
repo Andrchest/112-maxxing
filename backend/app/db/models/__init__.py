@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.db.base import Base
 from app.db.models.dds import (
     DDSAssignment,
+    DdsCall,
     DDSServiceStatusHistory,
     EmergencyResource,
     Notification,
@@ -34,7 +35,14 @@ from app.db.models.layers import (
     IncidentCardRevision,
     IncidentWorldState,
 )
-from app.db.models.reference import Scenario, ScenarioVersion, ScoringRule, User
+from app.db.models.reference import (
+    Scenario,
+    ScenarioVersion,
+    ScoringRule,
+    TraineeGroup,
+    TraineeGroupMember,
+    User,
+)
 from app.db.models.reports import ReportExplanation
 from app.db.models.scoring import ScoreEvidence, ScoreResult
 from app.db.models.session import (
@@ -51,6 +59,7 @@ __all__ = [
     "Base",
     "DDSAssignment",
     "DDSServiceStatusHistory",
+    "DdsCall",
     "DialogueTurn",
     "EmergencyResource",
     "HandoffSnapshot",
@@ -74,6 +83,8 @@ __all__ = [
     "SessionEvent",
     "SessionParticipant",
     "SimulationSession",
+    "TraineeGroup",
+    "TraineeGroupMember",
     "TranscriptSegment",
     "User",
     "WorldEngineState",

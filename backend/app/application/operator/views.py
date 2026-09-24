@@ -317,9 +317,9 @@ def project_call_state(events: Sequence[SessionEvent]) -> CallStateView:
             phase = CallPhase.ENDED
             ended = event.monotonic_offset_ms
             speaking = False
-        elif event_type is EventType.CALLER_TTS_STARTED:
+        elif event_type is EventType.CALLER_TTS_STARTED and _of_this_call(event, call_id):
             speaking = True
-        elif event_type in _TTS_STOPPED:
+        elif event_type in _TTS_STOPPED and _of_this_call(event, call_id):
             speaking = False
 
     return CallStateView(
@@ -337,6 +337,19 @@ def project_call_state(events: Sequence[SessionEvent]) -> CallStateView:
 
 _TTS_STOPPED = frozenset({EventType.CALLER_TTS_ENDED, EventType.CALLER_UTTERANCE_INTERRUPTED})
 """The caller stopped producing audio — ended normally, or cut off by a barge-in (§42 test 12)."""
+
+
+def _of_this_call(event: SessionEvent, call_id: UUID | None) -> bool:
+    """A caller-TTS event belongs to the 112 call being folded (I3 E6b, HLD 80 §80.3.6).
+
+    A ДДС claimant call-back reuses `CALLER_TTS_*` under its own `call_id`; its voice must not
+    light the 112 widget's `caller_speaking`. An event without a `call_id`, or a fold that has not
+    seen `CALL_RINGING`, keeps the behaviour it always had.
+    """
+    raw = event.payload.get("call_id")
+    if raw is None or call_id is None:
+        return True
+    return str(raw).lower() == str(call_id).lower()
 
 
 def _duration_ms(started: int | None, answered: int | None, ended: int | None) -> int | None:

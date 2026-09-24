@@ -133,7 +133,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "at_offset_ms": "int",
             "vad_provider": "str",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.USER_SPEECH_ENDED: EventSpec(
         event_type=EventType.USER_SPEECH_ENDED,
@@ -145,7 +147,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "speech_duration_ms": "int",
             "endpoint_silence_ms": "int",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.ASR_PARTIAL: EventSpec(
         event_type=EventType.ASR_PARTIAL,
@@ -159,7 +163,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "asr_provider": "str",
             "asr_model": "str",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.ASR_FINAL: EventSpec(
         event_type=EventType.ASR_FINAL,
@@ -176,7 +182,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "asr_provider": "str",
             "asr_model": "str",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.CALLER_RESPONSE_PLANNED: EventSpec(
         event_type=EventType.CALLER_RESPONSE_PLANNED,
@@ -223,7 +231,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         # §40.4 row 12 wins over §10.13's prose column (ruling R6): redacted to
         # {call_id, turn_index, at_offset_ms} for OPERATOR_112, applied by the redaction layer,
         # not here.
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.CALLER_TTS_ENDED: EventSpec(
         event_type=EventType.CALLER_TTS_ENDED,
@@ -238,7 +248,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         },
         # §40.4 row 13 wins over §10.13's prose column (ruling R6): redacted to
         # {call_id, turn_index, at_offset_ms, completed} for OPERATOR_112.
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.CALLER_UTTERANCE_INTERRUPTED: EventSpec(
         event_type=EventType.CALLER_UTTERANCE_INTERRUPTED,
@@ -252,7 +264,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "total_audio_ms_generated": "int",
             "cutoff_latency_ms": "int",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.CARD_FIELD_CHANGED: EventSpec(
         event_type=EventType.CARD_FIELD_CHANGED,
@@ -718,7 +732,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "reason": "str",
             "at_offset_ms": "int",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.TRANSPORT_RECONNECTED: EventSpec(
         event_type=EventType.TRANSPORT_RECONNECTED,
@@ -729,7 +745,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "downtime_ms": "int",
             "at_offset_ms": "int",
         },
-        visible_to=frozenset({_OP, _INSTRUCTOR}),
+        # I3 E6b (HLD 80 §80.6.2): call-scoped `▲` for DDS — pushed to the ДДС only when
+        # `call_id` is a DDS call id, and then never to OPERATOR_112 (`realtime/redaction.py`).
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
     EventType.INFERENCE_HEALTH_CHANGED: EventSpec(
         event_type=EventType.INFERENCE_HEALTH_CHANGED,
@@ -823,6 +841,49 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "issue_kind": "CardIssueKind",
             "comment_ru": "str",
             "actor_user_id": "uuid",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    # -----------------------------------------------------------------------------------------
+    # I3 H2 telephony (HLD 80 §80.6.1): the ДДС phone line (E6b)
+    # -----------------------------------------------------------------------------------------
+    EventType.DDS_CALL_STARTED: EventSpec(
+        event_type=EventType.DDS_CALL_STARTED,
+        actor_types=frozenset({ActorType.TRAINEE, ActorType.SIMULATION}),
+        payload_keys={
+            "call_id": "uuid",
+            "kind": "DdsCallKind",
+            "direction": "DdsCallDirection",
+            "assignment_id": "uuid | null",
+            "service_type": "ServiceId | null",
+            "dialed": "str",
+            "endpoint": "CallEndpoint",
+            "room": "str",
+            "persona_id": "str | null",
+            "actor_user_id": "uuid | null",
+            "selection_reason": "CallSelectionReason",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    EventType.DDS_CALL_ANSWERED: EventSpec(
+        event_type=EventType.DDS_CALL_ANSWERED,
+        actor_types=frozenset({ActorType.SIMULATION, ActorType.TRAINEE}),
+        payload_keys={
+            "call_id": "uuid",
+            "answered_by": "CallAnsweredBy",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    EventType.DDS_CALL_ENDED: EventSpec(
+        event_type=EventType.DDS_CALL_ENDED,
+        actor_types=frozenset({ActorType.TRAINEE, ActorType.SIMULATION, ActorType.SYSTEM}),
+        payload_keys={
+            "call_id": "uuid",
+            "reason": "DdsCallEndReason",
+            "duration_ms": "int",
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),

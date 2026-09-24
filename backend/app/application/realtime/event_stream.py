@@ -45,6 +45,7 @@ from app.application.realtime.redaction import (
 )
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
+from app.domain.dds.call import dds_call_ids
 
 __all__ = [
     "ErrorFrame",
@@ -189,7 +190,7 @@ class SessionEventStream:
 
             cursor = after_seq_no
             replayed = 0
-            current = connection
+            current = await self._seed_dds_call_ids(session_id, connection, after_seq_no)
 
             async for step in self._replay(session_id, current, cursor):
                 cursor, current = step.cursor, step.connection
@@ -270,9 +271,27 @@ class SessionEventStream:
         both trainee roles (§40.4 rows 3 and 32), so the choice changes no payload — it only keeps
         the rule statable in one sentence.
         """
-        envelope = redact(event, connection.role, connection.policy)
+        envelope = redact(
+            event, connection.role, connection.policy, dds_call_ids=connection.dds_call_ids
+        )
         moved = fold_role(connection, event.event_type, event.payload)
         return (None if envelope is None else EventFrame.of(envelope)), moved
+
+    async def _seed_dds_call_ids(
+        self, session_id: SessionId, connection: Connection, after_seq_no: int
+    ) -> Connection:
+        """The ДДС call ids started at or before the cursor (I3 E6b, HLD 80 §80.6.2).
+
+        A resumed connection has not folded the `DDS_CALL_STARTED` events behind its cursor, and
+        without them a ДДС call's turn after the cursor would be taken for the 112 call's. One
+        read of the log's head, once per `resume`; nothing to read for a replay from `0`.
+        """
+        if after_seq_no <= 0:
+            return connection
+        async with self._unit_of_work() as uow:
+            head = await uow.events.read(session_id, 0, after_seq_no)
+            await uow.commit()
+        return connection.with_dds_call_ids(dds_call_ids(head))
 
     async def _log_last_seq_no(self, session_id: SessionId) -> int:
         """`MAX(seq_no)` over the whole log — the cursor check of §40.1's `4409` is not per role.

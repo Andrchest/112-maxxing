@@ -6,3 +6,5 @@
 export * from './apply-call-event';
 export * from './format';
 export * from './media-state-store';
+// I3 E6b: the ДДС phone line, one entry per `call_id` (HLD 80 §80.3).
+export * from './dds-call-store';

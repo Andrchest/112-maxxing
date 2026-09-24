@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.application.dds.end_dds_call import EndDdsCallBySystem
 from app.application.dialogue.dialogue_context import DialogueContextLoader
 from app.application.dialogue.fallbacks import FallbackTemplates
 from app.application.dialogue.generator import (
@@ -76,6 +77,9 @@ from app.application.voice.turn_pipeline import (
 from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings
 from app.domain.common.ids import SessionId
+from app.domain.dds.call import DdsCallEndReason
+from app.domain.events.session_event import DomainEvent, SessionEvent
+from app.domain.events.types import EventType
 from app.domain.session.policy import SESSION_POLICIES
 from app.infrastructure.metrics import PgMetricsRecorder
 from app.infrastructure.recording.wav_writer import WavFileSink
@@ -496,8 +500,12 @@ def build_dialogue_responder(
     tts: TTSProvider | None = None,
     tts_fallback: TTSProvider | None = None,
     guard: InferenceGuard | None = None,
+    operator_label_ru: str | None = None,
 ) -> DialogueResponder:
     """The whole E13 chain: interpreter → Fact Access Gate → generator → validator → §7.8 (R10).
+
+    `operator_label_ru` (I3 E6b) is the one change a ДДС claimant call-back makes to this chain:
+    the caller prompt names the other party «ДИСПЕТЧЕР» instead of «ОПЕРАТОР» (HLD 80 §80.3.4).
 
     Every stage is its own object and every literal comes from `Settings` (§5.1, §5.2, §5.3, §7).
     The Fact Access Gate is not built here because it is a pure function, not a collaborator —
@@ -518,7 +526,14 @@ def build_dialogue_responder(
         generator=CallerResponseGenerator(
             client,
             recorder,
-            CallerPromptBuilder(caller_prompt_config_from_settings(settings)),
+            (
+                CallerPromptBuilder(caller_prompt_config_from_settings(settings))
+                if operator_label_ru is None
+                else CallerPromptBuilder(
+                    caller_prompt_config_from_settings(settings),
+                    operator_label_ru=operator_label_ru,
+                )
+            ),
             validator,
             config=generator_config_from_settings(settings),
         ),
@@ -555,6 +570,32 @@ def show_asr_partials(deps: VoiceAgentDeps) -> ShowAsrPartials:
     return read
 
 
+class DdsCallEventAppender(VoiceEventAppender):
+    """The voice appender of a ДДС call (I3 E6b): every event but `CALL_ENDED`.
+
+    `CALL_ENDED` is the 112 call's event — `project_call_state` folds it into the operator's phone
+    widget and it is pushed to the OPERATOR_112 socket — so a ДДС call-back must never write one;
+    the backend's `DDS_CALL_ENDED` ends a ДДС call (HLD 80 §80.3.6). Every per-turn event passes
+    through unchanged, under the call's `call_id`.
+
+    The one `CALL_ENDED` a pipeline writes on its own authority — `TRANSPORT_LOST`, the media plane
+    gone past `reconnect_grace_s` — becomes SYSTEM's `hang_up` of the ДДС call instead
+    (`EndDdsCallBySystem`, `DDS_CALL_ENDED {reason: TRANSPORT_LOST}`). Every other reason (the
+    trainee's hang-up, a `voice:cancel`, the browser leaving the room) is the backend's to record.
+    """
+
+    async def append(self, events: Sequence[DomainEvent], **rows: Any) -> list[SessionEvent]:
+        kept: list[DomainEvent] = []
+        for event in events:
+            if event.event_type is not EventType.CALL_ENDED:
+                kept.append(event)
+            elif event.payload.get("reason") == DdsCallEndReason.TRANSPORT_LOST.value:
+                await EndDdsCallBySystem(self._uow_factory, self._clock)(
+                    self.session_id, uuid.UUID(str(event.payload["call_id"]))
+                )
+        return await super().append(kept, **rows)
+
+
 def build_pipeline(
     deps: VoiceAgentDeps,
     *,
@@ -571,8 +612,18 @@ def build_pipeline(
     metrics: MetricsRecorder | None = None,
     record: bool = True,
     guard: InferenceGuard | None = None,
+    dds_call: bool = False,
+    first_turn_index: int = 0,
+    operator_label_ru: str | None = None,
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
+
+    **A ДДС claimant call-back (I3 E6b, HLD 80 §80.3.6)** is this very pipeline — the frozen caller
+    chain, unchanged — built with three additive arguments: `dds_call` keeps the pipeline's
+    `CALL_ENDED` out of the log (that event and `session:{id}:call_state` are the 112 call's; a
+    ДДС call ends through `DDS_CALL_ENDED`, which the backend appends), `first_turn_index`
+    continues the session's turn numbering (`dialogue_turns` is unique per session), and
+    `operator_label_ru` is the prompt's speaker label («ДИСПЕТЧЕР»).
 
     `vad`, `asr` and `llm` are built from `SIM_VAD_PROVIDER` / `SIM_ASR_PROVIDER` /
     `SIM_LLM_PROVIDER` when the caller does not supply them; the voice-agent process builds each
@@ -608,8 +659,8 @@ def build_pipeline(
         call_id=call_id,
         transport=transport,
         vad=vad,
-        detector=TurnDetector(deps.config),
-        appender=VoiceEventAppender(
+        detector=TurnDetector(deps.config, first_turn_index=first_turn_index),
+        appender=(DdsCallEventAppender if dds_call else VoiceEventAppender)(
             session_id=session_id,
             uow_factory=deps.uow_factory,
             clock=deps.clock,
@@ -635,6 +686,7 @@ def build_pipeline(
                     tts_fallback=tts_fallback,
                     metrics=recorder,
                     guard=guard,
+                    operator_label_ru=operator_label_ru,
                 ),
                 guard=guard,
             )

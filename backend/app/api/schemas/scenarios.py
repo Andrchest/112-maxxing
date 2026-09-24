@@ -60,6 +60,8 @@ class ScenarioSummarySchema(ApiModel):
     title_ru: str
     version_count: int = Field(ge=0)
     latest_version: int | None = Field(default=None, ge=1)
+    latest_difficulty: int | None = Field(default=None, ge=1, le=5)
+    """I3 E9a: the latest version's «Сложность» (1–5)."""
 
 
 class VariantSupportViewSchema(ApiModel):
@@ -182,6 +184,7 @@ def scenario_summary_schema(listing: StoredScenarioListing) -> ScenarioSummarySc
         title_ru=listing.title_ru,
         version_count=listing.version_count,
         latest_version=listing.latest_version,
+        latest_difficulty=listing.latest_difficulty,
     )
 
 

@@ -1,7 +1,7 @@
 """DDS, resources and notifications (HLD `20-db-schema.md` §20.5).
 
-`dds_assignments`, `emergency_resources`, `resource_state_changes`, `notifications`, and — I3 E5a —
-`dds_service_status_history`.
+`dds_assignments`, `emergency_resources`, `resource_state_changes`, `notifications`, — I3 E5a —
+`dds_service_status_history`, and — I3 E6b — `dds_calls` (HLD 80 §80.7).
 """
 
 from __future__ import annotations
@@ -9,6 +9,14 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from app.db.base import GEN_RANDOM_UUID, JSONB_T, TEXT_ARRAY_T, UUID_T, Base, enum_check
+from app.domain.dds.call import (
+    CallAnsweredBy,
+    CallEndpoint,
+    DdsCallDirection,
+    DdsCallEndReason,
+    DdsCallKind,
+    DdsCallState,
+)
 from app.domain.dds.response import LegResponder, ServiceResponseStatus
 from app.domain.enums import (
     DDSStageState,
@@ -194,4 +202,67 @@ class Notification(Base):
         ),
         sa.CheckConstraint(enum_check("audience_role", RoleType), name="audience_role"),
         sa.CheckConstraint(enum_check("severity", NotificationSeverity), name="severity"),
+    )
+
+
+class DdsCall(Base):
+    """`dds_calls` — the ДДС phone line's read model (I3 E6b, HLD 80 §80.3.1, §80.7).
+
+    Written in the same Unit of Work as the `DDS_CALL_*` event it mirrors and rebuildable from
+    those events alone (INV 13). `id` is the call's `call_id`.
+    """
+
+    __tablename__ = "dds_calls"
+
+    id = sa.Column(UUID_T, primary_key=True)
+    session_id = sa.Column(
+        UUID_T, sa.ForeignKey("simulation_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = sa.Column(sa.Text(), nullable=False)
+    direction = sa.Column(sa.Text(), nullable=False)
+    assignment_id = sa.Column(
+        UUID_T, sa.ForeignKey("dds_assignments.id", ondelete="CASCADE"), nullable=True
+    )
+    service_type = sa.Column(sa.Text(), nullable=True)
+    dialed = sa.Column(sa.Text(), nullable=False)
+    endpoint = sa.Column(sa.Text(), nullable=False)
+    room = sa.Column(sa.Text(), nullable=False)
+    persona_id = sa.Column(sa.Text(), nullable=True)
+    actor_user_id = sa.Column(UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    state = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'DIALING'"))
+    answered_by = sa.Column(sa.Text(), nullable=True)
+    selection_reason = sa.Column(sa.Text(), nullable=False)
+    started_event_id = sa.Column(
+        UUID_T, sa.ForeignKey("session_events.id", ondelete="RESTRICT"), nullable=False
+    )
+    started_at_offset_ms = sa.Column(sa.Integer(), nullable=False)
+    answered_at_offset_ms = sa.Column(sa.Integer(), nullable=True)
+    ended_at_offset_ms = sa.Column(sa.Integer(), nullable=True)
+    end_reason = sa.Column(sa.Text(), nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint("room", name="uq_dds_calls_room"),
+        sa.UniqueConstraint("started_event_id", name="uq_dds_calls_started_event_id"),
+        sa.Index("ix_dds_calls_session", "session_id", "started_at_offset_ms"),
+        sa.Index(
+            "ix_dds_calls_live",
+            "session_id",
+            "actor_user_id",
+            postgresql_where=sa.text("state <> 'ENDED'"),
+        ),
+        sa.CheckConstraint(enum_check("kind", DdsCallKind), name="kind"),
+        sa.CheckConstraint(enum_check("direction", DdsCallDirection), name="direction"),
+        sa.CheckConstraint(enum_check("endpoint", CallEndpoint), name="endpoint"),
+        sa.CheckConstraint(enum_check("state", DdsCallState), name="state"),
+        sa.CheckConstraint(
+            enum_check("answered_by", CallAnsweredBy, nullable=True), name="answered_by"
+        ),
+        sa.CheckConstraint(
+            enum_check("end_reason", DdsCallEndReason, nullable=True), name="end_reason"
+        ),
+        sa.CheckConstraint(
+            "(kind = 'SERVICE_HEAD') = (assignment_id IS NOT NULL)", name="service_head_leg"
+        ),
+        sa.CheckConstraint("(state = 'ENDED') = (ended_at_offset_ms IS NOT NULL)", name="ended_at"),
+        sa.CheckConstraint("(state = 'ENDED') = (end_reason IS NOT NULL)", name="ended_reason"),
     )

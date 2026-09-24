@@ -20,6 +20,11 @@ Three rules this module, not the individual evaluators, is responsible for:
   off-service unit attaches to the primary leg, so `assignment_id` does not imply a service. The
   per-unit `RESOURCE_DISPATCHED.service_type_by_resource` map is the only source
   (`application/dds/leg_for.py`).
+* **A ДДС call's facts are not the 112 call's** (I3 E6b, HLD 80 §80.6.2). The per-turn pipeline
+  events are reused under a ДДС call's `call_id` (a claimant call-back runs the frozen caller
+  chain), so `deliveries_of` excludes every `FACTS_DELIVERED` whose `call_id` is a DDS call id —
+  the `call_id`s of the log's `DDS_CALL_STARTED` — unless a rule asks for them (`on_call:
+  DDS_CLAIMANT`). A call-back therefore never moves the 112 trainee's `FACT_OBTAINED` score.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from uuid import UUID
 
 from app.domain.common.ids import CardRevisionId
 from app.domain.common.values import FactValue
+from app.domain.dds.call import DdsCallKind
 from app.domain.enums import ActorType, RoleType, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
@@ -42,6 +48,8 @@ if TYPE_CHECKING:  # `app.domain.scenario` imports the evaluator registry (§30.
     from app.domain.scenario.version import ScenarioVersion
 
 __all__ = [
+    "CALLER_112",
+    "DDS_CLAIMANT",
     "CardFieldChange",
     "DispatchedUnit",
     "FactDelivery",
@@ -55,6 +63,11 @@ _SCORING_EVENT_TYPES: frozenset[EventType] = frozenset(
     member for member in EventType if member.name.startswith("SCORING_")
 )
 """Every event `score()` produces and therefore must never read back (ruling R2)."""
+
+CALLER_112 = "CALLER_112"
+"""`FACT_OBTAINED.on_call`'s default: facts delivered on the 112 call (HLD 80 §80.6.2)."""
+DDS_CLAIMANT = "DDS_CLAIMANT"
+"""`FACT_OBTAINED.on_call`: facts the claimant delivered on a ДДС call-back (I3 E6b)."""
 
 
 class UnorderedEventLogError(ValueError):
@@ -83,6 +96,8 @@ class FactDelivery:
     fact_id: str
     at_offset_ms: int
     event: SessionEvent
+    call_id: str | None = None
+    """The delivering call's id, lowercase — a DDS call id or the 112 call's (I3 E6b)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +139,10 @@ class ScoringContext:
     variants: SessionVariants
     session_completed: SessionEvent | None
     stage_completed_by_role: Mapping[RoleType, SessionEvent]
+    dds_call_ids: frozenset[str] = frozenset()
+    """The session's DDS call ids (`DDS_CALL_STARTED.call_id`, lowercase; HLD 80 §80.6.2)."""
+    claimant_call_ids: frozenset[str] = frozenset()
+    """The subset of `dds_call_ids` whose `kind` is `CLAIMANT`."""
 
     # -- offsets -------------------------------------------------------------------------
 
@@ -177,9 +196,23 @@ class ScoringContext:
 
     # -- facts ---------------------------------------------------------------------------
 
-    def deliveries_of(self, fact_id: str) -> tuple[FactDelivery, ...]:
-        """Every delivery of `fact_id`, in log order (`FACTS_DELIVERED` only — D10)."""
-        return tuple(delivery for delivery in self.deliveries if delivery.fact_id == fact_id)
+    def deliveries_of(self, fact_id: str, *, on_call: str = CALLER_112) -> tuple[FactDelivery, ...]:
+        """Every delivery of `fact_id`, in log order (`FACTS_DELIVERED` only — D10).
+
+        `on_call` (I3 E6b, HLD 80 §80.6.2): `CALLER_112` — the default, and everything before E6b —
+        excludes the deliveries of every ДДС call; `DDS_CLAIMANT` keeps only a claimant
+        call-back's."""
+        if on_call == DDS_CLAIMANT:
+            return tuple(
+                delivery
+                for delivery in self.deliveries
+                if delivery.fact_id == fact_id and delivery.call_id in self.claimant_call_ids
+            )
+        return tuple(
+            delivery
+            for delivery in self.deliveries
+            if delivery.fact_id == fact_id and delivery.call_id not in self.dds_call_ids
+        )
 
     # -- bounding events (the "absence" evidence of D11) ---------------------------------
 
@@ -235,6 +268,20 @@ def build_context(
         variants=_variants(scenario_version, by_type),
         session_completed=_last(by_type.get(EventType.SESSION_COMPLETED, [])),
         stage_completed_by_role=_stage_completed_by_role(by_type),
+        dds_call_ids=_dds_call_ids(by_type),
+        claimant_call_ids=_dds_call_ids(by_type, kind=DdsCallKind.CLAIMANT),
+    )
+
+
+def _dds_call_ids(
+    by_type: Mapping[EventType, Sequence[SessionEvent]], kind: DdsCallKind | None = None
+) -> frozenset[str]:
+    """`DDS_CALL_STARTED.call_id`s (of one `kind`, or all), lowercase (HLD 80 §80.6.2)."""
+    return frozenset(
+        str(event.payload["call_id"]).lower()
+        for event in by_type.get(EventType.DDS_CALL_STARTED, [])
+        if event.payload.get("call_id")
+        and (kind is None or event.payload.get("kind") == kind.value)
     )
 
 
@@ -291,10 +338,14 @@ def _deliveries(events: Sequence[SessionEvent]) -> tuple[FactDelivery, ...]:
         if not isinstance(fact_ids, list | tuple):
             continue
         at_offset_ms = _int(event.payload.get("at_offset_ms"), event.monotonic_offset_ms)
+        raw_call_id = event.payload.get("call_id")
+        call_id = None if raw_call_id is None else str(raw_call_id).lower()
         for fact_id in fact_ids:
             if isinstance(fact_id, str):
                 deliveries.append(
-                    FactDelivery(fact_id=fact_id, at_offset_ms=at_offset_ms, event=event)
+                    FactDelivery(
+                        fact_id=fact_id, at_offset_ms=at_offset_ms, event=event, call_id=call_id
+                    )
                 )
     return tuple(deliveries)
 

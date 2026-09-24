@@ -83,6 +83,8 @@ PAYLOAD_LABELS_RU: Mapping[str, str] = {
     "completed": "завершено",
     "component": "компонент",
     "delivered_text": "произнесено",
+    "dialed": "набранный номер",
+    "duration_ms": "длительность, мс",
     "error_kind": "вид ошибки",
     "fact_ids": "факты",
     "field_path": "поле",
@@ -234,6 +236,10 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.DDS_CARD_ISSUE_FLAGGED: SummaryTemplate(
         "ДДС отметила ошибку в карточке", ("issue_kind", "field_path")
     ),
+    # I3 E6b (HLD 80 §80.6.1): the ДДС phone line.
+    EventType.DDS_CALL_STARTED: SummaryTemplate("ДДС начала звонок", ("dialed",)),
+    EventType.DDS_CALL_ANSWERED: SummaryTemplate("Звонок ДДС принят"),
+    EventType.DDS_CALL_ENDED: SummaryTemplate("Звонок ДДС завершён", ("reason", "duration_ms")),
 }
 
 

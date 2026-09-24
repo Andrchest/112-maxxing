@@ -107,7 +107,10 @@ class DetectorStep:
 class TurnDetector:
     """§4's transition table, verbatim. One instance per call."""
 
-    def __init__(self, config: VoiceTurnConfig) -> None:
+    def __init__(self, config: VoiceTurnConfig, *, first_turn_index: int = 0) -> None:
+        """`first_turn_index` (additive, I3 E6b): where this call's turn numbering starts. `0` for
+        the 112 call, as always; a ДДС call-back continues after the session's last turn, because
+        `dialogue_turns` is unique on `(session_id, turn_index)` (HLD 80 §80.6.1)."""
         self._config = config
         self._pre_roll = PreRollBuffer(config.pre_roll_frames)
         self._state = TurnDetectorState.IDLE
@@ -116,8 +119,8 @@ class TurnDetector:
         self._sustain_ms = config.speech_start_min_ms
         self._was_during_playback = False
         self._turn_id: uuid.UUID | None = None
-        self._turn_index = 0
-        self._next_turn_index = 0
+        self._turn_index = first_turn_index
+        self._next_turn_index = first_turn_index
         self._start_ms = 0
         self._accumulator: list[bytes] = []
         self._accumulated_bytes = 0

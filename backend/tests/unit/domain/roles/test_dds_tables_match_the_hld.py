@@ -159,25 +159,35 @@ def _variant_part(mode: DdsMode) -> str:
     return memo if mode is DdsMode.MEMO_STATUSES else picker
 
 
-def _variants(mode: DdsMode, card_check: DdsCardCheck = DdsCardCheck.OFF) -> SessionVariants:
+def _variants(
+    mode: DdsMode,
+    card_check: DdsCardCheck = DdsCardCheck.OFF,
+    brigade_call: DdsBrigadeCall = DdsBrigadeCall.OFF,
+) -> SessionVariants:
     return SessionVariants(
         card_source=CardSource.GENERATED_CARD,
         dds_mode=mode,
         dds_card_check=card_check,
-        dds_brigade_call=DdsBrigadeCall.OFF,
+        dds_brigade_call=brigade_call,
     )
 
 
 _CARD_CHECK_ONLY = "only `dds_card_check: ON`"
 """The qualifier §10.9's memo table puts on an action offered only under card check `ON` (E5b)."""
 
+_BRIGADE_CALL_ONLY = "only `dds_brigade_call: ON`"
+"""The qualifier §10.9's memo table puts on a ДДС-phone action (I3 E6b, HLD 80 §80.5)."""
+
 
 def _documented_actions(
-    mode: DdsMode = DdsMode.RESOURCE_PICKER, card_check: DdsCardCheck = DdsCardCheck.OFF
+    mode: DdsMode = DdsMode.RESOURCE_PICKER,
+    card_check: DdsCardCheck = DdsCardCheck.OFF,
+    brigade_call: DdsBrigadeCall = DdsBrigadeCall.OFF,
 ) -> dict[DDSStageState, tuple[str, ...]]:
     """`state -> the action ids §10.9 lists for it` in `mode`'s table, in the document's order.
 
-    An action qualified "only `dds_card_check: ON`" is listed only for `card_check` `ON`."""
+    An action qualified "only `dds_card_check: ON`" is listed only for `card_check` `ON`, one
+    qualified "only `dds_brigade_call: ON`" only for `brigade_call` `ON` (I3 E6b)."""
     table: dict[DDSStageState, tuple[str, ...]] = {}
     for cells in _rows(_variant_part(mode), 2):
         names = _BACKTICKED.findall(cells[0])
@@ -189,6 +199,7 @@ def _documented_actions(
             for part in cells[1].split(";")
             if _BACKTICKED.findall(part)
             and (card_check is DdsCardCheck.ON or _CARD_CHECK_ONLY not in part)
+            and (brigade_call is DdsBrigadeCall.ON or _BRIGADE_CALL_ONLY not in part)
         )
         table[state] = actions
     return table
@@ -198,6 +209,9 @@ DOCUMENTED_ACTIONS = _documented_actions()
 DOCUMENTED_MEMO_ACTIONS = _documented_actions(DdsMode.MEMO_STATUSES)
 DOCUMENTED_MEMO_CARD_CHECK_ACTIONS = _documented_actions(DdsMode.MEMO_STATUSES, DdsCardCheck.ON)
 DOCUMENTED_PICKER_CARD_CHECK_ACTIONS = _documented_actions(DdsMode.RESOURCE_PICKER, DdsCardCheck.ON)
+DOCUMENTED_MEMO_BRIGADE_CALL_ACTIONS = _documented_actions(
+    DdsMode.MEMO_STATUSES, DdsCardCheck.ON, DdsBrigadeCall.ON
+)
 
 
 def test_the_parser_saw_every_dds_stage_state() -> None:
@@ -262,6 +276,25 @@ def test_picker_card_check_actions_match_the_documented_table(state: DDSStageSta
     assert tuple(action.action_id for action in actual) == documented
     flagged = state not in (DDSStageState.RECEIVED, DDSStageState.CLOSED)
     assert ("flag_card_issue" in documented) is flagged
+
+
+@pytest.mark.parametrize("state", list(DDSStageState))
+def test_memo_brigade_call_actions_match_the_documented_table(state: DDSStageState) -> None:
+    """Under `dds_brigade_call: ON` the memo `RECEIVED` / `ACKNOWLEDGED` rows end with
+    `call_claimant` (I3 E6b, HLD 80 §80.5)."""
+    variants = _variants(DdsMode.MEMO_STATUSES, DdsCardCheck.ON, DdsBrigadeCall.ON)
+    actual = DDSModule().available_actions(state, variants=variants)
+    documented = DOCUMENTED_MEMO_BRIGADE_CALL_ACTIONS[state]
+    assert tuple(action.action_id for action in actual) == documented
+    offered = state in (DDSStageState.RECEIVED, DDSStageState.ACKNOWLEDGED)
+    assert ("call_claimant" in documented) is offered
+
+
+def test_call_claimant_is_documented_for_brigade_call_on_only() -> None:
+    """A guard on the guard: the brigade-call qualifier is parsed, and `OFF` offers no call."""
+    for actions in (*DOCUMENTED_MEMO_ACTIONS.values(), *DOCUMENTED_ACTIONS.values()):
+        assert "call_claimant" not in actions
+    assert "call_claimant" in DOCUMENTED_MEMO_BRIGADE_CALL_ACTIONS[DDSStageState.RECEIVED]
 
 
 def test_no_resource_action_is_offered_in_memo_mode() -> None:

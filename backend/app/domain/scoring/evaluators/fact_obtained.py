@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.enums import RoleType
@@ -20,6 +22,9 @@ class FactObtainedConfig(BaseModel):
     within_ms: int | None
     points: float
     penalty_if_missing: float = 0.0
+    on_call: Literal["CALLER_112", "DDS_CLAIMANT"] = "CALLER_112"
+    """Additive, I3 E6b (HLD 80 §80.6.2): whose delivery counts — the 112 caller's (default; a ДДС
+    call-back never moves it) or a claimant call-back's, for ДДС-side claimant rules."""
 
 
 def evaluate(rule: ScoringRule, config: FactObtainedConfig, ctx: ScoringContext) -> ScoreResult:
@@ -30,7 +35,7 @@ def evaluate(rule: ScoringRule, config: FactObtainedConfig, ctx: ScoringContext)
     interrupted utterance produced no `FACTS_DELIVERED` and therefore obtained nothing, however
     much of it was audible.
     """
-    deliveries = ctx.deliveries_of(config.fact_id)
+    deliveries = ctx.deliveries_of(config.fact_id, on_call=config.on_call)
     for delivery in deliveries:
         if config.within_ms is not None and delivery.at_offset_ms > config.within_ms:
             continue

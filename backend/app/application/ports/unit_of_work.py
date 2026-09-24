@@ -22,6 +22,7 @@ from typing import Protocol, runtime_checkable
 from app.application.ports.audio_segment_repository import AudioSegmentRepository
 from app.application.ports.caller_belief_repository import CallerBeliefRepository
 from app.application.ports.dds_assignment_repository import DDSAssignmentRepository
+from app.application.ports.dds_call_repository import DdsCallRepository
 from app.application.ports.dialogue_turn_repository import DialogueTurnRepository
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
@@ -35,6 +36,7 @@ from app.application.ports.resource_repository import ResourceRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import SessionRepository
+from app.application.ports.trainee_group_repository import TraineeGroupRepository
 from app.application.ports.transcript_segment_repository import TranscriptSegmentRepository
 from app.application.ports.user_repository import UserRepository
 from app.application.ports.world_engine_state_repository import WorldEngineStateRepository
@@ -98,6 +100,11 @@ class UnitOfWork(Protocol):
         ...
 
     @property
+    def trainee_groups(self) -> TraineeGroupRepository:
+        """The `trainee_groups` repository bound to this transaction (HLD 70 §70.3.7, I3 E9a)."""
+        ...
+
+    @property
     def sessions(self) -> SessionRepository:
         """The session aggregate repository bound to this transaction (§20.3)."""
         ...
@@ -138,6 +145,15 @@ class UnitOfWork(Protocol):
 
         It reaches no information layer: the DDS side sees the trainee's facts only through the
         `HandoffSnapshot` the assignment points at (D3, SPEC §42 test 3).
+        """
+        ...
+
+    @property
+    def dds_calls(self) -> DdsCallRepository:
+        """The `dds_calls` read model bound to this transaction (I3 E6b, HLD 80 §80.7).
+
+        Written in the same transaction as the `DDS_CALL_*` event it mirrors; like
+        `dds_assignments` it reaches no information layer (SPEC §42 test 3).
         """
         ...
 

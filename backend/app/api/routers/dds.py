@@ -1,4 +1,6 @@
-"""`dds` router — the DDS stage's sixteen operations (`DDSModule`, SPEC §11, §12; D3, D8).
+"""`dds` router — the DDS stage's sixteen operations (`DDSModule`, SPEC §11, §12; D3, D8), plus the
+four operations of the ДДС phone line (I3 E6b, HLD 80 §80.3: `startDdsCall`, `listDdsCalls`,
+`getDdsCall`, `hangUpDdsCall`).
 
 The eleven the `dds` tag has always had, plus the two E9 added additively so that
 `open_resource_selection` and `back_to_acknowledged` — `available_actions` entries §10.9 listed
@@ -64,6 +66,13 @@ from app.api.schemas.dds import (
     radio_message_page_schema,
     resource_schema,
     status_update_schema,
+)
+from app.api.schemas.dds_calls import (
+    DdsCallViewSchema,
+    StartDdsCallRequestSchema,
+    StartDdsCallResponseSchema,
+    dds_call_schema,
+    started_dds_call_schema,
 )
 from app.api.schemas.handoff import DdsWorkItemSchema, dds_work_item_schema
 from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
@@ -453,3 +462,89 @@ async def close_dds_incident(
     else:
         await tick(SessionId(session_id))
     return session_detail_schema(view)
+
+
+# ---------------------------------------------------------------------------------------------
+# The ДДС phone line (I3 E6b, HLD 80 §80.3) — `dds_brigade_call: ON` only
+# ---------------------------------------------------------------------------------------------
+
+
+@router.post(
+    "/{session_id}/dds-calls",
+    operation_id="startDdsCall",
+    summary=(
+        "The ДДС trainee places a call (service head, claimant or 112) — only "
+        "`dds_brigade_call = ON`."
+    ),
+    response_model=StartDdsCallResponseSchema,
+    status_code=201,
+)
+async def start_dds_call(
+    session_id: UUID,
+    body: StartDdsCallRequestSchema,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> StartDdsCallResponseSchema:
+    """`[*] --start--> DIALING`, then `ring` when the transport is up (HLD 80 §80.3.2)."""
+    started = await container.start_dds_call()(
+        SessionId(session_id),
+        user,
+        body.kind,
+        None if body.assignment_id is None else AssignmentId(body.assignment_id),
+    )
+    await tick(SessionId(session_id))
+    return started_dds_call_schema(started)
+
+
+@router.get(
+    "/{session_id}/dds-calls",
+    operation_id="listDdsCalls",
+    summary=(
+        "Every ДДС call of the session, newest first — restores the phone widget after a "
+        "refresh (INV 13)."
+    ),
+    response_model=list[DdsCallViewSchema],
+    status_code=200,
+)
+async def list_dds_calls(
+    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> list[DdsCallViewSchema]:
+    """The `dds_calls` read model (migration 0014). DDS and INSTRUCTOR only."""
+    views = await container.list_dds_calls()(SessionId(session_id), user)
+    return [dds_call_schema(view) for view in views]
+
+
+@router.get(
+    "/{session_id}/dds-calls/{call_id}",
+    operation_id="getDdsCall",
+    summary="One ДДС call.",
+    response_model=DdsCallViewSchema,
+    status_code=200,
+)
+async def get_dds_call(
+    session_id: UUID, call_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> DdsCallViewSchema:
+    """One row of the `dds_calls` read model."""
+    view = await container.get_dds_call()(SessionId(session_id), call_id, user)
+    return dds_call_schema(view)
+
+
+@router.post(
+    "/{session_id}/dds-calls/{call_id}/hang-up",
+    operation_id="hangUpDdsCall",
+    summary="The ДДС trainee hangs up (from DIALING, RINGING or CONNECTED).",
+    response_model=DdsCallViewSchema,
+    status_code=200,
+)
+async def hang_up_dds_call(
+    session_id: UUID,
+    call_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> DdsCallViewSchema:
+    """`hang_up` (TRAINEE ⇒ `HANGUP`), then `voice:cancel` after the commit."""
+    view = await container.hang_up_dds_call()(SessionId(session_id), call_id, user)
+    await tick(SessionId(session_id))
+    return dds_call_schema(view)

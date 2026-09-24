@@ -541,10 +541,18 @@ paths:
         LiveKit API secret. The token grants join on exactly the room of this session's active
         call and nothing else. Issued only while the session is `ACTIVE` and the caller is the
         participant assigned to an `OPERATOR_112` stage.
+        (additive, I3 E6b) With `call_id` of a non-`ENDED` `DdsCall` whose `actor_user_id` is the
+        caller: that call's room (re-join after a refresh, INV 13). `ENDED` ⇒ `409`. Absent body
+        ⇒ the behaviour above, unchanged.
       x-action: '-'
       x-emits: []
       parameters:
         - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoiceTokenRequest' }
       responses:
         '200':
           description: A room-scoped LiveKit token.
@@ -1513,6 +1521,114 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # ----------------------------------------------------------- dds-calls ----
+  # (additive, I3 E6b — `80-telephony.md` §80.3, `contracts/i3-telephony-openapi-delta.yaml`)
+  /api/v1/sessions/{session_id}/dds-calls:
+    post:
+      tags: [dds]
+      operationId: startDdsCall
+      summary: The ДДС trainee places a call (service head, claimant or 112) — only `dds_brigade_call = ON`.
+      description: |
+        (additive, I3 E6b — 80 §80.3.2) Fires `start` then, when the transport is ready, `ring`
+        of `DDS_CALL_TRANSITIONS`. `SERVICE_HEAD` needs `assignment_id` of a leg the caller plays
+        (`plays_leg`), else `403 FORBIDDEN_FOR_SERVICE`; `CLAIMANT` and `OPERATOR_112` take no
+        `assignment_id` (`422 VALIDATION_ERROR`). `dds_brigade_call = OFF`, `dds_mode =
+        RESOURCE_PICKER` or the DDS stage not started ⇒ `409 ACTION_NOT_AVAILABLE`; the user
+        already has a live call in the session ⇒ `409 DDS_LINE_BUSY`. The endpoint is `SIP` when
+        the user has a live softphone binding and the deployment offers `sip` (80 §80.3.7, E6e),
+        else `BROWSER`; `voice` is the room-scoped LiveKit token for the browser endpoint and
+        `null` for `SIP` (the softphone rings instead). `SERVICE_HEAD` kind: E6c; `OPERATOR_112`
+        kind: E6d; `CLAIMANT`: E6b. Until an epic lands its kind, that kind is `409
+        ACTION_NOT_AVAILABLE`. A `CLAIMANT` call is placed to the frozen snapshot's `caller.phone`;
+        while the session's 112 call is live the claimant is `busy` (the call comes back `ENDED`).
+      x-action: [call_service_head, call_claimant, call_112]
+      x-emits: [DDS_CALL_STARTED, DDS_CALL_ENDED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartDdsCallRequest' }
+      responses:
+        '201':
+          description: The call (usually `RINGING`; `ENDED` with `BUSY` for a claimant whose 112 call is live).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StartDdsCallResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [dds]
+      operationId: listDdsCalls
+      summary: Every ДДС call of the session, newest first — restores the phone widget after a refresh (INV 13).
+      description: (additive, I3 E6b) Read from the `dds_calls` read model (migration 0014). DDS and INSTRUCTOR only.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The calls.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds-calls/{call_id}:
+    get:
+      tags: [dds]
+      operationId: getDdsCall
+      summary: One ДДС call.
+      description: (additive, I3 E6b) One row of the `dds_calls` read model. DDS and INSTRUCTOR only.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds-calls/{call_id}/hang-up:
+    post:
+      tags: [dds]
+      operationId: hangUpDdsCall
+      summary: The ДДС trainee hangs up (from DIALING, RINGING or CONNECTED).
+      description: |
+        (additive, I3 E6b) Fires `hang_up` (TRAINEE, `end_reason HANGUP`), then publishes
+        `voice:cancel:{session_id} {call_id, reason HANGUP}` after commit (the agent leaves; a SIP
+        endpoint's gateway sends `BYE`). An `ENDED` call ⇒ `409 INVALID_TRANSITION`; another
+        trainee's line ⇒ `403 FORBIDDEN_FOR_ROLE`.
+      x-action: hang_up
+      x-emits: [DDS_CALL_ENDED]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call, `ENDED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   # ---------------------------------------------------------- instructor ----
   /api/v1/instructor/sessions/{session_id}/overview:
     get:
@@ -2123,6 +2239,206 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # ------------------------------------------- weight proposals & groups ----
+  # Additive, I3 E9a (70 §70.3.7): AI-suggested difficulty weights are stored as proposals and
+  # applied to `PlanEntry.weight` only when the instructor accepts them; trainee groups are named
+  # lists of trainees a lesson may be created for.
+  /api/v1/lessons/{lesson_id}/weight-proposals:
+    post:
+      tags: [lessons]
+      operationId: requestWeightProposals
+      summary: Ask for difficulty-weight proposals for every card (stored, never applied).
+      description: |
+        The creator of the lesson or an ADMIN. One `WeightProposer` call for the whole lesson: the
+        LLM adapter (JSON-schema constrained, prompt built only from scenario **metadata** — title,
+        difficulty, card type, number of services, timers, special-variant flags, provenance —
+        never from world truth) or, on any LLM failure, the deterministic heuristic
+        (`source: HEURISTIC`, `fallback_reason`). The answer replaces the lesson's stored
+        proposals; **no weight changes** — only `acceptWeightProposals` writes `PlanEntry.weight`,
+        so scoring stays deterministic (SPEC §2, D11).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '201':
+          description: The stored proposals beside the current weights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeightProposalSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [lessons]
+      operationId: getWeightProposals
+      summary: The lesson's latest weight proposals beside the current weights.
+      description: '`404 NOT_FOUND` until proposals have been requested.'
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The stored proposals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeightProposalSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/lessons/{lesson_id}/weight-proposals/accept:
+    post:
+      tags: [lessons]
+      operationId: acceptWeightProposals
+      summary: Accept the chosen proposals into the plan's weights.
+      description: |
+        The creator of the lesson or an ADMIN. Each chosen position's `proposed_weight` becomes
+        its `PlanEntry.weight` (and the proposal's `accepted_at` is set); the others are left as
+        they are. Allowed in every lesson state — `getLessonReport` reads the weights when asked,
+        nothing is rescored. `422 VALIDATION_ERROR` for a position without a proposal, `404` when
+        no proposals exist.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WeightProposalAcceptRequest' }
+      responses:
+        '200':
+          description: The proposals after the accept, with the new current weights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeightProposalSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/trainee-groups:
+    get:
+      tags: [lessons]
+      operationId: listTraineeGroups
+      summary: List trainee groups (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Groups in `name_ru` order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TraineeGroup' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [lessons]
+      operationId: createTraineeGroup
+      summary: Create a trainee group (INSTRUCTOR / ADMIN).
+      description: Every member must be an active `TRAINEE` account (`422 VALIDATION_ERROR`).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TraineeGroupRequest' }
+      responses:
+        '201':
+          description: The created group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraineeGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/trainee-groups/{group_id}:
+    get:
+      tags: [lessons]
+      operationId: getTraineeGroup
+      summary: One trainee group with its members.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraineeGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [lessons]
+      operationId: updateTraineeGroup
+      summary: Rename a trainee group and replace its members whole.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TraineeGroupRequest' }
+      responses:
+        '200':
+          description: The group after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraineeGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    delete:
+      tags: [lessons]
+      operationId: deleteTraineeGroup
+      summary: Delete a trainee group; lessons created for it keep their participants.
+      description: '`lessons.group_id` of every lesson created for it becomes `null`.'
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Deleted.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ----------------------------------------------------------- incidents ----
   # Additive, I3 E4a (70 §70.3.6).
   /api/v1/incidents:
@@ -2181,6 +2497,12 @@ components:
       description: HS256 JWT minted by `loginUser`; the secret comes from the environment (D8, SPEC §41).
 
   parameters:
+    CallIdParam:
+      description: (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1).
+      name: call_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     SessionIdParam:
       name: session_id
       in: path
@@ -2243,7 +2565,8 @@ components:
         `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
         `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
         does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
-        `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`.
+        `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
+        (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2306,6 +2629,7 @@ components:
         - SERVICE_REMOVAL_FORBIDDEN    # additive, I3 E2b′
         - COMMENT_REQUIRED             # additive, I3 E5a
         - FORBIDDEN_FOR_SERVICE        # additive, I3 E5a
+        - DDS_LINE_BUSY                # additive, I3 E6b
 
     Problem:
       type: object
@@ -2359,9 +2683,37 @@ components:
       type: string
       enum: ['OFF', 'ON']
     DdsBrigadeCall:
-      description: (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1).
+      description: (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1). (I3 E6b) `ON` is implemented — "the ДДС has a phone" (80 §80.5) — memo mode only (R41); the default stays `OFF` (C7).
       type: string
       enum: ['OFF', 'ON']
+    DdsCallKind:
+      description: (additive, I3 E6b) Who a ДДС call is to (80 §80.3.1).
+      type: string
+      enum: [SERVICE_HEAD, CLAIMANT, OPERATOR_112]
+    DdsCallDirection:
+      description: (additive, I3 E6b) `INBOUND` = the brigade calls the ДДС (E6c).
+      type: string
+      enum: [OUTBOUND, INBOUND]
+    CallEndpoint:
+      description: (additive, I3 E6b) Where the trainee's side of the call is — the browser widget or a registered softphone. Not a variant switch (D25).
+      type: string
+      enum: [BROWSER, SIP]
+    DdsCallState:
+      description: (additive, I3 E6b) `DDS_CALL_TRANSITIONS` states (80 §80.3.2).
+      type: string
+      enum: [DIALING, RINGING, CONNECTED, ENDED]
+    DdsCallEndReason:
+      description: (additive, I3 E6b)
+      type: string
+      enum: [HANGUP, NO_ANSWER, BUSY, ABORT, TRANSPORT_LOST]
+    CallAnsweredBy:
+      description: (additive, I3 E6b) `TRAINEE` on an `OPERATOR_112` call is the reserved hook for a human 112 trainee (owner Q1, E6g — not in I3).
+      type: string
+      enum: [AI, TRAINEE]
+    CallSelectionReason:
+      description: (additive, I3 E6b) Why this session was the one a call went to (80 §80.3.5).
+      type: string
+      enum: [BROWSER_BUTTON, LAST_OPENED_CARD, OLDEST_ACTIVE, INBOUND_SCRIPT]
     Operator112StageState:
       type: string
       enum: [WAITING_FOR_CALL, RINGING, CONNECTED, INTERVIEW, HANDOFF_PREPARATION, HANDED_OFF, STAGE_COMPLETED]
@@ -2526,6 +2878,7 @@ components:
         - VIEW_TRANSCRIPT
         - SET_SERVICE_STATUS           # additive, I3 E5a
         - FLAG_CARD_ISSUE              # additive, I3 E5a
+        - PLACE_DDS_CALL               # additive, I3 E6b
     EventType:
       type: string
       description: |
@@ -2586,6 +2939,9 @@ components:
         - DDS_CARD_OPENED              # additive, I3 E5a
         - DDS_SERVICE_STATUS_SET       # additive, I3 E5a
         - DDS_CARD_ISSUE_FLAGGED       # additive, I3 E5b
+        - DDS_CALL_STARTED             # additive, I3 E6b
+        - DDS_CALL_ANSWERED            # additive, I3 E6b
+        - DDS_CALL_ENDED               # additive, I3 E6b
 
     # ------------------------------------------------------ value objects ----
     FactValue:
@@ -2659,13 +3015,18 @@ components:
       type: object
       description: '`Scenario` — identity only (D4): slug and title, never content.'
       additionalProperties: false
-      required: [scenario_id, slug, title_ru, version_count, latest_version]
+      required: [scenario_id, slug, title_ru, version_count, latest_version, latest_difficulty]
       properties:
         scenario_id: { type: string, format: uuid }
         slug: { type: string }
         title_ru: { type: string }
         version_count: { type: integer, minimum: 0 }
         latest_version: { type: [integer, 'null'], minimum: 1 }
+        latest_difficulty:
+          description: (additive, I3 E9a) The latest version's difficulty («Сложность», 1–5).
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 5
 
     ScenarioVersionListItem:
       type: object
@@ -3192,6 +3553,74 @@ components:
         room_name: { type: string }
         participant_identity: { type: string }
         expires_at: { type: string, format: date-time }
+
+    # ------------------------------------------- dds calls (I3 E6b) ----
+    VoiceTokenRequest:
+      description: (additive, I3 E6b) `createVoiceToken`'s optional body.
+      type: object
+      additionalProperties: false
+      properties:
+        call_id:
+          type: [string, 'null']
+          format: uuid
+          description: A non-`ENDED` `DdsCall` of the caller; absent ⇒ the session's 112 call (unchanged behaviour).
+    StartDdsCallRequest:
+      description: (additive, I3 E6b)
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        assignment_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required for `SERVICE_HEAD` (the leg), absent / null otherwise (422).
+    StartDdsCallResponse:
+      description: (additive, I3 E6b)
+      type: object
+      additionalProperties: false
+      required: [call, voice]
+      properties:
+        call: { $ref: '#/components/schemas/DdsCallView' }
+        voice:
+          description: Room-scoped LiveKit token for the browser endpoint; `null` for `SIP` or an `ENDED` call.
+          oneOf:
+            - $ref: '#/components/schemas/VoiceTokenResponse'
+            - type: 'null'
+    DdsCallView:
+      description: (additive, I3 E6b) One row of the `dds_calls` read model (migration 0014), plus the caller's legal actions.
+      type: object
+      additionalProperties: false
+      required: [call_id, session_id, kind, direction, assignment_id, service_type, dialed, endpoint, room_name, persona_id, persona_title_ru, actor_user_id, state, answered_by, started_at_offset_ms, answered_at_offset_ms, ended_at_offset_ms, end_reason, available_actions]
+      properties:
+        call_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        direction: { $ref: '#/components/schemas/DdsCallDirection' }
+        assignment_id: { type: [string, 'null'], format: uuid }
+        service_type: { type: [string, 'null'], description: '`ServiceId` of the leg (SERVICE_HEAD only).' }
+        dialed: { type: string, examples: ['101', '7012', '112', '9161234567'] }
+        endpoint: { $ref: '#/components/schemas/CallEndpoint' }
+        room_name: { type: string }
+        persona_id: { type: [string, 'null'], examples: [BRIGADE_101, OPERATOR_112] }
+        persona_title_ru: { type: [string, 'null'], examples: [Начальник караула ПСЧ, Заявитель] }
+        actor_user_id: { type: [string, 'null'], format: uuid }
+        state: { $ref: '#/components/schemas/DdsCallState' }
+        answered_by:
+          oneOf:
+            - $ref: '#/components/schemas/CallAnsweredBy'
+            - type: 'null'
+        started_at_offset_ms: { type: integer }
+        answered_at_offset_ms: { type: [integer, 'null'] }
+        ended_at_offset_ms: { type: [integer, 'null'] }
+        end_reason:
+          oneOf:
+            - $ref: '#/components/schemas/DdsCallEndReason'
+            - type: 'null'
+        available_actions:
+          type: array
+          description: '`hang_up` «Положить трубку» while live (the line owner only); `answer` «Ответить» on a ringing INBOUND call (E6c).'
+          items: { $ref: '#/components/schemas/ActionDescriptor' }
 
     # ------------------------------------------------------ operator card ----
     OperatorCardView:
@@ -4715,6 +5144,10 @@ components:
           minItems: 1
           items: { $ref: '#/components/schemas/PlanEntry' }
         time_scale: { type: number, minimum: 0.1, maximum: 10, default: 1 }
+        group_id:
+          description: (additive, I3 E9a) The trainee group the lesson is created for — recorded; the participants are the request's own (`404` for an unknown group).
+          type: [string, 'null']
+          format: uuid
     LessonSessionView:
       type: object
       additionalProperties: false
@@ -4744,7 +5177,7 @@ components:
     LessonDetail:
       type: object
       additionalProperties: false
-      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at]
+      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at, group_id]
       properties:
         lesson_id: { type: string, format: uuid }
         title_ru: { type: string }
@@ -4763,6 +5196,10 @@ components:
         started_at: { type: [string, 'null'], format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
         report_released_at: { type: [string, 'null'], format: date-time }
+        group_id:
+          description: (additive, I3 E9a) The trainee group the lesson was created for, or `null`.
+          type: [string, 'null']
+          format: uuid
     LessonReport:
       type: object
       additionalProperties: false
@@ -4782,6 +5219,78 @@ components:
               score: { $ref: '#/components/schemas/ScoreReportView' }
         weighted_total: { type: number }
         weighted_max: { type: number }
+    # ------------------------------------------- I3 E9a: weights & groups ----
+    ProposalSource:
+      type: string
+      enum: [LLM, HEURISTIC]
+    WeightProposalLine:
+      type: object
+      additionalProperties: false
+      required: [position, scenario_version_id, current_weight, proposed_weight, reason_ru, accepted_at]
+      properties:
+        position: { type: integer, minimum: 1 }
+        scenario_version_id: { type: string, format: uuid }
+        current_weight:
+          description: The card's `PlanEntry.weight` now — what the report uses.
+          type: number
+        proposed_weight: { type: integer, minimum: 1, maximum: 10 }
+        reason_ru: { type: string }
+        accepted_at: { type: [string, 'null'], format: date-time }
+    WeightProposalSet:
+      description: A lesson's latest difficulty-weight proposals (70 §70.3.7) — never applied until accepted.
+      type: object
+      additionalProperties: false
+      required: [lesson_id, source, model_name, fallback_reason, requested_at, requested_by_user_id, proposals]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        source: { $ref: '#/components/schemas/ProposalSource' }
+        model_name: { type: [string, 'null'] }
+        fallback_reason:
+          description: Why the heuristic answered instead of the LLM (`LLM_TIMEOUT`, `LLM_UNAVAILABLE`, `LLM_INVALID_OUTPUT`), or `null`.
+          type: [string, 'null']
+        requested_at: { type: string, format: date-time }
+        requested_by_user_id: { type: string, format: uuid }
+        proposals:
+          type: array
+          items: { $ref: '#/components/schemas/WeightProposalLine' }
+    WeightProposalAcceptRequest:
+      type: object
+      additionalProperties: false
+      required: [positions]
+      properties:
+        positions:
+          type: array
+          minItems: 1
+          items: { type: integer, minimum: 1 }
+    TraineeGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [name_ru]
+      properties:
+        name_ru: { type: string, minLength: 1, maxLength: 200 }
+        member_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+    TraineeGroupMember:
+      type: object
+      additionalProperties: false
+      required: [user_id, username, display_name_ru]
+      properties:
+        user_id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+    TraineeGroup:
+      type: object
+      additionalProperties: false
+      required: [group_id, name_ru, created_by_user_id, created_at, members]
+      properties:
+        group_id: { type: string, format: uuid }
+        name_ru: { type: string }
+        created_by_user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/TraineeGroupMember' }
     IncidentListItem:
       description: One row of «Список происшествий» / «реестр». Deadlines are session offsets; `null` = not applicable yet.
       type: object

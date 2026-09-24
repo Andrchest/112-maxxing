@@ -347,6 +347,9 @@ export interface paths {
          *     LiveKit API secret. The token grants join on exactly the room of this session's active
          *     call and nothing else. Issued only while the session is `ACTIVE` and the caller is the
          *     participant assigned to an `OPERATOR_112` stage.
+         *     (additive, I3 E6b) With `call_id` of a non-`ENDED` `DdsCall` whose `actor_user_id` is the
+         *     caller: that call's room (re-join after a refresh, INV 13). `ENDED` ⇒ `409`. Absent body
+         *     ⇒ the behaviour above, unchanged.
          */
         post: operations["createVoiceToken"];
         delete?: never;
@@ -1090,6 +1093,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{session_id}/dds-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every ДДС call of the session, newest first — restores the phone widget after a refresh (INV 13).
+         * @description (additive, I3 E6b) Read from the `dds_calls` read model (migration 0014). DDS and INSTRUCTOR only.
+         */
+        get: operations["listDdsCalls"];
+        put?: never;
+        /**
+         * The ДДС trainee places a call (service head, claimant or 112) — only `dds_brigade_call = ON`.
+         * @description (additive, I3 E6b — 80 §80.3.2) Fires `start` then, when the transport is ready, `ring`
+         *     of `DDS_CALL_TRANSITIONS`. `SERVICE_HEAD` needs `assignment_id` of a leg the caller plays
+         *     (`plays_leg`), else `403 FORBIDDEN_FOR_SERVICE`; `CLAIMANT` and `OPERATOR_112` take no
+         *     `assignment_id` (`422 VALIDATION_ERROR`). `dds_brigade_call = OFF`, `dds_mode =
+         *     RESOURCE_PICKER` or the DDS stage not started ⇒ `409 ACTION_NOT_AVAILABLE`; the user
+         *     already has a live call in the session ⇒ `409 DDS_LINE_BUSY`. The endpoint is `SIP` when
+         *     the user has a live softphone binding and the deployment offers `sip` (80 §80.3.7, E6e),
+         *     else `BROWSER`; `voice` is the room-scoped LiveKit token for the browser endpoint and
+         *     `null` for `SIP` (the softphone rings instead). `SERVICE_HEAD` kind: E6c; `OPERATOR_112`
+         *     kind: E6d; `CLAIMANT`: E6b. Until an epic lands its kind, that kind is `409
+         *     ACTION_NOT_AVAILABLE`. A `CLAIMANT` call is placed to the frozen snapshot's `caller.phone`;
+         *     while the session's 112 call is live the claimant is `busy` (the call comes back `ENDED`).
+         */
+        post: operations["startDdsCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds-calls/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One ДДС call.
+         * @description (additive, I3 E6b) One row of the `dds_calls` read model. DDS and INSTRUCTOR only.
+         */
+        get: operations["getDdsCall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds-calls/{call_id}/hang-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The ДДС trainee hangs up (from DIALING, RINGING or CONNECTED).
+         * @description (additive, I3 E6b) Fires `hang_up` (TRAINEE, `end_reason HANGUP`), then publishes
+         *     `voice:cancel:{session_id} {call_id, reason HANGUP}` after commit (the agent leaves; a SIP
+         *     endpoint's gateway sends `BYE`). An `ENDED` call ⇒ `409 INVALID_TRANSITION`; another
+         *     trainee's line ⇒ `403 FORBIDDEN_FOR_ROLE`.
+         */
+        post: operations["hangUpDdsCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instructor/sessions/{session_id}/overview": {
         parameters: {
             query?: never;
@@ -1548,6 +1629,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lessons/{lesson_id}/weight-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The lesson's latest weight proposals beside the current weights.
+         * @description `404 NOT_FOUND` until proposals have been requested.
+         */
+        get: operations["getWeightProposals"];
+        put?: never;
+        /**
+         * Ask for difficulty-weight proposals for every card (stored, never applied).
+         * @description The creator of the lesson or an ADMIN. One `WeightProposer` call for the whole lesson: the
+         *     LLM adapter (JSON-schema constrained, prompt built only from scenario **metadata** — title,
+         *     difficulty, card type, number of services, timers, special-variant flags, provenance —
+         *     never from world truth) or, on any LLM failure, the deterministic heuristic
+         *     (`source: HEURISTIC`, `fallback_reason`). The answer replaces the lesson's stored
+         *     proposals; **no weight changes** — only `acceptWeightProposals` writes `PlanEntry.weight`,
+         *     so scoring stays deterministic (SPEC §2, D11).
+         */
+        post: operations["requestWeightProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/weight-proposals/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept the chosen proposals into the plan's weights.
+         * @description The creator of the lesson or an ADMIN. Each chosen position's `proposed_weight` becomes
+         *     its `PlanEntry.weight` (and the proposal's `accepted_at` is set); the others are left as
+         *     they are. Allowed in every lesson state — `getLessonReport` reads the weights when asked,
+         *     nothing is rescored. `422 VALIDATION_ERROR` for a position without a proposal, `404` when
+         *     no proposals exist.
+         */
+        post: operations["acceptWeightProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trainee-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List trainee groups (INSTRUCTOR / ADMIN). */
+        get: operations["listTraineeGroups"];
+        put?: never;
+        /**
+         * Create a trainee group (INSTRUCTOR / ADMIN).
+         * @description Every member must be an active `TRAINEE` account (`422 VALIDATION_ERROR`).
+         */
+        post: operations["createTraineeGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trainee-groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One trainee group with its members. */
+        get: operations["getTraineeGroup"];
+        /** Rename a trainee group and replace its members whole. */
+        put: operations["updateTraineeGroup"];
+        post?: never;
+        /**
+         * Delete a trainee group; lessons created for it keep their participants.
+         * @description `lessons.group_id` of every lesson created for it becomes `null`.
+         */
+        delete: operations["deleteTraineeGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/incidents": {
         parameters: {
             query?: never;
@@ -1579,7 +1757,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "FORBIDDEN_FOR_SERVICE";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1629,10 +1807,45 @@ export interface components {
          */
         DdsCardCheck: "OFF" | "ON";
         /**
-         * @description (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1).
+         * @description (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1). (I3 E6b) `ON` is implemented — "the ДДС has a phone" (80 §80.5) — memo mode only (R41); the default stays `OFF` (C7).
          * @enum {string}
          */
         DdsBrigadeCall: "OFF" | "ON";
+        /**
+         * @description (additive, I3 E6b) Who a ДДС call is to (80 §80.3.1).
+         * @enum {string}
+         */
+        DdsCallKind: "SERVICE_HEAD" | "CLAIMANT" | "OPERATOR_112";
+        /**
+         * @description (additive, I3 E6b) `INBOUND` = the brigade calls the ДДС (E6c).
+         * @enum {string}
+         */
+        DdsCallDirection: "OUTBOUND" | "INBOUND";
+        /**
+         * @description (additive, I3 E6b) Where the trainee's side of the call is — the browser widget or a registered softphone. Not a variant switch (D25).
+         * @enum {string}
+         */
+        CallEndpoint: "BROWSER" | "SIP";
+        /**
+         * @description (additive, I3 E6b) `DDS_CALL_TRANSITIONS` states (80 §80.3.2).
+         * @enum {string}
+         */
+        DdsCallState: "DIALING" | "RINGING" | "CONNECTED" | "ENDED";
+        /**
+         * @description (additive, I3 E6b)
+         * @enum {string}
+         */
+        DdsCallEndReason: "HANGUP" | "NO_ANSWER" | "BUSY" | "ABORT" | "TRANSPORT_LOST";
+        /**
+         * @description (additive, I3 E6b) `TRAINEE` on an `OPERATOR_112` call is the reserved hook for a human 112 trainee (owner Q1, E6g — not in I3).
+         * @enum {string}
+         */
+        CallAnsweredBy: "AI" | "TRAINEE";
+        /**
+         * @description (additive, I3 E6b) Why this session was the one a call went to (80 §80.3.5).
+         * @enum {string}
+         */
+        CallSelectionReason: "BROWSER_BUTTON" | "LAST_OPENED_CARD" | "OLDEST_ACTIVE" | "INBOUND_SCRIPT";
         /** @enum {string} */
         Operator112StageState: "WAITING_FOR_CALL" | "RINGING" | "CONNECTED" | "INTERVIEW" | "HANDOFF_PREPARATION" | "HANDED_OFF" | "STAGE_COMPLETED";
         /** @enum {string} */
@@ -1689,13 +1902,13 @@ export interface components {
         /** @enum {string} */
         EvaluatorType: "FACT_OBTAINED" | "CARD_FIELD_CORRECT" | "CARD_FIELD_PRESENT" | "CARD_CONTRADICTION" | "SERVICE_SELECTION" | "DEADLINE" | "WORKFLOW_ACTION" | "RESOURCE_SELECTION" | "REQUIRED_STATUS_UPDATE" | "HANDOFF_COMPLETENESS";
         /** @enum {string} */
-        Permission: "ANSWER_CALL" | "END_CALL" | "EDIT_CARD" | "SELECT_SERVICES" | "CREATE_HANDOFF" | "VIEW_HANDOFF" | "ACKNOWLEDGE_ASSIGNMENT" | "SELECT_RESOURCES" | "DISPATCH_RESOURCES" | "SEND_STATUS_UPDATE" | "CLOSE_INCIDENT" | "ACKNOWLEDGE_NOTIFICATION" | "VIEW_RESOURCE_BOARD" | "VIEW_TRANSCRIPT" | "SET_SERVICE_STATUS" | "FLAG_CARD_ISSUE";
+        Permission: "ANSWER_CALL" | "END_CALL" | "EDIT_CARD" | "SELECT_SERVICES" | "CREATE_HANDOFF" | "VIEW_HANDOFF" | "ACKNOWLEDGE_ASSIGNMENT" | "SELECT_RESOURCES" | "DISPATCH_RESOURCES" | "SEND_STATUS_UPDATE" | "CLOSE_INCIDENT" | "ACKNOWLEDGE_NOTIFICATION" | "VIEW_RESOURCE_BOARD" | "VIEW_TRANSCRIPT" | "SET_SERVICE_STATUS" | "FLAG_CARD_ISSUE" | "PLACE_DDS_CALL";
         /**
          * @description All members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by the
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED" | "DDS_CALL_STARTED" | "DDS_CALL_ANSWERED" | "DDS_CALL_ENDED";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -1755,6 +1968,8 @@ export interface components {
             title_ru: string;
             version_count: number;
             latest_version: number | null;
+            /** @description (additive, I3 E9a) The latest version's difficulty («Сложность», 1–5). */
+            latest_difficulty: number | null;
         };
         ScenarioVersionListItem: {
             /** Format: uuid */
@@ -2086,6 +2301,71 @@ export interface components {
             participant_identity: string;
             /** Format: date-time */
             expires_at: string;
+        };
+        /** @description (additive, I3 E6b) `createVoiceToken`'s optional body. */
+        VoiceTokenRequest: {
+            /**
+             * Format: uuid
+             * @description A non-`ENDED` `DdsCall` of the caller; absent ⇒ the session's 112 call (unchanged behaviour).
+             */
+            call_id?: string | null;
+        };
+        /** @description (additive, I3 E6b) */
+        StartDdsCallRequest: {
+            kind: components["schemas"]["DdsCallKind"];
+            /**
+             * Format: uuid
+             * @description Required for `SERVICE_HEAD` (the leg), absent / null otherwise (422).
+             */
+            assignment_id?: string | null;
+        };
+        /** @description (additive, I3 E6b) */
+        StartDdsCallResponse: {
+            call: components["schemas"]["DdsCallView"];
+            /** @description Room-scoped LiveKit token for the browser endpoint; `null` for `SIP` or an `ENDED` call. */
+            voice: components["schemas"]["VoiceTokenResponse"] | null;
+        };
+        /** @description (additive, I3 E6b) One row of the `dds_calls` read model (migration 0014), plus the caller's legal actions. */
+        DdsCallView: {
+            /** Format: uuid */
+            call_id: string;
+            /** Format: uuid */
+            session_id: string;
+            kind: components["schemas"]["DdsCallKind"];
+            direction: components["schemas"]["DdsCallDirection"];
+            /** Format: uuid */
+            assignment_id: string | null;
+            /** @description `ServiceId` of the leg (SERVICE_HEAD only). */
+            service_type: string | null;
+            /**
+             * @example 101
+             * @example 7012
+             * @example 112
+             * @example 9161234567
+             */
+            dialed: string;
+            endpoint: components["schemas"]["CallEndpoint"];
+            room_name: string;
+            /**
+             * @example BRIGADE_101
+             * @example OPERATOR_112
+             */
+            persona_id: string | null;
+            /**
+             * @example Начальник караула ПСЧ
+             * @example Заявитель
+             */
+            persona_title_ru: string | null;
+            /** Format: uuid */
+            actor_user_id: string | null;
+            state: components["schemas"]["DdsCallState"];
+            answered_by: components["schemas"]["CallAnsweredBy"] | null;
+            started_at_offset_ms: number;
+            answered_at_offset_ms: number | null;
+            ended_at_offset_ms: number | null;
+            end_reason: components["schemas"]["DdsCallEndReason"] | null;
+            /** @description `hang_up` «Положить трубку» while live (the line owner only); `answer` «Ответить» on a ringing INBOUND call (E6c). */
+            available_actions: components["schemas"]["ActionDescriptor"][];
         };
         /** @description `OperatorCard` (SPEC §9). `values` is keyed by the dotted `field_path`s of `CARD_FIELDS`. */
         OperatorCardView: {
@@ -3122,6 +3402,11 @@ export interface components {
             scenario_plan: components["schemas"]["PlanEntry"][];
             /** @default 1 */
             time_scale: number;
+            /**
+             * Format: uuid
+             * @description (additive, I3 E9a) The trainee group the lesson is created for — recorded; the participants are the request's own (`404` for an unknown group).
+             */
+            group_id?: string | null;
         };
         LessonSessionView: {
             position: number;
@@ -3165,6 +3450,11 @@ export interface components {
             completed_at: string | null;
             /** Format: date-time */
             report_released_at: string | null;
+            /**
+             * Format: uuid
+             * @description (additive, I3 E9a) The trainee group the lesson was created for, or `null`.
+             */
+            group_id: string | null;
         };
         LessonReport: {
             /** Format: uuid */
@@ -3178,6 +3468,56 @@ export interface components {
             }[];
             weighted_total: number;
             weighted_max: number;
+        };
+        /** @enum {string} */
+        ProposalSource: "LLM" | "HEURISTIC";
+        WeightProposalLine: {
+            position: number;
+            /** Format: uuid */
+            scenario_version_id: string;
+            /** @description The card's `PlanEntry.weight` now — what the report uses. */
+            current_weight: number;
+            proposed_weight: number;
+            reason_ru: string;
+            /** Format: date-time */
+            accepted_at: string | null;
+        };
+        /** @description A lesson's latest difficulty-weight proposals (70 §70.3.7) — never applied until accepted. */
+        WeightProposalSet: {
+            /** Format: uuid */
+            lesson_id: string;
+            source: components["schemas"]["ProposalSource"];
+            model_name: string | null;
+            /** @description Why the heuristic answered instead of the LLM (`LLM_TIMEOUT`, `LLM_UNAVAILABLE`, `LLM_INVALID_OUTPUT`), or `null`. */
+            fallback_reason: string | null;
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: uuid */
+            requested_by_user_id: string;
+            proposals: components["schemas"]["WeightProposalLine"][];
+        };
+        WeightProposalAcceptRequest: {
+            positions: number[];
+        };
+        TraineeGroupRequest: {
+            name_ru: string;
+            member_user_ids?: string[];
+        };
+        TraineeGroupMember: {
+            /** Format: uuid */
+            user_id: string;
+            username: string;
+            display_name_ru: string;
+        };
+        TraineeGroup: {
+            /** Format: uuid */
+            group_id: string;
+            name_ru: string;
+            /** Format: uuid */
+            created_by_user_id: string;
+            /** Format: date-time */
+            created_at: string;
+            members: components["schemas"]["TraineeGroupMember"][];
         };
         /** @description One row of «Список происшествий» / «реестр». Deadlines are session offsets; `null` = not applicable yet. */
         IncidentListItem: {
@@ -3243,7 +3583,8 @@ export interface components {
          *     `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
          *     `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
          *     does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
-         *     `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`.
+         *     `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
+         *     (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session.
          */
         Conflict: {
             headers: {
@@ -3283,6 +3624,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+        CallIdParam: string;
         SessionIdParam: string;
         ScenarioIdParam: string;
         ScenarioVersionIdParam: string;
@@ -3749,7 +4092,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["VoiceTokenRequest"];
+            };
+        };
         responses: {
             /** @description A room-scoped LiveKit token. */
             200: {
@@ -4654,6 +5001,117 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    listDdsCalls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The calls. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsCallView"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    startDdsCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartDdsCallRequest"];
+            };
+        };
+        responses: {
+            /** @description The call (usually `RINGING`; `ENDED` with `BUSY` for a claimant whose 112 call is live). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartDdsCallResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getDdsCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+                call_id: components["parameters"]["CallIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsCallView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    hangUpDdsCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+                call_id: components["parameters"]["CallIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The call, `ENDED`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsCallView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     getInstructorSessionOverview: {
         parameters: {
             query?: never;
@@ -5263,6 +5721,219 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getWeightProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored proposals. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeightProposalSet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    requestWeightProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored proposals beside the current weights. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeightProposalSet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    acceptWeightProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeightProposalAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description The proposals after the accept, with the new current weights. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeightProposalSet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    listTraineeGroups: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Groups in `name_ru` order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["TraineeGroup"][];
+                        total: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createTraineeGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraineeGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description The created group. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraineeGroup"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getTraineeGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraineeGroup"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateTraineeGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraineeGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description The group after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraineeGroup"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    deleteTraineeGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listMyIncidents: {

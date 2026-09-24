@@ -49,6 +49,9 @@ Conventions used throughout:
 | 27 | `report_explanations` | additive (E16; D11, SPEC §2, §29) | the optional LLM prose about a stored `ScoreReport` |
 | 28 | `lessons` | additive (I3 E4a; D15, `70-i3-alignment.md` §70.3) | scheduling of N ordinary sessions; no event log of its own |
 | 29 | `dds_service_status_history` | additive (I3 E5a; D16, `70-i3-alignment.md` §70.4.3) | append-only, materialized from `DDS_SERVICE_STATUS_SET` |
+| 30 | `trainee_groups` | additive (I3 E9a; `70-i3-alignment.md` §70.3.7) | reference data: named trainee groups an instructor builds lessons for |
+| 31 | `trainee_group_members` | additive (I3 E9a; `70-i3-alignment.md` §70.3.7) | reference data: one row per (group, trainee) |
+| 32 | `dds_calls` | additive (I3 E6b; D23, `80-telephony.md` §80.3.1, §80.7, migration `0014_dds_calls`) | the ДДС phone line's read model, materialized from `DDS_CALL_*` and rebuildable from them (INV 13) |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -70,6 +73,31 @@ built from the log. Flagged in the report for the manager to ratify.
 | `created_at` | `timestamptz` | no | `now()` |
 
 PK `(id)`. Unique `uq_users_username (username)`. `CHECK (role IN ('TRAINEE','INSTRUCTOR','ADMIN'))` (D8).
+
+### `trainee_groups` (additive, I3 E9a)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | |
+| `name_ru` | `text` | no | |
+| `created_by_user_id` | `uuid` | no | |
+| `created_at` | `timestamptz` | no | `now()` |
+
+PK `(id)`. FK `created_by_user_id → users(id) ON DELETE RESTRICT`. `CHECK (name_ru <> '')`.
+
+### `trainee_group_members` (additive, I3 E9a)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `group_id` | `uuid` | no | |
+| `user_id` | `uuid` | no | |
+
+PK `(group_id, user_id)`. FK `group_id → trainee_groups(id) ON DELETE CASCADE`;
+FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_trainee_group_members_user (user_id)`.
+
+A trainee group (migration `0013_trainee_groups`, HLD 70 §70.3.7) is a named list of trainees
+(«Назначать учащимся конкретные задания и группы»), managed by any INSTRUCTOR/ADMIN; a member is an
+active `TRAINEE` account (checked by the use case). A lesson created "for a group" copies the
+members into its own `lessons.participants` and records `lessons.group_id`; editing or deleting the
+group changes no lesson.
 
 ### `scenarios`
 | Column | PG type | Null | Default |
@@ -334,9 +362,12 @@ lists; every existing incident gets one when the column is added.
 | `completed_at` | `timestamptz` | yes | |
 | `report_released_at` | `timestamptz` | yes | |
 | `report_released_by_user_id` | `uuid` | yes | |
+| `group_id` *(additive, I3 E9a)* | `uuid` | yes | |
+| `weight_proposals` *(additive, I3 E9a)* | `jsonb` | yes | |
 
 PK `(id)`. FK `created_by_user_id → users(id) ON DELETE RESTRICT`;
-FK `report_released_by_user_id → users(id) ON DELETE RESTRICT`.
+FK `report_released_by_user_id → users(id) ON DELETE RESTRICT`;
+FK `group_id → trainee_groups(id) ON DELETE SET NULL` *(additive, I3 E9a)*.
 Index `ix_lessons_state (state)`.
 `CHECK (session_mode IN ('SINGLE_ROLE','FULL_CYCLE_SINGLE_TRAINEE','MULTI_TRAINEE','ASSESSMENT'))`,
 `CHECK (state IN ('CREATED','ACTIVE','COMPLETED','ABORTED'))`.
@@ -347,6 +378,15 @@ not simulation: no event log of its own — everything that happens in a card is
 session log. `participants`, `scenario_plan` (the `PlanEntry` list) and `variants` (the lesson-wide
 `VariantsRequest`) are jsonb documents written whole at creation; only `state` and the timestamps
 change afterwards. `completed_at` is when the lesson reached `COMPLETED` or `ABORTED`.
+
+*(additive, I3 E9a, migration `0013_trainee_groups`, HLD 70 §70.3.7)* `group_id` records the
+trainee group the lesson was created for (`NULL` for a lesson built by hand, or once the group is
+deleted). `weight_proposals` holds the latest `WeightProposalSet` — `{source: LLM|HEURISTIC,
+model_name, fallback_reason, requested_at, requested_by_user_id, proposals: [{position,
+proposed_weight 1..10, reason_ru, accepted_at}]}` — replaced whole by every
+`requestWeightProposals`. It is never applied by itself: `acceptWeightProposals` is the one writer
+of `scenario_plan[*].weight` after creation (it writes the chosen proposals' weights and nothing
+else of the plan), and the lesson report reads only `scenario_plan[*].weight` (D11).
 
 ### `world_engine_states` (additive, E6)
 The world event engine (D7) carries state that is neither a fact about the world nor a fact about
