@@ -827,6 +827,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "source": "StatusSource",
             "actor_user_id": "uuid | null",
             "at_offset_ms": "int",
+            # Additive, I3 E6c (HLD 80 §80.6.1): the call on which the confirmed status was heard;
+            # present only on a trainee's confirmation of a `DDS_CALL_STATUS_PROPOSED`.
+            "proposed_by_call_id": "uuid | null",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
@@ -887,6 +890,36 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    # I3 E6c (HLD 80 §80.4.2, §80.6.1): what the service head said and what the trainee stated.
+    EventType.DDS_CALL_STATUS_PROPOSED: EventSpec(
+        event_type=EventType.DDS_CALL_STATUS_PROPOSED,
+        actor_types=frozenset({ActorType.SIMULATION}),
+        payload_keys={
+            "call_id": "uuid",
+            "assignment_id": "uuid",
+            "service_type": "ServiceId",
+            "status": "ServiceResponseStatus",
+            "order_number": "str | null",
+            "comment_ru": "str | null",
+            "script_after_ms": "int",
+            "due_offset_ms": "int",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
+    EventType.DDS_CALL_ASSERTION: EventSpec(
+        event_type=EventType.DDS_CALL_ASSERTION,
+        actor_types=frozenset({ActorType.MODEL}),
+        payload_keys={
+            "call_id": "uuid",
+            "turn_id": "uuid",
+            "field_path": "str",
+            "value_ru": "str",
+            "matches_snapshot": "bool",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_INSTRUCTOR}),
     ),
 }
 

@@ -20,6 +20,7 @@ from typing import Any
 
 import yaml
 
+from app.domain.dds.personas import PersonaCatalog
 from app.domain.layers.card_schema import CardSchema, CardSchemaError, parse_card_schema
 from app.domain.routing.catalog import (
     ReferenceCatalog,
@@ -82,6 +83,7 @@ def load_reference(directory: Path) -> ReferenceCatalog:
     service_ids = sorted({pack.services for pack in packs})
     classifier_ids = sorted({pack.classifier for pack in packs if pack.classifier is not None})
     card_schema_ids = sorted({pack.card_schema for pack in packs})
+    persona_ids = sorted({pack.personas for pack in packs if pack.personas is not None})
     return ReferenceCatalog(
         packs=packs,
         service_catalogs=[_services(directory, files, catalog_id) for catalog_id in service_ids],
@@ -89,6 +91,7 @@ def load_reference(directory: Path) -> ReferenceCatalog:
         card_schemas=[_card_schema(directory, files, sid) for sid in card_schema_ids],
         file_sha256=files,
         manifest=manifest,
+        persona_catalogs=[_personas(directory, files, pid) for pid in persona_ids],
     )
 
 
@@ -102,6 +105,19 @@ def _services(directory: Path, files: dict[str, str], catalog_id: str) -> Servic
     path = _pinned(directory, files, f"services/{catalog_id}.yaml")
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     return ServiceCatalog(catalog_id=catalog_id, services=document["services"])
+
+
+def _personas(directory: Path, files: dict[str, str], catalog_id: str) -> PersonaCatalog:
+    """`personas/<id>.yaml` (HLD 80 §80.4.1, I3 E6c), pinned by the manifest."""
+    path = _pinned(directory, files, f"personas/{catalog_id}.yaml")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        catalog = PersonaCatalog.model_validate(document)
+    except ValueError as error:
+        raise ReferencePackError(f"{path}: {error}") from error
+    if catalog.catalog_id != catalog_id:
+        raise ReferencePackError(f"{path}: catalog_id {catalog.catalog_id!r} != {catalog_id!r}")
+    return catalog
 
 
 def _card_schema(directory: Path, files: dict[str, str], schema_id: str) -> CardSchema:

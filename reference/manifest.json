@@ -9,7 +9,8 @@
     "v046_24-r1": {
       "card_schema": "v2",
       "services": "v1",
-      "classifier": "v046_24"
+      "classifier": "v046_24",
+      "personas": "v1"
     }
   },
   "files": {
@@ -19,7 +20,8 @@
     "classifier/v046_24.json": "3662af593eec0b59b3d47b097b88a2c7c2b984655312496e5f297697cbd35273",
     "classifier/v046_24.columns.json": "a05cde7051ddd237aec6bd2db90ffbaa05d5d0b5068c7701448d1df0312a9641",
     "services/v1.yaml": "77eb36eee144a4291e9e01067cf63c877012022698a6b713cc3936debbc59c8b",
-    "services/sluzhby-112.transcription.tsv": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32"
+    "services/sluzhby-112.transcription.tsv": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32",
+    "personas/v1.yaml": "df664512190e268180dd9aaa7d6f0e4819633148ccf7bd540d1d879d4ee12566"
   },
   "sources": {
     "card-schema/v2.yaml": {

@@ -29,6 +29,11 @@ observed at rest in memo mode, and the events are that operation's memo `x-emits
 `STAGE_STATE_CHANGED`, `DDS_INCIDENT_CLOSED`, `ROLE_STAGE_COMPLETED`, `STAGE_STATE_CHANGED`. The
 legs' response statuses are theirs and are left as they are.
 
+**The ДДС phone (I3 E6c, HLD 80 §80.3.2).** Closing the incident is the DDS stage's completion,
+so every ДДС call still live in the session is ended by SYSTEM (`DDS_CALL_ENDED {reason: ABORT}`)
+in this same Unit of Work, before the closure's own events, and `voice:cancel:{session_id}
+{call_id, reason: ABORT}` is published for each after the commit — the voice agent drops the call.
+
 **Release (HLD gap, analyst §7 #13).** §10.13 gives `DDS_INCIDENT_CLOSED` a
 `released_resource_ids` key without saying what "released" does. The reading closest to SPEC §11
 is taken: the units still attached to any leg are named in the payload and **detached**
@@ -44,8 +49,10 @@ from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.dds.command_context import DdsCommandContext, DdsCommandGate
+from app.application.dds.dds_call_flow import CallSignal, end_live_calls, publish_signals
 from app.application.handoff.complete_session import SYSTEM_ACTOR, complete_session
 from app.application.ports.clock import Clock
+from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
 from app.application.sessions.queries import SessionDetailView, assemble_session_detail
 from app.domain.common.ids import ResourceId, SessionId
 from app.domain.enums import ClosureReason, DDSStageState
@@ -62,9 +69,15 @@ class CloseDdsIncident:
     """`closeDdsIncident` (`openapi.yaml`): `RESOLVED -> CLOSED` (memo: from `ACKNOWLEDGED`
     through `RESOLVED`), then the session machine."""
 
-    def __init__(self, gate: DdsCommandGate, clock: Clock) -> None:
+    def __init__(
+        self,
+        gate: DdsCommandGate,
+        clock: Clock,
+        voice_signals: VoiceSignalPublisher | None = None,
+    ) -> None:
         self._gate = gate
         self._clock = clock
+        self._voice_signals = voice_signals
 
     async def __call__(
         self,
@@ -81,8 +94,12 @@ class CloseDdsIncident:
         DDS/INSTRUCTOR only, since `OPERATOR_112` never receives this event type at all (D3).
         `score()` never reads it: no evaluator's evidence path touches `comment_ru`.
         """
+        signals: list[CallSignal] = []
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
             released = _attached_units(ctx)
+            call_events, signals = await end_live_calls(ctx.uow, session_id, ctx.now_ms)
+            if call_events:
+                await ctx.append(call_events)
 
             resolved_events: list[DomainEvent] = []
             if ctx.memo and ctx.stage_state is DDSStageState.ACKNOWLEDGED:
@@ -134,9 +151,12 @@ class CloseDdsIncident:
                     runtime=ctx.guard_runtime(),
                 )
 
-            return await assemble_session_detail(
+            detail = await assemble_session_detail(
                 ctx.uow, ctx.session, viewer=user, clock=self._clock
             )
+        # The gate committed when the block closed; the cancels follow the commit (§40.6).
+        await publish_signals(self._voice_signals, session_id, signals)
+        return detail
 
 
 def _attached_units(ctx: DdsCommandContext) -> tuple[ResourceId, ...]:

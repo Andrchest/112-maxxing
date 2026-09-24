@@ -35,6 +35,7 @@ from app.application.auth.list_users import ListUsers
 from app.application.auth.login import Login
 from app.application.dds.acknowledge import AcknowledgeDdsAssignment
 from app.application.dds.acknowledge_notification import AcknowledgeNotification
+from app.application.dds.answer_dds_call import AnswerDdsCall
 from app.application.dds.back_to_acknowledged import BackToDdsAcknowledged
 from app.application.dds.close_incident import CloseDdsIncident
 from app.application.dds.command_context import DdsCommandGate
@@ -117,6 +118,7 @@ from app.application.reference.card_schemas import GetCardSchema
 from app.application.reference.queries import (
     GetClassifierRow,
     GetReferenceManifest,
+    ListReferencePersonas,
     ListReferenceServices,
     SearchClassifier,
 )
@@ -682,6 +684,10 @@ class Container:
         """`listReferenceServices`."""
         return ListReferenceServices(self.reference)
 
+    def list_reference_personas(self) -> ListReferencePersonas:
+        """`listReferencePersonas` (I3 E6c)."""
+        return ListReferencePersonas(self.reference)
+
     def search_classifier(self) -> SearchClassifier:
         """`searchClassifier`."""
         return SearchClassifier(self.reference)
@@ -836,7 +842,7 @@ class Container:
 
     def close_dds_incident(self) -> CloseDdsIncident:
         """`closeDdsIncident`."""
-        return CloseDdsIncident(self.dds_command_gate(), self.clock)
+        return CloseDdsIncident(self.dds_command_gate(), self.clock, self.voice_signals)
 
     def dds_stage_automation(self) -> DdsStageAutomation:
         """The `SIMULATION`-fired DDS stage triggers (§10.8, D6, D7).
@@ -873,19 +879,26 @@ class Container:
             self.call_transport_status,
             self.voice_tokens,
             self.voice_signals,
+            # I3 E6c (R42): the persona a scenario names for a service, read runner-side — the
+            # command is handed a persona id per service, never the script (INV 3).
+            persona_override=ScenarioResponderScripts(self.unit_of_work).persona_override,
         )
 
     def list_dds_calls(self) -> ListDdsCalls:
         """`listDdsCalls` (I3 E6b)."""
-        return ListDdsCalls(self.unit_of_work)
+        return ListDdsCalls(self.unit_of_work, self.reference)
 
     def get_dds_call(self) -> GetDdsCall:
         """`getDdsCall` (I3 E6b)."""
-        return GetDdsCall(self.unit_of_work)
+        return GetDdsCall(self.unit_of_work, self.reference)
 
     def hang_up_dds_call(self) -> HangUpDdsCall:
         """`hangUpDdsCall` (I3 E6b)."""
-        return HangUpDdsCall(self.unit_of_work, self.clock, self.voice_signals)
+        return HangUpDdsCall(self.unit_of_work, self.clock, self.voice_signals, self.reference)
+
+    def answer_dds_call(self) -> AnswerDdsCall:
+        """`answerDdsCall` — the trainee answers a brigade's INBOUND call (I3 E6c)."""
+        return AnswerDdsCall(self.unit_of_work, self.clock, self.voice_tokens, self.reference)
 
     def advance_dds_calls(self) -> AdvanceDdsCalls:
         """The SIMULATION side of the ДДС phone line (`ring` / `busy` / `answer`, per-call
@@ -899,6 +912,7 @@ class Container:
             self.call_transport_status,
             self.voice_signals,
             join_retry_ms=self.settings.voice_join_retry_ms,
+            reference=self.reference,
         )
         self._advance_dds_calls_use_case: AdvanceDdsCalls = built
         return built

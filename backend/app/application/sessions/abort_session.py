@@ -22,6 +22,11 @@ talking into it. The signal is published **after** the commit, like every other 
 its loss is harmless by that section's own account — "the caller finishes one utterance into a
 closed call; no state is corrupted" — so an unreachable Redis never fails an abort. A session with
 no call in its log publishes nothing: there is no `call_id` to cancel.
+
+**The ДДС phone (I3 E6c, HLD 80 §80.3.2).** Every ДДС call still live in the session is ended by
+SYSTEM in the same Unit of Work (`DDS_CALL_ENDED {reason: ABORT}`, before `SESSION_ABORTED`), and
+`voice:cancel:{session_id} {call_id, reason: ABORT}` follows the commit for each, so the voice
+agent drops those calls too.
 """
 
 from __future__ import annotations
@@ -57,6 +62,10 @@ class AbortSession:
         self, session_id: SessionId, actor: ActorRef, reason: str
     ) -> SimulationSession:
         """Fire `abort`; returns the `ABORTED` aggregate or raises `InvalidTransitionError`."""
+        # Imported here, not at the top: `app.application.dds` reaches `app.application.sessions`
+        # through the operator slice, and this module is part of that package's import.
+        from app.application.dds.dds_call_flow import end_live_calls, publish_signals
+
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get_for_update(session_id)
             if session is None:
@@ -66,9 +75,10 @@ class AbortSession:
             runtime = build_guard_runtime(log, scenario_valid=True, inference_ready=False)
             now_ms = running_ms(session, self._clock.now())
             aborted, events = session.abort(reason, actor=actor, now_ms=now_ms, runtime=runtime)
+            call_events, call_signals = await end_live_calls(uow, session_id, now_ms)
 
             await uow.sessions.save(aborted)
-            await uow.events.append(session_id, events)
+            await uow.events.append(session_id, [*call_events, *events])
             await uow.commit()
             call = project_call_state(log)
 
@@ -77,6 +87,7 @@ class AbortSession:
             await self._voice_signals.publish_cancel(
                 session_id, call_id=call.call_id, reason="ABORT", at_offset_ms=now_ms
             )
+        await publish_signals(self._voice_signals, session_id, call_signals)
         return aborted
 
 

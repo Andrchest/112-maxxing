@@ -85,6 +85,12 @@ class EventType(str, Enum):
     """A ДДС call was answered (`RINGING --answer--> CONNECTED`); SIMULATION or TRAINEE (E6b)."""
     DDS_CALL_ENDED = "DDS_CALL_ENDED"
     """A ДДС call ended — hang-up, no answer, busy, abort, transport lost (E6b)."""
+    DDS_CALL_STATUS_PROPOSED = "DDS_CALL_STATUS_PROPOSED"
+    """The service head reported a due script step on a call — a proposal the trainee may confirm
+    (§80.4.2, D24); SIMULATION (E6c)."""
+    DDS_CALL_ASSERTION = "DDS_CALL_ASSERTION"
+    """The trainee stated a card fact on a call, matched by code against the snapshot (§80.4.2);
+    MODEL (E6c)."""
 
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -151,6 +157,8 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.DDS_CALL_STARTED,
         EventType.DDS_CALL_ANSWERED,
         EventType.DDS_CALL_ENDED,
+        EventType.DDS_CALL_STATUS_PROPOSED,
+        EventType.DDS_CALL_ASSERTION,
     }
 )
 

@@ -15,6 +15,7 @@ from pydantic import Field
 from app.api.schemas.common import ApiModel
 from app.api.schemas.operator import CardFieldSpecSchema, card_field_spec_schema
 from app.application.reference.card_schemas import CardSchemaView
+from app.domain.dds.personas import Persona
 from app.domain.enums import ServiceId
 from app.domain.routing.catalog import ServiceCatalogEntry
 from app.domain.routing.classifier import ClassifierRow
@@ -40,6 +41,8 @@ class ReferencePackPartsSchema(ApiModel):
     card_schema: str
     services: str
     classifier: str | None
+    personas: str | None = None
+    """I3 E6c (HLD 80 §80.4.1): the ДДС phone's persona set; absent for a pack without one."""
 
 
 class ReferenceSourceSchema(ApiModel):
@@ -159,4 +162,33 @@ def classifier_row_schema(row: ClassifierRow) -> ClassifierRowSchema:
             org_id: [RoutingCellSchema(when=dict(cell.when), value=cell.value) for cell in cells]
             for org_id, cells in row.routing.items()
         },
+    )
+
+
+class PersonaAppliesSchema(ApiModel):
+    """`PersonaView.applies` — most specific wins, `code` over `kind` (HLD 80 §80.4.1)."""
+
+    code: str | None
+    kind: str | None
+
+
+class PersonaViewSchema(ApiModel):
+    """`openapi.yaml`'s `PersonaView` (I3 E6c): a persona of the ДДС phone. Voices are logical ids;
+    no TTS internals are exposed."""
+
+    persona_id: str
+    applies: PersonaAppliesSchema
+    title_ru: str
+    gender: Literal["MALE", "FEMALE"]
+    voice_id: str
+
+
+def persona_view_schema(persona: Persona) -> PersonaViewSchema:
+    """`Persona` -> the wire model."""
+    return PersonaViewSchema(
+        persona_id=persona.id,
+        applies=PersonaAppliesSchema(code=persona.applies.code, kind=persona.applies.kind),
+        title_ru=persona.title_ru,
+        gender=persona.gender.value,
+        voice_id=persona.voice_id,
     )

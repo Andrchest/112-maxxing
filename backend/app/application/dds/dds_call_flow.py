@@ -13,7 +13,10 @@ call's, untouched) and `DdsStageAutomation`:
   `CONNECTED` — the claimant cannot be on two calls at once (the frozen `CallerBelief` would be
   driven by two pipelines, §80.13);
 * `RINGING --answer--> CONNECTED` by the AI callee of an OUTBOUND call, `answer_after_ms` after the
-  call started (a persona's `answer_after_ms` from E6c; the claimant uses the persona default).
+  call started (the persona's `answer_after_ms`, I3 E6c; the claimant uses the persona default);
+* `RINGING --busy--> ENDED` at ring for a persona marked `busy`, and `RINGING --no_answer-->
+  ENDED` `ring_timeout_ms` after the start for a persona marked `no_answer` (REQ-5325 «телефон не
+  работает либо не отвечают») and for an INBOUND call the trainee never answers (I3 E6c).
 
 Two more duties, both SYSTEM's:
 
@@ -26,6 +29,11 @@ Two more duties, both SYSTEM's:
 
 `ring_now` and `join_extra` are shared with `startDdsCall`, which rings a call in its own command
 when the transport is already up (the common case), so the trainee hears the ringback at once.
+
+`end_live_calls` is SYSTEM's `hang_up` (`ABORT`) of every live call of a session, shared by
+`closeDdsIncident` and `abortSession` (§80.3.2 "session abort, stage completion"): both end the
+line in their own Unit of Work and publish `voice:cancel` after their commit, so no call outlives
+its session.
 
 This module never touches the 112 call: it reads `project_call_state` for the busy rule and
 nothing else, and it never writes `session:{id}:call_state` (§80.3.6).
@@ -41,8 +49,11 @@ from uuid import UUID
 from app.application.operator.views import CallPhase, project_call_state
 from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
+from app.application.reference.card_schemas import session_pack_id
+from app.application.reference.queries import reference_catalog
 from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import InvalidTransitionError
@@ -57,6 +68,7 @@ from app.domain.dds.call import (
     DdsCallState,
     fire_call_trigger,
 )
+from app.domain.dds.personas import DEFAULT_ANSWER_AFTER_MS, Persona
 from app.domain.enums import ActorType, DDSStageState, RoleType, SessionState
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.session.session import SimulationSession
@@ -64,10 +76,13 @@ from app.domain.session.variants import DdsBrigadeCall
 
 __all__ = [
     "DEFAULT_ANSWER_AFTER_MS",
+    "DEFAULT_RING_TIMEOUT_MS",
     "AdvanceDdsCalls",
     "CallSignal",
     "agent_joined_call",
+    "call_persona",
     "claimant_busy",
+    "end_live_calls",
     "join_extra",
     "publish_signals",
     "ring_now",
@@ -75,8 +90,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ANSWER_AFTER_MS = 4000
-"""A persona's default `answer_after_ms` (HLD 80 §80.4.1); the claimant answers after it too."""
+DEFAULT_RING_TIMEOUT_MS = 30_000
+"""How long a call rings before `no_answer` (§80.3.2: a `no_answer` persona, an unanswered
+INBOUND call)."""
 
 _SIMULATION = ActorRef(actor_type=ActorType.SIMULATION)
 _SYSTEM = ActorRef(actor_type=ActorType.SYSTEM)
@@ -95,13 +111,26 @@ class CallSignal:
 
 
 def join_extra(call: DdsCall) -> Mapping[str, str | None]:
-    """`voice:join`'s additive keys for a ДДС call (HLD 80 §80.3.6)."""
+    """`voice:join`'s additive keys for a ДДС call (HLD 80 §80.3.6; `direction` since I3 E6c, so
+    the head of an INBOUND call knows it is the one reporting)."""
     return {
         "call_kind": call.kind.value,
         "assignment_id": None if call.assignment_id is None else str(call.assignment_id).lower(),
         "persona_id": call.persona_id,
         "endpoint": call.endpoint.value,
+        "direction": call.direction.value,
     }
+
+
+def call_persona(
+    reference: ReferencePort | None, log: Sequence[SessionEvent], call: DdsCall
+) -> Persona | None:
+    """The persona recorded on the call (`DDS_CALL_STARTED.persona_id`, P4), read from the session's
+    recorded pack; `None` for a claimant call or a pack without it."""
+    if call.persona_id is None:
+        return None
+    personas = reference_catalog(reference).personas(session_pack_id(log))
+    return None if personas is None else personas.get(call.persona_id)
 
 
 def claimant_busy(log: Sequence[SessionEvent]) -> bool:
@@ -132,9 +161,11 @@ async def ring_now(
     now_ms: int,
     transport_ready: bool,
     log: Sequence[SessionEvent],
+    persona: Persona | None = None,
 ) -> tuple[DdsCall, list[DomainEvent]]:
     """`ring` a `DIALING` call when the transport is up, then — for a claimant whose 112 call is
-    live — `busy`. Returns the call as it now stands and the events to append (none for `ring`).
+    live, or a persona marked `busy` (I3 E6c) — `busy`. Returns the call as it now stands and the
+    events to append (none for `ring`).
 
     Persists the moved call through `uow.dds_calls`; the caller appends the events.
     """
@@ -151,12 +182,36 @@ async def ring_now(
     except InvalidTransitionError:  # pragma: no cover - checked just above
         return call, []
     events: list[DomainEvent] = []
-    if rung.kind is DdsCallKind.CLAIMANT and claimant_busy(log):
+    busy = rung.kind is DdsCallKind.CLAIMANT and claimant_busy(log)
+    if busy or (persona is not None and persona.busy):
         rung, ended = fire_call_trigger(rung, "busy", actor=_SIMULATION, now_ms=now_ms)
         assert ended is not None
         events.append(ended)
     await uow.dds_calls.save(rung)
     return rung, events
+
+
+async def end_live_calls(
+    uow: UnitOfWork,
+    session_id: SessionId,
+    now_ms: int,
+    *,
+    reason: DdsCallEndReason = DdsCallEndReason.ABORT,
+) -> tuple[list[DomainEvent], list[CallSignal]]:
+    """SYSTEM's `hang_up` of every live ДДС call of the session (§80.3.2 "session abort, stage
+    completion"). Saves the ended calls; returns their `DDS_CALL_ENDED` events, for the caller to
+    append in its own Unit of Work, and the `voice:cancel` signals owed after its commit."""
+    events: list[DomainEvent] = []
+    signals: list[CallSignal] = []
+    for call in await uow.dds_calls.list_live(session_id):
+        ended, event = fire_call_trigger(
+            call, "hang_up", actor=_SYSTEM, now_ms=now_ms, end_reason=reason
+        )
+        await uow.dds_calls.save(ended)
+        assert event is not None
+        events.append(event)
+        signals.append(CallSignal(ended, cancel_reason=reason.value, at_offset_ms=now_ms))
+    return events, signals
 
 
 async def publish_signals(
@@ -194,6 +249,8 @@ class AdvanceDdsCalls:
         *,
         answer_after_ms: int = DEFAULT_ANSWER_AFTER_MS,
         join_retry_ms: int = 2000,
+        ring_timeout_ms: int = DEFAULT_RING_TIMEOUT_MS,
+        reference: ReferencePort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
@@ -201,6 +258,8 @@ class AdvanceDdsCalls:
         self._voice_signals = voice_signals
         self._answer_after_ms = answer_after_ms
         self._join_retry_ms = join_retry_ms
+        self._ring_timeout_ms = ring_timeout_ms
+        self._reference = reference
         #: `call_id -> monotonic ms of the last `voice:join``: a rate limiter, not state (§40.6).
         self._last_join_ms: dict[UUID, int] = {}
 
@@ -265,16 +324,31 @@ class AdvanceDdsCalls:
         log: Sequence[SessionEvent],
         transport_ready: bool,
     ) -> tuple[DdsCall, list[DomainEvent]]:
-        """Ring a `DIALING` call, or let the AI callee answer a `RINGING` OUTBOUND one."""
+        """Ring a `DIALING` call, let the AI callee answer a `RINGING` OUTBOUND one, or give up on
+        a call that rang out (a `no_answer` persona, an INBOUND call nobody answered)."""
+        persona = call_persona(self._reference, log, call)
         if call.state is DdsCallState.DIALING:
             return await ring_now(
-                uow, call, now_ms=now_ms, transport_ready=transport_ready, log=log
+                uow,
+                call,
+                now_ms=now_ms,
+                transport_ready=transport_ready,
+                log=log,
+                persona=persona,
             )
-        if (
-            call.state is DdsCallState.RINGING
-            and call.direction is DdsCallDirection.OUTBOUND
-            and now_ms >= call.started_at_offset_ms + self._answer_after_ms
-        ):
+        if call.state is not DdsCallState.RINGING:
+            return call, []
+        rings_out = call.direction is DdsCallDirection.INBOUND or (
+            persona is not None and persona.no_answer
+        )
+        if rings_out:
+            if now_ms < call.started_at_offset_ms + self._ring_timeout_ms:
+                return call, []
+            ended, event = fire_call_trigger(call, "no_answer", actor=_SIMULATION, now_ms=now_ms)
+            await uow.dds_calls.save(ended)
+            return ended, [] if event is None else [event]
+        answer_after_ms = self._answer_after_ms if persona is None else persona.answer_after_ms
+        if now_ms >= call.started_at_offset_ms + answer_after_ms:
             if call.kind is DdsCallKind.CLAIMANT and claimant_busy(log):
                 ended, event = fire_call_trigger(call, "busy", actor=_SIMULATION, now_ms=now_ms)
                 await uow.dds_calls.save(ended)

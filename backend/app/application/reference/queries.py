@@ -15,6 +15,7 @@ from collections.abc import Mapping
 
 from app.application.ports.reference import ReferencePort
 from app.domain.common.errors import DomainError
+from app.domain.dds.personas import Persona
 from app.domain.routing.catalog import (
     LEGACY_REFERENCE,
     ReferenceCatalog,
@@ -110,3 +111,16 @@ class GetClassifierRow:
         if row is None:
             raise ReferenceNotFoundError(f"no classifier row {code!r}")
         return row
+
+
+class ListReferencePersonas:
+    """`listReferencePersonas` — the ДДС phone's personas of a pack, in file order (I3 E6c, HLD 80
+    §80.4.1). A pack without personas (`legacy-r1`) answers an empty list; an unknown pack `404`."""
+
+    def __init__(self, reference: ReferencePort) -> None:
+        self._reference = reference
+
+    def __call__(self, *, pack: str | None = None) -> list[Persona]:
+        catalog = self._reference.catalog()
+        personas = catalog.personas(_pack_id(catalog, pack))
+        return [] if personas is None else list(personas.personas)

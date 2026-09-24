@@ -109,6 +109,15 @@ DDS_CONTAINER_FACTORIES: tuple[str, ...] = (
     "set_dds_service_status",
     # I3 E5b: «Отметить ошибку в карточке».
     "flag_dds_card_issue",
+    # I3 E6b/E6c (HLD 80 §80.9 INV 3): the ДДС phone's use cases — none is handed a world-truth,
+    # caller-belief or operator-card repository, nor the script (the service head's persona
+    # override reaches `startDdsCall` as a persona-id probe only).
+    "start_dds_call",
+    "list_dds_calls",
+    "get_dds_call",
+    "hang_up_dds_call",
+    "answer_dds_call",
+    "advance_dds_calls",
 )
 
 #: The module that projects the DDS work item — the one place a repair could be smuggled in.

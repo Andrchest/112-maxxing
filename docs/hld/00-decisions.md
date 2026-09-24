@@ -456,7 +456,7 @@ voice_agent    -> application, inference, infrastructure
 
 - `DdsCall {call_id, kind: SERVICE_HEAD | CLAIMANT | OPERATOR_112, direction, assignment_id?, endpoint:
   BROWSER | SIP, …}` with the table-driven `DDS_CALL_TRANSITIONS` (DIALING → RINGING → CONNECTED →
-  ENDED); read model `dds_calls` (migration `0013`). The 112 call model (`CallStateView`,
+  ENDED); read model `dds_calls` (migration `0014`). The 112 call model (`CallStateView`,
   `session:{id}:call_state`) is not widened. The endpoint is recorded on the event.
 - Events `DDS_CALL_STARTED / ANSWERED / ENDED / STATUS_PROPOSED / ASSERTION` are additive; the existing
   per-turn pipeline events are reused under the call's `call_id` (no `RESPONDER_*` twins), with

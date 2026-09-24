@@ -9,7 +9,9 @@ A separate process, not a backend thread. It:
    per call, plus a `voice:cancel:{session_id}` subscription for that call's hang-up/abort;
    calls are keyed by `(session_id, call_id)` (I3 E6b, HLD 80 §80.3.6): a ДДС call-back to the
    claimant (`call_kind: CLAIMANT`) runs beside the session's 112 call, on the same frozen caller
-   pipeline, and never writes the 112 call's `CALL_ENDED` or `session:{id}:call_state`;
+   pipeline, and never writes the 112 call's `CALL_ENDED` or `session:{id}:call_state`; a call to a
+   service head (`call_kind: SERVICE_HEAD`, I3 E6c) runs the responder chain instead
+   (`build_service_head_responder`) in the persona's voice;
 3. warms the inference components up in `60-inference-ops.md` §4.2's **sequential** order — VAD,
    then ASR, then the LLM, then TTS — and heartbeats one `voice:health:{service}` key per warmed
    component with `SET … EX voice_health_ttl_s` every `voice_health_heartbeat_s` seconds. A
@@ -42,6 +44,7 @@ import wave
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from app.application.dialogue.prompt_builder import DISPATCHER_LABEL_RU
@@ -73,12 +76,14 @@ from voice_agent.health import (
 )
 from voice_agent.preflight_http import PreflightHttpServer, resolve_preflight_port
 from voice_agent.providers import build_asr, build_vad
+from voice_agent.tts_cache import CACHE_DIR_NAME, CachedTTSProvider, TtsLineCache
 from voice_agent.wiring import (
     TRANSPORT_LIVEKIT,
     VoiceAgentDeps,
     build_agent_token,
     build_dialogue_llm,
     build_pipeline,
+    build_service_head_responder,
     build_transport,
     build_tts,
     build_tts_fallback,
@@ -110,9 +115,11 @@ HEALTH_SERVICES: tuple[str, ...] = (VAD_SERVICE, ASR_SERVICE, LLM_SERVICE, TTS_S
 
 #: `voice:join.call_kind` of the session's 112 call — absent from the payload means this (§80.3.6).
 CALL_KIND_CALLER = "CALLER"
-#: The ДДС call kinds this build runs (I3 E6b): the claimant call-back on the frozen caller chain.
-#: `SERVICE_HEAD` (E6c) and `OPERATOR_112` (E6d) need the responder chain; ignored until then.
-SUPPORTED_DDS_CALL_KINDS: frozenset[str] = frozenset({DdsCallKind.CLAIMANT.value})
+#: The ДДС call kinds this build runs: the claimant call-back on the frozen caller chain (I3 E6b)
+#: and the service head on the responder chain (I3 E6c). `OPERATOR_112` (E6d) is ignored until then.
+SUPPORTED_DDS_CALL_KINDS: frozenset[str] = frozenset(
+    {DdsCallKind.CLAIMANT.value, DdsCallKind.SERVICE_HEAD.value}
+)
 
 #: `CALL_ENDED.reason` when the call's transport could not be built at all (E19-E3). A free `str`
 #: like the pipeline's own `TRANSPORT_CLOSED` / `TRANSPORT_LOST` / `CANCELLED`, and deliberately
@@ -203,6 +210,11 @@ class VoiceAgent:
         #: 112 call and a ДДС call of the same session are two entries.
         self._calls: dict[tuple[SessionId, uuid.UUID], asyncio.Task[None]] = {}
         self._stopping = asyncio.Event()
+        #: The service heads' pre-synthesised lines (I3 E6c, `voice_agent.tts_cache`): filled in
+        #: the background after the warm-up, per persona voice, and read back from disk.
+        self._line_cache = TtsLineCache(
+            Path(deps.settings.data_dir) / CACHE_DIR_NAME / deps.settings.tts_provider
+        )
         #: Built once per process, warmed once, shared by every call (§4.2).
         self._vad: VADProvider | None = None
         self._asr: ASRProvider | None = None
@@ -710,6 +722,7 @@ class VoiceAgent:
             call_id = uuid.UUID(str(payload["call_id"]))
             room = str(payload["room"])
             call_kind = str(payload.get("call_kind") or CALL_KIND_CALLER)
+            persona_id = payload.get("persona_id")
         except (KeyError, ValueError, TypeError, json.JSONDecodeError):
             logger.warning("ignoring malformed voice:join payload %r", raw)
             return
@@ -723,6 +736,15 @@ class VoiceAgent:
             self._run_call(session_id, call_id, room)
             if call_kind == CALL_KIND_CALLER
             else self._run_call(session_id, call_id, room, dds_call=True)
+            if call_kind == DdsCallKind.CLAIMANT.value
+            else self._run_call(
+                session_id,
+                call_id,
+                room,
+                dds_call=True,
+                call_kind=call_kind,
+                persona_id=None if persona_id is None else str(persona_id),
+            )
         )
         self._calls[key] = asyncio.create_task(run, name=f"voice-call-{session_id}-{call_id}")
 
@@ -794,7 +816,14 @@ class VoiceAgent:
         return max(indices) + 1 if indices else 0
 
     async def _run_call(
-        self, session_id: SessionId, call_id: uuid.UUID, room: str, *, dds_call: bool = False
+        self,
+        session_id: SessionId,
+        call_id: uuid.UUID,
+        room: str,
+        *,
+        dds_call: bool = False,
+        call_kind: str = CALL_KIND_CALLER,
+        persona_id: str | None = None,
     ) -> None:
         """One call: build the transport, build the pipeline, run until the media plane goes away.
 
@@ -822,6 +851,21 @@ class VoiceAgent:
                 if dds_call
                 else {}
             )
+            if call_kind == DdsCallKind.SERVICE_HEAD.value:
+                # I3 E6c (HLD 80 §80.4): the service head's chain behind ASR, in its own voice;
+                # the fixed lines come from the warmed cache when there is one.
+                dds_options["next_stage"] = build_service_head_responder(
+                    self._deps,
+                    voice_id=self._persona_voice(persona_id),
+                    llm=self._llm,
+                    tts=(
+                        None
+                        if self._tts is None
+                        else CachedTTSProvider(self._tts, self._line_cache)
+                    ),
+                    tts_fallback=self._tts_fallback,
+                    guard=self._guard,
+                )
             pipeline = build_pipeline(
                 self._deps,
                 session_id=session_id,
@@ -871,6 +915,59 @@ class VoiceAgent:
                 with contextlib.suppress(Exception):
                     await transport.disconnect()
             self._calls.pop((session_id, call_id), None)
+
+    def _persona_voice(self, persona_id: str | None) -> str:
+        """The logical voice of `persona_id` in the reference pack, else `SIM_TTS_VOICE_ID`."""
+        for persona in self._personas():
+            if persona.id == persona_id:
+                return persona.voice_id
+        return self._deps.settings.tts_voice_id
+
+    def _personas(self) -> list[Any]:
+        """Every persona of every pack of the reference directory (I3 E6c), or none."""
+        try:
+            from app.infrastructure.reference.file_catalog import FileReferenceCatalog
+
+            catalog = FileReferenceCatalog(self._deps.settings.reference_dir).catalog()
+        except Exception:
+            logger.exception("the reference pack's personas could not be read")
+            return []
+        found: dict[str, Any] = {}
+        for pack_id in catalog.pack_ids:
+            personas = catalog.personas(pack_id)
+            if personas is not None:
+                for persona in personas.personas:
+                    found.setdefault(persona.id, persona)
+        return list(found.values())
+
+    async def warm_line_cache(self) -> int:
+        """Pre-synthesise every persona's fixed lines in its voice (I3 E6c, `tts_cache`).
+
+        Runs in the background after the warm-up, never before READY: with a whole-utterance TTS
+        it takes minutes the first time, and a restart reads the files back instead. Returns how
+        many lines are cached; a failure is only a smaller cache."""
+        from app.application.dialogue.responder_templates import ResponderTemplates
+
+        if self._tts is None:
+            return 0
+        templates = ResponderTemplates()
+        by_voice: dict[str, list[str]] = {}
+        for persona in self._personas():
+            by_voice.setdefault(persona.voice_id, []).extend(templates.static_lines(persona))
+        cached = 0
+        settings = self._deps.settings
+        for voice_id, lines in by_voice.items():
+            if self._stopping.is_set():
+                break
+            try:
+                cached += await self._line_cache.warm(
+                    self._tts,
+                    TtsVoiceSpec(voice_id=voice_id, speaking_rate=settings.tts_speaking_rate),
+                    lines,
+                )
+            except Exception:
+                logger.exception("warming the line cache for %s failed", voice_id)
+        return cached
 
     async def _session_started_at(self, session_id: SessionId) -> datetime | None:
         """The session's `started_at` — the origin every offset of this call is measured from.
@@ -928,10 +1025,11 @@ class VoiceAgent:
             await self._preflight.start()
         heartbeat = asyncio.create_task(self._heartbeat(), name="voice-heartbeat")
         joins = asyncio.create_task(self._join_subscription(), name="voice-join")
+        lines = asyncio.create_task(self.warm_line_cache(), name="voice-line-cache")
         try:
             await self._stopping.wait()
         finally:
-            for task in (heartbeat, joins):
+            for task in (heartbeat, joins, lines):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task

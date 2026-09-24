@@ -13,6 +13,15 @@ application layer and the adapters, so that nothing else has to. It builds, per 
 
 The agent owns no domain rule. It produces events and audio; every decision about session state
 belongs to the backend's use cases.
+
+**A service head's call (I3 E6c, HLD 80 §80.4).** `build_service_head_responder` puts
+`ServiceHeadResponder` behind ASR instead of the frozen caller chain — `ResponderContextLoader`
+(script + snapshot, the runner-side `responder_scripts` probe, no WorldTruth / CallerBelief
+repository), the interpreter against the responder slot catalog, `ResponderTemplates` (or, under
+`SIM_RESPONDER_DIALOGUE=llm`, the checked paraphrase) — and a `PersonaSpeechSink`: the same TTS
+stage speaking in the persona's logical voice (`tts.voice_map` resolves it), which never touches
+the scenario caller's emotion. The fixed lines come from the `voice_agent.tts_cache` cache when the
+process has warmed it.
 """
 
 from __future__ import annotations
@@ -40,6 +49,8 @@ from app.application.dialogue.prompt_builder import (
     caller_prompt_config_from_settings,
 )
 from app.application.dialogue.responder import DialogueResponder
+from app.application.dialogue.responder_context import ResponderContextLoader
+from app.application.dialogue.service_head import LeakValuesProbe, ServiceHeadResponder
 from app.application.dialogue.speech_sink import CallerSpeechSink, NullCallerSpeechSink
 from app.application.dialogue.validator import ResponseValidator, validator_config_from_settings
 from app.application.ports.asr import ASRProvider
@@ -55,9 +66,10 @@ from app.application.ports.llm import (
     LlmUsage,
 )
 from app.application.ports.metrics_recorder import MetricsRecorder
-from app.application.ports.tts import TTSProvider
+from app.application.ports.tts import TTSProvider, TtsVoiceSpec
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.vad import VADProvider
+from app.application.simulation.responder_scripts import ScenarioResponderScripts
 from app.application.voice.asr_responder import (
     AsrTurnResponder,
     UnitOfWorkSessionStageResolver,
@@ -71,6 +83,7 @@ from app.application.voice.turn_detector import TurnDetector
 from app.application.voice.turn_pipeline import (
     ShowAsrPartials,
     TranscribedTurnResponder,
+    TurnContext,
     TurnPipeline,
     TurnResponder,
 )
@@ -101,16 +114,19 @@ __all__ = [
     "VAD_ENERGY",
     "VAD_SILERO",
     "NullCallerSpeechSink",
+    "PersonaSpeechSink",
     "ScriptedFakeDialogueLLM",
     "VoiceAgentDeps",
     "agent_participant_identity",
     "build_agent_token",
     "build_asr",
     "build_dialogue_responder",
+    "build_leak_values",
     "build_llm",
     "build_metrics",
     "build_pipeline",
     "build_responder",
+    "build_service_head_responder",
     "build_speech_sink",
     "build_transport",
     "build_tts",
@@ -570,6 +586,103 @@ def show_asr_partials(deps: VoiceAgentDeps) -> ShowAsrPartials:
     return read
 
 
+class PersonaSpeechSink(TtsSpeechSink):
+    """E14's TTS stage speaking as a service head (I3 E6c): the persona's logical voice for every
+    line, and no trigger on the scenario caller's emotion — the head is not the caller."""
+
+    def __init__(self, *, voice: TtsVoiceSpec, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._persona_voice = voice
+
+    async def _voice_for(self, session_id: SessionId) -> TtsVoiceSpec:
+        return self._persona_voice
+
+    async def _apply_interruption_trigger(self, context: TurnContext) -> None:
+        return None
+
+
+def build_leak_values(deps: VoiceAgentDeps) -> LeakValuesProbe:
+    """Every world / caller value of the session's scenario — the `llm` leak check's list (D10).
+
+    Read by code for code: the list never reaches a prompt (`ServiceHeadResponder`)."""
+    from app.domain.scenario.validation import build_fact_definitions
+    from app.domain.scenario.version import ScenarioVersion
+
+    async def read(session_id: SessionId) -> list[str]:
+        async with deps.uow_factory() as uow:
+            session = await uow.sessions.get(session_id)
+            document = (
+                None
+                if session is None
+                else await uow.scenarios.get_version_document(session.scenario_version_id)
+            )
+        if document is None:
+            return []
+        definitions = build_fact_definitions(ScenarioVersion.model_validate(dict(document)))
+        values: list[str] = []
+        for definition in definitions.values():
+            for value in (definition.world_value, definition.caller_value):
+                if isinstance(value, str) and value.strip():
+                    values.append(value)
+                elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                    values.append(str(value))
+        return values
+
+    return read
+
+
+def build_service_head_responder(
+    deps: VoiceAgentDeps,
+    *,
+    voice_id: str,
+    llm: LLMClient | None = None,
+    metrics: MetricsRecorder | None = None,
+    tts: TTSProvider | None = None,
+    tts_fallback: TTSProvider | None = None,
+    guard: InferenceGuard | None = None,
+    reference: Any = None,
+) -> ServiceHeadResponder:
+    """The service head's chain for one call (HLD 80 §80.4; see the module docstring)."""
+    from app.infrastructure.reference.file_catalog import FileReferenceCatalog
+
+    settings = deps.settings
+    client = llm if llm is not None else build_dialogue_llm(deps)
+    recorder = metrics if metrics is not None else build_metrics(deps)
+    return ServiceHeadResponder(
+        loader=ResponderContextLoader(
+            deps.uow_factory,
+            deps.clock,
+            ScenarioResponderScripts(deps.uow_factory),
+            reference if reference is not None else FileReferenceCatalog(settings.reference_dir),
+        ),
+        interpreter=DialogueInterpreter(
+            client, recorder, config=interpreter_config_from_settings(settings)
+        ),
+        sink=PersonaSpeechSink(
+            voice=TtsVoiceSpec(voice_id=voice_id, speaking_rate=settings.tts_speaking_rate),
+            provider=tts if tts is not None else build_tts(settings),
+            fallback_provider=(
+                tts_fallback if tts_fallback is not None else build_tts_fallback(settings)
+            ),
+            metrics=recorder,
+            clock=deps.clock,
+            config=deps.config,
+            uow_factory=deps.uow_factory,
+            default_voice_id=voice_id,
+            default_speaking_rate=settings.tts_speaking_rate,
+            timeout_ms=settings.tts_timeout_ms,
+            first_chunk_timeout_ms=settings.tts_first_chunk_timeout_ms,
+            max_unit_chars=settings.tts_max_unit_chars,
+            guard=guard,
+        ),
+        uow_factory=deps.uow_factory,
+        mode=settings.responder_dialogue,
+        llm=client,
+        leak_values=build_leak_values(deps),
+        llm_timeout_ms=settings.llm_interpreter_timeout_ms,
+    )
+
+
 class DdsCallEventAppender(VoiceEventAppender):
     """The voice appender of a ДДС call (I3 E6b): every event but `CALL_ENDED`.
 
@@ -615,6 +728,7 @@ def build_pipeline(
     dds_call: bool = False,
     first_turn_index: int = 0,
     operator_label_ru: str | None = None,
+    next_stage: TranscribedTurnResponder | None = None,
 ) -> TurnPipeline:
     """One `TurnPipeline` for one call (§3.7).
 
@@ -624,6 +738,10 @@ def build_pipeline(
     ДДС call ends through `DDS_CALL_ENDED`, which the backend appends), `first_turn_index`
     continues the session's turn numbering (`dialogue_turns` is unique per session), and
     `operator_label_ru` is the prompt's speaker label («ДИСПЕТЧЕР»).
+
+    **A service head's call (I3 E6c)** is the same pipeline with `dds_call` and `first_turn_index`
+    and a different chain behind ASR: `next_stage` (`build_service_head_responder`) replaces the
+    frozen caller chain, which is then not built at all.
 
     `vad`, `asr` and `llm` are built from `SIM_VAD_PROVIDER` / `SIM_ASR_PROVIDER` /
     `SIM_LLM_PROVIDER` when the caller does not supply them; the voice-agent process builds each
@@ -679,14 +797,18 @@ def build_pipeline(
                 deps,
                 asr=provider,
                 metrics=recorder,
-                next_stage=build_dialogue_responder(
-                    deps,
-                    llm=llm,
-                    tts=tts,
-                    tts_fallback=tts_fallback,
-                    metrics=recorder,
-                    guard=guard,
-                    operator_label_ru=operator_label_ru,
+                next_stage=(
+                    next_stage
+                    if next_stage is not None
+                    else build_dialogue_responder(
+                        deps,
+                        llm=llm,
+                        tts=tts,
+                        tts_fallback=tts_fallback,
+                        metrics=recorder,
+                        guard=guard,
+                        operator_label_ru=operator_label_ru,
+                    )
                 ),
                 guard=guard,
             )

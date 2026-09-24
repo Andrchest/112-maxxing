@@ -73,6 +73,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from itertools import groupby
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.application.dds.command_context import dds_stage_of, history_entries, is_memo
 from app.application.ports.clock import Clock
@@ -84,14 +85,25 @@ from app.application.sessions.guard_context import build_guard_runtime
 from app.application.simulation.sim_time import running_ms
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import InvalidTransitionError
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import SessionId, UserId
 from app.domain.dds.assignment import DDSAssignment, fire_response_trigger
+from app.domain.dds.call import (
+    CallEndpoint,
+    CallSelectionReason,
+    DdsCall,
+    DdsCallDirection,
+    DdsCallKind,
+    start_call,
+)
 from app.domain.dds.card_status import mirror_leg_status
+from app.domain.dds.personas import resolve_persona
 from app.domain.dds.policy import StatusPolicy, policy_of
 from app.domain.dds.responders import (
     ScriptedResponders,
     ScriptedStep,
+    ScriptReport,
     due_scripted_steps,
+    persona_override_for,
     script_for,
     step_trigger,
 )
@@ -102,7 +114,11 @@ from app.domain.dds.response import (
     StatusSource,
 )
 from app.domain.enums import ActorType, DDSStageState, SessionState
-from app.domain.events.session_event import DomainEvent
+from app.domain.events.session_event import DomainEvent, SessionEvent
+from app.domain.events.types import EventType
+from app.domain.routing.dial_plan import phone_extension
+from app.domain.session.session import RoleStage, SimulationSession
+from app.domain.session.variants import DdsBrigadeCall
 
 __all__ = [
     "SIMULATION_TRIGGER_BY_STATE",
@@ -110,6 +126,7 @@ __all__ = [
     "ResolutionProbe",
     "ResponderProbe",
     "fire_due_scripted_steps",
+    "inbound_call_id",
 ]
 
 logger = logging.getLogger(__name__)
@@ -172,8 +189,9 @@ class DdsStageAutomation:
                 legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
                 scripted = await self._play_scripts(uow, session_id, legs, now_ms)
                 flushed = await uow.events.flush_deadlines(session_id, now_ms)
+                rang = await self._ring_call_in_steps(uow, session, stage, legs, now_ms)
                 await uow.commit()
-                return scripted or bool(flushed)
+                return scripted or bool(flushed) or rang
             flushed = await uow.events.flush_deadlines(session_id, now_ms)
             if stage is None:
                 await uow.commit()
@@ -272,6 +290,144 @@ class DdsStageAutomation:
             stored.extend(await uow.events.append(session_id, list(group)))
         await uow.dds_assignments.add_history(history_entries(session_id, stored))
         return True
+
+    async def _ring_call_in_steps(
+        self,
+        uow: UnitOfWork,
+        session: SimulationSession,
+        stage: RoleStage,
+        legs: Sequence[DDSAssignment],
+        now_ms: int,
+    ) -> bool:
+        """Start an INBOUND call for each due, not yet rung `report: CALL_IN` step of a leg the
+        trainee plays (see the module docstring); `True` when one was started."""
+        if session.variants.dds_brigade_call is not DdsBrigadeCall.ON:
+            return False
+        if stage.state not in _CALL_HOLDING_STATES:
+            return False
+        trainee_legs = [
+            leg
+            for leg in sorted(
+                legs, key=lambda item: (item.received_at_offset_ms, item.service_type)
+            )
+            if leg.responder is LegResponder.TRAINEE
+            and leg.response_status not in TERMINAL_RESPONSE_STATUSES
+        ]
+        if not trainee_legs:
+            return False
+        responders = await self._responder_probe(session.id)
+        log: list[SessionEvent] | None = None
+        started = False
+        for leg in trainee_legs:
+            script = script_for(responders, leg.service_type)
+            due = due_scripted_steps(leg.response_status, leg.received_at_offset_ms, script, now_ms)
+            for step, due_at in due:
+                if step.report is not ScriptReport.CALL_IN:
+                    continue
+                call_id = inbound_call_id(session.id, leg, script.index(step))
+                if await uow.dds_calls.get(session.id, call_id) is not None:
+                    continue
+                callee = _callee_of(session, stage, leg)
+                if callee is None:
+                    break
+                if await uow.dds_calls.live_for_user(session.id, callee) is not None:
+                    break  # the line is busy: the step rings once it is free
+                if log is None:
+                    log = list(await uow.events.read(session.id))
+                at = max(due_at, _line_free_at(log, callee))
+                call, event = self._inbound_call(log, session, leg, call_id, callee, at, responders)
+                stored = await uow.events.append(session.id, [event])
+                log.extend(stored)
+                started_id = next(
+                    item.id for item in stored if item.event_type is EventType.DDS_CALL_STARTED
+                )
+                await uow.dds_calls.add(call, started_event_id=UUID(str(started_id)))
+                started = True
+                break  # one line per workstation: the next due CALL_IN waits for this one
+        return started
+
+    def _inbound_call(
+        self,
+        log: Sequence[SessionEvent],
+        session: SimulationSession,
+        leg: DDSAssignment,
+        call_id: UUID,
+        callee: UserId,
+        at: int,
+        responders: ScriptedResponders | None,
+    ) -> tuple[DdsCall, DomainEvent]:
+        """`[*] --start--> DIALING` of the brigade's INBOUND call (§80.3.2)."""
+        catalog = reference_catalog(self._reference)
+        pack_id = session_pack_id(log)
+        services = catalog.services(pack_id)
+        entry = None if services is None else services.get(leg.service_type)
+        persona = resolve_persona(
+            catalog.personas(pack_id),
+            code=None if entry is None else entry.code,
+            kind=None if entry is None else entry.kind.value,
+            override=persona_override_for(responders, leg.service_type),
+        )
+        extension = None if services is None else phone_extension(services, leg.service_type)
+        return start_call(
+            call_id=call_id,
+            session_id=session.id,
+            kind=DdsCallKind.SERVICE_HEAD,
+            direction=DdsCallDirection.INBOUND,
+            dialed=extension or str(leg.service_type),
+            endpoint=CallEndpoint.BROWSER,
+            actor=_SIMULATION,
+            now_ms=at,
+            selection_reason=CallSelectionReason.INBOUND_SCRIPT,
+            assignment_id=leg.assignment_id,
+            service_type=leg.service_type,
+            persona_id=None if persona is None else persona.id,
+            callee_user_id=callee,
+        )
+
+
+_CALL_HOLDING_STATES = frozenset({DDSStageState.RECEIVED, DDSStageState.ACKNOWLEDGED})
+"""The memo states a ДДС call may be live in (`dds_call_flow`): the ones a brigade rings in."""
+
+
+def _leg_order(leg: DDSAssignment) -> tuple[int, str]:
+    """A stable leg order: the legs of one handoff share the offset and their ids are random."""
+    return leg.received_at_offset_ms, leg.service_type
+
+
+def inbound_call_id(session_id: SessionId, leg: DDSAssignment, step_index: int) -> UUID:
+    """The INBOUND call of one `report: CALL_IN` step — the same id on every tick (INV 7)."""
+    return uuid5(NAMESPACE_URL, f"sim-112:call-in:{session_id}:{leg.assignment_id}:{step_index}")
+
+
+def _callee_of(session: SimulationSession, stage: RoleStage, leg: DDSAssignment) -> UserId | None:
+    """The workstation a brigade's call rings: the leg's participant, else the DDS stage's, else
+    the first ДДС participant of the session."""
+    if leg.bound_user_id is not None:
+        return leg.bound_user_id
+    if stage.participant_user_id is not None:
+        return stage.participant_user_id
+    for participant in session.participants:
+        if session.plays_dds(participant.user_id):
+            return participant.user_id
+    return None
+
+
+def _line_free_at(log: Sequence[SessionEvent], user_id: UserId) -> int:
+    """When `user_id`'s line last became free: their latest `DDS_CALL_ENDED`, else 0."""
+    wanted = str(user_id).lower()
+    mine = {
+        str(event.payload.get("call_id", "")).lower()
+        for event in log
+        if event.event_type is EventType.DDS_CALL_STARTED
+        and str(event.payload.get("actor_user_id", "")).lower() == wanted
+    }
+    ended = [
+        int(event.payload.get("at_offset_ms", event.monotonic_offset_ms))
+        for event in log
+        if event.event_type is EventType.DDS_CALL_ENDED
+        and str(event.payload.get("call_id", "")).lower() in mine
+    ]
+    return max(ended, default=0)
 
 
 def fire_due_scripted_steps(

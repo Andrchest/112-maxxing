@@ -70,7 +70,7 @@ def _parse_protocol_table() -> dict[EventType, _Row]:
 _PARSED_ROWS = _parse_protocol_table()
 
 
-def test_protocol_table_parses_all_49_event_types() -> None:
+def test_protocol_table_parses_every_event_type() -> None:
     assert frozenset(_PARSED_ROWS) == frozenset(EventType)
 
 

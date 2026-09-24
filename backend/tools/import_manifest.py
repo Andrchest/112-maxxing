@@ -13,7 +13,9 @@ Stdlib only: the gate's sha check (`backend/tests/unit/reference/test_reference_
 the same file with `json` + `hashlib` and needs nothing from here.
 
 Scope: `legacy-r1` (card `v1`, no classifier) since I3 E2a; `v046_24-r1` (card `v2`, classifier
-`v046_24`) since E3a added `card-schema/v2.yaml` (HLD 70 §70.6.1, B1 §3 "Row E3a′").
+`v046_24`) since E3a added `card-schema/v2.yaml` (HLD 70 §70.6.1, B1 §3 "Row E3a′"), re-pinned with
+the ДДС phone's personas (`personas/v1.yaml`, hand authored) by I3 E6c (HLD 80 §80.4.1). A pack
+without personas names none (`legacy-r1`: schema 1 never has the phone, P5).
 """
 
 from __future__ import annotations
@@ -34,7 +36,12 @@ MANIFEST_VERSION = 1
 #: manifest", the reference API's default (`PackQueryParam`).
 PACKS: dict[str, dict[str, str | None]] = {
     "legacy-r1": {"card_schema": "v1", "services": "v1", "classifier": None},
-    "v046_24-r1": {"card_schema": "v2", "services": "v1", "classifier": "v046_24"},
+    "v046_24-r1": {
+        "card_schema": "v2",
+        "services": "v1",
+        "classifier": "v046_24",
+        "personas": "v1",
+    },
 }
 
 #: Every reference file the manifest pins, in the order HLD 70 §70.6.1 lists them.
@@ -46,6 +53,7 @@ FILES: tuple[str, ...] = (
     "classifier/v046_24.columns.json",
     "services/v1.yaml",
     "services/sluzhby-112.transcription.tsv",
+    "personas/v1.yaml",
 )
 
 CLASSIFIER_SOURCE = (

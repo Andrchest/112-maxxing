@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from app.domain.common.errors import ScenarioValidationError
+from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
 from app.domain.scenario.validation import (
     VALIDATION_RULE_NUMBERS,
     scenario_version_violations,
@@ -297,6 +298,18 @@ def _r41_brigade_call_on_without_memo_mode(document: Document) -> None:
     _schema_2(document, supported_dds_brigade_call=["OFF", "ON"])
 
 
+def _r42_persona_override_without_the_phone(document: Document) -> None:
+    # I3 E6c (HLD 80 §80.5): a persona voices a service only on the ДДС phone, so naming one in a
+    # scenario whose support has no `dds_brigade_call: ON` means nothing — R42 refuses it.
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = {
+        "FIRE_RESCUE": {
+            "persona": "BRIGADE_101",
+            "steps": [{"after_ms": 0, "status": "RECEIVED"}],
+        }
+    }
+
+
 PROVENANCE: dict[str, Any] = {
     "source": "TICKET",
     "ticket": 17,
@@ -354,6 +367,7 @@ MUTATIONS: dict[int, Mutation] = {
     39: _r39_accept_deadline_not_before_not_completed,
     40: _r40_applies_to_variants_names_an_unknown_value,
     41: _r41_brigade_call_on_without_memo_mode,
+    42: _r42_persona_override_without_the_phone,
     43: _r43_provenance_names_a_ticket_that_does_not_exist,
 }
 
@@ -397,9 +411,97 @@ def test_mutation_table_covers_exactly_the_rule_registry() -> None:
     assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
 
 
-def test_the_rule_registry_after_e6b() -> None:
-    """R01-R41 (R41 from I3 E6b), then R43 (I3 E8); R42 is E6c's and is not run yet."""
-    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 42), 43]
+def test_the_rule_registry_after_e6c() -> None:
+    """R01-R43: R41 from I3 E6b, R42 from I3 E6c, R43 from I3 E8."""
+    assert list(VALIDATION_RULE_NUMBERS) == list(range(1, 44))
+
+
+def _phone_reference() -> ReferenceCatalog:
+    """`LEGACY_REFERENCE`'s one pack, plus the ДДС phone's personas (I3 E6c): the demo document
+    is a `legacy-r1` scenario, and R42 reads the personas of the scenario's own pack."""
+    from app.infrastructure.reference.file_catalog import FileReferenceCatalog
+
+    personas = FileReferenceCatalog().catalog().personas("v046_24-r1")
+    assert personas is not None
+    legacy = LEGACY_REFERENCE.pack("legacy-r1")
+    assert legacy is not None
+    services = LEGACY_REFERENCE.services("legacy-r1")
+    assert services is not None
+    return ReferenceCatalog(
+        packs=(legacy.model_copy(update={"personas": personas.catalog_id}),),
+        service_catalogs=(services,),
+        persona_catalogs=(personas,),
+    )
+
+
+def _brigade_call_document(responders: Any) -> Document:
+    document = demo_document()
+    _schema_2(
+        document,
+        supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"],
+        supported_dds_brigade_call=["OFF", "ON"],
+    )
+    document["expected_response"]["responders"] = responders
+    return document
+
+
+def test_r42_allows_a_pack_persona_and_call_in_steps_under_the_phone() -> None:
+    """R42's allow half: the object form with a persona of the pack, and a `CALL_IN` step."""
+    document = _brigade_call_document(
+        {
+            "FIRE_RESCUE": {
+                "persona": "BRIGADE_101",
+                "steps": [
+                    {"after_ms": 0, "status": "RECEIVED"},
+                    {"after_ms": 15_000, "status": "ACCEPTED", "report": "CALL_IN"},
+                ],
+            },
+            "POLICE": [{"after_ms": 0, "status": "RECEIVED", "report": "ON_REQUEST"}],
+        }
+    )
+    assert validate_scenario_document(document, reference=_phone_reference()) == []
+
+
+def test_r42_refuses_a_persona_the_pack_does_not_have() -> None:
+    document = _brigade_call_document(
+        {
+            "FIRE_RESCUE": {
+                "persona": "NO_SUCH_PERSONA",
+                "steps": [{"after_ms": 0, "status": "RECEIVED"}],
+            }
+        }
+    )
+    violations = validate_scenario_document(document, reference=_phone_reference())
+    assert _rule_numbers(violations) == {42}
+    assert any("NO_SUCH_PERSONA" in violation for violation in violations)
+
+
+def test_r42_refuses_a_call_in_step_without_the_phone() -> None:
+    document = demo_document()
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+    document["expected_response"]["responders"] = {
+        "FIRE_RESCUE": [{"after_ms": 0, "status": "RECEIVED", "report": "CALL_IN"}]
+    }
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {42}
+    assert any("report is CALL_IN" in violation for violation in violations)
+
+
+def test_r42_refuses_an_unknown_report_value() -> None:
+    document = _brigade_call_document(
+        {"FIRE_RESCUE": [{"after_ms": 0, "status": "RECEIVED", "report": "SOMETIMES"}]}
+    )
+    assert validate_scenario_document(document, reference=_phone_reference()) != []
+
+
+def test_a_step_without_report_dumps_as_before_e6c() -> None:
+    """D4: a script written before E6c keeps its canonical dump — `report` is left out while it is
+    the default, and the bare list stays a list."""
+    document = _brigade_call_document({"FIRE_RESCUE": [{"after_ms": 0, "status": "RECEIVED"}]})
+    dumped = ScenarioVersion.model_validate(document).model_dump(mode="json")
+    step = dumped["expected_response"]["responders"]["FIRE_RESCUE"][0]
+    assert "report" not in step
+    assert step == {"after_ms": 0, "status": "RECEIVED", "comment_ru": None, "order_number": None}
 
 
 def test_r41_allows_brigade_call_on_with_memo_mode_and_responders() -> None:

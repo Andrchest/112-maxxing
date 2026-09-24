@@ -26,14 +26,29 @@ same whether the runner ticks every 100 ms or every 900 ms.
 **INV 3.** The script is scenario data. Only stage automation (runner side) is handed it, through a
 probe the composition root binds (`app.application.simulation.responder_scripts`); no DDS command
 and no DDS read ever sees `responders`.
+
+**The ДДС phone (I3 E6c, HLD 80 §80.3.3, §80.4.1, R42).** Under `dds_brigade_call: ON` the script
+of a leg the trainee plays is the brigade's timeline, **voiced** by the service head on a call and
+never applied. Two additive, optional keys serve it, both meaningless under `OFF` (R42): a step's
+`report` (`ON_REQUEST`, the default — the head says it when asked; `CALL_IN` — the brigade calls the
+ДДС to report it), and a service's `persona` override, for which a service's script may be written
+as an object `{persona: <id>, steps: [...]}` instead of the bare list (`ServiceScript`). A step
+written before E6c dumps exactly as before (`report` is left out while it is the default, D4).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from enum import Enum
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from app.domain.common.ids import UserId
 from app.domain.dds.assignment import DDSAssignment
@@ -49,13 +64,17 @@ from app.domain.enums import ActorType, ServiceId
 __all__ = [
     "DEFAULT_RESPONDERS",
     "DEFAULT_SCRIPT",
+    "ScriptReport",
     "ScriptedResponders",
     "ScriptedStep",
+    "ServiceScript",
     "assign_responders",
     "due_scripted_steps",
+    "persona_override_for",
     "plays_leg",
     "script_for",
     "script_problems",
+    "service_scripts",
     "step_trigger",
 ]
 
@@ -65,9 +84,19 @@ DEFAULT_RESPONDERS: Literal["DEFAULT"] = "DEFAULT"
 _S = ServiceResponseStatus
 
 
+class ScriptReport(str, Enum):
+    """How a step reaches the ДДС under `dds_brigade_call: ON` (HLD 80 §80.3.3, I3 E6c)."""
+
+    ON_REQUEST = "ON_REQUEST"
+    """The head says it when the ДДС calls and asks (pull, REQ-1038) — the default."""
+    CALL_IN = "CALL_IN"
+    """The brigade calls the ДДС to report it (push): an INBOUND `DdsCall` rings when it is due."""
+
+
 class ScriptedStep(BaseModel):
     """One entry of a service's script: the status the leg moves to `after_ms` after its
-    `HANDOFF_RECEIVED`, with the entry's comment and «Номер наряда» (free text, A-2)."""
+    `HANDOFF_RECEIVED`, with the entry's comment and «Номер наряда» (free text, A-2), and — under
+    `dds_brigade_call: ON` only — how the brigade reports it (`report`, I3 E6c)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -75,10 +104,32 @@ class ScriptedStep(BaseModel):
     status: ServiceResponseStatus
     comment_ru: str | None = None
     order_number: str | None = None
+    report: ScriptReport = ScriptReport.ON_REQUEST
+
+    @model_serializer(mode="wrap")
+    def _omit_default_report(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """Leave `report` out while it is the default, so a script written before E6c dumps — and
+        hashes (D4) — byte for byte as it did (P5)."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("report") in (ScriptReport.ON_REQUEST, "ON_REQUEST"):
+            data.pop("report", None)
+        return data
 
 
-type ScriptedResponders = Mapping[ServiceId, tuple[ScriptedStep, ...]] | Literal["DEFAULT"]
-"""The value of `expected_response.responders` (§70.4.5)."""
+class ServiceScript(BaseModel):
+    """A service's script with the persona that voices it (R42, I3 E6c): the object form of
+    `expected_response.responders[service_id]`. The bare list stays the ordinary form."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    persona: str | None = None
+    steps: tuple[ScriptedStep, ...]
+
+
+type ScriptedResponders = (
+    Mapping[ServiceId, tuple[ScriptedStep, ...] | ServiceScript] | Literal["DEFAULT"]
+)
+"""The value of `expected_response.responders` (§70.4.5; the object form since E6c)."""
 
 DEFAULT_SCRIPT: tuple[ScriptedStep, ...] = (
     ScriptedStep(after_ms=0, status=_S.RECEIVED),
@@ -94,6 +145,19 @@ WORKING +200 000, COMPLETED +600 000` (ms after the leg's `HANDOFF_RECEIVED`).""
 _COMMENT_REQUIRED = frozenset({_S.NOT_ACCEPTED, _S.REFUSED})
 
 
+def _steps_of(entry: tuple[ScriptedStep, ...] | ServiceScript) -> tuple[ScriptedStep, ...]:
+    return entry.steps if isinstance(entry, ServiceScript) else tuple(entry)
+
+
+def service_scripts(
+    responders: ScriptedResponders | None,
+) -> Mapping[ServiceId, tuple[ScriptedStep, ...]]:
+    """Every service the map names, with its steps whichever form it was written in."""
+    if responders is None or isinstance(responders, str):
+        return {}
+    return {service: _steps_of(entry) for service, entry in responders.items()}
+
+
 def script_for(responders: ScriptedResponders | None, service_id: str) -> tuple[ScriptedStep, ...]:
     """The script a scripted leg of `service_id` walks: its own entry, else `DEFAULT_SCRIPT`.
 
@@ -102,7 +166,16 @@ def script_for(responders: ScriptedResponders | None, service_id: str) -> tuple[
     """
     if responders is None or isinstance(responders, str):
         return DEFAULT_SCRIPT
-    return responders.get(ServiceId(service_id), DEFAULT_SCRIPT)
+    entry = responders.get(ServiceId(service_id))
+    return DEFAULT_SCRIPT if entry is None else _steps_of(entry)
+
+
+def persona_override_for(responders: ScriptedResponders | None, service_id: str) -> str | None:
+    """The scenario's persona override for `service_id` (R42), or `None`."""
+    if responders is None or isinstance(responders, str):
+        return None
+    entry = responders.get(ServiceId(service_id))
+    return entry.persona if isinstance(entry, ServiceScript) else None
 
 
 def step_trigger(

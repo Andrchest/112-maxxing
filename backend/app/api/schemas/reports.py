@@ -295,6 +295,10 @@ class TranscriptSegmentViewSchema(ApiModel):
     asr_model: str | None
     audio_segment_id: UUID | None
     turn_index: int | None
+    call_id: UUID | None = None
+    """I3 E6c (HLD 80 §80.6.1): the call this row was said on — the report groups by it."""
+    call_party_ru: str | None = None
+    """I3 E6c: the call's party label («Вызов 112: абонент», «Звонок ДДС: …»)."""
 
 
 class AudioSegmentRefSchema(ApiModel):
@@ -319,6 +323,10 @@ class TimelineEntryViewSchema(ApiModel):
     actor_id: UUID | None
     summary_ru: str
     payload: dict[str, Any]
+    call_id: UUID | None = None
+    """I3 E6c (HLD 80 §80.6.1): the payload's `call_id`, so a client groups turns by call."""
+    call_party_ru: str | None = None
+    """I3 E6c: the call's party label, read from `DDS_CALL_STARTED.kind` / the persona."""
 
 
 class DispatchEventSchema(ApiModel):
@@ -486,6 +494,8 @@ def timeline_entry_schema(entry: TimelineEntry) -> TimelineEntryViewSchema:
         # Already JSON-safe: `session_events.payload` is `jsonb`, and the event store writes it
         # through `json_safe_payload` at the one `DomainEvent` -> row boundary (§20.8).
         payload=dict(entry.payload),
+        call_id=entry.call_id,
+        call_party_ru=entry.call_party_ru,
     )
 
 
@@ -503,6 +513,8 @@ def transcript_segment_schema(entry: TranscriptEntry) -> TranscriptSegmentViewSc
         asr_model=entry.asr_model,
         audio_segment_id=entry.audio_segment_id,
         turn_index=entry.turn_index,
+        call_id=entry.call_id,
+        call_party_ru=entry.call_party_ru,
     )
 
 

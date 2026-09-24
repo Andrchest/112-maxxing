@@ -185,6 +185,17 @@ to `RECEIVED` at the same offset). Stage automation fires the steps in memo mode
 (`source: SCRIPTED_RESPONDER`), each stamped with its due offset (INV 7); it is the only reader of
 the key at runtime (INV 3).
 
+*(Additive, I3 E6c — `80-telephony.md` §80.3.3, §80.4.1, rule 42.)* Under `dds_brigade_call: ON` the
+script of a leg the trainee plays is the brigade's timeline, voiced by the service head on a ДДС call
+and never applied. Two optional keys serve it, both only in a document supporting `ON`: an entry's
+`report` — `ON_REQUEST` (the default; left out of the canonical dump while default, D4) or `CALL_IN`
+(the brigade rings the ДДС when the step falls due) — and a service's persona override, for which the
+service's script may be written as the object `{persona: <persona id of the pack>, steps: [...]}`
+instead of the bare list, e.g. `FIRE_RESCUE: {persona: BRIGADE_101, steps: [{after_ms: 0, status:
+RECEIVED}, {after_ms: 15000, status: ACCEPTED, report: CALL_IN}]}`. At runtime the key's readers stay
+runner-side (`responder_scripts`, INV 3): stage automation, the head's `ResponderContextLoader`, and a
+persona-id-only probe `startDdsCall` is handed.
+
 `prefab_handoff.card_values` keys must be `field_path`s from `CARD_FIELDS`
 (`10-domain-model.md` §10.6). The prefab is deliberately imperfect where the exercise wants it to be —
 it stands in for an operator who already made mistakes.
@@ -549,17 +560,21 @@ when the document is parsed and is reported as rule 39 too; the cross-field half
 39. `timers.*` are positive integers; `timers.accept_within_ms < timers.not_completed_after_ms`
     (after the defaults of §30.12 are applied to absent keys).
 
-Rule 43 is added by I3 E8 (§30.13); numbers 41 and 42 are reserved by the telephony HLD
+Rule 43 is added by I3 E8 (§30.13); numbers 41 and 42 are the telephony HLD's
 (`80-telephony.md`, E6b/E6c). Rule 1 is extended once more: `provenance` in a schema-1 document is
 refused.
 
 Rule 41 is added by I3 E6b (`80-telephony.md` §80.5, D25): `dds_brigade_call: ON` — "the ДДС has a
 phone" — is a memo-mode variant. Its session half is `resolve_variants`': a session resolving to
-`ON` with `dds_mode: RESOURCE_PICKER` is refused with `409 VARIANT_NOT_SUPPORTED`. Rule 42 (the
-persona override and a script step's `report`) stays reserved for E6c.
+`ON` with `dds_mode: RESOURCE_PICKER` is refused with `409 VARIANT_NOT_SUPPORTED`. Rule 42 is added
+by I3 E6c (`80-telephony.md` §80.4.1, §80.5): the persona override and a script step's `report`.
 
 41. `variants.supported.dds_brigade_call` contains `ON` ⇒ `variants.supported.dds_mode` contains
     `MEMO_STATUSES` and `expected_response.responders` is present (or `responders: DEFAULT`).
+42. `expected_response.responders[service_id].persona`, when present, names a persona of the
+    document's reference pack (`reference/personas/<id>.yaml` of the pack in the manifest); a
+    step's `report` is `ON_REQUEST` or `CALL_IN`; and `persona` / a `CALL_IN` step appear only in a
+    schema-2 document whose `variants.supported.dds_brigade_call` contains `ON`.
 
 43. `provenance`, when present, is well formed — exactly the keys `source` (`TICKET`), `ticket`
     (integer), `call` (integer) and `generation_candidate` (boolean), strictly typed; a malformed key

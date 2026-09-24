@@ -231,6 +231,7 @@ async def set_dds_service_status(
         status=body.status,
         order_number=body.order_number,
         comment_ru=body.comment_ru,
+        proposed_by_call_id=body.proposed_by_call_id,
     )
     await tick(SessionId(session_id))
     return dds_leg_schema(view)
@@ -528,6 +529,26 @@ async def get_dds_call(
     """One row of the `dds_calls` read model."""
     view = await container.get_dds_call()(SessionId(session_id), call_id, user)
     return dds_call_schema(view)
+
+
+@router.post(
+    "/{session_id}/dds-calls/{call_id}/answer",
+    operation_id="answerDdsCall",
+    summary="The ДДС trainee answers an INBOUND brigade call (a `report CALL_IN` script step).",
+    response_model=StartDdsCallResponseSchema,
+    status_code=200,
+)
+async def answer_dds_call(
+    session_id: UUID,
+    call_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> StartDdsCallResponseSchema:
+    """`answer` (TRAINEE) on a ringing INBOUND call (I3 E6c, HLD 80 §80.3.2)."""
+    answered = await container.answer_dds_call()(SessionId(session_id), call_id, user)
+    await tick(SessionId(session_id))
+    return started_dds_call_schema(answered)
 
 
 @router.post(

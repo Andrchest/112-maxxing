@@ -119,6 +119,9 @@ class SetServiceStatusRequestSchema(ApiModel):
     status: ServiceResponseStatus
     order_number: str | None = Field(default=None, max_length=64)
     comment_ru: str | None = Field(default=None, max_length=2000)
+    proposed_by_call_id: UUID | None = None
+    """I3 E6c (HLD 80 §80.3.3): the ДДС call on which the status was heard — it must name a
+    `DDS_CALL_STATUS_PROPOSED` of this leg (`422 PROPOSAL_UNKNOWN`)."""
 
 
 class FlagCardIssueRequestSchema(ApiModel):
@@ -408,6 +411,8 @@ class DdsLegViewSchema(ApiModel):
     is_mine: bool
     history: list[ServiceStatusEntryViewSchema]
     available_actions: list[ActionDescriptorSchema]
+    live_call_id: UUID | None = None
+    """I3 E6c: the non-`ENDED` `SERVICE_HEAD` call on this leg, if any (HLD 80 contract delta)."""
 
 
 def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
@@ -426,6 +431,7 @@ def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
         is_mine=view.is_mine,
         history=[status_entry_schema(entry) for entry in view.history],
         available_actions=action_schemas(view.available_actions),
+        live_call_id=view.live_call_id,
     )
 
 

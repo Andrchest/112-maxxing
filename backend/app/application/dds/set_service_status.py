@@ -20,6 +20,14 @@ One command, one step of `SERVICE_RESPONSE_TRANSITIONS`, in the fixed order belo
    `RECEIVED` also fires the stage's `acknowledge` (§70.4.4), so `DDS_ACKNOWLEDGED` and every
    acknowledge `DEADLINE` rule keep working; no other stage trigger is ever fired from here.
 
+**A status heard on a call (I3 E6c, HLD 80 §80.3.3, D24).** Under `dds_brigade_call: ON` the
+service head *proposes* (`DDS_CALL_STATUS_PROPOSED`) and the trainee *commits* with this very
+command, optionally naming the call with `proposed_by_call_id`: it must name a
+`DDS_CALL_STATUS_PROPOSED` of this leg in the session's log, else `422 PROPOSAL_UNKNOWN` (checked
+after the leg and before the machine). It is copied into `DDS_SERVICE_STATUS_SET` and changes
+nothing else — the status written is the request's, never the proposal's (INV 4), and the leg
+machine, `409`, `422 COMMENT_REQUIRED`, the history and the memo closure are exactly as above.
+
 `x-emits` is `[DDS_CARD_STATUS_CHANGED, DDS_SERVICE_STATUS_SET, DDS_ACKNOWLEDGED,
 STAGE_STATE_CHANGED]`: the event store merges the due card-status events in (flush-before-append,
 §70.3.5), then the status event(s), then the acknowledgement when this was the first decision. The
@@ -28,6 +36,7 @@ history rows are written from the stored events in the same transaction.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
@@ -46,13 +55,14 @@ from app.domain.dds.response import (
     trigger_for,
 )
 from app.domain.enums import ActorType, DDSStageState
-from app.domain.events.session_event import DomainEvent
+from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
 
 __all__ = [
     "ACTION_ID",
     "CommentRequiredError",
     "ForbiddenForServiceError",
+    "ProposalUnknownError",
     "SetDdsServiceStatus",
     "acknowledged_event",
     "check_leg_bound",
@@ -74,6 +84,35 @@ class CommentRequiredError(DomainError):
     def __init__(self, status: ServiceResponseStatus) -> None:
         self.status = status
         super().__init__(f"status {status.value} requires a non-blank comment_ru")
+
+
+class ProposalUnknownError(DomainError):
+    """`proposed_by_call_id` names no `DDS_CALL_STATUS_PROPOSED` of this leg (`422`, I3 E6c)."""
+
+    code = "PROPOSAL_UNKNOWN"
+
+    def __init__(self, call_id: UUID, assignment_id: AssignmentId) -> None:
+        self.call_id = call_id
+        self.assignment_id = assignment_id
+        super().__init__(
+            f"call {call_id} proposed no status for assignment {assignment_id} in this session"
+        )
+
+
+def check_proposal(log: Sequence[SessionEvent], call_id: UUID, assignment_id: AssignmentId) -> None:
+    """`proposed_by_call_id` must name a `DDS_CALL_STATUS_PROPOSED` of this leg (§80.3.3)."""
+    wanted_call = str(call_id).lower()
+    wanted_leg = str(assignment_id).lower()
+    for event in log:
+        if event.event_type is not EventType.DDS_CALL_STATUS_PROPOSED:
+            continue
+        payload = event.payload
+        if (
+            str(payload.get("call_id", "")).lower() == wanted_call
+            and str(payload.get("assignment_id", "")).lower() == wanted_leg
+        ):
+            return
+    raise ProposalUnknownError(call_id, assignment_id)
 
 
 class ForbiddenForServiceError(DomainError):
@@ -151,11 +190,14 @@ class SetDdsServiceStatus:
         status: ServiceResponseStatus,
         order_number: str | None = None,
         comment_ru: str | None = None,
+        proposed_by_call_id: UUID | None = None,
     ) -> DdsLegView:
         """Move the leg to `status` (see the module docstring for the order of the checks)."""
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
             leg = ctx.leg(assignment_id)
             check_leg_bound(leg, user.user_id)
+            if proposed_by_call_id is not None:
+                check_proposal(ctx.full_log, proposed_by_call_id, assignment_id)
             policy = ctx.status_policy(leg)
             current = (
                 ServiceResponseStatus.RECEIVED
@@ -194,6 +236,7 @@ class SetDdsServiceStatus:
                 status_policy=policy,
                 order_number=order_number,
                 comment_ru=comment_ru,
+                proposed_by_call_id=proposed_by_call_id,
             )
             events.append(event)
             await ctx.save_leg(moved)

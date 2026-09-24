@@ -59,8 +59,12 @@ def test_every_source_has_the_sha256_the_manifest_records() -> None:
 def test_every_pack_names_pinned_files() -> None:
     files = set(MANIFEST["files"])
     for pack_id, pack in MANIFEST["packs"].items():
-        assert set(pack) == {"card_schema", "services", "classifier"}, pack_id
+        # `personas` is optional (I3 E6c, HLD 80 §80.4.1): only a pack with the ДДС phone names it.
+        assert {"card_schema", "services", "classifier"} <= set(pack), pack_id
+        assert set(pack) <= {"card_schema", "services", "classifier", "personas"}, pack_id
         assert f"card-schema/{pack['card_schema']}.yaml" in files, pack_id
+        if pack.get("personas") is not None:
+            assert f"personas/{pack['personas']}.yaml" in files, pack_id
         assert f"services/{pack['services']}.yaml" in files, pack_id
         if pack["classifier"] is not None:
             assert f"classifier/{pack['classifier']}.json" in files, pack_id

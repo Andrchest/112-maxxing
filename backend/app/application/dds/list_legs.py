@@ -93,6 +93,11 @@ async def assemble_leg_views(
     users = await uow.users.get_many([UserId(person) for person in people]) if people else []
     display_names = {UUID(str(user.user_id)): user.display_name_ru for user in users}
     may_act = _may_act(session, stage)
+    live_calls = {
+        UUID(str(call.assignment_id)): call.call_id
+        for call in await uow.dds_calls.list_live(session.id)
+        if call.assignment_id is not None
+    }
     views: list[DdsLegView] = []
     for leg in legs:
         entry = None if catalog is None else catalog.get(leg.service_type)
@@ -105,6 +110,7 @@ async def assemble_leg_views(
                 display_names=display_names,
                 is_mine=_is_mine(session, stage, leg, viewer),
                 may_act=may_act,
+                live_call_id=live_calls.get(UUID(str(leg.assignment_id))),
             )
         )
     return tuple(views)

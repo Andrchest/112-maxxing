@@ -7,6 +7,11 @@
 // `leg.available_actions` verbatim — never a hard-coded status list — and its confirm/cancel are
 // icon buttons (✓/×) carrying the same accessible names (`aria-label`) the buttons always had, so
 // existing and new tests keep finding them by role+name.
+//
+// I3 E6c (HLD 80 §80.3.3, D24): under `dds_brigade_call: ON` a status the service head reported on a
+// call (`DDS_CALL_STATUS_PROPOSED`) is offered as a chip «Услышано по телефону» above the pencil —
+// only when that status is one of the leg's own `available_actions` targets. «Подставить в форму»
+// fills the form and the confirmation carries `proposed_by_call_id`; the trainee still commits it.
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
@@ -17,6 +22,7 @@ import { formatCallDurationMs } from '@/entities/call';
 import { problemMessageRu, setDdsServiceStatus, type DdsLegView, type ProblemCode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { serviceResponseStatusLabelRu, TRIGGER_TARGET_STATUS, triggerRequiresComment } from './dds-labels';
+import { latestProposalFor, useCallProposalStore, type CallStatusProposal } from './call-proposals';
 
 interface ServiceLegBlockProps {
   sessionId: string;
@@ -33,15 +39,33 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
   const [comment, setComment] = useState('');
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [proposedBy, setProposedBy] = useState<CallStatusProposal | null>(null);
+  const legProposals = useCallProposalStore((state) => state.byLeg[leg.assignment_id]);
 
   const canEdit = leg.is_mine && leg.available_actions.length > 0;
   const commentRequired = triggerRequiresComment(trigger);
+  const targetStatuses = new Set(
+    leg.available_actions.map((action) => TRIGGER_TARGET_STATUS[action.action_id]).filter((status) => status !== undefined),
+  );
+  const proposal = canEdit ? latestProposalFor(legProposals, targetStatuses) : null;
 
   function openEditor(): void {
     setTrigger(leg.available_actions[0]?.action_id ?? '');
     setOrderNumber('');
     setComment('');
     setErrorMessage(null);
+    setProposedBy(null);
+    setEditing(true);
+  }
+
+  function applyProposal(heard: CallStatusProposal): void {
+    const action = leg.available_actions.find((item) => TRIGGER_TARGET_STATUS[item.action_id] === heard.status);
+    if (!action) return;
+    setTrigger(action.action_id);
+    setOrderNumber(heard.order_number ?? '');
+    setComment(heard.comment_ru ?? '');
+    setErrorMessage(null);
+    setProposedBy(heard);
     setEditing(true);
   }
 
@@ -60,6 +84,8 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
         status: targetStatus,
         order_number: orderNumber.trim() === '' ? null : orderNumber.trim(),
         comment_ru: comment.trim() === '' ? null : comment.trim(),
+        // Only a confirmation of a heard status names its call (I3 E6c); otherwise the key is absent.
+        ...(proposedBy !== null && proposedBy.status === targetStatus ? { proposed_by_call_id: proposedBy.call_id } : {}),
       });
       onLegUpdated(updated);
       setEditing(false);
@@ -121,9 +147,26 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
             )}
           </ul>
 
+          {proposal && !editing ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900" data-slot="dds-leg-proposal">
+              <span>
+                {t('ddsLegProposalChip')}: {serviceResponseStatusLabelRu(proposal.status)}
+                {proposal.order_number ? ` · ${t('ddsLegOrderNumberLabel')}: ${proposal.order_number}` : null}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => applyProposal(proposal)}>
+                {t('ddsLegProposalApply')}
+              </Button>
+            </div>
+          ) : null}
+
           {canEdit ? (
             editing ? (
               <div className="flex flex-col gap-1.5 border-t border-border pt-2" data-slot="dds-leg-form">
+                {proposedBy ? (
+                  <p className="text-xs text-amber-800" data-slot="dds-leg-form-proposal">
+                    {t('ddsLegProposalFromCall')}
+                  </p>
+                ) : null}
                 <Label htmlFor={`dds-leg-${leg.assignment_id}-status`}>{t('ddsLegStatusLabel')}</Label>
                 <select
                   id={`dds-leg-${leg.assignment_id}-status`}

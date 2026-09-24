@@ -44,13 +44,14 @@ from app.application.reports.dds_decisions import (
     dds_participant_totals,
 )
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
-from app.application.reports.timeline import TimelineEntry, timeline_entry
+from app.application.reports.timeline import TimelineEntry, call_parties, timeline_entry
 from app.application.reports.timing_metrics import TimingMetrics, timing_metrics
 from app.application.reports.transcript import (
     AudioSegmentRef,
     TranscriptEntry,
     audio_segment_refs,
     transcript_entries,
+    turn_calls,
 )
 from app.application.reports.truth_vs_card import TruthVsCardEntry, truth_vs_card_diff
 from app.application.reports.visibility import ReportVisibility, report_visibility
@@ -60,6 +61,7 @@ from app.application.sessions.queries import SessionDetailView, assemble_session
 from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import ScenarioVersionId, SessionId, SnapshotId
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.call import dds_call_ids
 from app.domain.enums import RoleType, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
@@ -169,7 +171,7 @@ class GetSessionReport:
             )
             transcript = (
                 await uow.transcript_segments.list_for_session(session_id)
-                if visibility.shows_operator_sections
+                if visibility.shows_operator_sections or visibility.shows_dds_sections
                 else []
             )
             audio = (
@@ -193,15 +195,34 @@ class GetSessionReport:
         service_names = (
             {} if catalog is None else {str(entry.id): entry.name_ru for entry in catalog.services}
         )
+        # I3 E6c (HLD 80 §80.6.1, §80.6.2): every call of the session with its party label, the
+        # ДДС call ids the timeline is call-scoped by, and each transcript row's call.
+        dds_ids = dds_call_ids(events)
+        personas = reference_catalog(self._reference).personas(scenario_version.reference_pack_id)
+        parties = call_parties(
+            events,
+            {} if personas is None else {p.id: p.title_ru for p in personas.personas},
+        )
         timeline = tuple(
             timeline_entry(
                 envelope,
                 actor_id=actor_ids.get(envelope.seq_no),
                 scenario_title=scenario_version.title,
+                parties=parties,
+                dds_call_ids=dds_ids,
             )
-            for envelope in (visibility.timeline_entry(source_of_row(event)) for event in events)
+            for envelope in (
+                visibility.timeline_entry(source_of_row(event), dds_call_ids=dds_ids)
+                for event in events
+            )
             if envelope is not None
         )
+        calls_by_turn = turn_calls(events)
+        visible_transcript = [
+            segment
+            for segment in transcript
+            if _transcript_visible(visibility, segment.turn_index, calls_by_turn, dds_ids)
+        ]
 
         return SessionReportView(
             session_id=session_id,
@@ -213,7 +234,7 @@ class GetSessionReport:
             # `score_report_checksum` must get the same string whoever is reading.
             checksum=report_checksum(score_report),
             timeline=timeline,
-            transcript=transcript_entries(transcript),
+            transcript=transcript_entries(visible_transcript, calls=calls_by_turn, parties=parties),
             audio_segments=audio_segment_refs(audio),
             final_card=_final_card(card, visibility, card_schema),
             truth_vs_card_diff=(
@@ -235,6 +256,22 @@ class GetSessionReport:
                 else ()
             ),
         )
+
+
+def _transcript_visible(
+    visibility: ReportVisibility,
+    turn_index: int | None,
+    calls_by_turn: Mapping[int, str],
+    dds_ids: frozenset[str],
+) -> bool:
+    """A transcript row by its call (I3 E6c, HLD 80 §80.6.2): a ДДС call's rows are the ДДС
+    viewer's, every other row the operator's; the instructor reads all of them."""
+    if visibility.is_instructor:
+        return True
+    call = None if turn_index is None else calls_by_turn.get(turn_index)
+    if call is not None and call in dds_ids:
+        return visibility.shows_dds_sections
+    return visibility.shows_operator_sections
 
 
 # -------------------------------------------------------------------------------------------

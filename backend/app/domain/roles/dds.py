@@ -27,10 +27,11 @@ the stage leaves `ACKNOWLEDGED` only through the additive `close` row. `RESOURCE
 session with no variants) keeps the picker table and machine verbatim.
 
 **The ДДС phone (I3 E6b, HLD 80 §80.5, D25).** Under `dds_brigade_call: ON` — memo mode only (R41)
-— the memo table also offers `call_claimant` «Позвонить заявителю» in the two states the ДДС holds
-the card in (`RECEIVED`, `ACKNOWLEDGED`); `call_service_head` (E6c) and `call_112` (E6d) join when
-their kinds land. `hang_up` «Положить трубку» (and, E6c, `answer` «Ответить») are actions of a live
-`DdsCall`, not of the stage: they are served as `DdsCallView.available_actions`
+— the memo table also offers `call_service_head` «Позвонить старшему» (E6c) and `call_claimant`
+«Позвонить заявителю» (E6b) in the two states the ДДС holds the card in (`RECEIVED`,
+`ACKNOWLEDGED`); `call_112` (E6d) joins when its kind lands. `hang_up` «Положить трубку» and, on a
+ringing INBOUND call, `answer` «Ответить» (E6c) are actions of a live `DdsCall`, not of the stage:
+they are served as `DdsCallView.available_actions`
 (`dds_call_actions`). Under `OFF` no call action exists anywhere. The DDS visibility whitelist
 also gains the three `DDS_CALL_*` events and the per-turn pipeline events, which
 `realtime/redaction.py` then delivers call-scoped (HLD 80 §80.6.2).
@@ -210,24 +211,43 @@ CALL_CLAIMANT = ActionDescriptor(
     label_ru="Позвонить заявителю",
     permission=Permission.PLACE_DDS_CALL,
 )
+CALL_SERVICE_HEAD = ActionDescriptor(
+    action_id="call_service_head",
+    label_ru="Позвонить старшему",
+    permission=Permission.PLACE_DDS_CALL,
+)
 CALL_HANG_UP = ActionDescriptor(
     action_id="hang_up",
     label_ru="Положить трубку",
     permission=Permission.PLACE_DDS_CALL,
     trigger="hang_up",
 )
+CALL_ANSWER = ActionDescriptor(
+    action_id="answer",
+    label_ru="Ответить",
+    permission=Permission.PLACE_DDS_CALL,
+    trigger="answer",
+)
 
 _CALL_STAGE_STATES: frozenset[DDSStageState] = frozenset(
     {DDSStageState.RECEIVED, DDSStageState.ACKNOWLEDGED}
 )
-"""The memo states the ДДС holds the card in — where «Позвонить заявителю» is offered under `ON`."""
+"""The memo states the ДДС holds the card in — where the call actions are offered under `ON`."""
+
+_CALL_ACTIONS: tuple[ActionDescriptor, ...] = (CALL_SERVICE_HEAD, CALL_CLAIMANT)
+"""The stage's call actions under `ON`, in §80.5's order: «Позвонить старшему» (E6c; the leg is
+the request's `assignment_id`, and only a leg the trainee plays may be called), «Позвонить
+заявителю» (E6b). `call_112` joins with E6d."""
 
 
 def dds_call_actions(call: DdsCall) -> tuple[ActionDescriptor, ...]:
-    """`DdsCallView.available_actions`: `hang_up` while the call is live, nothing once it ended.
-
-    (`answer` on a ringing INBOUND call joins in E6c, with the inbound calls themselves.)"""
-    return (CALL_HANG_UP,) if call.live else ()
+    """`DdsCallView.available_actions`: `answer` «Ответить» on a ringing INBOUND call (I3 E6c),
+    `hang_up` while the call is live, nothing once it ended."""
+    if not call.live:
+        return ()
+    if call.direction.value == "INBOUND" and call.state.value == "RINGING":
+        return (CALL_ANSWER, CALL_HANG_UP)
+    return (CALL_HANG_UP,)
 
 
 def _brigade_call_on(variants: SessionVariants | None) -> bool:
@@ -312,6 +332,7 @@ class DDSModule:
                     EventType.DDS_CALL_STARTED,
                     EventType.DDS_CALL_ANSWERED,
                     EventType.DDS_CALL_ENDED,
+                    EventType.DDS_CALL_STATUS_PROPOSED,  # I3 E6c (HLD 80 §80.6.1)
                     EventType.USER_SPEECH_STARTED,
                     EventType.USER_SPEECH_ENDED,
                     EventType.ASR_PARTIAL,
@@ -332,7 +353,8 @@ class DDSModule:
         `MEMO_STATUSES` — with `flag_card_issue` in `ACKNOWLEDGED` when `dds_card_check: ON`
         (I3 E5b) — the picker table otherwise (and for `variants=None`), with `flag_card_issue`
         from `ACKNOWLEDGED` to `RESOLVED` under card check `ON`. Under `dds_brigade_call: ON` the
-        memo `RECEIVED` / `ACKNOWLEDGED` rows end with `call_claimant` (I3 E6b)."""
+        memo `RECEIVED` / `ACKNOWLEDGED` rows end with `call_service_head` (I3 E6c) and
+        `call_claimant` (I3 E6b)."""
         assert isinstance(stage_state, DDSStageState)
         if _is_memo(variants):
             table = (
@@ -340,8 +362,8 @@ class DDSModule:
             )
             actions = table[stage_state]
             if _brigade_call_on(variants) and stage_state in _CALL_STAGE_STATES:
-                # I3 E6b (HLD 80 §80.5): the ДДС phone, memo mode only (R41).
-                return (*actions, CALL_CLAIMANT)
+                # I3 E6b/E6c (HLD 80 §80.5): the ДДС phone, memo mode only (R41).
+                return (*actions, *_CALL_ACTIONS)
             return actions
         if _card_check_on(variants):
             return _PICKER_CARD_CHECK_ACTIONS[stage_state]

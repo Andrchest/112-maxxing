@@ -361,8 +361,10 @@ async def test_on_offers_call_claimant_on_the_stage(
         action["action_id"]: action["label_ru"] for action in snapshot.json()["available_actions"]
     }
     assert actions["call_claimant"] == "Позвонить заявителю"
-    # E6c / E6d land their kinds; until then they are simply not offered (409 on a direct call).
-    assert "call_service_head" not in actions and "call_112" not in actions
+    # E6c landed the service head («Позвонить старшему»); E6d's 112 kind is not offered yet (409 on
+    # a direct call).
+    assert actions["call_service_head"] == "Позвонить старшему"
+    assert "call_112" not in actions
     head = await client.post(
         f"{API}/{on_session}/dds-calls", headers=dds(tokens), json={"kind": "OPERATOR_112"}
     )
@@ -404,6 +406,7 @@ async def test_the_claimant_call_rings_is_answered_and_is_hung_up(
         "assignment_id": None,
         "persona_id": None,
         "endpoint": "BROWSER",
+        "direction": "OUTBOUND",  # additive, I3 E6c
     }
 
     # The AI claimant answers `answer_after_ms` after the call started, on a tick (SIMULATION).

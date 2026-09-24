@@ -7,13 +7,17 @@ automation. The runner side is where the scenario is read (`TickSession.resoluti
 reads `resolution_condition` the same way), so this probe lives here and the composition root hands
 it to `app.application.dds.stage_automation.DdsStageAutomation` as a callable — the automation
 learns the script and nothing else of the scenario, and no DDS command can reach it.
+
+`persona_override` (I3 E6c, HLD 80 §80.4.1, R42) is the one narrow answer the ДДС phone needs from
+the same key: the persona id a scenario names for one service, which `startDdsCall` records on
+`DDS_CALL_STARTED` (P4). It answers a persona id and nothing else — never a step of the script.
 """
 
 from __future__ import annotations
 
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.domain.common.ids import SessionId
-from app.domain.dds.responders import ScriptedResponders
+from app.domain.dds.responders import ScriptedResponders, persona_override_for
 from app.domain.scenario.version import ScenarioVersion
 
 __all__ = ["ScenarioResponderScripts"]
@@ -39,3 +43,7 @@ class ScenarioResponderScripts:
         if document is None:
             return None
         return ScenarioVersion.model_validate(dict(document)).expected_response.responders
+
+    async def persona_override(self, session_id: SessionId, service_id: str) -> str | None:
+        """The scenario's persona override for one service (R42), or `None`."""
+        return persona_override_for(await self(session_id), service_id)

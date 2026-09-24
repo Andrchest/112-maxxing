@@ -11,11 +11,13 @@ HLD 80 §80.6.2).
 
 `persona_title_ru` is «Заявитель» for a claimant call (the scenario's `CallerProfile` is the
 persona, and its identity is a fact the trainee may still have to ask for, so the widget shows the
-role, never the name); the service-head and 112 personas resolve in E6c / E6d.
+role, never the name); for a service-head call it is the recorded persona's title from the
+session's reference pack («Начальник караула ПСЧ», I3 E6c, HLD 80 §80.4.1).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -23,7 +25,10 @@ from pydantic import BaseModel, ConfigDict
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.dds.get_work_item import may_read_work_item
 from app.application.operator.views import ActionView, action_views
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.reference.card_schemas import session_pack_id
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.errors import DomainError
@@ -37,6 +42,8 @@ from app.domain.dds.call import (
     DdsCallKind,
     DdsCallState,
 )
+from app.domain.dds.personas import PersonaCatalog
+from app.domain.events.session_event import SessionEvent
 from app.domain.roles.dds import dds_call_actions
 from app.domain.session.session import SimulationSession
 
@@ -47,6 +54,8 @@ __all__ = [
     "GetDdsCall",
     "ListDdsCalls",
     "dds_call_view",
+    "persona_title_of",
+    "session_personas",
 ]
 
 CLAIMANT_TITLE_RU = "Заявитель"
@@ -89,9 +98,29 @@ class DdsCallView(BaseModel):
     available_actions: tuple[ActionView, ...]
 
 
-def dds_call_view(call: DdsCall, user: AuthenticatedUser | None = None) -> DdsCallView:
-    """One call's view. `available_actions` are the line owner's: `hang_up` while live — empty
-    for anyone else (the instructor observes, SPEC §7)."""
+def session_personas(
+    reference: ReferencePort | None, log: Sequence[SessionEvent]
+) -> PersonaCatalog | None:
+    """The personas of the session's recorded reference pack (I3 E6c)."""
+    return reference_catalog(reference).personas(session_pack_id(log))
+
+
+def persona_title_of(call: DdsCall, personas: PersonaCatalog | None) -> str | None:
+    """The widget's party label: the recorded persona's title, or `None` (I3 E6c)."""
+    if call.persona_id is None or personas is None:
+        return None
+    persona = personas.get(call.persona_id)
+    return None if persona is None else persona.title_ru
+
+
+def dds_call_view(
+    call: DdsCall,
+    user: AuthenticatedUser | None = None,
+    *,
+    persona_title_ru: str | None = None,
+) -> DdsCallView:
+    """One call's view. `available_actions` are the line owner's: `answer` on a ringing INBOUND
+    call, `hang_up` while live — empty for anyone else (the instructor observes, SPEC §7)."""
     mine = (
         user is not None and call.actor_user_id is not None and call.actor_user_id == user.user_id
     )
@@ -106,7 +135,9 @@ def dds_call_view(call: DdsCall, user: AuthenticatedUser | None = None) -> DdsCa
         endpoint=call.endpoint,
         room_name=call.room,
         persona_id=call.persona_id,
-        persona_title_ru=CLAIMANT_TITLE_RU if call.kind is DdsCallKind.CLAIMANT else None,
+        persona_title_ru=(
+            CLAIMANT_TITLE_RU if call.kind is DdsCallKind.CLAIMANT else persona_title_ru
+        ),
         actor_user_id=None if call.actor_user_id is None else UUID(str(call.actor_user_id)),
         state=call.state,
         answered_by=call.answered_by,
@@ -128,8 +159,11 @@ def _check_may_read(session: SimulationSession, user: AuthenticatedUser) -> None
 class ListDdsCalls:
     """`listDdsCalls` — every ДДС call of the session, newest first (INV 13)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> list[DdsCallView]:
         async with self._unit_of_work() as uow:
@@ -138,15 +172,22 @@ class ListDdsCalls:
                 raise SessionNotFoundError(session_id)
             _check_may_read(session, user)
             calls = await uow.dds_calls.list_for_session(session_id)
+            personas = session_personas(self._reference, await uow.events.read(session_id))
             await uow.commit()
-        return [dds_call_view(call, user) for call in calls]
+        return [
+            dds_call_view(call, user, persona_title_ru=persona_title_of(call, personas))
+            for call in calls
+        ]
 
 
 class GetDdsCall:
     """`getDdsCall` — one ДДС call."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(
         self, session_id: SessionId, call_id: UUID, user: AuthenticatedUser
@@ -157,7 +198,8 @@ class GetDdsCall:
                 raise SessionNotFoundError(session_id)
             _check_may_read(session, user)
             call = await uow.dds_calls.get(session_id, call_id)
+            personas = session_personas(self._reference, await uow.events.read(session_id))
             await uow.commit()
         if call is None:
             raise DdsCallNotFoundError(call_id)
-        return dds_call_view(call, user)
+        return dds_call_view(call, user, persona_title_ru=persona_title_of(call, personas))

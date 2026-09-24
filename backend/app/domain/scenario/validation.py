@@ -4,7 +4,7 @@
 Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
-  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41, HLD 80 §80.5, and R43)
+  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41-R42, HLD 80 §80.5, and R43)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -33,7 +33,12 @@ from pydantic import ValidationError
 from app.domain.common.errors import CardFieldError, ScenarioValidationError
 from app.domain.common.values import FactValue
 from app.domain.dds.policy import policy_of
-from app.domain.dds.responders import script_problems
+from app.domain.dds.responders import (
+    ScriptReport,
+    ServiceScript,
+    script_problems,
+    service_scripts,
+)
 from app.domain.enums import (
     EffectKind,
     KnowledgeState,
@@ -706,7 +711,7 @@ def _check_responders(
     if responders is None or isinstance(responders, str):
         return
     catalog = reference.services(version.reference_pack_id)
-    for service_id, steps in sorted(responders.items()):
+    for service_id, steps in sorted(service_scripts(responders).items()):
         if not steps:
             out.append(f"R36: expected_response.responders['{service_id}'] is empty")
             continue
@@ -736,6 +741,41 @@ def _check_brigade_call(version: ScenarioVersion, out: list[str]) -> None:
             "R41: variants.supported.dds_brigade_call has ON, so expected_response.responders "
             "(or responders: DEFAULT) is required"
         )
+
+
+def _check_personas(version: ScenarioVersion, reference: ReferenceCatalog, out: list[str]) -> None:
+    """Rule R42 (I3 E6c, HLD 80 §80.5, §80.4.1): a service's `persona` override names a persona of
+    the scenario's reference pack; a step's `report` is `ON_REQUEST` or `CALL_IN` (the enum holds
+    that); and `persona` / a non-default `report` appear only in a schema-2 document whose
+    `variants.supported.dds_brigade_call` contains `ON` — they mean nothing under `OFF`."""
+    responders = version.expected_response.responders
+    if responders is None or isinstance(responders, str):
+        return
+    brigade_on = (
+        version.schema_version >= 2
+        and DdsBrigadeCall.ON in version.scenario_variants.supported.dds_brigade_call
+    )
+    personas = reference.personas(version.reference_pack_id)
+    for service_id, entry in sorted(responders.items()):
+        where = f"expected_response.responders['{service_id}']"
+        if isinstance(entry, ServiceScript) and entry.persona is not None:
+            if not brigade_on:
+                out.append(
+                    f"R42: {where}.persona is set, but variants.supported.dds_brigade_call has "
+                    "no ON (a persona voices a service only on the ДДС phone)"
+                )
+            elif personas is None or entry.persona not in personas:
+                out.append(
+                    f"R42: {where}.persona '{entry.persona}' is not a persona of reference "
+                    f"pack '{version.reference_pack_id}'"
+                )
+        steps = entry.steps if isinstance(entry, ServiceScript) else entry
+        for index, step in enumerate(steps):
+            if step.report is not ScriptReport.ON_REQUEST and not brigade_on:
+                out.append(
+                    f"R42: {where}[{index}].report is {step.report.value}, but "
+                    "variants.supported.dds_brigade_call has no ON"
+                )
 
 
 def _check_variant_support(variants: ScenarioVariants, out: list[str]) -> None:
@@ -932,6 +972,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
     ((39,), lambda version, _modules, _reference, out: _check_timers(version, out)),
     ((40,), lambda version, _modules, _reference, out: _check_applies_to_variants(version, out)),
     ((41,), lambda version, _modules, _reference, out: _check_brigade_call(version, out)),
+    ((42,), lambda version, _modules, reference, out: _check_personas(version, reference, out)),
     ((43,), lambda version, _modules, _reference, out: _check_provenance(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
@@ -942,7 +983,7 @@ VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
 """Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, R43 after I3 E8, R41
-after I3 E6b; R42 is reserved by the telephony HLD, `80-telephony.md`, for E6c)."""
+after I3 E6b, R42 after I3 E6c — `80-telephony.md` §80.5)."""
 
 
 def scenario_version_violations(

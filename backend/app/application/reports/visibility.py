@@ -150,7 +150,9 @@ class ReportVisibility:
 
     # -- the timeline -------------------------------------------------------------------------
 
-    def timeline_entry(self, event: SourceEvent) -> RealtimeEnvelope | None:
+    def timeline_entry(
+        self, event: SourceEvent, *, dds_call_ids: frozenset[str] = frozenset()
+    ) -> RealtimeEnvelope | None:
         """This event as this viewer may see it, or `None` when no role of theirs may (R3).
 
         For an instructor, `redact` is called once with `INSTRUCTOR` and returns every key. For a
@@ -158,6 +160,10 @@ class ReportVisibility:
         wins: a full-cycle trainee therefore sees their operator events through the operator's
         whitelist and their DDS events through the DDS's, which is precisely the union R3 asks
         for and precisely not a new whitelist.
+
+        `dds_call_ids` (I3 E6c) is the session's ДДС call ids, handed to `redact` so the report
+        timeline is call-scoped exactly as the sockets are (HLD 80 §80.6.2): a ДДС call's turns
+        reach the ДДС viewer and never the 112 one.
         """
         if self.is_instructor:
             return redact(event, INSTRUCTOR, self.session.policy)
@@ -169,7 +175,7 @@ class ReportVisibility:
             return redact(event, INSTRUCTOR, self.session.policy)
 
         for role in self.role_chain:
-            projected = redact(event, role, self.session.policy)
+            projected = redact(event, role, self.session.policy, dds_call_ids=dds_call_ids)
             if projected is not None:
                 return projected
         return None

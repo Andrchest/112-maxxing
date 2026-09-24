@@ -119,8 +119,17 @@ tts:
   # logical voice onto (`~/911-trainee-simulator/tools/qwen3_tts_worker.py:67-70`:
   # `female`/`female_alt`/`female_calm`/`elderly_female` -> `Serena`), so the same casting
   # decision is carried over rather than re-invented.
+  # I3 E6c (HLD 80 §80.4.1): the ДДС phone's personas (`reference/personas/v1.yaml`). The male
+  # speakers were verified against the INSTALLED `qwen_tts` 0.1.1 (workers/tts_qwen3/.venv): the
+  # package's `get_supported_speakers()` is the checkpoint's `talker_config.spk_id` — aiden, dylan,
+  # eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian — of which the worker allows the four
+  # `VENDOR_SPEAKERS` (Serena, Ryan, Vivian, Aiden); Ryan and Aiden are the male ones there (the
+  # owner's other project maps `male` -> Ryan, `teen_male` -> Aiden). Piper has no male voice on
+  # disk: under the Piper fallback every id below resolves to ru_RU-irina-medium (REQ-4041 partial).
   voice_map:
-    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml
+    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml; personas 103, DEPARTMENT, OPERATOR_112
+    ru_male_adult_01: Ryan        # personas BRIGADE_101, BRIGADE_102, CITY_DEFAULT
+    ru_male_adult_02: Aiden       # personas BRIGADE_104, DDS_DISTRICT, DDS_PREFECTURE
   default_voice: Serena           # vendor CustomVoice speaker; every unmapped logical id
 
 vad:

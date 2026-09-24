@@ -412,7 +412,13 @@ def test_tts_voice_map_and_default_voice_are_overlaid_from_the_profile(
 
     overlaid = apply_profile(settings, load_profile("DEV_3060TI"))
 
-    assert overlaid.tts_voice_map == {"ru_female_adult_01": "Serena"}
+    # I3 E6c (HLD 80 §80.4.1): the ДДС phone's male persona voices, verified against the
+    # installed `qwen_tts` (Ryan, Aiden).
+    assert overlaid.tts_voice_map == {
+        "ru_female_adult_01": "Serena",
+        "ru_male_adult_01": "Ryan",
+        "ru_male_adult_02": "Aiden",
+    }
     assert overlaid.tts_default_voice == "Serena"
 
     # The Piper-primary profile maps the same logical id onto ITS native voice.

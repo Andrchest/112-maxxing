@@ -6,6 +6,11 @@
 //   (`startDdsCall {kind: CLAIMANT}`) and the line is free — the server still has the last word
 //   (`409 DDS_LINE_BUSY`);
 // * «Положить трубку» only from the call's own `DdsCallView.available_actions` (`hang_up`).
+// * (I3 E6c) «Позвонить старшему» once per leg the trainee plays (`is_mine`), when the stage offers
+//   `call_service_head` and the line is free (`startDdsCall {kind: SERVICE_HEAD, assignment_id}`);
+//   «Ответить» on a brigade's ringing INBOUND call, from the call's own `available_actions`
+//   (`answer`, `answerDdsCall`). The party is the server's `persona_title_ru`
+//   («Начальник караула ПСЧ»).
 //
 // The call's state is the server's `DdsCallView` — `listDdsCalls` on mount and on every
 // `DDS_CALL_*` event (the console invalidates `queryKeys.dds.calls`), `startDdsCall` /
@@ -25,17 +30,22 @@ import { ru } from '@/shared/i18n/ru';
 import { currentDdsCall, formatCallDurationMs, formatDialedRu, useDdsCallStore, type DdsCallView } from '@/entities/call';
 import { useWorkItemStore } from '@/entities/work-item';
 import {
+  answerDdsCall,
   createDdsCallVoiceToken,
   hangUpDdsCall,
   listDdsCalls,
+  listDdsLegs,
+  listSessionEvents,
   problemMessageRu,
   queryKeys,
   startDdsCall,
   type ProblemCode,
+  type StartDdsCallResponse,
   type VoiceTokenResponse,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { CallMedia, type MediaPhase } from '@/shared/media/call-media';
+import { PROPOSAL_EVENT_TYPE, useCallProposalStore } from './call-proposals';
 
 const STATE_LABEL_KEY: Record<DdsCallView['state'], keyof typeof ru> = {
   DIALING: 'ddsPhoneDialing',
@@ -83,10 +93,27 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
   const [mediaPhase, setMediaPhase] = useState<MediaPhase>('idle');
 
   const callsQuery = useQuery({ queryKey: queryKeys.dds.calls(sessionId), queryFn: () => listDdsCalls(sessionId) });
+  const offersServiceHead = availableActions.some((action) => action.action_id === 'call_service_head');
+  const legsQuery = useQuery({
+    queryKey: queryKeys.dds.legs(sessionId),
+    queryFn: () => listDdsLegs(sessionId),
+    enabled: offersServiceHead,
+  });
   useEffect(() => {
     if (callsQuery.data) useDdsCallStore.getState().setCalls(callsQuery.data);
   }, [callsQuery.data]);
   useEffect(() => () => useDdsCallStore.getState().reset(), []);
+  // I3 E6c: the statuses heard on earlier calls, restored after a refresh (INV 13); new ones
+  // arrive on the socket (`console-page`).
+  const proposalsQuery = useQuery({
+    queryKey: [...queryKeys.dds.calls(sessionId), 'proposals'],
+    queryFn: () => listSessionEvents(sessionId, { eventType: [PROPOSAL_EVENT_TYPE], limit: 1000 }),
+  });
+  useEffect(() => {
+    const items = proposalsQuery.data?.items;
+    if (Array.isArray(items)) useCallProposalStore.getState().applyEvents(items);
+  }, [proposalsQuery.data]);
+  useEffect(() => () => useCallProposalStore.getState().reset(), []);
 
   // -- the media session (the 112 widget's `CallMedia`, one per widget lifetime) --------------
   const callMediaRef = useRef<CallMedia | null>(null);
@@ -136,11 +163,11 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
     setErrorMessage(error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown'));
   }
 
-  async function handleCallClaimant(): Promise<void> {
+  async function runCallCommand(command: () => Promise<StartDdsCallResponse>): Promise<void> {
     setErrorMessage(null);
     setPending(true);
     try {
-      const started = await startDdsCall(sessionId, { kind: 'CLAIMANT' });
+      const started = await command();
       if (started.voice) tokensRef.current[started.call.call_id] = started.voice;
       useDdsCallStore.getState().upsertCall(started.call);
     } catch (error) {
@@ -148,6 +175,18 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
     } finally {
       setPending(false);
     }
+  }
+
+  function handleCallClaimant(): Promise<void> {
+    return runCallCommand(() => startDdsCall(sessionId, { kind: 'CLAIMANT' }));
+  }
+
+  function handleCallServiceHead(assignmentId: string): Promise<void> {
+    return runCallCommand(() => startDdsCall(sessionId, { kind: 'SERVICE_HEAD', assignment_id: assignmentId }));
+  }
+
+  function handleAnswer(callId: string): Promise<void> {
+    return runCallCommand(() => answerDdsCall(sessionId, callId));
   }
 
   async function handleHangUp(callId: string): Promise<void> {
@@ -165,6 +204,10 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
   const lineFree = !call || call.state === 'ENDED';
   const callClaimant = lineFree ? (availableActions.find((action) => action.action_id === 'call_claimant') ?? null) : null;
   const hangUp = call?.available_actions.find((action) => action.action_id === 'hang_up') ?? null;
+  const answer = call?.available_actions.find((action) => action.action_id === 'answer') ?? null;
+  const callServiceHead = lineFree ? (availableActions.find((action) => action.action_id === 'call_service_head') ?? null) : null;
+  const myLegs = callServiceHead ? (legsQuery.data ?? []).filter((leg) => leg.is_mine) : [];
+  const incoming = call?.direction === 'INBOUND' && call.state === 'RINGING';
   const endedDurationMs =
     call?.state === 'ENDED' && call.answered_at_offset_ms !== null && call.ended_at_offset_ms !== null
       ? call.ended_at_offset_ms - call.answered_at_offset_ms
@@ -177,7 +220,7 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
         <>
           <span className="flex items-center gap-2">
             <span className={`size-2.5 rounded-full ${STATE_DOT_CLASS[call.state]}`} aria-hidden="true" />
-            <span data-slot="dds-call-state">{t(STATE_LABEL_KEY[call.state])}</span>
+            <span data-slot="dds-call-state">{incoming ? t('ddsPhoneIncoming') : t(STATE_LABEL_KEY[call.state])}</span>
           </span>
           <span data-slot="dds-call-party">{call.persona_title_ru ?? t(PARTY_LABEL_KEY[call.kind])}</span>
           <span className="text-muted-foreground" data-slot="dds-call-number">
@@ -201,6 +244,25 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
         </span>
       )}
       <span className="flex flex-wrap gap-2">
+        {callServiceHead
+          ? myLegs.map((leg) => (
+              <Button
+                key={leg.assignment_id}
+                type="button"
+                size="sm"
+                disabled={pending}
+                data-slot="dds-call-service-head"
+                onClick={() => void handleCallServiceHead(leg.assignment_id)}
+              >
+                {callServiceHead.label_ru} · {leg.service_name_ru}
+              </Button>
+            ))
+          : null}
+        {call && answer ? (
+          <Button type="button" size="sm" disabled={pending} onClick={() => void handleAnswer(call.call_id)}>
+            {answer.label_ru}
+          </Button>
+        ) : null}
         {callClaimant ? (
           <Button type="button" size="sm" disabled={pending} onClick={() => void handleCallClaimant()}>
             {callClaimant.label_ru}

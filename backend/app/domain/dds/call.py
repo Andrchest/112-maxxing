@@ -308,12 +308,18 @@ def start_call(
     assignment_id: AssignmentId | None = None,
     service_type: ServiceId | None = None,
     persona_id: str | None = None,
+    callee_user_id: UserId | None = None,
 ) -> tuple[DdsCall, DomainEvent]:
     """`[*] --start--> DIALING` and its `DDS_CALL_STARTED` (§80.3.2, §80.6.1).
 
     The caller has checked `guard_dds_call_allowed`. What is checked here is what the call alone
     can tell: a `SERVICE_HEAD` call names its leg and nothing else does (the `dds_calls` CHECK), and
     an OUTBOUND call is the trainee's while an INBOUND one is the simulation's.
+
+    `actor_user_id` is the ДДС trainee on the line: the caller of an OUTBOUND call, and for an
+    INBOUND one (a brigade's `report: CALL_IN`, I3 E6c) the workstation it rings, `callee_user_id`
+    — so one line per workstation, `hang_up` and `createVoiceToken {call_id}` read one field for
+    both directions.
     """
     if (kind is DdsCallKind.SERVICE_HEAD) != (assignment_id is not None):
         raise DomainError(
@@ -324,7 +330,7 @@ def start_call(
     if actor.actor_type is not expected:
         raise DomainError(f"a {direction.value} call is started by {expected.value}")
     room = dds_call_room_name(session_id, call_id)
-    actor_user_id = actor.actor_id if direction is DdsCallDirection.OUTBOUND else None
+    actor_user_id = actor.actor_id if direction is DdsCallDirection.OUTBOUND else callee_user_id
     call = DdsCall(
         call_id=call_id,
         session_id=session_id,

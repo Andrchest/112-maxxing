@@ -91,6 +91,7 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, SessionId, UserId
 from app.domain.common.state_machine import GuardContext, GuardRuntime
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.personas import PersonaCatalog
 from app.domain.dds.policy import StatusPolicy, policy_of
 from app.domain.dds.resources import RESOURCE_STATE_MACHINE, EmergencyResource
 from app.domain.dds.response import (
@@ -287,6 +288,8 @@ class DdsCommandContext:
     card_schema: CardSchema = CARD_SCHEMA_V1
     service_catalog: ServiceCatalog | None = None
     """The service catalog of the session's recorded reference pack (names, status policies)."""
+    personas: PersonaCatalog | None = None
+    """The ДДС phone's personas of the same pack (HLD 80 §80.4.1, I3 E6c); `None` without them."""
     _appended: list[SessionEvent] = field(default_factory=list)
 
     # -- projections ---------------------------------------------------------------------------
@@ -555,6 +558,7 @@ class DdsCommandGate:
                 dispatched=tuple(await uow.resources.dispatch_history(session_id)),
                 card_schema=pack_card_schema(catalog, log),
                 service_catalog=catalog.services(session_pack_id(log)),
+                personas=catalog.personas(session_pack_id(log)),
             )
             yield context
             await uow.commit()

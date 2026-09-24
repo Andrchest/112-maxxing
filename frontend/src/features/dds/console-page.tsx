@@ -34,6 +34,7 @@ import { DdsHeaderStrip } from './dds-header-strip';
 import { DdsSideDrawer } from './dds-side-drawer';
 import { DdsPhoneWidget } from './phone-widget';
 import { DDS_CALL_EVENT_TYPES, useDdsCallStore } from '@/entities/call';
+import { PROPOSAL_EVENT_TYPE, useCallProposalStore } from './call-proposals';
 import { ddsStageStateLabelRu } from './dds-labels';
 
 // I3 E5c: events that mean "the legs list (or a leg's history) may have changed elsewhere" —
@@ -135,6 +136,12 @@ export function DdsConsolePage() {
         if (DDS_CALL_EVENT_TYPES.has(event.event_type)) {
           useDdsCallStore.getState().applyEvent(event);
           void queryClient.invalidateQueries({ queryKey: queryKeys.dds.calls(snapshot.session.id) });
+          // I3 E6c: a leg's `live_call_id` follows its service-head call.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.dds.legs(snapshot.session.id) });
+        }
+        // I3 E6c: a status the service head reported — offered on the leg's pencil form.
+        if (event.event_type === PROPOSAL_EVENT_TYPE) {
+          useCallProposalStore.getState().applyEvent(event);
         }
       },
       onStatusChange: setConnectionStatus,

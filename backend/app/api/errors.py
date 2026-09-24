@@ -103,6 +103,7 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "SERVICE_UNKNOWN": 422,
     "CARD_OPTION_UNKNOWN": 422,
     "COMMENT_REQUIRED": 422,
+    "PROPOSAL_UNKNOWN": 422,  # I3 E6c (HLD 80 §80.3.3)
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,

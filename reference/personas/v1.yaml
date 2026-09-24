@@ -1,0 +1,97 @@
+# The AI personas of the ДДС phone (HLD 80-telephony.md §80.4.1, D24; I3 E6c).
+#
+# Who answers when the ДДС calls a service head, resolved by the service's catalog category:
+# `applies.code` (the catalog `code`, 101…104) wins over `applies.kind` (CITY, DISTRICT,
+# PREFECTURE, DEPARTMENT; OPERATOR_112 is the AI 112 operator of E6d). `voice_id` is a LOGICAL id
+# the model profile's `tts.voice_map` resolves (DEV_3060TI: ru_male_adult_01 -> Ryan,
+# ru_male_adult_02 -> Aiden, ru_female_adult_01 -> Serena; Piper fallback: ru_RU-irina-medium for
+# every id). `vocabulary` holds the memo's words for each status the head reports.
+catalog_id: v1
+personas:
+  - id: BRIGADE_101
+    applies: {code: "101"}
+    title_ru: Начальник караула ПСЧ
+    gender: MALE
+    voice_id: ru_male_adult_01
+    greeting_ru: Начальник караула, слушаю.
+    answer_after_ms: 4000
+    vocabulary: &brigade_vocabulary
+      RECEIVED: Карточку получили
+      ACCEPTED: Вызов приняли
+      NOT_ACCEPTED: Вызов не приняли
+      RESPONSE_STARTED: Выехали
+      ARRIVED: Прибыли на место
+      WORKING: Работаем на месте
+      COMPLETED: Работы завершили
+      REFUSED: От выполнения работ отказываемся
+  - id: BRIGADE_102
+    applies: {code: "102"}
+    title_ru: Старший наряда
+    gender: MALE
+    voice_id: ru_male_adult_01
+    greeting_ru: Старший наряда, слушаю.
+    answer_after_ms: 4000
+    vocabulary: *brigade_vocabulary
+  - id: BRIGADE_103
+    applies: {code: "103"}
+    title_ru: Старший бригады СМП
+    gender: FEMALE
+    voice_id: ru_female_adult_01
+    greeting_ru: Старший бригады скорой, слушаю.
+    answer_after_ms: 4000
+    vocabulary: *brigade_vocabulary
+  - id: BRIGADE_104
+    applies: {code: "104"}
+    title_ru: Дежурный аварийной бригады
+    gender: MALE
+    voice_id: ru_male_adult_02
+    greeting_ru: Аварийная бригада, дежурный слушает.
+    answer_after_ms: 4000
+    vocabulary: *brigade_vocabulary
+  - id: DDS_DISTRICT
+    applies: {kind: DISTRICT}
+    title_ru: Дежурный ДДС района
+    gender: MALE
+    voice_id: ru_male_adult_02
+    greeting_ru: Дежурный ДДС района, слушаю.
+    answer_after_ms: 4000
+    vocabulary: &dds_vocabulary
+      RECEIVED: Карточку получили
+      ACCEPTED: Приняли к исполнению
+      NOT_ACCEPTED: Не приняли
+      RESPONSE_STARTED: Направили силы
+      ARRIVED: Силы прибыли на место
+      WORKING: Ведём работы
+      COMPLETED: Работы завершены
+      REFUSED: От выполнения работ отказываемся
+  - id: DDS_PREFECTURE
+    applies: {kind: PREFECTURE}
+    title_ru: Дежурный ДДС префектуры
+    gender: MALE
+    voice_id: ru_male_adult_02
+    greeting_ru: Дежурный префектуры, слушаю.
+    answer_after_ms: 4000
+    vocabulary: *dds_vocabulary
+  - id: DEPARTMENT
+    applies: {kind: DEPARTMENT}
+    title_ru: Дежурный департамента
+    gender: FEMALE
+    voice_id: ru_female_adult_01
+    greeting_ru: Дежурный департамента, слушаю.
+    answer_after_ms: 4000
+    vocabulary: *dds_vocabulary
+  - id: CITY_DEFAULT
+    applies: {kind: CITY}
+    title_ru: Дежурный городской службы
+    gender: MALE
+    voice_id: ru_male_adult_01
+    greeting_ru: Дежурный, слушаю.
+    answer_after_ms: 4000
+    vocabulary: *dds_vocabulary
+  - id: OPERATOR_112
+    applies: {kind: OPERATOR_112}
+    title_ru: Оператор 112
+    gender: FEMALE
+    voice_id: ru_female_adult_01
+    greeting_ru: Служба 112, оператор слушает.
+    answer_after_ms: 4000

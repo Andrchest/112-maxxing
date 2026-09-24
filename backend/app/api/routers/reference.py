@@ -17,12 +17,14 @@ from app.api.schemas.reference import (
     CardSchemaViewSchema,
     ClassifierRowSchema,
     ClassifierSearchPageSchema,
+    PersonaViewSchema,
     ReferenceManifestSchema,
     ServiceCatalogEntrySchema,
     card_schema_view_schema,
     classifier_row_schema,
     classifier_row_summary_schema,
     manifest_schema,
+    persona_view_schema,
     service_catalog_entry_schema,
 )
 from app.api.security import CurrentUserDep
@@ -37,6 +39,8 @@ PackQuery = Annotated[str | None, Query(description="Reference pack id; default:
     operation_id="getReferenceManifest",
     summary="The reference packs and the sha256 of every reference file.",
     response_model=ReferenceManifestSchema,
+    # `manifest.json` verbatim: a pack without personas (I3 E6c) has no `personas` key at all.
+    response_model_exclude_unset=True,
     status_code=200,
 )
 async def get_reference_manifest(
@@ -63,6 +67,25 @@ async def list_reference_services(
     """Catalog entries in catalog order; hidden and deprecated ones only with `include_hidden`."""
     entries = container.list_reference_services()(pack=pack, include_hidden=include_hidden, q=q)
     return [service_catalog_entry_schema(entry) for entry in entries]
+
+
+@router.get(
+    "/personas",
+    operation_id="listReferencePersonas",
+    summary=(
+        "The AI personas of a reference pack (service heads by catalog category, the AI 112 "
+        "operator)."
+    ),
+    response_model=list[PersonaViewSchema],
+    status_code=200,
+)
+async def list_reference_personas(
+    container: ContainerDep, _user: CurrentUserDep, pack: PackQuery = None
+) -> list[PersonaViewSchema]:
+    """`reference/personas/<id>.yaml` of the pack, in file order (I3 E6c, HLD 80 §80.4.1)."""
+    return [
+        persona_view_schema(persona) for persona in container.list_reference_personas()(pack=pack)
+    ]
 
 
 @router.get(

@@ -86,8 +86,13 @@ def fire_response_trigger(
     status_policy: StatusPolicy = StatusPolicy.DEFAULT,
     order_number: str | None = None,
     comment_ru: str | None = None,
+    proposed_by_call_id: UUID | None = None,
 ) -> tuple[DDSAssignment, DomainEvent]:
     """Fire one `SERVICE_RESPONSE_TRANSITIONS` trigger on `leg` (§70.4.2).
+
+    `proposed_by_call_id` (I3 E6c, HLD 80 §80.3.3) names the ДДС call on which the status was
+    heard; it is written into the event only when given, so every status set before E6c — and
+    every one not confirming a proposal — keeps its payload byte for byte.
 
     Raises `InvalidTransitionError` exactly as the machine does (an out-of-sequence status, a
     denied guard, an actor the row does not allow). On success returns the moved leg — its
@@ -132,6 +137,8 @@ def fire_response_trigger(
         "actor_user_id": None if actor.actor_id is None else UUID(str(actor.actor_id)),
         "at_offset_ms": now_ms,
     }
+    if proposed_by_call_id is not None:
+        payload["proposed_by_call_id"] = proposed_by_call_id
     validate_payload(EventType.DDS_SERVICE_STATUS_SET, payload)
     event = DomainEvent(
         event_type=EventType.DDS_SERVICE_STATUS_SET,

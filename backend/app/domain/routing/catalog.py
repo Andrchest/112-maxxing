@@ -23,6 +23,7 @@ from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.operator_card import CARD_SCHEMA_V1
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.domain.dds.personas import PersonaCatalog
     from app.domain.routing.classifier import Classifier
 
 __all__ = [
@@ -132,6 +133,9 @@ class ReferencePack(BaseModel):
     card_schema: str
     services: str
     classifier: str | None
+    personas: str | None = None
+    """The ДДС phone's personas (`personas/<id>.yaml`, HLD 80 §80.4.1, I3 E6c); `None` for a pack
+    without the phone (`legacy-r1`)."""
 
 
 class ReferencePackRecord(BaseModel):
@@ -166,6 +170,7 @@ class ReferenceCatalog:
         card_schemas: Iterable[CardSchema] = (),
         file_sha256: Mapping[str, str] | None = None,
         manifest: Mapping[str, object] | None = None,
+        persona_catalogs: Iterable[PersonaCatalog] = (),
     ) -> None:
         self._packs: Mapping[str, ReferencePack] = MappingProxyType(
             {pack.pack_id: pack for pack in packs}
@@ -180,6 +185,9 @@ class ReferenceCatalog:
             {CARD_SCHEMA_V1.schema_id: CARD_SCHEMA_V1}
             | {schema.schema_id: schema for schema in card_schemas}
         )
+        self._personas: Mapping[str, PersonaCatalog] = MappingProxyType(
+            {catalog.catalog_id: catalog for catalog in persona_catalogs}
+        )
         self._file_sha256: Mapping[str, str] = MappingProxyType(dict(file_sha256 or {}))
         self._manifest: Mapping[str, object] = MappingProxyType(dict(manifest or {}))
         if not self._packs:
@@ -191,6 +199,8 @@ class ReferenceCatalog:
                 raise ValueError(f"pack {pack.pack_id}: no classifier {pack.classifier!r}")
             if pack.card_schema not in self._card_schemas:
                 raise ValueError(f"pack {pack.pack_id}: no card schema {pack.card_schema!r}")
+            if pack.personas is not None and pack.personas not in self._personas:
+                raise ValueError(f"pack {pack.pack_id}: no persona set {pack.personas!r}")
 
     @property
     def pack_ids(self) -> tuple[str, ...]:
@@ -230,6 +240,14 @@ class ReferenceCatalog:
         """The card schema of `pack_id` (HLD 70 §70.5.4), or `None` for an unknown pack."""
         pack = self._packs.get(pack_id)
         return self._card_schemas[pack.card_schema] if pack is not None else None
+
+    def personas(self, pack_id: str) -> PersonaCatalog | None:
+        """The ДДС phone's personas of `pack_id` (HLD 80 §80.4.1); `None` for an unknown pack or
+        a pack without personas."""
+        pack = self._packs.get(pack_id)
+        if pack is None or pack.personas is None:
+            return None
+        return self._personas[pack.personas]
 
     def card_schema_by_id(self, schema_id: str) -> CardSchema | None:
         """A card schema by its own id (`v1`, `v2`), or `None` (`getCardSchema`)."""

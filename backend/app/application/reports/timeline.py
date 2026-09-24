@@ -36,7 +36,7 @@ that already has the loaded `ScenarioVersion`, `assemble_report.compute_report`)
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -59,13 +59,16 @@ from app.application.reports.timeline_labels_ru import (
 from app.domain.dds.card_status import CARD_STATUS_LABELS_RU
 from app.domain.dds.response import SERVICE_RESPONSE_LABELS_RU
 from app.domain.enums import ActorType
+from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 
 __all__ = [
+    "DDS_CALL_TURN_TITLES_RU",
     "PAYLOAD_LABELS_RU",
     "SUMMARY_TEMPLATES",
     "SummaryTemplate",
     "TimelineEntry",
+    "call_parties",
     "summary_ru",
     "timeline_entry",
 ]
@@ -103,6 +106,8 @@ PAYLOAD_LABELS_RU: Mapping[str, str] = {
     "rule_id": "правило",
     "scenario_title": "сценарий",
     "service_type": "служба",
+    "matches_snapshot": "совпадает с карточкой",
+    "value_ru": "сказано",
     "session_mode": "режим",
     "status": "статус",
     "text_ru": "текст",
@@ -240,7 +245,69 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.DDS_CALL_STARTED: SummaryTemplate("ДДС начала звонок", ("dialed",)),
     EventType.DDS_CALL_ANSWERED: SummaryTemplate("Звонок ДДС принят"),
     EventType.DDS_CALL_ENDED: SummaryTemplate("Звонок ДДС завершён", ("reason", "duration_ms")),
+    # I3 E6c (HLD 80 §80.4.2): what the service head said and what the trainee stated.
+    EventType.DDS_CALL_STATUS_PROPOSED: SummaryTemplate(
+        "Старший службы доложил статус", ("service_type", "status")
+    ),
+    EventType.DDS_CALL_ASSERTION: SummaryTemplate(
+        "ДДС сообщила сведения по телефону", ("field_path", "value_ru", "matches_snapshot")
+    ),
 }
+
+#: The per-turn titles of a ДДС call's own turns (I3 E6c, HLD 80 §80.6.1): the pipeline events are
+#: reused under the call's `call_id`, where «оператор» is the ДДС trainee and «абонент» is the AI
+#: party of the call — named by `TimelineEntry.call_party_ru`, so the titles stay neutral here.
+DDS_CALL_TURN_TITLES_RU: Mapping[EventType, str] = {
+    EventType.USER_SPEECH_STARTED: "ДДС начала говорить",
+    EventType.USER_SPEECH_ENDED: "ДДС закончила реплику",
+    EventType.ASR_PARTIAL: "Промежуточное распознавание речи ДДС",
+    EventType.ASR_FINAL: "Речь ДДС распознана",
+    EventType.DIALOGUE_INTERPRETED: "Реплика ДДС разобрана",
+    EventType.CALLER_TTS_STARTED: "Собеседник начал говорить",
+    EventType.CALLER_TTS_ENDED: "Собеседник закончил реплику",
+    EventType.CALLER_UTTERANCE_INTERRUPTED: "Реплика собеседника прервана ДДС",
+    EventType.CALLER_RESPONSE_PLANNED: "Ответ собеседника спланирован",
+    EventType.CALLER_RESPONSE_GENERATED: "Ответ собеседника сформулирован",
+    EventType.FACT_GATE_EVALUATED: "Проверен доступ к фактам",
+    EventType.FACTS_DELIVERED: "Факты сообщены собеседником",
+    EventType.TRANSPORT_DISCONNECTED: "Потеряна голосовая связь звонка ДДС",
+    EventType.TRANSPORT_RECONNECTED: "Голосовая связь звонка ДДС восстановлена",
+}
+
+_CALL_112_PARTY_RU = "Вызов 112: абонент"
+_DDS_PARTY_BY_KIND_RU: Mapping[str, str] = {
+    "CLAIMANT": "Звонок ДДС: заявитель",
+    "SERVICE_HEAD": "Звонок ДДС: старший службы",
+    "OPERATOR_112": "Звонок ДДС: оператор 112",
+}
+
+
+def call_parties(
+    events: Sequence[SessionEvent], persona_titles_ru: Mapping[str, str] | None = None
+) -> Mapping[str, str]:
+    """`call_id → the party label` of every call of the session (I3 E6c, HLD 80 §80.6.1): the 112
+    call's (`CALL_RINGING`) is the caller's, a ДДС call's is read from `DDS_CALL_STARTED.kind` —
+    the persona's own title for a service head when `persona_titles_ru` knows it. Keys are
+    lowercase call ids."""
+    titles = persona_titles_ru or {}
+    parties: dict[str, str] = {}
+    for event in events:
+        call_id = event.payload.get("call_id")
+        if call_id is None:
+            continue
+        key = str(call_id).lower()
+        if event.event_type is EventType.CALL_RINGING:
+            parties.setdefault(key, _CALL_112_PARTY_RU)
+        elif event.event_type is EventType.DDS_CALL_STARTED:
+            kind = str(event.payload.get("kind", ""))
+            persona_id = event.payload.get("persona_id")
+            title = titles.get(str(persona_id)) if persona_id is not None else None
+            parties[key] = (
+                f"Звонок ДДС: {title}"
+                if title is not None
+                else _DDS_PARTY_BY_KIND_RU.get(kind, "Звонок ДДС")
+            )
+    return parties
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +322,10 @@ class TimelineEntry:
     actor_id: UUID | None
     summary_ru: str
     payload: Mapping[str, Any]
+    call_id: UUID | None = None
+    """The call this event belongs to (its payload's `call_id`), so a client groups by call."""
+    call_party_ru: str | None = None
+    """«Вызов 112: абонент», «Звонок ДДС: Начальник караула ПСЧ», … (I3 E6c, HLD 80 §80.6.1)."""
 
 
 def summary_ru(
@@ -297,6 +368,8 @@ def timeline_entry(
     *,
     actor_id: UUID | None,
     scenario_title: str | None = None,
+    parties: Mapping[str, str] | None = None,
+    dds_call_ids: frozenset[str] = frozenset(),
 ) -> TimelineEntry:
     """One redacted envelope as a `TimelineEntryView`.
 
@@ -304,7 +377,19 @@ def timeline_entry(
     frame carries `actor_type` only, and the report shows *who*, which is one of the things a
     post-session review is for (SPEC §29 item 4). `scenario_title` is forwarded to `summary_ru`
     unchanged — see its own docstring.
+
+    **Calls (I3 E6c, HLD 80 §80.6.1).** The entry carries its payload's `call_id` and the call's
+    party label from `parties` (`call_parties`), so the report groups turns by call; a per-turn
+    event of a ДДС call (`dds_call_ids`) is titled from `DDS_CALL_TURN_TITLES_RU`, because its
+    «оператор» is the ДДС trainee and its «абонент» the AI party of that call.
     """
+    raw_call_id = envelope.payload.get("call_id")
+    call_key = None if raw_call_id is None else str(raw_call_id).lower()
+    summary = summary_ru(envelope.event_type, envelope.payload, scenario_title=scenario_title)
+    dds_title = DDS_CALL_TURN_TITLES_RU.get(envelope.event_type)
+    if call_key is not None and call_key in dds_call_ids and dds_title is not None:
+        template = SUMMARY_TEMPLATES[envelope.event_type]
+        summary = dds_title + summary[len(template.title_ru) :]
     return TimelineEntry(
         seq_no=envelope.seq_no,
         event_type=envelope.event_type,
@@ -312,9 +397,20 @@ def timeline_entry(
         timestamp_utc=envelope.timestamp_utc,
         actor_type=envelope.actor_type,
         actor_id=actor_id,
-        summary_ru=summary_ru(envelope.event_type, envelope.payload, scenario_title=scenario_title),
+        summary_ru=summary,
         payload=dict(envelope.payload),
+        call_id=_uuid_or_none(raw_call_id),
+        call_party_ru=None if call_key is None else (parties or {}).get(call_key),
     )
+
+
+def _uuid_or_none(value: object) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None
 
 
 #: Payload keys whose Russian rendering does not depend on which event type carries them (every
@@ -371,6 +467,8 @@ def _render_detail_value(
         elif event_type is EventType.DDS_SERVICE_STATUS_SET:
             status_table = _RESPONSE_STATUS_LABELS_RU
         return status_table.get(str(value), _render(value))
+    if key == "status" and event_type is EventType.DDS_CALL_STATUS_PROPOSED:
+        return _RESPONSE_STATUS_LABELS_RU.get(str(value), _render(value))
     simple_table = _SIMPLE_KEY_TABLES.get(key)
     if simple_table is not None:
         return simple_table.get(str(value), _render(value))

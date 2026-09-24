@@ -11,6 +11,7 @@ import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import dotenv_values
 from pydantic import Field, field_validator
@@ -325,6 +326,11 @@ class Settings(BaseSettings):
     #: `tts.model_variant` like every other field here (R3's precedence: an explicit env value
     #: set under either process wins over the profile).
     tts_model_variant: str | None = Field(default=None, validation_alias="SIM_TTS_QWEN3_MODEL")
+    # -- I3 E6c: the service head's dialogue on a ДДС call (HLD 80 §80.4.3) ------------------
+    #: `SIM_RESPONDER_DIALOGUE`: `template` (the default — the deterministic `ResponderTemplates`)
+    #: or `llm` (the template line reworded by the dialogue model, checked by code, falling back
+    #: to the template on any failure). The decision of what is said is code's in both modes.
+    responder_dialogue: Literal["template", "llm"] = "template"
     # -- E13-B2: the caller prompt builder and the response validator (§5.2, §5.3, §7) --------
     #: §5.2's turn window: "the last 6 turns … but never drops below 4" (valid 4-6, SPEC §22).
     dialogue_window_turns: int = 6

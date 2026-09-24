@@ -230,6 +230,8 @@ class DdsLegView(DdsView):
     is_mine: bool
     history: tuple[ServiceStatusEntryView, ...]
     available_actions: tuple[ActionView, ...]
+    live_call_id: UUID | None = None
+    """The non-`ENDED` `SERVICE_HEAD` call on this leg, if any (HLD 80 contract delta, I3 E6c)."""
 
 
 class CardIssueView(DdsView):
@@ -445,6 +447,7 @@ def leg_view(
     display_names: Mapping[UUID, str],
     is_mine: bool,
     may_act: bool,
+    live_call_id: UUID | None = None,
 ) -> DdsLegView:
     """Project one leg and its history (`DdsLegView`). `may_act` is whether the stage offers
     `set_service_status` right now; the dropdown is empty unless the leg `is_mine` too."""
@@ -478,6 +481,7 @@ def leg_view(
         is_mine=is_mine,
         history=entries,
         available_actions=(action_views(leg_actions(leg, policy)) if is_mine and may_act else ()),
+        live_call_id=live_call_id,
     )
 
 

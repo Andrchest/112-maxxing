@@ -1030,7 +1030,11 @@ export interface paths {
          *     of the session may issue it (several ДДС trainees, each bound to a service). The trainee's first primary
          *     decision also fires the stage's `acknowledge`; no other stage trigger is fired (memo mode
          *     never enters `RESOURCE_SELECTION` … `WORKING`, 70 §70.4.4). Due deadline events are
-         *     appended first (flush-before-append).
+         *     appended first (flush-before-append). (additive, I3 E6c — 80 §80.3.3, D24) The optional
+         *     `proposed_by_call_id` names the ДДС call on which the status was heard: it must name a
+         *     `DDS_CALL_STATUS_PROPOSED` of this leg, else `422 PROPOSAL_UNKNOWN`; it is copied into
+         *     `DDS_SERVICE_STATUS_SET.proposed_by_call_id`. The status written is the request's, never
+         *     the proposal's (the AI proposes, the trainee commits — INV 4).
          */
         post: operations["setDdsServiceStatus"];
         delete?: never;
@@ -1120,6 +1124,12 @@ export interface paths {
          *     kind: E6d; `CLAIMANT`: E6b. Until an epic lands its kind, that kind is `409
          *     ACTION_NOT_AVAILABLE`. A `CLAIMANT` call is placed to the frozen snapshot's `caller.phone`;
          *     while the session's 112 call is live the claimant is `busy` (the call comes back `ENDED`).
+         *     (I3 E6c — 80 §80.4.1) A `SERVICE_HEAD` call without `assignment_id` ⇒ `422
+         *     VALIDATION_ERROR`, a leg not on this card ⇒ `404`; it dials the service's number (its
+         *     catalog `code`, else `7` + its position) and the persona is resolved from the session's
+         *     reference pack by catalog category (`code` over `kind`) unless the scenario names one for
+         *     the service (R42); `persona_id` is recorded on `DDS_CALL_STARTED` and a `busy` persona
+         *     answers `BUSY`.
          */
         post: operations["startDdsCall"];
         delete?: never;
@@ -1142,6 +1152,30 @@ export interface paths {
         get: operations["getDdsCall"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds-calls/{call_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The ДДС trainee answers an INBOUND brigade call (a `report CALL_IN` script step).
+         * @description (additive, I3 E6c — 80 §80.3.2, §80.3.3) Fires `answer` (TRAINEE) on an `INBOUND` call in
+         *     `RINGING` — the brigade's call a due `report: CALL_IN` step of the trainee's own leg
+         *     started; an `OUTBOUND` call or another state ⇒ `409 INVALID_TRANSITION`; another
+         *     trainee's line ⇒ `403 FORBIDDEN_FOR_ROLE`. Returns the call and, for the browser
+         *     endpoint, the room-scoped token.
+         */
+        post: operations["answerDdsCall"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1440,6 +1474,29 @@ export interface paths {
         };
         /** The service catalog («СЛУЖБЫ 112») of a pack. */
         get: operations["listReferenceServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reference/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The AI personas of a reference pack (service heads by catalog category, the AI 112 operator).
+         * @description (additive, I3 E6c — 80 §80.4.1) Served from the sha-pinned `reference/personas/v1.yaml`,
+         *     in file order; a pack without personas (`legacy-r1`) answers `[]`. Used by the ДДС
+         *     console (the persona title beside «Позвонить старшему»), the report (party labels) and
+         *     the instructor's scenario view. Voices are logical ids; no TTS internals are exposed.
+         */
+        get: operations["listReferencePersonas"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1757,7 +1814,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1908,7 +1965,7 @@ export interface components {
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED" | "DDS_CALL_STARTED" | "DDS_CALL_ANSWERED" | "DDS_CALL_ENDED";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED" | "DDS_CALL_STARTED" | "DDS_CALL_ANSWERED" | "DDS_CALL_ENDED" | "DDS_CALL_STATUS_PROPOSED" | "DDS_CALL_ASSERTION";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -2908,6 +2965,13 @@ export interface components {
             /** Format: uuid */
             audio_segment_id: string | null;
             turn_index: number | null;
+            /**
+             * Format: uuid
+             * @description (additive, I3 E6c — 80 §80.6.1) The call the row was said on; the report groups by it.
+             */
+            call_id?: string | null;
+            /** @description (additive, I3 E6c) The party label of the call («Вызов 112: абонент», «Звонок ДДС: Начальник караула ПСЧ»). */
+            call_party_ru?: string | null;
         };
         AudioSegmentRef: {
             /** Format: uuid */
@@ -2935,6 +2999,13 @@ export interface components {
             payload: {
                 [key: string]: unknown;
             };
+            /**
+             * Format: uuid
+             * @description (additive, I3 E6c — 80 §80.6.1) The payload's `call_id`, so turns group by call.
+             */
+            call_id?: string | null;
+            /** @description (additive, I3 E6c) The call's party label, read from `DDS_CALL_STARTED.kind` and the persona. */
+            call_party_ru?: string | null;
         };
         /** @description The DDS decisions section of SPEC §29 — what was acknowledged, dispatched, reported and closed. */
         DdsDecisionView: {
@@ -3207,6 +3278,8 @@ export interface components {
                     card_schema: string;
                     services: string;
                     classifier: string | null;
+                    /** @description (additive, I3 E6c — 80 §80.4.1) The ДДС phone's persona set; absent for a pack without one. */
+                    personas?: string;
                 };
             };
             files: {
@@ -3321,6 +3394,11 @@ export interface components {
             history: components["schemas"]["ServiceStatusEntryView"][];
             /** @description The legal next triggers of this leg for the caller (empty when `is_mine` is false). */
             available_actions: components["schemas"]["ActionDescriptor"][];
+            /**
+             * Format: uuid
+             * @description (additive, I3 E6c) The non-`ENDED` `SERVICE_HEAD` call on this leg, if any.
+             */
+            live_call_id?: string | null;
         };
         /** @description (additive, I3 E5a) The memo's pencil form. */
         SetServiceStatusRequest: {
@@ -3329,6 +3407,36 @@ export interface components {
             order_number?: string | null;
             /** @description Mandatory (non-blank) for `NOT_ACCEPTED` and `REFUSED` — `422 COMMENT_REQUIRED`. */
             comment_ru?: string | null;
+            /**
+             * Format: uuid
+             * @description (additive, I3 E6c) The call on which the status was heard; must name a `DDS_CALL_STATUS_PROPOSED` of this leg (`422 PROPOSAL_UNKNOWN`).
+             */
+            proposed_by_call_id?: string | null;
+        };
+        /** @description (additive, I3 E6c — 80 §80.4.1) One AI persona of the ДДС phone. */
+        PersonaView: {
+            /**
+             * @example BRIGADE_101
+             * @example DDS_DISTRICT
+             * @example OPERATOR_112
+             */
+            persona_id: string;
+            /** @description Most specific wins — `code` over `kind`. */
+            applies: {
+                /** @example 101 */
+                code: string | null;
+                /** @enum {string|null} */
+                kind: "CITY" | "DISTRICT" | "PREFECTURE" | "DEPARTMENT" | "OPERATOR_112" | null;
+            };
+            /** @example Начальник караула ПСЧ */
+            title_ru: string;
+            /** @enum {string} */
+            gender: "MALE" | "FEMALE";
+            /**
+             * @description Logical voice id resolved through the profile `tts.voice_map`.
+             * @example ru_male_adult_01
+             */
+            voice_id: string;
         };
         /**
          * @description (additive, I3 E5b) What the ДДС says is wrong with the received card (70 §70.7).
@@ -3599,7 +3707,9 @@ export interface components {
          *     `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
          *     I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog; (additive,
          *     I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes;
-         *     (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment.
+         *     (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment;
+         *     (additive, I3 E6c) `PROPOSAL_UNKNOWN` — `proposed_by_call_id` names no
+         *     `DDS_CALL_STATUS_PROPOSED` of the leg.
          */
         UnprocessableEntity: {
             headers: {
@@ -5084,6 +5194,34 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    answerDdsCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+                call_id: components["parameters"]["CallIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The call, `CONNECTED`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartDdsCallResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     hangUpDdsCall: {
         parameters: {
             query?: never;
@@ -5443,6 +5581,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceCatalogEntry"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listReferencePersonas: {
+        parameters: {
+            query?: {
+                /** @description (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest. */
+                pack?: components["parameters"]["PackQueryParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The personas, in file order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaView"][];
                 };
             };
             401: components["responses"]["Unauthorized"];

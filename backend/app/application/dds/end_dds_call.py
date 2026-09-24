@@ -21,9 +21,16 @@ from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.dds.dds_call_flow import CallSignal, publish_signals
-from app.application.dds.dds_call_views import DdsCallNotFoundError, DdsCallView, dds_call_view
+from app.application.dds.dds_call_views import (
+    DdsCallNotFoundError,
+    DdsCallView,
+    dds_call_view,
+    persona_title_of,
+    session_personas,
+)
 from app.application.operator.command_context import SessionNotActiveError
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.user_repository import UserRole
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
@@ -55,10 +62,12 @@ class HangUpDdsCall:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         voice_signals: VoiceSignalPublisher | None = None,
+        reference: ReferencePort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._voice_signals = voice_signals
+        self._reference = reference
 
     async def __call__(
         self, session_id: SessionId, call_id: UUID, user: AuthenticatedUser
@@ -90,13 +99,14 @@ class HangUpDdsCall:
             await uow.dds_calls.save(ended)
             assert event is not None
             await uow.events.append(session_id, [event])
+            personas = session_personas(self._reference, await uow.events.read(session_id))
             await uow.commit()
         await publish_signals(
             self._voice_signals,
             session_id,
             [CallSignal(ended, cancel_reason=_CANCEL_REASON, at_offset_ms=now_ms)],
         )
-        return dds_call_view(ended, user)
+        return dds_call_view(ended, user, persona_title_ru=persona_title_of(ended, personas))
 
 
 class EndDdsCallBySystem:

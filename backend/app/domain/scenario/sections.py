@@ -40,7 +40,7 @@ from app.domain.caller.emotion import EmotionRule
 from app.domain.caller.profile import CallerProfile
 from app.domain.common.values import FactValue
 from app.domain.dds.resources import EtaProfile, ResourceAvailability, ResourceCapability
-from app.domain.dds.responders import ScriptedStep
+from app.domain.dds.responders import ScriptedStep, ServiceScript
 from app.domain.enums import (
     DisclosurePolicy,
     KnowledgeState,
@@ -181,11 +181,15 @@ class ExpectedResponse(BaseModel):
     min_units_by_service: Mapping[ServiceId, int] = Field(default_factory=dict)
     resolution_condition: Condition | None = None
     prefab_handoff: PrefabHandoff | None = None
-    responders: Mapping[ServiceId, tuple[ScriptedStep, ...]] | Literal["DEFAULT"] | None = None
+    responders: (
+        Mapping[ServiceId, tuple[ScriptedStep, ...] | ServiceScript] | Literal["DEFAULT"] | None
+    ) = None
     """Schema 2 only (HLD 70 §70.4.5, I3 E5b): the scripted responders of the services no ДДС
     participant is bound to — `DEFAULT` (§70.4.5's schedule) or a script per service
     (`app.domain.dds.responders`). Rule R36 requires it when `MEMO_STATUSES` is supported; R01
-    refuses it in a schema-1 document. Read at runtime by stage automation only (INV 3)."""
+    refuses it in a schema-1 document. Read at runtime by stage automation only (INV 3). Since I3
+    E6c a service's script may be the object `{persona, steps}` and a step may carry `report`
+    (HLD 80 §80.3.3, R42) — both for `dds_brigade_call: ON` only."""
 
     @model_serializer(mode="wrap")
     def _omit_absent_responders(self, handler: SerializerFunctionWrapHandler) -> Any:

@@ -9,7 +9,7 @@
 #   - `x-epic` names the epic that merges the item;
 #   - `x-change: NEW | CHANGED | ADDITIVE` — ADDITIVE only adds optional request properties or new
 #     response properties to an existing operation / schema (`x-additive-to` names it);
-#   - `x-optional: true` — built only if the owner wants it (80 §80.7, migration 0014);
+#   - `x-optional: true` — built only if the owner wants it (80 §80.7, migration 0015);
 #   - `x-action` / `x-emits` as in openapi.yaml;
 #   - references to unchanged definitions point into openapi.yaml or contracts/i3-openapi-delta.yaml.
 #
@@ -78,7 +78,7 @@ paths:
       x-epic: E6b
       x-change: NEW
       summary: Every ДДС call of the session, newest first — restores the phone widget after a refresh (INV 13).
-      description: Read from the `dds_calls` read model (migration 0013). DDS and INSTRUCTOR only.
+      description: Read from the `dds_calls` read model (migration 0014). DDS and INSTRUCTOR only.
       x-action: '-'
       x-emits: []
       parameters:
@@ -365,7 +365,7 @@ paths:
       x-epic: E6e
       x-change: NEW
       x-optional: true
-      summary: Per-user SIP HA1 for the registrar (only with migration 0014).
+      summary: Per-user SIP HA1 for the registrar (only with migration 0015).
       description: |
         Returns `users.sip_ha1` for `username`, or `404` when the user has none (the deployment
         password then applies). Never logged by either side (SPEC §41). Built only if per-user SIP
@@ -535,7 +535,7 @@ components:
     DdsCallView:
       x-epic: E6b
       x-change: NEW
-      description: One row of the `dds_calls` read model (migration 0013), plus the caller's legal actions.
+      description: One row of the `dds_calls` read model (migration 0014), plus the caller's legal actions.
       type: object
       additionalProperties: false
       required: [call_id, session_id, kind, direction, assignment_id, service_type, dialed, endpoint, room_name, persona_id, persona_title_ru, actor_user_id, state, answered_by, started_at_offset_ms, answered_at_offset_ms, ended_at_offset_ms, end_reason, available_actions]

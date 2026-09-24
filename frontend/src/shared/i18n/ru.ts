@@ -920,4 +920,14 @@ export const ru = {
   eventTypeDdsCallStarted: 'ДДС начала звонок',
   eventTypeDdsCallAnswered: 'Звонок ДДС принят',
   eventTypeDdsCallEnded: 'Звонок ДДС завершён',
+  // -- I3 E6c: the service head's call and the heard status (HLD 80 §80.3.3, §80.4) --------------
+  problemProposalUnknown: 'На этом звонке такой статус не докладывали.',
+  ddsPhoneCallServiceHead: 'Позвонить старшему',
+  ddsPhoneAnswer: 'Ответить',
+  ddsPhoneIncoming: 'Входящий звонок',
+  ddsLegProposalChip: 'Услышано по телефону',
+  ddsLegProposalApply: 'Подставить в форму',
+  ddsLegProposalFromCall: 'Статус со звонка',
+  eventTypeDdsCallStatusProposed: 'Старший службы доложил статус',
+  eventTypeDdsCallAssertion: 'ДДС сообщила сведения по телефону',
 } as const;

@@ -12,6 +12,12 @@ retry, carrying the previous raw output and the validation error; a second failu
 transport error goes straight to the deterministic fallback (`speech_act = UNINTELLIGIBLE`, every
 list empty, `semantic_confidence = 0.0`) with `fallback_used = True`. Nothing here ever fills in a
 guessed value for a field the model omitted or got wrong.
+
+**The responder slot catalog (I3 E6c, HLD 80 §80.4.3).** On a ДДС call to a service head the same
+interpreter reads the ДДС trainee's utterance against `RESPONDER_SLOT_CATALOG` instead of a
+scenario's facts — five value-free slots (`status`, `order_number`, `address`, `victims`, `eta`):
+`requested_facts` are what the trainee asks the head, `operator_assertions` what they state to it.
+Like every catalog it carries labels and aliases, never a value.
 """
 
 from __future__ import annotations
@@ -50,6 +56,8 @@ from app.domain.facts.definitions import FactCatalog, FactCatalogEntry
 __all__ = [
     "INTERPRETER_GRAMMAR",
     "INTERPRETER_JSON_SCHEMA",
+    "RESPONDER_SLOTS",
+    "RESPONDER_SLOT_CATALOG",
     "DialogueInterpreter",
     "DialogueTurn",
     "InterpretationOutcome",
@@ -63,6 +71,46 @@ __all__ = [
 
 _CHARS_PER_TOKEN = 3
 _MAX_ITEMS = 8
+
+_RESPONDER_CATEGORY = ("RESPONDER",)
+
+RESPONDER_SLOT_CATALOG: FactCatalog = FactCatalog(
+    (
+        FactCatalogEntry(
+            fact_id="status",
+            label_ru="Статус бригады: выехали, прибыли, работают, завершили",
+            aliases_ru=("доехали", "выехали", "прибыли", "где вы", "обстановка", "как дела"),
+            categories=_RESPONDER_CATEGORY,
+        ),
+        FactCatalogEntry(
+            fact_id="order_number",
+            label_ru="Номер наряда",
+            aliases_ru=("наряд", "номер наряда", "какой наряд"),
+            categories=_RESPONDER_CATEGORY,
+        ),
+        FactCatalogEntry(
+            fact_id="address",
+            label_ru="Адрес происшествия",
+            aliases_ru=("адрес", "улица", "дом", "куда ехать"),
+            categories=_RESPONDER_CATEGORY,
+        ),
+        FactCatalogEntry(
+            fact_id="victims",
+            label_ru="Пострадавшие",
+            aliases_ru=("пострадавшие", "раненые", "есть ли люди"),
+            categories=_RESPONDER_CATEGORY,
+        ),
+        FactCatalogEntry(
+            fact_id="eta",
+            label_ru="Время прибытия",
+            aliases_ru=("когда будете", "сколько ехать", "время прибытия"),
+            categories=_RESPONDER_CATEGORY,
+        ),
+    )
+)
+"""The value-free catalog a service head's call is interpreted against (§80.4.3, I3 E6c)."""
+
+RESPONDER_SLOTS: tuple[str, ...] = tuple(entry.fact_id for entry in RESPONDER_SLOT_CATALOG)
 
 
 def _estimate_tokens(text: str) -> int:

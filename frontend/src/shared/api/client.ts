@@ -725,6 +725,23 @@ export function createDdsCallVoiceToken(sessionId: string, callId: string): Prom
   });
 }
 
+// -- I3 E6c: the service head's call and the heard status (HLD 80 §80.3.3, §80.4) ---------------
+export type PersonaView = components['schemas']['PersonaView'];
+
+/** `POST /dds-calls/{call_id}/answer` (`answerDdsCall`) — «Ответить» on a brigade's ringing
+ * INBOUND call (a `report: CALL_IN` step). The answer carries the room-scoped token. */
+export function answerDdsCall(sessionId: string, callId: string): Promise<StartDdsCallResponse> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds-calls/${encodeURIComponent(callId)}/answer`, {
+    method: 'POST',
+  });
+}
+
+/** `GET /reference/personas` (`listReferencePersonas`) — the ДДС phone's personas of a pack. */
+export function listReferencePersonas(pack?: string): Promise<PersonaView[]> {
+  const qs = pack ? `?pack=${encodeURIComponent(pack)}` : '';
+  return apiFetch(`/reference/personas${qs}`);
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails
@@ -768,6 +785,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   COMMENT_REQUIRED: 'problemCommentRequired', // additive, I3 E5a
   FORBIDDEN_FOR_SERVICE: 'problemForbiddenForService', // additive, I3 E5a
   DDS_LINE_BUSY: 'problemDdsLineBusy', // additive, I3 E6b
+  PROPOSAL_UNKNOWN: 'problemProposalUnknown', // additive, I3 E6c
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that
