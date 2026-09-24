@@ -4,7 +4,7 @@ Per the §10.1 module map this file holds `EventSpec`/`EVENT_PAYLOAD_CATALOG` on
 `DomainEvent` live in `events/session_event.py` (ruling R2 — the module map wins over §10.13's
 code-block header, which named `catalog.py` for all four classes).
 
-`EVENT_PAYLOAD_CATALOG` covers every one of the 49 `EventType` members with the actor types,
+`EVENT_PAYLOAD_CATALOG` covers every `EventType` member (49 of I1, plus I3's) with the actor types,
 payload keys and `visible_to` set that `10-domain-model.md` §10.13 lists, cross-checked against
 `40-realtime-protocol.md` §40.4 (its "Consistency rule for implementers" says the two are one fact
 expressed twice). Per this task's ruling R6, where the two tables disagreed on a row, §40.4 won:
@@ -69,6 +69,11 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "scenario_role_chain": "list[RoleType]",
             # Additive, I3 E2a (HLD 70 §70.6.1, §70.7): the reference pack's ids and sha256.
             "reference_pack": "ReferencePackRecord",
+            # Additive, I3 E4a (HLD 70 §70.3.4, §70.7): the resolved per-card timers (session
+            # ms) and the lesson this session is a card of (`null` for a single session).
+            "timers": "CardTimers",
+            "lesson_id": "uuid | null",
+            "lesson_position": "int | null",
         },
         visible_to=frozenset({_INSTRUCTOR}),
     ),
@@ -79,6 +84,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "started_at_utc": "datetime",
             "first_role_stage_id": "uuid",
             "first_role_type": "RoleType",
+            # Additive, I3 E4a (HLD 70 §70.3.2): how a lesson card arrived, in lesson wall ms;
+            # `null` for a session started by hand.
+            "lesson_arrival": "LessonArrival | null",
         },
         visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
@@ -722,6 +730,24 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "detail": "str",
         },
         visible_to=frozenset({_INSTRUCTOR}),
+    ),
+    # ---------------------------------------------------------------------------------------
+    # Additive events of I3 (HLD 70 §70.7)
+    # ---------------------------------------------------------------------------------------
+    EventType.DDS_CARD_STATUS_CHANGED: EventSpec(
+        event_type=EventType.DDS_CARD_STATUS_CHANGED,
+        actor_types=frozenset({ActorType.SIMULATION}),
+        payload_keys={
+            "incident_id": "uuid",
+            "previous_status": "CardStatus",
+            "new_status": "CardStatus",
+            "reason": "CardStatusReason",
+            "assignment_id": "uuid | null",
+            "service_type": "ServiceId | null",
+            "deadline_offset_ms": "int | null",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
     ),
 }
 

@@ -1271,6 +1271,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List lessons — mine, or all for an instructor. */
+        get: operations["listLessons"];
+        put?: never;
+        /**
+         * Create a lesson (занятие) of N cards (INSTRUCTOR / ADMIN).
+         * @description Validates the whole plan and creates **every** plan session at once through the existing
+         *     `createSession` path (each `READY`, with `lesson_id` / `lesson_position`), in one Unit of
+         *     Work. Nothing ticks until `startLesson`. Refusals are those of `createSession` for the
+         *     offending entry, with `detail` naming its `position`.
+         */
+        post: operations["createLesson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A lesson with its plan and the per-card status of every session. */
+        get: operations["getLesson"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the lesson (`CREATED → ACTIVE`); the LessonRunner then starts cards by arrival.
+         * @description The creator or an ADMIN only. The `LessonRunner` starts each card's session as the
+         *     instructor who created the lesson when its `Arrival` holds (`SESSION_STARTED.lesson_arrival`);
+         *     a card due at offset 0 is started before this response.
+         */
+        post: operations["startLesson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort the lesson and every non-terminal card session. */
+        post: operations["abortLesson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The N card reports of a completed lesson plus the weighted sum.
+         * @description Composes the existing per-session `ScoreReportView`s; no new evaluator. Trainee access
+         *     follows the per-session release rule (a lesson release releases every card, `x-emits: []`).
+         *     `409 REPORT_NOT_READY` until the lesson is `COMPLETED` or `ABORTED`.
+         */
+        get: operations["getLessonReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/lessons/{lesson_id}/report/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release every card report of the lesson to its trainees (idempotent, no event).
+         * @description Calls the existing per-session release for every card; sets `incidents.card_status` to
+         *     `CHECKED` where the projection allows it (70 §70.4.6). Emits no event (HLD 20 §20.3).
+         */
+        post: operations["releaseLessonReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's cross-session incident list (ДДС «Список происшествий», 112 «реестр»).
+         * @description One row per session the caller participates in (optionally one lesson), with the materialised
+         *     `card_status` and the deadline offsets; the client renders countdowns from
+         *     `session_offset_ms` and never decides a status. A ДДС trainee sees rows only once the card
+         *     has arrived (its session is `ACTIVE` or terminal).
+         */
+        get: operations["listMyIncidents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1279,7 +1425,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1391,11 +1537,11 @@ export interface components {
         /** @enum {string} */
         Permission: "ANSWER_CALL" | "END_CALL" | "EDIT_CARD" | "SELECT_SERVICES" | "CREATE_HANDOFF" | "VIEW_HANDOFF" | "ACKNOWLEDGE_ASSIGNMENT" | "SELECT_RESOURCES" | "DISPATCH_RESOURCES" | "SEND_STATUS_UPDATE" | "CLOSE_INCIDENT" | "ACKNOWLEDGE_NOTIFICATION" | "VIEW_RESOURCE_BOARD" | "VIEW_TRANSCRIPT";
         /**
-         * @description All 49 members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by
-         *     the 21 additive members of D5.
+         * @description All members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by the
+         *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -1685,6 +1831,13 @@ export interface components {
              *     effective chain (the suffix starting at DDS under `card_source: GENERATED_CARD`).
              */
             scenario_role_chain: components["schemas"]["RoleType"][];
+            /**
+             * Format: uuid
+             * @description (additive, I3 E4a) The lesson this session is a card of; `null` for a single session (70 §70.3.2).
+             */
+            lesson_id: string | null;
+            /** @description (additive, I3 E4a) The card's plan position; set exactly when `lesson_id` is. */
+            lesson_position: number | null;
         };
         AbortSessionRequest: {
             reason: string;
@@ -2551,6 +2704,123 @@ export interface components {
                 }[];
             };
         };
+        /** @enum {string} */
+        LessonState: "CREATED" | "ACTIVE" | "COMPLETED" | "ABORTED";
+        /** @enum {string} */
+        ArrivalKind: "AT_OFFSET" | "AFTER_PREVIOUS_112_STAGE" | "AFTER_PREVIOUS_SESSION";
+        /**
+         * @description Card status of the memo p.27 (70 §70.4.6). Labels: Зарегистрирована, Отработана, Проверена, Не оповещено, Отказ, Не завершено, Завершена.
+         * @enum {string}
+         */
+        CardStatus: "REGISTERED" | "WORKED" | "CHECKED" | "NOT_NOTIFIED" | "REFUSED" | "NOT_COMPLETED" | "COMPLETED";
+        Arrival: {
+            kind: components["schemas"]["ArrivalKind"];
+            /** @description Required for `AT_OFFSET` (lesson wall ms since start), forbidden otherwise. */
+            offset_ms?: number | null;
+            /** @default 0 */
+            delay_ms: number;
+        };
+        PlanEntry: {
+            position: number;
+            /** Format: uuid */
+            scenario_version_id: string;
+            arrival: components["schemas"]["Arrival"];
+            variants?: components["schemas"]["VariantsRequest"];
+            /** @description E9a hook — per-workstation tasks; absent = every lesson participant. */
+            participants?: string[] | null;
+            /**
+             * @description E9a hook — difficulty weight in the lesson report.
+             * @default 1
+             */
+            weight: number;
+        };
+        LessonCreateRequest: {
+            title_ru: string;
+            session_mode: components["schemas"]["SessionMode"];
+            participants: components["schemas"]["ParticipantAssignment"][];
+            variants?: components["schemas"]["VariantsRequest"];
+            scenario_plan: components["schemas"]["PlanEntry"][];
+            /** @default 1 */
+            time_scale: number;
+        };
+        LessonSessionView: {
+            position: number;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            incident_id: string;
+            display_number: number;
+            state: components["schemas"]["SessionState"];
+            card_status: components["schemas"]["CardStatus"];
+            arrival: components["schemas"]["Arrival"];
+            started_at_lesson_offset_ms?: number | null;
+            variants: components["schemas"]["SessionVariants"];
+        };
+        LessonListItem: {
+            /** Format: uuid */
+            lesson_id: string;
+            title_ru: string;
+            session_mode: components["schemas"]["SessionMode"];
+            state: components["schemas"]["LessonState"];
+            card_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by_user_id: string;
+        };
+        LessonDetail: {
+            /** Format: uuid */
+            lesson_id: string;
+            title_ru: string;
+            session_mode: components["schemas"]["SessionMode"];
+            state: components["schemas"]["LessonState"];
+            participants: components["schemas"]["ParticipantAssignment"][];
+            scenario_plan: components["schemas"]["PlanEntry"][];
+            sessions: components["schemas"]["LessonSessionView"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            report_released_at: string | null;
+        };
+        LessonReport: {
+            /** Format: uuid */
+            lesson_id: string;
+            cards: {
+                position: number;
+                /** Format: uuid */
+                session_id: string;
+                weight: number;
+                score: components["schemas"]["ScoreReportView"];
+            }[];
+            weighted_total: number;
+            weighted_max: number;
+        };
+        /** @description One row of «Список происшествий» / «реестр». Deadlines are session offsets; `null` = not applicable yet. */
+        IncidentListItem: {
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            incident_id: string;
+            display_number: number;
+            /** Format: uuid */
+            lesson_id: string | null;
+            card_status: components["schemas"]["CardStatus"];
+            session_state: components["schemas"]["SessionState"];
+            /** Format: date-time */
+            arrived_at_utc: string | null;
+            session_offset_ms: number;
+            accept_deadline_offset_ms: number | null;
+            fill_deadline_offset_ms: number | null;
+            not_completed_deadline_offset_ms: number | null;
+            classifier_code: string | null;
+            /** @description From the snapshot for a ДДС row, from the live card for a 112 row (never WorldTruth). */
+            address_line_ru: string | null;
+            my_role_type: components["schemas"]["RoleType"] | null;
+        };
     };
     responses: {
         /** @description `UNAUTHENTICATED` — missing, malformed or expired bearer token. */
@@ -2591,7 +2861,7 @@ export interface components {
          *     `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
          *     `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
          *     `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
-         *     does not have.
+         *     does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`.
          */
         Conflict: {
             headers: {
@@ -2632,6 +2902,7 @@ export interface components {
         SessionIdParam: string;
         ScenarioIdParam: string;
         ScenarioVersionIdParam: string;
+        LessonIdParam: string;
         /** @description (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest. */
         PackQueryParam: string;
     };
@@ -4273,6 +4544,228 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listLessons: {
+        parameters: {
+            query?: {
+                scope?: "MINE" | "ALL";
+                state?: components["schemas"]["LessonState"];
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lessons, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["LessonListItem"][];
+                        total: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createLesson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LessonCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created lesson in state `CREATED`. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getLesson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lesson. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    startLesson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lesson in state `ACTIVE`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    abortLesson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbortSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description The lesson in state `ABORTED`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getLessonReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lesson report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    releaseLessonReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lesson after release. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listMyIncidents: {
+        parameters: {
+            query?: {
+                lesson_id?: string;
+                role_type?: components["schemas"]["RoleType"];
+                card_status?: components["schemas"]["CardStatus"];
+                /** @description Search over display number, address and classifier code («Поиск»). */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Incidents, newest arrival first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["IncidentListItem"][];
+                        total: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
 }

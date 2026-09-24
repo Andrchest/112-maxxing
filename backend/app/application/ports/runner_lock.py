@@ -21,9 +21,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import LessonId, SessionId
 
-__all__ = ["RunnerLock"]
+__all__ = ["LessonRunnerLock", "RunnerLock"]
 
 
 @runtime_checkable
@@ -39,5 +39,26 @@ class RunnerLock(Protocol):
         ...
 
     async def release(self, session_id: SessionId, owner: str) -> bool:
+        """Delete the lock if and only if `owner` holds it; `True` when it was deleted."""
+        ...
+
+
+@runtime_checkable
+class LessonRunnerLock(Protocol):
+    """Single-runner-per-lesson lock, `lock:lesson:{lesson_id}:runner` (HLD 70 §70.3.3).
+
+    The same three operations with the same semantics as `RunnerLock`, keyed by a lesson: the
+    `LessonRunner` keeps the `SimulationRunner`'s discipline, only the key differs.
+    """
+
+    async def acquire(self, lesson_id: LessonId, owner: str, ttl_s: int) -> bool:
+        """`SET NX EX`: `True` when this call took the lock for `owner`."""
+        ...
+
+    async def refresh(self, lesson_id: LessonId, owner: str, ttl_s: int) -> bool:
+        """Extend the TTL while `owner` still holds the lock; `False` when it does not."""
+        ...
+
+    async def release(self, lesson_id: LessonId, owner: str) -> bool:
         """Delete the lock if and only if `owner` holds it; `True` when it was deleted."""
         ...

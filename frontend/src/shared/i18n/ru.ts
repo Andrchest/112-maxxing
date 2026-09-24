@@ -203,6 +203,7 @@ export const ru = {
   problemVariantNotAvailable: 'Этот вариант занятия пока недоступен в данной версии тренажёра.',
   problemReferencePackUnknown: 'Справочник, указанный в сценарии, не найден.',
   problemServiceUnknown: 'Такой службы нет в справочнике служб.',
+  problemLessonNotActive: 'Занятие не идёт.',
   problemUnknown: 'Неизвестная ошибка. Попробуйте ещё раз.',
 
   // -- operator 112: handoff dialog + role transition (E10; SPEC §10, §10.10) ----------------
@@ -665,4 +666,5 @@ export const ru = {
   eventTypeTransportDisconnected: 'Потеряна голосовая связь',
   eventTypeTransportReconnected: 'Голосовая связь восстановлена',
   eventTypeInferenceHealthChanged: 'Изменилась готовность моделей',
+  eventTypeDdsCardStatusChanged: 'Изменился статус карточки',
 } as const;

@@ -38,6 +38,7 @@ from app.db.models.reports import ReportExplanation
 from app.db.models.scoring import ScoreEvidence, ScoreResult
 from app.db.models.session import (
     Incident,
+    Lesson,
     RoleStage,
     SessionParticipant,
     SimulationSession,
@@ -57,6 +58,7 @@ __all__ = [
     "IncidentCardRevision",
     "IncidentWorldState",
     "InferenceMetric",
+    "Lesson",
     "Notification",
     "RecordingPurgeAudit",
     "ReportExplanation",

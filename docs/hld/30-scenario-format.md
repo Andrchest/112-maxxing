@@ -31,13 +31,14 @@ Identifiers, keys and enum members are English. Only `*_ru` fields, `label_ru`, 
 | `scoring_rules` | list | yes | §30.7 |
 | `variants` *(additive, I3 E1)* | mapping | no — `schema_version: 2` only | §30.10 |
 | `reference_pack` *(additive, I3 E2a)* | string | no — `schema_version: 2` only | §30.11 |
+| `timers` *(additive, I3 E4a)* | mapping | no — `schema_version: 2` only | §30.12 |
 
 Additional top-level keys are rejected (`extra="forbid"`). `schema_version` is `1` or `2`
 (`SUPPORTED_SCHEMA_VERSIONS`). A `schema_version: 1` document has exactly the SPEC §4 keys above;
 `schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2) and
-`reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1). The later schema-2 keys `timers` and
-`expected_response.responders` (HLD 70 §70.3.4, §70.4.5) are not accepted yet — they stay refused
-until their epics (E4, E5b).
+`reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1) and `timers` (I3 E4a, HLD 70 §70.3.4). The
+later schema-2 key `expected_response.responders` (HLD 70 §70.4.5) is not accepted yet — it stays
+refused until its epic (E5b).
 
 ## 30.2 The three fact sections
 
@@ -491,7 +492,7 @@ are not re-checked (P5).
 
 1. *(extended)* `schema_version ∈ {1, 2}`; a key introduced by schema 2 (`variants`, `timers`,
    `reference_pack`, `expected_response.responders`) in a schema-1 document is refused
-   (`variants` from E1 and `reference_pack` from E2a are accepted in schema 2).
+   (`variants` from E1, `reference_pack` from E2a and `timers` from E4a are accepted in schema 2).
 32. `variants.default` ∈ `variants.supported`, every `supported` list non-empty and duplicate-free.
 33. `CALLER_VOICE` supported ⇒ `OPERATOR_112 ∈ role_chain` and the three fact sections non-empty.
 34. `GENERATED_CARD` supported ⇒ `expected_response.prefab_handoff` present (rule 29's check, reached
@@ -519,6 +520,12 @@ the check the enum used to make at parse time.
 38. `reference_pack` names a pack of `reference/manifest.json`. The card-path half — every path in
     rule 14's scope exists in *that pack's* card schema — stays rule 14 until E3a adds a second card
     schema: the only pack today, `legacy-r1`, has card schema `v1` = `CARD_FIELDS`.
+
+Rule 39 is added by I3 E4a (HLD 70 §70.2.3, §70.3.4, D15). A non-positive timer is already refused
+when the document is parsed and is reported as rule 39 too; the cross-field half is the validator's.
+
+39. `timers.*` are positive integers; `timers.accept_within_ms < timers.not_completed_after_ms`
+    (after the defaults of §30.12 are applied to absent keys).
 
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 
@@ -805,4 +812,24 @@ the service catalog («СЛУЖБЫ 112») and the classifier a scenario's sessi
 checks every service id against the pack's catalog. `createSession` records the pack's ids and file
 sha256 in `SESSION_CREATED.reference_pack`; a stored version naming a pack the running manifest
 lacks cannot start a session (`409 REFERENCE_PACK_UNKNOWN`). A dump omits an absent key, so a
+schema-1 document's `content_sha256` is unchanged (P5).
+
+## 30.12 `timers` — schema 2 (additive, I3 E4a)
+
+```yaml
+timers:                         # all in SESSION (running) milliseconds; defaults when absent
+  accept_within_ms: 30000       # Принята / Не принята within 30 s of the leg's HANDOFF_RECEIVED
+  fill_within_ms: 180000        # 3 minutes to fill the card, from CALL_ANSWERED (CALLER_VOICE only)
+  not_completed_after_ms: 172800000   # 48 h → «Не завершено», from the handoff; authors scale it
+```
+
+The per-card timers of HLD 70 §70.3.4 (D15). Every absent key — and an absent `timers` — takes its
+default, which is also what every schema-1 document gets (`ScenarioVersion.card_timers`). They are
+**session** milliseconds, not wall milliseconds, so the deadline consequences are deterministic and
+independent of `time_scale`. `createSession` records the resolved timers in `SESSION_CREATED.timers`;
+the card-status projection (HLD 70 §70.4.6) reads them from there: a leg without a primary decision
+at `received + accept_within_ms` turns the card `NOT_NOTIFIED`, a leg not completed at
+`handoff + not_completed_after_ms` turns it `NOT_COMPLETED` — each a SIMULATION
+`DDS_CARD_STATUS_CHANGED` stamped with the deadline offset. The *scoring* of a late action stays an
+ordinary `DEADLINE` rule in `scoring_rules`. Rule 39 checks the key; a dump omits an absent key, so a
 schema-1 document's `content_sha256` is unchanged (P5).

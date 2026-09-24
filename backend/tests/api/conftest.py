@@ -60,7 +60,11 @@ DEMO_SLUG = "apartment-fire"
 #: `scenarios`/`scenario_versions` are reference data that stays committed across tests instead of
 #: being wiped and re-seeded every time (E9-0); see the `users` and `demo_version_id` fixtures
 #: below for why that is safe.
-_TRUNCATE_SESSION_TABLES = text("TRUNCATE TABLE simulation_sessions RESTART IDENTITY CASCADE")
+#: `lessons` (I3 E4a) is truncated with them: it is per-test state too, and it is referenced *by*
+#: `simulation_sessions`, so the session cascade alone never reaches it.
+_TRUNCATE_SESSION_TABLES = text(
+    "TRUNCATE TABLE lessons, simulation_sessions RESTART IDENTITY CASCADE"
+)
 
 #: The seeded accounts' passwords. Test-only values in a test file — never a source default.
 PASSWORDS: dict[str, str] = {

@@ -22,6 +22,12 @@ Releasing a session whose mode is trainee-visible anyway (`SINGLE_ROLE`,
 `FULL_CYCLE_SINGLE_TRAINEE`) is permitted and is a no-op for visibility: it records that an
 instructor reviewed and published the result, which is a fact worth having even when nothing was
 gated on it.
+
+**`CHECKED` (HLD 70 §70.4.6, C2, I3 E4a).** «Проверена» is the instructor's release. It is
+materialised on `incidents.card_status` only — still no event, the log is closed — and only where
+the projection allows it: the card status is re-derived from the log with `report_released=True`
+at the log's last offset, so a card that is `COMPLETED`, `REFUSED`, `NOT_COMPLETED` or
+`NOT_NOTIFIED` keeps that status and a merely `WORKED` one becomes `CHECKED`.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from app.application.scoring.rescore_session import ReportNotReadyError
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import SessionId
+from app.domain.dds.card_status import CardStatus, fold_card_status
 from app.domain.enums import SessionState
 
 __all__ = ["ReleaseReportToTrainee"]
@@ -64,5 +71,8 @@ class ReleaseReportToTrainee:
                 released_by_user_id=user.user_id,
                 released_at=self._clock.now(),
             )
+            fold = fold_card_status(await uow.events.read(session_id))
+            if fold.status_at(fold.horizon_ms or 0, report_released=True) is CardStatus.CHECKED:
+                await uow.sessions.set_card_status(session_id, CardStatus.CHECKED)
             await uow.commit()
         return release

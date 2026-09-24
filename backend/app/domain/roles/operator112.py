@@ -156,6 +156,7 @@ class Operator112Module:
                     EventType.CALL_ENDED,
                     EventType.TRANSPORT_DISCONNECTED,
                     EventType.TRANSPORT_RECONNECTED,
+                    EventType.DDS_CARD_STATUS_CHANGED,  # I3 E4a (HLD 70 §70.7)
                 }
             ),
         )

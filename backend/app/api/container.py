@@ -54,6 +54,13 @@ from app.application.handoff.create_handoff import CreateHandoff
 from app.application.inference_health.health_changed import AppendInferenceHealthChanged
 from app.application.inference_health.ports import InferenceFatalLatch
 from app.application.instructor.get_overview import GetInstructorSessionOverview
+from app.application.lessons.abort_lesson import AbortLesson
+from app.application.lessons.create_lesson import CreateLesson
+from app.application.lessons.lesson_report import GetLessonReport
+from app.application.lessons.lesson_runner import LessonRunner
+from app.application.lessons.queries import GetLesson, ListLessons, ListMyIncidents
+from app.application.lessons.release import ReleaseLessonReport
+from app.application.lessons.start_lesson import StartLesson
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
 from app.application.operator.begin_handoff_preparation import BeginHandoffPreparation
@@ -78,7 +85,7 @@ from app.application.ports.last_seq_no_cache import LastSeqNoCache
 from app.application.ports.llm import LLMClient
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
-from app.application.ports.runner_lock import RunnerLock
+from app.application.ports.runner_lock import LessonRunnerLock, RunnerLock
 from app.application.ports.token_service import TokenService
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
@@ -140,7 +147,7 @@ from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
 from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCache
 from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
-from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock
+from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock, lesson_runner_lock_key
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
 from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
@@ -200,6 +207,7 @@ class Container:
         health_probes: Sequence[HealthProbe] | None = None,
         idempotency: IdempotencyStore | None = None,
         reference: ReferencePort | None = None,
+        lesson_runner_lock: LessonRunnerLock | None = None,
         owns_engine: bool = True,
         owns_redis: bool = True,
     ) -> None:
@@ -326,6 +334,28 @@ class Container:
         self.reference: ReferencePort = (
             reference if reference is not None else FileReferenceCatalog(settings.reference_dir)
         )
+        # -- I3 E4a: the LessonRunner (HLD 70 §70.3.3, D15) ------------------------------------
+        #
+        # Beside the `SimulationRunner`, with the same settings and the same discipline; its lock
+        # is `lock:lesson:{id}:runner`. A card it starts is adopted into the `SimulationRunner`
+        # (when the runner is enabled), so N cards are N session runners. Appended at the end of
+        # `__init__` so nothing above it moves.
+        self.lesson_runner_lock: LessonRunnerLock = (
+            lesson_runner_lock
+            if lesson_runner_lock is not None
+            else RedisRunnerLock(self.redis, key=lesson_runner_lock_key)
+        )
+        self.lesson_runner = LessonRunner(
+            self.unit_of_work,
+            self.start_session(),
+            self.lesson_runner_lock,
+            self.clock,
+            instance_id=settings.instance_id,
+            tick_ms=settings.sim_tick_ms,
+            lock_ttl_s=settings.sim_runner_lock_ttl_s,
+            lock_refresh_s=settings.sim_runner_lock_refresh_s,
+            on_session_started=self._adopt_started_card,
+        )
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -381,6 +411,45 @@ class Container:
     def abort_session(self) -> AbortSession:
         """`abortSession`; publishes `voice:cancel:{session_id}` after the commit (§40.6)."""
         return AbortSession(self.unit_of_work, self.clock, self.voice_signals)
+
+    # -- I3 E4a: lessons and the incident list (HLD 70 §70.3) -----------------------------------
+
+    def create_lesson(self) -> CreateLesson:
+        """`createLesson` — every card through `createSession`'s path, one Unit of Work."""
+        return CreateLesson(self.unit_of_work, self.ids, self.clock, self.create_session())
+
+    def list_lessons(self) -> ListLessons:
+        """`listLessons`."""
+        return ListLessons(self.unit_of_work)
+
+    def get_lesson(self) -> GetLesson:
+        """`getLesson`."""
+        return GetLesson(self.unit_of_work)
+
+    def start_lesson(self) -> StartLesson:
+        """`startLesson`."""
+        return StartLesson(self.unit_of_work, self.clock)
+
+    def abort_lesson(self) -> AbortLesson:
+        """`abortLesson` — each running card through `abortSession`."""
+        return AbortLesson(self.unit_of_work, self.clock, self.abort_session())
+
+    def get_lesson_report(self) -> GetLessonReport:
+        """`getLessonReport` — the cards' own `getSessionReport`s, weighted."""
+        return GetLessonReport(self.unit_of_work, self.get_session_report())
+
+    def release_lesson_report(self) -> ReleaseLessonReport:
+        """`releaseLessonReport` — `releaseReportToTrainee` for every completed card."""
+        return ReleaseLessonReport(self.unit_of_work, self.clock, self.release_report_to_trainee())
+
+    def list_my_incidents(self) -> ListMyIncidents:
+        """`listMyIncidents`."""
+        return ListMyIncidents(self.unit_of_work, self.clock)
+
+    def _adopt_started_card(self, session_id: SessionId) -> None:
+        """A card the `LessonRunner` started is ticked like any session (D7)."""
+        if self.settings.runner_enabled:
+            self.runner.adopt(session_id)
 
     def list_sessions(self) -> ListSessions:
         """`listSessions`."""

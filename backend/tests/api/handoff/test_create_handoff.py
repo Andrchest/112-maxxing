@@ -64,6 +64,9 @@ async def test_the_events_are_exactly_the_x_emits_list_in_order(prepared: Operat
         "STAGE_STATE_CHANGED",
         "HANDOFF_RECEIVED",
         "HANDOFF_RECEIVED",
+        # I3 E4a (HLD 70 §70.4.6): the card is handed off — REGISTERED → WORKED, one SIMULATION
+        # event after the command's own, in the same Unit of Work (flush-before-append).
+        "DDS_CARD_STATUS_CHANGED",
     ]
 
 
@@ -126,6 +129,7 @@ async def test_the_optional_comment_becomes_a_card_field_before_the_freeze(
         "STAGE_STATE_CHANGED",
         "HANDOFF_RECEIVED",
         "HANDOFF_RECEIVED",
+        "DDS_CARD_STATUS_CHANGED",  # I3 E4a: REGISTERED → WORKED
     ]
 
     snapshot = response.json()["snapshot"]

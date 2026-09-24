@@ -47,7 +47,7 @@ from app.domain.enums import SessionState
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle at runtime
     from app.domain.session.session import SimulationSession
 
-__all__ = ["running_ms", "sim_ms", "sim_now_ms", "transition_clock_ms"]
+__all__ = ["running_ms", "running_offset_ms", "sim_ms", "sim_now_ms", "transition_clock_ms"]
 
 
 def sim_ms(real_elapsed_ms: int, paused_total_ms: int, time_scale: float) -> int:
@@ -60,6 +60,24 @@ def sim_ms(real_elapsed_ms: int, paused_total_ms: int, time_scale: float) -> int
     """
     running_ms = max(0, real_elapsed_ms - paused_total_ms)
     return int(running_ms * time_scale)
+
+
+def running_offset_ms(
+    *,
+    started_at: datetime | None,
+    paused_total_ms: int,
+    state: SessionState,
+    role_transition_started_offset_ms: int | None,
+    now: datetime,
+) -> int:
+    """`running_ms` over the four session columns it reads, for a caller holding the row but not
+    the aggregate — the event store's flush-before-append (HLD 70 §70.3.5), which runs on every
+    append and must not load the whole aggregate to learn one number. Same arithmetic, one
+    implementation: `transition_clock_ms` and `running_ms` delegate here."""
+    unfrozen = max(0, session_offset_ms(now, started_at) - paused_total_ms)
+    if state is SessionState.ROLE_TRANSITION and role_transition_started_offset_ms is not None:
+        return min(unfrozen, role_transition_started_offset_ms)
+    return unfrozen
 
 
 def transition_clock_ms(session: SimulationSession, now: datetime) -> int:
@@ -85,11 +103,13 @@ def running_ms(session: SimulationSession, now: datetime) -> int:
     The clamp is a `min`, not an assignment: a wall clock nudged backwards during the pause must
     not make the frozen value jump *forward*.
     """
-    unfrozen = transition_clock_ms(session, now)
-    frozen = session.role_transition_started_offset_ms
-    if session.state is SessionState.ROLE_TRANSITION and frozen is not None:
-        return min(unfrozen, frozen)
-    return unfrozen
+    return running_offset_ms(
+        started_at=session.started_at,
+        paused_total_ms=session.paused_total_ms,
+        state=session.state,
+        role_transition_started_offset_ms=session.role_transition_started_offset_ms,
+        now=now,
+    )
 
 
 def sim_now_ms(session: SimulationSession, now: datetime) -> int:

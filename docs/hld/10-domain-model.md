@@ -63,10 +63,16 @@ backend/app/domain/
 │   └── edds.py              EDDSModule
 ├── dds/
 │   ├── assignment.py        DDSAssignment
+│   ├── card_status.py       (additive, I3 E4a — HLD 70 §70.4.6) CardStatus, CardStatusReason,
+│   │                        CardTimers, CardLeg, card_status, CardStatusFold, plan_append
 │   ├── resources.py         ResourceCapability, EtaProfile, EmergencyResource,
 │   │                        RESOURCE_STATUS_TRANSITIONS
 │   ├── notification.py      Notification
 │   └── radio.py             RadioMessage
+├── lesson/                  (additive, I3 E4a — HLD 70 §70.3)
+│   ├── plan.py              ArrivalKind, Arrival, LessonParticipant, PlanEntry, PreviousCard,
+│   │                        validate_plan, arrival_due_offset_ms, arrival_holds
+│   └── lesson.py            LessonState, Lesson, LESSON_TRANSITIONS, create_lesson
 ├── routing/                 (additive, I3 E2a — HLD 70 §70.6)
 │   ├── catalog.py           ServiceCatalogEntry, ServiceCatalog, ReferencePack,
 │   │                        ReferencePackRecord, ReferenceCatalog, LEGACY_REFERENCE
@@ -233,7 +239,9 @@ Additive per D5 (21 members):
 `DIALOGUE_INTERPRETED`, `FACT_GATE_EVALUATED`, `FACTS_DELIVERED`, `TRANSPORT_DISCONNECTED`,
 `TRANSPORT_RECONNECTED`, `INFERENCE_HEALTH_CHANGED`
 
-Total: 49 members.
+Additive, I3 (HLD 70 §70.7): `DDS_CARD_STATUS_CHANGED` (E4a).
+
+Total: 50 members.
 
 ## 10.3 The four information layers (D3, SPEC §3)
 
@@ -939,6 +947,53 @@ GENERATED_CARD}`, `dds_mode {RESOURCE_PICKER}`, `dds_card_check {OFF}`, `dds_bri
 `RoleModule.available_actions(stage_state, *, variants=None)` takes the session's variants
 (Protocol-compatible; every module ignores them until E5's memo table).
 
+### Lessons — `backend/app/domain/lesson/` (additive, I3 E4a)
+
+A lesson (занятие, D15, HLD 70 §70.3) owns N ordinary sessions; `uq_incidents_session` is kept, so a
+stream of cards is N sessions of one incident each. `SimulationSession` gains `lesson_id` /
+`lesson_position` (both or neither), recorded in `SESSION_CREATED`.
+
+```python
+class LessonState(str, Enum):   CREATED, ACTIVE, COMPLETED, ABORTED
+class ArrivalKind(str, Enum):   AT_OFFSET, AFTER_PREVIOUS_112_STAGE, AFTER_PREVIOUS_SESSION
+class Arrival(BaseModel):       kind; offset_ms: int | None (AT_OFFSET only); delay_ms: int = 0
+class LessonParticipant:        user_id; assigned_role_type; assigned_service_id (E5)
+class PlanEntry:                position (1..N); scenario_version_id; arrival;
+                                variants: PartialVariants | None; participants | None; weight = 1.0
+class Lesson:                   lesson_id, title_ru, created_by_user_id, session_mode, variants,
+                                participants, scenario_plan, state, created_at, started_at,
+                                completed_at, report_released_at, report_released_by_user_id
+```
+
+`LESSON_TRANSITIONS` (`lesson.py`), table-driven like the other machines (INV 8):
+
+| From | Trigger | To | Who may fire | Guard / effect |
+|:--|:--|:--|:--|:--|
+| `CREATED` | `start` | `ACTIVE` | INSTRUCTOR (creator or ADMIN, checked by the use case) | `guard_every_plan_session_ready`; sets `started_at` |
+| `ACTIVE` | `complete` | `COMPLETED` | SYSTEM (LessonRunner) | `guard_every_plan_session_terminal` |
+| `CREATED`, `ACTIVE` | `abort` | `ABORTED` | INSTRUCTOR, SYSTEM | the use case aborts every non-terminal card through `abort_session` |
+| `COMPLETED`, `ABORTED` | — | — | — | terminal |
+
+Lessons have no event log. The `LessonRunner` (`application/lessons/lesson_runner.py`) starts a
+`READY` card when its arrival holds (lesson wall ms since `started_at`; `AFTER_*` read the previous
+card's log), through `start_session` as `ActorRef(INSTRUCTOR, created_by_user_id)`, recording
+`SESSION_STARTED.lesson_arrival`.
+
+### Card status — `backend/app/domain/dds/card_status.py` (additive, I3 E4a)
+
+`CardStatus`: `REGISTERED` (Зарегистрирована), `WORKED` (Отработана), `CHECKED` (Проверена),
+`NOT_NOTIFIED` (Не оповещено), `REFUSED` (Отказ), `NOT_COMPLETED` (Не завершено), `COMPLETED`
+(Завершена). `card_status(legs, handoff_offset_ms, timers, now_offset_ms, report_released)` is pure
+and evaluates HLD 70 §70.4.6 in the precedence `COMPLETED > REFUSED > NOT_COMPLETED > NOT_NOTIFIED >
+CHECKED > WORKED > REGISTERED` (A-5); `NOT_NOTIFIED` is sticky. Until E5 the legs' statuses are
+mirrored from the DDS stage by the picker map (§70.4.4) and `ACCEPTED ≡ DDS_ACKNOWLEDGED`.
+`CardTimers` is the schema-2 key `timers` (HLD 30 §30.12). The status is a read model
+(`incidents.card_status`); each change is one SIMULATION `DDS_CARD_STATUS_CHANGED`. The
+**flush-before-append** rule (§70.3.5) is `plan_append`, run by the event store on every append
+(and by `EventStore.flush_deadlines` from stage automation on every tick): the deadlines due before
+an event are appended first, stamped with their deadline offset, so the stream is independent of
+the tick rate (INV 7). `CHECKED` is written by the report release alone, with no event.
+
 ## 10.11 World event engine (SPEC §12, D7)
 
 ### Condition expression language — `backend/app/domain/world/conditions.py`
@@ -1231,8 +1286,8 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 
 | Event type | Actor type(s) | Payload keys (`name: type`) | Visible to |
 |:--|:--|:--|:--|
-| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]` (the effective chain, I3 E1), `created_by_user_id: uuid`, `variants: SessionVariants` (additive, I3 E1), `scenario_role_chain: list[RoleType]` (additive, I3 E1), `reference_pack: ReferencePackRecord` (additive, I3 E2a: `{pack_id, card_schema, card_schema_sha256, classifier, classifier_sha256, services, services_sha256}`) | INSTRUCTOR |
-| `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType` | OPERATOR_112, DDS, INSTRUCTOR |
+| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]` (the effective chain, I3 E1), `created_by_user_id: uuid`, `variants: SessionVariants` (additive, I3 E1), `scenario_role_chain: list[RoleType]` (additive, I3 E1), `reference_pack: ReferencePackRecord` (additive, I3 E2a: `{pack_id, card_schema, card_schema_sha256, classifier, classifier_sha256, services, services_sha256}`), `timers: CardTimers` (additive, I3 E4a: `{accept_within_ms, fill_within_ms, not_completed_after_ms}`), `lesson_id: uuid \| null`, `lesson_position: int \| null` (additive, I3 E4a) | INSTRUCTOR |
+| `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType`, `lesson_arrival: {kind: ArrivalKind, due_offset_ms: int, fired_offset_ms: int} \| null` (additive, I3 E4a: how a lesson card arrived, lesson wall ms) | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_STAGE_STARTED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `order_index: int`, `initial_state: str`, `participant_user_id: uuid \| null` | OPERATOR_112, DDS, INSTRUCTOR |
 | `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str` (a neutral incoming-call line, **never** `CallerProfile.identity_ru` — see below), `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CALL_ANSWERED` | `TRAINEE` | `call_id: uuid`, `at_offset_ms: int`, `ring_duration_ms: int`, `answered_by_user_id: uuid` | OPERATOR_112, INSTRUCTOR |
@@ -1295,6 +1350,7 @@ property name, does remain `CallerProfile.identity_ru`.
 | `TRANSPORT_DISCONNECTED` | `SYSTEM` | `call_id: uuid`, `participant_identity: str`, `reason: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `TRANSPORT_RECONNECTED` | `SYSTEM` | `call_id: uuid`, `participant_identity: str`, `downtime_ms: int`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `INFERENCE_HEALTH_CHANGED` | `SYSTEM` | `component: str`, `previous_status: HealthStatus`, `new_status: HealthStatus`, `detail: str` | INSTRUCTOR |
+| `DDS_CARD_STATUS_CHANGED` (additive, I3 E4a) | `SIMULATION` | `incident_id: uuid`, `previous_status: CardStatus`, `new_status: CardStatus`, `reason: CardStatusReason`, `assignment_id: uuid \| null`, `service_type: ServiceId \| null`, `deadline_offset_ms: int \| null`, `at_offset_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
 
 ### Turn record (materialized, not a domain type)
 

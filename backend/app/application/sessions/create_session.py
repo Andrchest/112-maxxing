@@ -30,6 +30,12 @@ Everything below happens in **one** Unit of Work transaction (D5), in this order
 Any failure anywhere in that list leaves the database untouched: no session row, no events, and
 the scenario version *not* locked. That is the whole reason steps 6-8 share one transaction with
 step 7 rather than locking the version up front.
+
+`create_in(uow, command)` is the same work inside a Unit of Work the caller owns (I3 E4a):
+`createLesson` creates every card of a lesson through it, in one transaction, so a lesson is either
+created with all its sessions or not at all (HLD 70 §70.3.2). A lesson card carries `lesson_id` /
+`lesson_position`, recorded in `SESSION_CREATED` and on the session row; `SESSION_CREATED.timers`
+records the version's resolved per-card timers (§70.3.4) for every session.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ from app.domain.common.errors import DomainError, ScenarioValidationError
 from app.domain.common.ids import (
     CardId,
     IncidentId,
+    LessonId,
     ResourceId,
     RoleStageId,
     ScenarioVersionId,
@@ -116,6 +123,10 @@ class CreateSessionCommand:
     time_scale: float = 1.0
     variants: PartialVariants = field(default_factory=PartialVariants)
     """`SessionCreateRequest.variants` — every switch optional (HLD 70 §70.2.2)."""
+    lesson_id: LessonId | None = None
+    """The lesson this session is a card of (HLD 70 §70.3.2); set only by `createLesson`."""
+    lesson_position: int | None = None
+    """The card's plan position; set exactly when `lesson_id` is."""
 
 
 class CreateSession:
@@ -134,11 +145,16 @@ class CreateSession:
     async def __call__(self, command: CreateSessionCommand) -> SimulationSession:
         """Create the session and return the persisted aggregate (state `READY`)."""
         async with self._unit_of_work() as uow:
-            version, session, events = await self._build(uow, command)
-            await self._persist(uow, version, session)
-            await uow.scenarios.lock_scenario_version(session.scenario_version_id)
-            await uow.events.append(session.id, events)
+            session = await self.create_in(uow, command)
             await uow.commit()
+        return session
+
+    async def create_in(self, uow: UnitOfWork, command: CreateSessionCommand) -> SimulationSession:
+        """Create the session inside `uow`, which the caller commits (or rolls back)."""
+        version, session, events = await self._build(uow, command)
+        await self._persist(uow, version, session)
+        await uow.scenarios.lock_scenario_version(session.scenario_version_id)
+        await uow.events.append(session.id, events)
         return session
 
     # -- steps --------------------------------------------------------------------------------
@@ -171,6 +187,8 @@ class CreateSession:
             time_scale=command.time_scale,
             variants=variants,
             reference_pack=reference_pack,
+            lesson_id=command.lesson_id,
+            lesson_position=command.lesson_position,
         )
         # `now_ms=0`: nothing before `SESSION_STARTED` has a timeline to be offset against —
         # `session_offset_ms(now, started_at=None)` is `0` — and the offset is never taken from a

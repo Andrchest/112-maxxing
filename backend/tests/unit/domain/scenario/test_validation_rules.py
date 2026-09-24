@@ -279,6 +279,13 @@ def _r38_unknown_reference_pack(document: Document) -> None:
     document["reference_pack"] = "no-such-pack-r1"
 
 
+def _r39_accept_deadline_not_before_not_completed(document: Document) -> None:
+    # Both positive (the parse-time half), but the accept window is not shorter than the
+    # not-completed one — the cross-field half only `validate_scenario_version` can see.
+    document["schema_version"] = 2
+    document["timers"] = {"accept_within_ms": 60_000, "not_completed_after_ms": 60_000}
+
+
 def _r40_applies_to_variants_names_an_unknown_value(document: Document) -> None:
     _rule(document, "fact_victim_inside")["applies_to_variants"] = {"dds_mode": ["BOGUS_MODE"]}
 
@@ -322,6 +329,7 @@ MUTATIONS: dict[int, Mutation] = {
     36: _r36_memo_statuses_without_responders,
     37: _r37_unknown_service_id,
     38: _r38_unknown_reference_pack,
+    39: _r39_accept_deadline_not_before_not_completed,
     40: _r40_applies_to_variants_names_an_unknown_value,
 }
 
@@ -365,8 +373,8 @@ def test_mutation_table_covers_exactly_the_rule_registry() -> None:
     assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
 
 
-def test_the_rule_registry_after_e2a() -> None:
-    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 39), 40]
+def test_the_rule_registry_after_e4a() -> None:
+    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 41)]
 
 
 def test_a_schema_2_document_with_variants_loads_clean() -> None:
@@ -396,13 +404,52 @@ def test_r01_refuses_the_variants_key_in_a_schema_1_document() -> None:
     assert any("variants" in violation for violation in violations)
 
 
-def test_r01_refuses_the_later_schema_2_top_level_keys() -> None:
-    """`timers` (E4) stays refused in every document."""
-    for schema_version in (1, 2):
-        document = demo_document()
-        document["schema_version"] = schema_version
-        document["timers"] = {}
-        assert _rule_numbers(validate_scenario_document(document)) == {1}
+def test_r01_refuses_timers_in_a_schema_1_document() -> None:
+    """`timers` is a schema-2 key (E4a): R01 refuses it in a schema-1 document."""
+    document = demo_document()
+    document["timers"] = {}
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {1}
+    assert any("timers" in violation for violation in violations)
+
+
+def test_a_schema_2_document_with_timers_loads_clean_and_resolves_the_defaults() -> None:
+    """R39's happy path, and §70.3.4's defaults for every key the document leaves out."""
+    document = demo_document()
+    document["schema_version"] = 2
+    document["timers"] = {"not_completed_after_ms": 600_000}
+    assert validate_scenario_document(document) == []
+    timers = ScenarioVersion.model_validate(document).card_timers
+    assert (timers.accept_within_ms, timers.fill_within_ms, timers.not_completed_after_ms) == (
+        30_000,
+        180_000,
+        600_000,
+    )
+
+
+def test_a_document_without_timers_gets_every_default_and_dumps_without_the_key() -> None:
+    version = ScenarioVersion.model_validate(demo_document())
+    assert version.card_timers.model_dump() == {
+        "accept_within_ms": 30_000,
+        "fill_within_ms": 180_000,
+        "not_completed_after_ms": 172_800_000,
+    }
+    assert "timers" not in version.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_r39_refuses_a_timer_that_is_not_positive(value: int) -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    document["timers"] = {"fill_within_ms": value}
+    assert _rule_numbers(validate_scenario_document(document)) == {39}
+
+
+def test_an_unknown_key_under_timers_is_rule_1() -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    document["timers"] = {"answer_within_ms": 10_000}
+    assert _rule_numbers(validate_scenario_document(document)) == {1}
 
 
 def test_r01_refuses_the_reference_pack_key_in_a_schema_1_document() -> None:

@@ -56,6 +56,7 @@ from app.application.reports.timeline_labels_ru import (
     service_type_list_label_ru,
     stage_state_label_ru,
 )
+from app.domain.dds.card_status import CARD_STATUS_LABELS_RU
 from app.domain.enums import ActorType
 from app.domain.events.types import EventType
 
@@ -217,6 +218,9 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.INFERENCE_HEALTH_CHANGED: SummaryTemplate(
         "Изменилась готовность моделей", ("component", "new_status")
     ),
+    EventType.DDS_CARD_STATUS_CHANGED: SummaryTemplate(
+        "Изменился статус карточки", ("new_status",)
+    ),
 }
 
 
@@ -312,6 +316,12 @@ _SIMPLE_KEY_TABLES: Mapping[str, Mapping[str, str]] = {
 }
 
 
+#: `DDS_CARD_STATUS_CHANGED.new_status` (I3 E4a) — the memo's card-status labels (HLD 70 §70.4.6).
+_CARD_STATUS_LABELS_RU: Mapping[str, str] = {
+    status.value: label for status, label in CARD_STATUS_LABELS_RU.items()
+}
+
+
 def _render_detail_value(
     event_type: EventType, key: str, value: object, payload: Mapping[str, Any]
 ) -> str:
@@ -329,11 +339,11 @@ def _render_detail_value(
     if key == "new_state" and event_type is EventType.STAGE_STATE_CHANGED:
         return stage_state_label_ru(str(payload.get("role_type", "")), str(value))
     if key == "new_status":
-        status_table = (
-            HEALTH_STATUS_LABELS_RU
-            if event_type is EventType.INFERENCE_HEALTH_CHANGED
-            else RESOURCE_STATUS_LABELS_RU
-        )
+        status_table: Mapping[str, str] = RESOURCE_STATUS_LABELS_RU
+        if event_type is EventType.INFERENCE_HEALTH_CHANGED:
+            status_table = HEALTH_STATUS_LABELS_RU
+        elif event_type is EventType.DDS_CARD_STATUS_CHANGED:
+            status_table = _CARD_STATUS_LABELS_RU
         return status_table.get(str(value), _render(value))
     simple_table = _SIMPLE_KEY_TABLES.get(key)
     if simple_table is not None:

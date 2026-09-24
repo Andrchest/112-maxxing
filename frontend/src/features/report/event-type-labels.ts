@@ -57,6 +57,7 @@ export const EVENT_TYPE_LABEL_KEY: Record<EventType, keyof typeof ru> = {
   TRANSPORT_DISCONNECTED: 'eventTypeTransportDisconnected',
   TRANSPORT_RECONNECTED: 'eventTypeTransportReconnected',
   INFERENCE_HEALTH_CHANGED: 'eventTypeInferenceHealthChanged',
+  DDS_CARD_STATUS_CHANGED: 'eventTypeDdsCardStatusChanged',
 };
 
 export function eventTypeLabelRu(value: EventType): string {

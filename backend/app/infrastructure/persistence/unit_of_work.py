@@ -27,6 +27,7 @@ from app.application.ports.event_publisher import EventPublisher, envelope_of
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
+from app.application.ports.lesson_repository import LessonRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
@@ -58,6 +59,7 @@ from app.infrastructure.persistence.handoff_repository import SqlAlchemyHandoffR
 from app.infrastructure.persistence.inference_metric_repository import (
     SqlAlchemyInferenceMetricRepository,
 )
+from app.infrastructure.persistence.lesson_repository import SqlAlchemyLessonRepository
 from app.infrastructure.persistence.notification_repository import (
     SqlAlchemyNotificationRepository,
 )
@@ -109,6 +111,7 @@ class SqlAlchemyUnitOfWork:
         self._transcript_segments: SqlAlchemyTranscriptSegmentRepository | None = None
         self._dialogue_turns: SqlAlchemyDialogueTurnRepository | None = None
         self._inference_metrics: SqlAlchemyInferenceMetricRepository | None = None
+        self._lessons: SqlAlchemyLessonRepository | None = None
         self._scenarios: SqlAlchemyScenarioRepository | None = None
         self._sessions: SqlAlchemySessionRepository | None = None
         self._users: SqlAlchemyUserRepository | None = None
@@ -136,6 +139,7 @@ class SqlAlchemyUnitOfWork:
         self._transcript_segments = SqlAlchemyTranscriptSegmentRepository(session)
         self._dialogue_turns = SqlAlchemyDialogueTurnRepository(session)
         self._inference_metrics = SqlAlchemyInferenceMetricRepository(session)
+        self._lessons = SqlAlchemyLessonRepository(session)
         self._scenarios = SqlAlchemyScenarioRepository(session)
         self._sessions = SqlAlchemySessionRepository(session)
         self._users = SqlAlchemyUserRepository(session)
@@ -171,6 +175,7 @@ class SqlAlchemyUnitOfWork:
             self._transcript_segments = None
             self._dialogue_turns = None
             self._inference_metrics = None
+            self._lessons = None
             self._scenarios = None
             self._sessions = None
             self._users = None
@@ -226,6 +231,12 @@ class SqlAlchemyUnitOfWork:
         if self._inference_metrics is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._inference_metrics
+
+    @property
+    def lessons(self) -> LessonRepository:
+        if self._lessons is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._lessons
 
     @property
     def scenarios(self) -> ScenarioRepository:

@@ -108,6 +108,8 @@ async def test_a_chain_without_dds_freezes_the_snapshot_and_creates_no_leg(
     assert (await operator_only.event_types())[len(before) :] == [
         "HANDOFF_CREATED",
         "STAGE_STATE_CHANGED",
+        # I3 E4a (HLD 70 §70.4.6): handed off, no leg — WORKED, never COMPLETED by an empty list.
+        "DDS_CARD_STATUS_CHANGED",
     ]
     assert await read_assignments(uow_factory, operator_only.session_id) == []
 

@@ -3,10 +3,11 @@
 
 `Scenario` (identity: slug, title) and `ScenarioVersion` (content) are separate types and separate
 tables (D4). A `schema_version: 1` document has exactly the SPEC §4 top-level keys, in that order;
-`schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2) and
-`reference_pack` (I3 E2a, §70.5.4, §70.6). `extra="forbid"` rejects any other key (§30.8 rule 1)
-— including the later schema-2 keys `timers` and `expected_response.responders`, which no epic has
-implemented yet — and rule R01 refuses `variants` and `reference_pack` in a schema-1 document.
+`schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2),
+`reference_pack` (I3 E2a, §70.5.4, §70.6) and `timers` (I3 E4a, §70.3.4). `extra="forbid"` rejects
+any other key (§30.8 rule 1) — including the later schema-2 key `expected_response.responders`,
+which no epic has implemented yet — and rule R01 refuses `variants`, `reference_pack` and `timers`
+in a schema-1 document.
 
 A `ScenarioVersion` becomes immutable as soon as a simulation starts using it (SPEC §4); the model
 is frozen here, and the DB trigger enforces the same at rest (D4).
@@ -19,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
+from app.domain.dds.card_status import DEFAULT_CARD_TIMERS, CardTimers
 from app.domain.enums import RoleType
 from app.domain.routing.catalog import DEFAULT_PACK_ID
 from app.domain.scenario.sections import (
@@ -48,8 +50,8 @@ class Scenario(BaseModel):
 
 
 class ScenarioVersion(BaseModel):
-    """One immutable scenario version: the SPEC §4 top-level keys, plus `variants` and
-    `reference_pack` from schema 2 (§10.15, §30.1, D14, D18)."""
+    """One immutable scenario version: the SPEC §4 top-level keys, plus `variants`,
+    `reference_pack` and `timers` from schema 2 (§10.15, §30.1, D14, D15, D18)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -75,10 +77,13 @@ class ScenarioVersion(BaseModel):
     reference_pack: str | None = None
     """Schema 2 only (HLD 70 §70.5.4, §70.6.1): the `reference/manifest.json` pack the scenario's
     card schema and service catalog come from. Absent ⇒ `DEFAULT_PACK_ID` (`legacy-r1`)."""
+    timers: CardTimers | None = None
+    """Schema 2 only (HLD 70 §70.3.4): the per-card timers in session ms; every absent key (and
+    an absent `timers`) takes its default — `card_timers` resolves them."""
 
     @model_serializer(mode="wrap")
     def _omit_absent_schema_2_keys(self, handler: SerializerFunctionWrapHandler) -> Any:
-        """Leave `variants` and `reference_pack` out of a dump when the document has none.
+        """Leave the schema-2 keys out of a dump when the document has none.
 
         `canonical_content` is `model_dump(mode="json")` and its SHA-256 is the version's
         identity (D4): a schema-1 document must dump byte-for-byte as it did before the keys
@@ -86,7 +91,7 @@ class ScenarioVersion(BaseModel):
         """
         data = handler(self)
         if isinstance(data, dict):
-            for key in ("variants", "reference_pack"):
+            for key in ("variants", "reference_pack", "timers"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data
@@ -95,6 +100,11 @@ class ScenarioVersion(BaseModel):
     def reference_pack_id(self) -> str:
         """The pack this version uses: `reference_pack`, or `legacy-r1` when it names none."""
         return self.reference_pack if self.reference_pack is not None else DEFAULT_PACK_ID
+
+    @property
+    def card_timers(self) -> CardTimers:
+        """The resolved timers: `timers`, or every default when the document has none (§70.3.4)."""
+        return self.timers if self.timers is not None else DEFAULT_CARD_TIMERS
 
     @property
     def scenario_variants(self) -> ScenarioVariants:

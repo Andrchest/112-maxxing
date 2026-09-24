@@ -29,6 +29,7 @@ from app.domain.common.ids import (
     CardRevisionId,
     EventId,
     IncidentId,
+    LessonId,
     ResourceId,
     RoleStageId,
     ScenarioVersionId,
@@ -374,6 +375,8 @@ def session_row_values(session: SimulationSession) -> dict[str, Any]:
         "completed_at": session.completed_at,
         "abort_reason": session.abort_reason,
         "variants": variants_payload(session.variants),
+        "lesson_id": UUID(str(session.lesson_id)) if session.lesson_id is not None else None,
+        "lesson_position": session.lesson_position,
     }
 
 
@@ -465,6 +468,12 @@ def session_from_rows(
         # `'{}'` (a session created before E1) leaves the field out, and the aggregate fills in
         # the schema-1 derivation of its own stage chain (HLD 70 §70.2.2).
         variants=session_row["variants"] or None,
+        lesson_id=(
+            None
+            if session_row["lesson_id"] is None
+            else LessonId(UUID(str(session_row["lesson_id"])))
+        ),
+        lesson_position=session_row["lesson_position"],
         incident=incident_from_row(incident_row),
         stages=tuple(role_stage_from_row(row) for row in stage_rows),
         participants=tuple(participant_from_row(row) for row in participant_rows),

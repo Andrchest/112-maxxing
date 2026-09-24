@@ -39,6 +39,7 @@ from app.domain.common.actors import ActorRef
 from app.domain.common.errors import PrefabHandoffRequiredError, RoleChainLengthError
 from app.domain.common.ids import (
     IncidentId,
+    LessonId,
     RoleStageId,
     ScenarioId,
     ScenarioVersionId,
@@ -46,6 +47,7 @@ from app.domain.common.ids import (
     UserId,
 )
 from app.domain.common.state_machine import GuardContext, GuardRuntime
+from app.domain.dds.card_status import CardTimers
 from app.domain.enums import (
     ActorType,
     ClosureReason,
@@ -204,6 +206,10 @@ class SimulationSession(BaseModel):
     the schema-1 derivation of its own stage chain (`legacy_session_variants`), which is exactly
     how it ran. `_fill_legacy_variants` supplies that when the field is absent.
     """
+    lesson_id: LessonId | None = None
+    """The lesson this session is a card of (HLD 70 §70.3.2, D15); `None` for a single session."""
+    lesson_position: int | None = None
+    """The card's `PlanEntry.position` in that lesson; set exactly when `lesson_id` is."""
 
     @model_validator(mode="before")
     @classmethod
@@ -399,9 +405,14 @@ class SimulationSession(BaseModel):
         actor: ActorRef,
         now_ms: int = 0,
         runtime: GuardRuntime = NO_RUNTIME_FACTS,
+        lesson_arrival: Mapping[str, Any] | None = None,
     ) -> tuple[SimulationSession, list[DomainEvent]]:
         """`READY --start--> ACTIVE` (INSTRUCTOR). Emits `SESSION_STARTED`, then
         `ROLE_STAGE_STARTED` for the first stage, whose `started_at_offset_ms` becomes `now_ms`.
+
+        `lesson_arrival` is `{kind, due_offset_ms, fired_offset_ms}` (lesson wall ms) when the
+        `LessonRunner` starts a lesson card (HLD 70 §70.3.2); `SESSION_STARTED.lesson_arrival`
+        records it, `null` for a session started by hand.
         """
         ctx = self._ctx(
             actor=actor,
@@ -429,6 +440,9 @@ class SimulationSession(BaseModel):
                     "started_at_utc": started_at.isoformat(),
                     "first_role_stage_id": str(started_stage.role_stage_id),
                     "first_role_type": started_stage.role_type.value,
+                    "lesson_arrival": (
+                        dict(lesson_arrival) if lesson_arrival is not None else None
+                    ),
                 },
             ),
             updated._role_stage_started(started_stage, now_ms=now_ms),
@@ -769,6 +783,9 @@ def create_session(
     time_scale: float = 1.0,
     variants: SessionVariants | None = None,
     reference_pack: ReferencePackRecord | None = None,
+    timers: CardTimers | None = None,
+    lesson_id: LessonId | None = None,
+    lesson_position: int | None = None,
 ) -> tuple[SimulationSession, list[DomainEvent]]:
     """Build a `CREATED` session with its one `Incident` and one `RoleStage` per entry of the
     **effective** role chain, and return it with the `SESSION_CREATED` event (§10.8, §10.10, D6,
@@ -783,6 +800,9 @@ def create_session(
     `VariantNotSupportedError`. `reference_pack` is the pack the session runs with (ids and sha256
     of its files, HLD 70 §70.6.1); `SESSION_CREATED.reference_pack` records it — `null` only for a
     caller that has no reference pack at hand (domain-level tests), never from `CreateSession`.
+    `timers` are the per-card timers (HLD 70 §70.3.4; `None` = the scenario's resolved timers) and
+    `lesson_id` / `lesson_position` name the lesson card this session is (§70.3.2, both or
+    neither); `SESSION_CREATED` records all three.
 
     Every id is passed in: the domain calls neither `uuid4` nor a clock. `session_seed` defaults to
     `scenario_version.deterministic_seed` (D7, SPEC §42 test 7).
@@ -828,6 +848,10 @@ def create_session(
         )
     if participant_ids is not None and len(participant_ids) != len(participants):
         raise ValueError("create_session needs one participant id per participant, or none")
+    if (lesson_id is None) != (lesson_position is None):
+        raise ValueError("create_session needs lesson_id and lesson_position together, or neither")
+    if timers is None:
+        timers = scenario_version.card_timers
     created_by_user_id = created_by.actor_id
     if created_by_user_id is None:
         raise ValueError("create_session needs a created_by ActorRef carrying an actor_id")
@@ -872,6 +896,8 @@ def create_session(
         stages=stages,
         participants=session_participants,
         variants=variants,
+        lesson_id=lesson_id,
+        lesson_position=lesson_position,
     )
     payload: Mapping[str, Any] = {
         "session_id": str(session_id),
@@ -889,6 +915,9 @@ def create_session(
         "reference_pack": (
             reference_pack.model_dump(mode="json") if reference_pack is not None else None
         ),
+        "timers": timers.model_dump(mode="json"),
+        "lesson_id": str(lesson_id) if lesson_id is not None else None,
+        "lesson_position": lesson_position,
     }
     validate_payload(EventType.SESSION_CREATED, payload)
     event = DomainEvent(

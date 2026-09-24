@@ -116,6 +116,8 @@ function makeSessionDetail(overrides: Partial<SessionDetail>): SessionDetail {
       dds_brigade_call: 'OFF',
     },
     scenario_role_chain: ['OPERATOR_112'],
+    lesson_id: null,
+    lesson_position: null,
     ...overrides,
   };
 }

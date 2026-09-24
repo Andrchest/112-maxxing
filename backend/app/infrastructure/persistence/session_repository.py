@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports.session_repository import (
     ReportRelease,
+    StoredIncidentRow,
     StoredParticipant,
     StoredSessionListing,
 )
@@ -44,7 +45,8 @@ from app.db.models.session import Incident as IncidentRow
 from app.db.models.session import RoleStage as RoleStageRow
 from app.db.models.session import SessionParticipant as ParticipantRow
 from app.db.models.session import SimulationSession as SessionRow
-from app.domain.common.ids import SessionId, UserId
+from app.domain.common.ids import IncidentId, LessonId, SessionId, UserId
+from app.domain.dds.card_status import CardStatus
 from app.domain.enums import RoleType, SessionMode, SessionState
 from app.domain.session.session import SimulationSession
 from app.infrastructure.persistence.mappers import (
@@ -192,6 +194,83 @@ class SqlAlchemySessionRepository:
             )
             if result.one_or_none() is None:
                 await self._session.execute(sa.insert(_PARTICIPANTS).values(**row))
+
+    # -- the card-status read model (HLD 70 §70.4.6, I3 E4a) -----------------------------------
+
+    async def get_card_status(self, session_id: SessionId) -> CardStatus | None:
+        """`incidents.card_status` of the session's one incident, or `None`."""
+        result = await self._session.execute(
+            sa.select(_INCIDENTS.c.card_status).where(
+                _INCIDENTS.c.session_id == UUID(str(session_id))
+            )
+        )
+        value = result.scalar_one_or_none()
+        return None if value is None else CardStatus(str(value))
+
+    async def set_card_status(self, session_id: SessionId, status: CardStatus) -> None:
+        """Materialise `incidents.card_status`, inside the caller's transaction."""
+        await self._session.execute(
+            sa.update(_INCIDENTS)
+            .where(_INCIDENTS.c.session_id == UUID(str(session_id)))
+            .values(card_status=status.value)
+        )
+
+    async def list_incident_rows(
+        self, *, viewer_user_id: UserId, lesson_id: LessonId | None
+    ) -> list[StoredIncidentRow]:
+        """The viewer's sessions (participant or creator), newest start first, one statement."""
+        viewer = UUID(str(viewer_user_id))
+        mine = _MY_PARTICIPATION.alias("mine")
+        conditions: list[sa.ColumnElement[bool]] = [
+            sa.or_(_SESSIONS.c.created_by_user_id == viewer, mine.c.session_id.isnot(None))
+        ]
+        if lesson_id is not None:
+            conditions.append(_SESSIONS.c.lesson_id == UUID(str(lesson_id)))
+        result = await self._session.execute(
+            sa.select(
+                _SESSIONS.c.id,
+                _SESSIONS.c.lesson_id,
+                _SESSIONS.c.lesson_position,
+                _SESSIONS.c.state,
+                _SESSIONS.c.started_at,
+                _SESSIONS.c.created_at,
+                _SESSIONS.c.created_by_user_id,
+                _INCIDENTS.c.id.label("incident_id"),
+                _INCIDENTS.c.display_number,
+                _INCIDENTS.c.card_status,
+                mine.c.session_id.label("participation"),
+                mine.c.assigned_role_type.label("my_role_type"),
+            )
+            .select_from(
+                _SESSIONS.join(_INCIDENTS, _INCIDENTS.c.session_id == _SESSIONS.c.id).outerjoin(
+                    mine,
+                    sa.and_(mine.c.session_id == _SESSIONS.c.id, mine.c.user_id == viewer),
+                )
+            )
+            .where(*conditions)
+            .order_by(
+                _SESSIONS.c.started_at.desc().nulls_last(),
+                _SESSIONS.c.created_at.desc(),
+                _SESSIONS.c.id,
+            )
+        )
+        return [
+            StoredIncidentRow(
+                session_id=SessionId(UUID(str(row.id))),
+                incident_id=IncidentId(UUID(str(row.incident_id))),
+                display_number=int(row.display_number),
+                lesson_id=None if row.lesson_id is None else LessonId(UUID(str(row.lesson_id))),
+                lesson_position=row.lesson_position,
+                card_status=CardStatus(str(row.card_status)),
+                session_state=SessionState(str(row.state)),
+                started_at=row.started_at,
+                created_at=row.created_at,
+                created_by_user_id=UserId(UUID(str(row.created_by_user_id))),
+                is_participant=row.participation is not None,
+                my_role_type=None if row.my_role_type is None else RoleType(str(row.my_role_type)),
+            )
+            for row in result.all()
+        ]
 
     # -- reads --------------------------------------------------------------------------------
 

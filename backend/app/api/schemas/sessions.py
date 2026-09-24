@@ -181,6 +181,8 @@ class SessionDetailSchema(ApiModel):
     transition_continue_available_at_offset_ms: int | None = None
     variants: SessionVariantsSchema
     scenario_role_chain: list[RoleType]
+    lesson_id: UUID | None
+    lesson_position: int | None = Field(ge=1)
 
 
 class SessionScopeQuery(ApiModel):
@@ -258,4 +260,6 @@ def session_detail_schema(view: SessionDetailView) -> SessionDetailSchema:
         ),
         variants=SessionVariantsSchema.of(session.variants),
         scenario_role_chain=list(view.scenario_role_chain),
+        lesson_id=None if session.lesson_id is None else UUID(str(session.lesson_id)),
+        lesson_position=session.lesson_position,
     )

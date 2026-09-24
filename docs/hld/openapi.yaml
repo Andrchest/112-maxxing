@@ -56,6 +56,10 @@ tags:
     description: Retention purge and inference health administration (SPEC §41, D9).
   - name: reference
     description: (additive, I3 E2a) The reference pack — manifest, service catalog, classifier (70 §70.6, D18).
+  - name: lessons
+    description: (additive, I3 E4a) Lessons (занятия) — a stream of cards as N ordinary sessions (70 §70.3, D15).
+  - name: incidents
+    description: (additive, I3 E4a) The caller's cross-session incident list (70 §70.3.6).
 
 paths:
 
@@ -1754,6 +1758,240 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ------------------------------------------------------------- lessons ----
+  # Additive, I3 E4a (70 §70.3, D15): a lesson owns N ordinary sessions; it has no event log of
+  # its own. Merged literally from `contracts/i3-openapi-delta.yaml`.
+  /api/v1/lessons:
+    post:
+      tags: [lessons]
+      operationId: createLesson
+      summary: Create a lesson (занятие) of N cards (INSTRUCTOR / ADMIN).
+      description: |
+        Validates the whole plan and creates **every** plan session at once through the existing
+        `createSession` path (each `READY`, with `lesson_id` / `lesson_position`), in one Unit of
+        Work. Nothing ticks until `startLesson`. Refusals are those of `createSession` for the
+        offending entry, with `detail` naming its `position`.
+      x-action: '-'
+      x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LessonCreateRequest' }
+      responses:
+        '201':
+          description: The created lesson in state `CREATED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [lessons]
+      operationId: listLessons
+      summary: List lessons — mine, or all for an instructor.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [MINE, ALL], default: MINE }
+        - name: state
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/LessonState' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Lessons, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LessonListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/lessons/{lesson_id}:
+    get:
+      tags: [lessons]
+      operationId: getLesson
+      summary: A lesson with its plan and the per-card status of every session.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/lessons/{lesson_id}/start:
+    post:
+      tags: [lessons]
+      operationId: startLesson
+      summary: Start the lesson (`CREATED → ACTIVE`); the LessonRunner then starts cards by arrival.
+      description: |
+        The creator or an ADMIN only. The `LessonRunner` starts each card's session as the
+        instructor who created the lesson when its `Arrival` holds (`SESSION_STARTED.lesson_arrival`);
+        a card due at offset 0 is started before this response.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson in state `ACTIVE`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/lessons/{lesson_id}/abort:
+    post:
+      tags: [lessons]
+      operationId: abortLesson
+      summary: Abort the lesson and every non-terminal card session.
+      x-action: '-'
+      x-emits: [SESSION_ABORTED]
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbortSessionRequest' }
+      responses:
+        '200':
+          description: The lesson in state `ABORTED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/lessons/{lesson_id}/report:
+    get:
+      tags: [lessons]
+      operationId: getLessonReport
+      summary: The N card reports of a completed lesson plus the weighted sum.
+      description: |
+        Composes the existing per-session `ScoreReportView`s; no new evaluator. Trainee access
+        follows the per-session release rule (a lesson release releases every card, `x-emits: []`).
+        `409 REPORT_NOT_READY` until the lesson is `COMPLETED` or `ABORTED`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/instructor/lessons/{lesson_id}/report/release:
+    post:
+      tags: [lessons]
+      operationId: releaseLessonReport
+      summary: Release every card report of the lesson to its trainees (idempotent, no event).
+      description: |
+        Calls the existing per-session release for every card; sets `incidents.card_status` to
+        `CHECKED` where the projection allows it (70 §70.4.6). Emits no event (HLD 20 §20.3).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson after release.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ----------------------------------------------------------- incidents ----
+  # Additive, I3 E4a (70 §70.3.6).
+  /api/v1/incidents:
+    get:
+      tags: [incidents]
+      operationId: listMyIncidents
+      summary: The caller's cross-session incident list (ДДС «Список происшествий», 112 «реестр»).
+      description: |
+        One row per session the caller participates in (optionally one lesson), with the materialised
+        `card_status` and the deadline offsets; the client renders countdowns from
+        `session_offset_ms` and never decides a status. A ДДС trainee sees rows only once the card
+        has arrived (its session is `ACTIVE` or terminal).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: lesson_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: role_type
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/RoleType' }
+        - name: card_status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/CardStatus' }
+        - name: q
+          in: query
+          required: false
+          description: Search over display number, address and classifier code («Поиск»).
+          schema: { type: string }
+      responses:
+        '200':
+          description: Incidents, newest arrival first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/IncidentListItem' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
 
   securitySchemes:
@@ -1776,6 +2014,11 @@ components:
       schema: { type: string, format: uuid }
     ScenarioVersionIdParam:
       name: scenario_version_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LessonIdParam:
+      name: lesson_id
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1813,7 +2056,7 @@ components:
         `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
         `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
         `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
-        does not have.
+        does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1869,6 +2112,7 @@ components:
         - VARIANT_NOT_AVAILABLE        # additive, I3 E1
         - REFERENCE_PACK_UNKNOWN       # additive, I3 E2a
         - SERVICE_UNKNOWN              # additive, I3 E2a
+        - LESSON_NOT_ACTIVE            # additive, I3 E4a
 
     Problem:
       type: object
@@ -2090,8 +2334,8 @@ components:
     EventType:
       type: string
       description: |
-        All 49 members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by
-        the 21 additive members of D5.
+        All members of `backend/app/domain/events/types.py` — the 28 of SPEC §8 followed by the
+        21 additive members of D5, then I3's additive members (70 §70.7).
       enum:
         - SESSION_CREATED
         - SESSION_STARTED
@@ -2142,6 +2386,7 @@ components:
         - TRANSPORT_DISCONNECTED
         - TRANSPORT_RECONNECTED
         - INFERENCE_HEALTH_CHANGED
+        - DDS_CARD_STATUS_CHANGED      # additive, I3 E4a
 
     # ------------------------------------------------------ value objects ----
     FactValue:
@@ -2527,6 +2772,8 @@ components:
         - transition_continue_available_at_offset_ms
         - variants
         - scenario_role_chain
+        - lesson_id
+        - lesson_position
       properties:
         id: { type: string, format: uuid }
         scenario_version_id: { type: string, format: uuid }
@@ -2578,6 +2825,14 @@ components:
             effective chain (the suffix starting at DDS under `card_source: GENERATED_CARD`).
           type: array
           items: { $ref: '#/components/schemas/RoleType' }
+        lesson_id:
+          description: (additive, I3 E4a) The lesson this session is a card of; `null` for a single session (70 §70.3.2).
+          type: [string, 'null']
+          format: uuid
+        lesson_position:
+          description: (additive, I3 E4a) The card's plan position; set exactly when `lesson_id` is.
+          type: [integer, 'null']
+          minimum: 1
 
     AbortSessionRequest:
       type: object
@@ -3929,3 +4184,168 @@ components:
                       type: object
                       additionalProperties: { type: boolean }
                     value: { type: [string, 'null'] }
+
+    # ------------------------------------------------------------- lessons ----
+    # Additive, I3 E4a (70 §70.3, §70.4.6), from `contracts/i3-openapi-delta.yaml`.
+    LessonState:
+      type: string
+      enum: [CREATED, ACTIVE, COMPLETED, ABORTED]
+    ArrivalKind:
+      type: string
+      enum: [AT_OFFSET, AFTER_PREVIOUS_112_STAGE, AFTER_PREVIOUS_SESSION]
+    CardStatus:
+      description: 'Card status of the memo p.27 (70 §70.4.6). Labels: Зарегистрирована, Отработана, Проверена, Не оповещено, Отказ, Не завершено, Завершена.'
+      type: string
+      enum: [REGISTERED, WORKED, CHECKED, NOT_NOTIFIED, REFUSED, NOT_COMPLETED, COMPLETED]
+    Arrival:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: '#/components/schemas/ArrivalKind' }
+        offset_ms:
+          type: [integer, 'null']
+          minimum: 0
+          description: Required for `AT_OFFSET` (lesson wall ms since start), forbidden otherwise.
+        delay_ms: { type: integer, minimum: 0, default: 0 }
+    PlanEntry:
+      type: object
+      additionalProperties: false
+      required: [position, scenario_version_id, arrival]
+      properties:
+        position: { type: integer, minimum: 1 }
+        scenario_version_id: { type: string, format: uuid }
+        arrival: { $ref: '#/components/schemas/Arrival' }
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
+        participants:
+          description: E9a hook — per-workstation tasks; absent = every lesson participant.
+          type: [array, 'null']
+          items: { type: string, format: uuid }
+        weight:
+          description: E9a hook — difficulty weight in the lesson report.
+          type: number
+          exclusiveMinimum: 0
+          default: 1
+    LessonCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [title_ru, session_mode, participants, scenario_plan]
+      properties:
+        title_ru: { type: string, minLength: 1 }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        participants:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
+        scenario_plan:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PlanEntry' }
+        time_scale: { type: number, minimum: 0.1, maximum: 10, default: 1 }
+    LessonSessionView:
+      type: object
+      additionalProperties: false
+      required: [position, session_id, incident_id, display_number, state, card_status, arrival, variants]
+      properties:
+        position: { type: integer, minimum: 1 }
+        session_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        display_number: { type: integer }
+        state: { $ref: '#/components/schemas/SessionState' }
+        card_status: { $ref: '#/components/schemas/CardStatus' }
+        arrival: { $ref: '#/components/schemas/Arrival' }
+        started_at_lesson_offset_ms: { type: [integer, 'null'] }
+        variants: { $ref: '#/components/schemas/SessionVariants' }
+    LessonListItem:
+      type: object
+      additionalProperties: false
+      required: [lesson_id, title_ru, session_mode, state, card_count, created_at, created_by_user_id]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/LessonState' }
+        card_count: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        created_by_user_id: { type: string, format: uuid }
+    LessonDetail:
+      type: object
+      additionalProperties: false
+      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        session_mode: { $ref: '#/components/schemas/SessionMode' }
+        state: { $ref: '#/components/schemas/LessonState' }
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/ParticipantAssignment' }
+        scenario_plan:
+          type: array
+          items: { $ref: '#/components/schemas/PlanEntry' }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/LessonSessionView' }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        report_released_at: { type: [string, 'null'], format: date-time }
+    LessonReport:
+      type: object
+      additionalProperties: false
+      required: [lesson_id, cards, weighted_total, weighted_max]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        cards:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [position, session_id, weight, score]
+            properties:
+              position: { type: integer, minimum: 1 }
+              session_id: { type: string, format: uuid }
+              weight: { type: number }
+              score: { $ref: '#/components/schemas/ScoreReportView' }
+        weighted_total: { type: number }
+        weighted_max: { type: number }
+    IncidentListItem:
+      description: One row of «Список происшествий» / «реестр». Deadlines are session offsets; `null` = not applicable yet.
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - incident_id
+        - display_number
+        - lesson_id
+        - card_status
+        - session_state
+        - arrived_at_utc
+        - session_offset_ms
+        - accept_deadline_offset_ms
+        - fill_deadline_offset_ms
+        - not_completed_deadline_offset_ms
+        - classifier_code
+        - address_line_ru
+        - my_role_type
+      properties:
+        session_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        display_number: { type: integer }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        card_status: { $ref: '#/components/schemas/CardStatus' }
+        session_state: { $ref: '#/components/schemas/SessionState' }
+        arrived_at_utc: { type: [string, 'null'], format: date-time }
+        session_offset_ms: { type: integer, minimum: 0 }
+        accept_deadline_offset_ms: { type: [integer, 'null'] }
+        fill_deadline_offset_ms: { type: [integer, 'null'] }
+        not_completed_deadline_offset_ms: { type: [integer, 'null'] }
+        classifier_code: { type: [string, 'null'] }
+        address_line_ru:
+          description: From the snapshot for a ДДС row, from the live card for a 112 row (never WorldTruth).
+          type: [string, 'null']
+        my_role_type:
+          oneOf:
+            - $ref: '#/components/schemas/RoleType'
+            - type: 'null'

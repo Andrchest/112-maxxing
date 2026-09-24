@@ -184,6 +184,7 @@ class DDSModule:
                     EventType.NOTIFICATION_CREATED,
                     EventType.NOTIFICATION_ACKNOWLEDGED,
                     EventType.RADIO_MESSAGE_CREATED,
+                    EventType.DDS_CARD_STATUS_CHANGED,  # I3 E4a (HLD 70 §70.7)
                 }
             ),
         )

@@ -29,6 +29,22 @@ class EventStore(Protocol):
         The numbers are contiguous and allocated under `SELECT … FOR UPDATE` on
         `simulation_sessions.next_seq_no` (§20.8), inside the caller's transaction. An empty
         `events` sequence is a no-op that allocates nothing and returns `[]`.
+
+        **Flush-before-append** (HLD 70 §70.3.5, I3 E4a): the card-status projection
+        (`app.domain.dds.card_status.plan_append`) runs over every append, so the returned list
+        may hold `DDS_CARD_STATUS_CHANGED` events the caller did not pass — deadline events
+        before the event whose offset they precede, a status the batch itself changed after it —
+        and `incidents.card_status` is materialised in the same transaction.
+        """
+        ...
+
+    async def flush_deadlines(self, session_id: SessionId, now_ms: int) -> list[SessionEvent]:
+        """Append every card-status deadline event due at `now_ms` and return what it appended.
+
+        The flush-before-append rule of HLD 70 §70.3.5: `append` already flushes the deadlines
+        due before each event it is given; this is the same flush with nothing after it, which
+        is what stage automation asks for on every tick so a deadline is observed even when
+        nobody acts. Nothing is appended when no deadline changes the card status.
         """
         ...
 

@@ -26,6 +26,7 @@ from app.application.ports.dialogue_turn_repository import DialogueTurnRepositor
 from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
+from app.application.ports.lesson_repository import LessonRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
@@ -84,6 +85,11 @@ class UnitOfWork(Protocol):
         Written through `MetricsRecorder`, which opens a Unit of Work of its **own** so that a
         telemetry failure can never fail the turn it was measuring.
         """
+        ...
+
+    @property
+    def lessons(self) -> LessonRepository:
+        """The `lessons` repository bound to this transaction (HLD 70 §70.3, I3 E4a)."""
         ...
 
     @property

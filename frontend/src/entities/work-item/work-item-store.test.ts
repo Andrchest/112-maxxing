@@ -80,6 +80,8 @@ describe('useWorkItemStore', () => {
           dds_brigade_call: 'OFF',
         },
         scenario_role_chain: ['DDS'],
+        lesson_id: null,
+        lesson_position: null,
       },
       my_role_type: 'DDS',
       active_role_stage_id: 'stage-dds-1',

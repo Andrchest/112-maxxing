@@ -40,7 +40,9 @@ from app.api.routers import (
     auth,
     dds,
     health,
+    incidents,
     instructor,
+    lessons,
     operator,
     realtime,
     reference,
@@ -107,6 +109,9 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(reports.audio_router)
     app.include_router(instructor.router)
     app.include_router(reference.router)
+    app.include_router(lessons.router)
+    app.include_router(lessons.instructor_router)
+    app.include_router(incidents.router)
 
     return app
 
@@ -119,6 +124,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if runner_enabled:
         adopted = await container.runner.start()
         logger.info("simulation runner started; adopted %d active session(s)", len(adopted))
+        # I3 E4a: the LessonRunner re-adopts every ACTIVE lesson (HLD 70 §70.3.3), same flag.
+        lessons_adopted = await container.lesson_runner.start()
+        logger.info("lesson runner started; adopted %d active lesson(s)", len(lessons_adopted))
         # E18-B: the `voice:health` tail, started next to the runner and gated on the same flag.
         # Both are long-lived background tasks over the same sessions, and an API test that wants
         # neither turns off one switch (`app.infrastructure.health.voice_health_subscriber`).
@@ -133,5 +141,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # `asyncio.all_tasks()` is back where it started by the time this returns.
         if runner_enabled:
             await container.inference_health.stop()
+            await container.lesson_runner.stop()
             await container.runner.stop()
         await container.aclose()

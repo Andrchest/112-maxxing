@@ -27,6 +27,9 @@ untouched by this: its handoff is the trainee's to make.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from app.application.handoff.prefab_handoff import materialise_prefab_handoff
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
@@ -96,8 +99,19 @@ class StartSession:
         #: D8's `REQUIRE_INFERENCE_READY`, injected — never read from `app.config` here.
         self._require_inference_ready = require_inference_ready
 
-    async def __call__(self, session_id: SessionId, actor: ActorRef) -> SimulationSession:
-        """Fire `start`; returns the `ACTIVE` aggregate or raises `InvalidTransitionError`."""
+    async def __call__(
+        self,
+        session_id: SessionId,
+        actor: ActorRef,
+        *,
+        lesson_arrival: Mapping[str, Any] | None = None,
+    ) -> SimulationSession:
+        """Fire `start`; returns the `ACTIVE` aggregate or raises `InvalidTransitionError`.
+
+        `lesson_arrival` (`{kind, due_offset_ms, fired_offset_ms}`, lesson wall ms) is passed by
+        the `LessonRunner` when it starts a lesson card (HLD 70 §70.3.3) and recorded in
+        `SESSION_STARTED.lesson_arrival`.
+        """
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get_for_update(session_id)
             if session is None:
@@ -113,7 +127,11 @@ class StartSession:
             # (`session_offset_ms(now, started_at)` with `now == started_at`), so it is written
             # literally here rather than read from a counter — SPEC §39, D7.
             started, events = session.start(
-                self._clock.now(), actor=actor, now_ms=0, runtime=runtime
+                self._clock.now(),
+                actor=actor,
+                now_ms=0,
+                runtime=runtime,
+                lesson_arrival=lesson_arrival,
             )
 
             await uow.sessions.save(started)

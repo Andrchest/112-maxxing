@@ -1,9 +1,9 @@
 """`EventType` (HLD `10-domain-model.md` §10.2, "EventType").
 
-`str, Enum`; member `NAME == VALUE`. Exactly the 49 members named by the HLD: the 28 SPEC §8
-members verbatim, then the 21 additive members allowed by D5 ("at least"). `SPEC_EVENT_TYPES` and
-`ADDITIVE_EVENT_TYPES` partition `EventType` and exist so later code (and tests) can assert that
-partition without re-typing either list.
+`str, Enum`; member `NAME == VALUE`. The 28 SPEC §8 members verbatim, then the additive members
+allowed by D5 ("at least"): the 21 of I1 plus I3's (HLD 70 §70.7 — `DDS_CARD_STATUS_CHANGED`,
+I3 E4a). `SPEC_EVENT_TYPES` and `ADDITIVE_EVENT_TYPES` partition `EventType` and exist so later
+code (and tests) can assert that partition without re-typing either list.
 """
 
 from __future__ import annotations
@@ -65,6 +65,10 @@ class EventType(str, Enum):
     TRANSPORT_RECONNECTED = "TRANSPORT_RECONNECTED"
     INFERENCE_HEALTH_CHANGED = "INFERENCE_HEALTH_CHANGED"
 
+    # Additive per D5, I3 (HLD 70 §70.7).
+    DDS_CARD_STATUS_CHANGED = "DDS_CARD_STATUS_CHANGED"
+    """The card's derived status changed (§70.4.6); SIMULATION, deadline-stamped (E4a)."""
+
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
     {
@@ -122,6 +126,7 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.TRANSPORT_DISCONNECTED,
         EventType.TRANSPORT_RECONNECTED,
         EventType.INFERENCE_HEALTH_CHANGED,
+        EventType.DDS_CARD_STATUS_CHANGED,
     }
 )
 

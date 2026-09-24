@@ -4,7 +4,7 @@
 Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
-  the rules of §30.8 (R01-R31, plus I3's R32-R38 and R40, HLD 70 §70.2.3)
+  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -189,11 +189,11 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
             f"(supported: {supported})"
         )
     # R01 (extended, HLD 70 §70.2.3): a key schema 2 introduced is refused in a schema-1
-    # document. `variants` (E1) and `reference_pack` (E2a) are the model fields today; `timers`
-    # and `expected_response.responders` are not, so `extra="forbid"` refuses them in every
-    # document until their epics (E4, E5b) add them.
+    # document. `variants` (E1), `reference_pack` (E2a) and `timers` (E4a) are the model fields
+    # today; `expected_response.responders` is not, so `extra="forbid"` refuses it in every
+    # document until its epic (E5b) adds it.
     if version.schema_version < 2:
-        for key in ("variants", "reference_pack"):
+        for key in ("variants", "reference_pack", "timers"):
             if getattr(version, key) is not None:
                 out.append(
                     f"R01: {key} is a schema_version 2 key; schema_version "
@@ -757,6 +757,22 @@ def _service_id_references(version: ScenarioVersion) -> Iterator[tuple[str, str]
                 yield f"{where}.min_units_by_service['{service}']", service
 
 
+def _check_timers(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R39 (HLD 70 §70.2.3, I3 E4a): `timers.*` are positive integers and
+    `accept_within_ms < not_completed_after_ms`. The field bounds already refuse a non-positive
+    value at parse time (reported as R39 too); this re-check is the defensive half, like 24-26."""
+    timers = version.card_timers
+    for key in ("accept_within_ms", "fill_within_ms", "not_completed_after_ms"):
+        value = getattr(timers, key)
+        if value <= 0:
+            out.append(f"R39: timers.{key} must be a positive integer, got {value}")
+    if timers.accept_within_ms >= timers.not_completed_after_ms:
+        out.append(
+            f"R39: timers.accept_within_ms ({timers.accept_within_ms}) must be less than "
+            f"timers.not_completed_after_ms ({timers.not_completed_after_ms})"
+        )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -806,6 +822,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
         (38,),
         lambda version, _modules, reference, out: _check_reference_pack(version, reference, out),
     ),
+    ((39,), lambda version, _modules, _reference, out: _check_timers(version, out)),
     ((40,), lambda version, _modules, _reference, out: _check_applies_to_variants(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
@@ -815,7 +832,7 @@ it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_N
 VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
-"""Every §30.8 rule number a validation run executes (R01-R38 and R40 after I3 E2a)."""
+"""Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a)."""
 
 
 def scenario_version_violations(
@@ -925,6 +942,7 @@ def build_fact_definitions(version: ScenarioVersion) -> dict[str, FactDefinition
 # Parse-error -> rule-number mapping
 # ---------------------------------------------------------------------------------------------
 
+_TIMER_KEYS = frozenset({"accept_within_ms", "fill_within_ms", "not_completed_after_ms"})
 _RULE_25_FIELDS = frozenset({"at_ms", "check_after_ms", "delay_ms"})
 _RULE_24_FIELDS = frozenset({"probability", "check_every_ms", "window_start_ms", "window_end_ms"})
 
@@ -952,6 +970,10 @@ def _rule_for_parse_error(loc: tuple[int | str, ...], message: str) -> str:
         return "R20"
     if "scoring_rules" in names and "applies_to_variants" in names:
         return "R40"
+    if loc and loc[0] == "timers" and len(loc) > 1:
+        # R39 (I3 E4a): a timer that is not a positive integer. An unknown key under `timers`
+        # stays rule 1's.
+        return "R39" if loc[1] in _TIMER_KEYS else "R01"
     return "R01"
 
 

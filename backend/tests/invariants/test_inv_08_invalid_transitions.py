@@ -1,7 +1,8 @@
 """SPEC §42 invariant test 8: "Invalid state-machine transitions fail."
 
 Table-driven and exhaustive: for each of the four SPEC §7 / §10.7 machines (`SESSION_TRANSITIONS`,
-`OPERATOR_112_TRANSITIONS`, `DDS_TRANSITIONS`, `RESOURCE_STATUS_TRANSITIONS`), every `(state,
+`OPERATOR_112_TRANSITIONS`, `DDS_TRANSITIONS`, `RESOURCE_STATUS_TRANSITIONS`) — and I3 E4a's
+`LESSON_TRANSITIONS` (HLD 70 §70.3.2) — every `(state,
 trigger)` pair is tried. The set of states comes from the matching enum (`list(SessionState)`,
 etc.); the set of triggers comes from the table itself (`{trigger for (_, trigger) in table}`) —
 neither is retyped here. A pair present in the table must succeed (`fire` returns the row's
@@ -52,6 +53,7 @@ from app.domain.enums import (
     RoleType,
     SessionState,
 )
+from app.domain.lesson.lesson import LESSON_TRANSITIONS, LessonState
 from app.domain.session.session import SimulationSession
 from app.domain.session.transitions import (
     DDS_TRANSITIONS,
@@ -131,6 +133,11 @@ def test_resource_status_transitions_exhaustive() -> None:
     )
 
 
+def test_lesson_transitions_exhaustive() -> None:
+    """I3 E4a (HLD 70 §70.3.2): `LESSON_TRANSITIONS` joins the table-driven expectations."""
+    _assert_exhaustive("LESSON_TRANSITIONS", LESSON_TRANSITIONS, list(LessonState))
+
+
 # ---------------------------------------------------------------------------------------------
 # Pinned illegal transitions (SPEC §7 / the HLD tables make these illegal by omission)
 # ---------------------------------------------------------------------------------------------
@@ -145,6 +152,9 @@ _PINNED_ILLEGAL: tuple[tuple[str, TransitionTable[Any], Any, str], ...] = (
         "create_handoff",
     ),
     ("DDS_TRANSITIONS", DDS_TRANSITIONS, DDSStageState.RECEIVED, "dispatch"),
+    ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.COMPLETED, "abort"),
+    ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.CREATED, "complete"),
+    ("LESSON_TRANSITIONS", LESSON_TRANSITIONS, LessonState.ABORTED, "start"),
 )
 
 

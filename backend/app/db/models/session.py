@@ -1,6 +1,8 @@
 """Session aggregate tables (HLD `20-db-schema.md` §20.3).
 
-`simulation_sessions`, `session_participants`, `role_stages`, `incidents`, `world_engine_states`.
+`simulation_sessions`, `session_participants`, `role_stages`, `incidents`, `world_engine_states`,
+and I3's `lessons` (HLD 70 §70.3, §70.8 `0011_lessons`): a lesson owns N ordinary sessions, so its
+table sits beside theirs.
 
 `world_engine_states` (additive, E6) is a 1:1 satellite of `incidents`, which is why it lives
 here rather than in `layers.py`: it is explicitly **not** a fifth information layer. World truth
@@ -13,7 +15,17 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 
-from app.db.base import GEN_RANDOM_UUID, JSONB_T, NOW, TIMESTAMPTZ_T, UUID_T, Base, enum_check
+from app.db.base import (
+    GEN_RANDOM_UUID,
+    JSONB_T,
+    NOW,
+    TIMESTAMPTZ_T,
+    UUID_T,
+    Base,
+    enum_check,
+    metadata_obj,
+)
+from app.domain.dds.card_status import CardStatus
 from app.domain.enums import (
     ClosureReason,
     DDSStageState,
@@ -22,6 +34,10 @@ from app.domain.enums import (
     SessionMode,
     SessionState,
 )
+from app.domain.lesson.lesson import LessonState
+
+#: `incidents.display_number` — the «Происшествие NNNNNNNN» number (HLD 70 §70.3.6, `0011`).
+INCIDENT_DISPLAY_NUMBER_SEQ = sa.Sequence("incident_display_number_seq", metadata=metadata_obj)
 
 #: `role_stages.state` carries either an `Operator112StageState` or a `DDSStageState` member; the
 #: CHECK lists the union of both enums (HLD §20.3).
@@ -31,6 +47,41 @@ ROLE_STAGE_STATES: tuple[str, ...] = tuple(
         + [member.value for member in DDSStageState]
     )
 )
+
+
+class Lesson(Base):
+    """`lessons` — a stream of cards (занятие) as N ordinary sessions (HLD 70 §70.3, D15).
+
+    Scheduling, not simulation: no event log of its own. `participants` and `scenario_plan` are
+    jsonb because their shape is the plan's (`LessonParticipant`, `PlanEntry`), read and written
+    whole; `variants` is the lesson-wide `VariantsRequest`.
+    """
+
+    __tablename__ = "lessons"
+
+    id = sa.Column(UUID_T, primary_key=True)
+    title_ru = sa.Column(sa.Text(), nullable=False)
+    created_by_user_id = sa.Column(
+        UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    session_mode = sa.Column(sa.Text(), nullable=False)
+    variants = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    participants = sa.Column(JSONB_T, nullable=False)
+    scenario_plan = sa.Column(JSONB_T, nullable=False)
+    state = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'CREATED'"))
+    created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    started_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
+    completed_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
+    report_released_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
+    report_released_by_user_id = sa.Column(
+        UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+
+    __table_args__ = (
+        sa.Index("ix_lessons_state", "state"),
+        sa.CheckConstraint(enum_check("session_mode", SessionMode), name="session_mode"),
+        sa.CheckConstraint(enum_check("state", LessonState), name="state"),
+    )
 
 
 class SimulationSession(Base):
@@ -78,9 +129,17 @@ class SimulationSession(Base):
     #: `'{}'` (every session created before E1) reads as the schema-1 derivation of the
     #: session's own stage chain (`app.domain.session.variants.legacy_session_variants`).
     variants = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    #: Additive in I3 E4a (HLD 70 §70.3.2, `0011_lessons`): the lesson this session is a card
+    #: of and its plan position — both or neither (a single session has neither).
+    lesson_id = sa.Column(UUID_T, sa.ForeignKey("lessons.id", ondelete="RESTRICT"), nullable=True)
+    lesson_position = sa.Column(sa.Integer(), nullable=True)
 
     __table_args__ = (
         sa.Index("ix_sessions_state", "state"),
+        sa.UniqueConstraint("lesson_id", "lesson_position", name="uq_sessions_lesson_position"),
+        sa.CheckConstraint(
+            "(lesson_id IS NULL) = (lesson_position IS NULL)", name="lesson_position_together"
+        ),
         sa.Index("ix_sessions_scenario_version", "scenario_version_id"),
         sa.CheckConstraint(enum_check("session_mode", SessionMode), name="session_mode"),
         sa.CheckConstraint(enum_check("state", SessionState), name="state"),
@@ -161,12 +220,24 @@ class Incident(Base):
     created_at_offset_ms = sa.Column(sa.Integer(), nullable=False, server_default=sa.text("0"))
     closed_at_offset_ms = sa.Column(sa.Integer(), nullable=True)
     closure_reason = sa.Column(sa.Text(), nullable=True)
+    #: Additive in I3 E4a (HLD 70 §70.4.6, `0011_lessons`): the derived card status, materialised
+    #: in the Unit of Work of the event that changed it (`CHECKED`: by the report release).
+    card_status = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'REGISTERED'"))
+    #: The «Происшествие NNNNNNNN» number, from `incident_display_number_seq`.
+    display_number = sa.Column(
+        sa.BigInteger(),
+        INCIDENT_DISPLAY_NUMBER_SEQ,
+        nullable=False,
+        server_default=INCIDENT_DISPLAY_NUMBER_SEQ.next_value(),
+    )
 
     __table_args__ = (
         sa.UniqueConstraint("session_id", name="uq_incidents_session"),
+        sa.UniqueConstraint("display_number", name="uq_incidents_display_number"),
         sa.CheckConstraint(
             enum_check("closure_reason", ClosureReason, nullable=True), name="closure_reason"
         ),
+        sa.CheckConstraint(enum_check("card_status", CardStatus), name="card_status"),
     )
 
 

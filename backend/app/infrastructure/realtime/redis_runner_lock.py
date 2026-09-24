@@ -15,11 +15,14 @@ Key names use the session UUID in canonical lowercase hyphenated form and never 
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from redis.asyncio import Redis
 
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import LessonId, SessionId
 
-__all__ = ["RedisRunnerLock", "runner_lock_key"]
+__all__ = ["RedisRunnerLock", "lesson_runner_lock_key", "runner_lock_key"]
 
 #: Extend the TTL only while the value is still this owner's id.
 _REFRESH_SCRIPT = """
@@ -43,25 +46,33 @@ def runner_lock_key(session_id: SessionId) -> str:
     return f"lock:session:{str(session_id).lower()}:runner"
 
 
-class RedisRunnerLock:
-    """`RunnerLock` over Redis (D7, §40.6)."""
+def lesson_runner_lock_key(lesson_id: LessonId) -> str:
+    """`lock:lesson:{lesson_id}:runner` (HLD 70 §70.3.3), same form as the session key."""
+    return f"lock:lesson:{str(lesson_id).lower()}:runner"
 
-    def __init__(self, client: Redis) -> None:
+
+class RedisRunnerLock:
+    """`RunnerLock` over Redis (D7, §40.6) — and, built with `lesson_runner_lock_key`, the
+    `LessonRunnerLock` of HLD 70 §70.3.3: one implementation, two key spaces."""
+
+    def __init__(self, client: Redis, key: Callable[[Any], str] = runner_lock_key) -> None:
         self._client = client
+        #: `runner_lock_key` for sessions, `lesson_runner_lock_key` for lessons.
+        self._key = key
 
     async def acquire(self, session_id: SessionId, owner: str, ttl_s: int) -> bool:
         """`SET key owner NX EX ttl` — `True` for the one instance that wins the race."""
-        taken = await self._client.set(runner_lock_key(session_id), owner, nx=True, ex=ttl_s)
+        taken = await self._client.set(self._key(session_id), owner, nx=True, ex=ttl_s)
         return bool(taken)
 
     async def refresh(self, session_id: SessionId, owner: str, ttl_s: int) -> bool:
         """Extend the TTL while `owner` still holds the key; `False` means the lock was lost."""
         result = await self._client.eval(
-            _REFRESH_SCRIPT, 1, runner_lock_key(session_id), owner, str(ttl_s)
+            _REFRESH_SCRIPT, 1, self._key(session_id), owner, str(ttl_s)
         )
         return bool(int(result))
 
     async def release(self, session_id: SessionId, owner: str) -> bool:
         """Compare-and-delete: never deletes a lock another instance has taken over."""
-        result = await self._client.eval(_RELEASE_SCRIPT, 1, runner_lock_key(session_id), owner)
+        result = await self._client.eval(_RELEASE_SCRIPT, 1, self._key(session_id), owner)
         return bool(int(result))

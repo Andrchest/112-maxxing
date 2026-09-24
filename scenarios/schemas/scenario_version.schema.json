@@ -527,6 +527,32 @@
       "title": "CardSource",
       "type": "string"
     },
+    "CardTimers": {
+      "additionalProperties": false,
+      "description": "The schema-2 scenario key `timers` (§70.3.4) — all in session (running) milliseconds.\n\nEvery key defaults when absent; rule R39 (`positive`, `accept < not_completed`) is enforced by\nthe field bounds and by `validate_scenario_version`.",
+      "properties": {
+        "accept_within_ms": {
+          "default": 30000,
+          "exclusiveMinimum": 0,
+          "title": "Accept Within Ms",
+          "type": "integer"
+        },
+        "fill_within_ms": {
+          "default": 180000,
+          "exclusiveMinimum": 0,
+          "title": "Fill Within Ms",
+          "type": "integer"
+        },
+        "not_completed_after_ms": {
+          "default": 172800000,
+          "exclusiveMinimum": 0,
+          "title": "Not Completed After Ms",
+          "type": "integer"
+        }
+      },
+      "title": "CardTimers",
+      "type": "object"
+    },
     "ChangeCallerEmotion": {
       "additionalProperties": false,
       "description": "`{kind: CHANGE_CALLER_EMOTION, set_emotion, stress_delta}` (§30.6.4).",
@@ -1115,7 +1141,8 @@
         "FACTS_DELIVERED",
         "TRANSPORT_DISCONNECTED",
         "TRANSPORT_RECONNECTED",
-        "INFERENCE_HEALTH_CHANGED"
+        "INFERENCE_HEALTH_CHANGED",
+        "DDS_CARD_STATUS_CHANGED"
       ],
       "title": "EventType",
       "type": "string"
@@ -2311,7 +2338,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One immutable scenario version: the SPEC §4 top-level keys, plus `variants` and\n`reference_pack` from schema 2 (§10.15, §30.1, D14, D18).",
+  "description": "One immutable scenario version: the SPEC §4 top-level keys, plus `variants`,\n`reference_pack` and `timers` from schema 2 (§10.15, §30.1, D14, D15, D18).",
   "properties": {
     "available_resources": {
       "items": {
@@ -2385,6 +2412,17 @@
       },
       "title": "Scoring Rules",
       "type": "array"
+    },
+    "timers": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CardTimers"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "title": {
       "title": "Title",

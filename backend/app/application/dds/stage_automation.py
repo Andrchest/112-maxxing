@@ -30,6 +30,17 @@ any path to the first two. So the evaluation happens where the `WorldState` alre
 as a **boolean**, through a callable the composition root injects. This module therefore asks for
 the verdict only in `WORKING`, the one state `incident_resolved` fires from, and never learns
 anything else about the world.
+
+**Card-status deadlines (HLD 70 §70.3.5, I3 E4a).** The same hook, in the same transaction and
+before anything else, asks the event store to flush the card-status deadlines due at the running
+offset (`EventStore.flush_deadlines`): a leg that has not been accepted within
+`timers.accept_within_ms` of its `HANDOFF_RECEIVED` turns the card `NOT_NOTIFIED`, a card whose
+legs are not all completed `timers.not_completed_after_ms` after the handoff turns it
+`NOT_COMPLETED`. Each such `DDS_CARD_STATUS_CHANGED` is SIMULATION-authored and stamped with its
+**deadline** offset, not with this tick's, so the stream does not depend on the tick rate (INV 7):
+a trainee command in between flushes the same events through the same rule before its own. The
+flush runs for every ACTIVE session — a lesson card waiting in a queue times like any other — and
+writes nothing when no deadline changes the status.
 """
 
 from __future__ import annotations
@@ -91,15 +102,17 @@ class DdsStageAutomation:
             if session is None or session.state is not SessionState.ACTIVE:
                 await uow.commit()
                 return False
+            now_ms = running_ms(session, self._clock.now())
+            flushed = await uow.events.flush_deadlines(session_id, now_ms)
             stage = dds_stage_of(session)
             if stage is None:
                 await uow.commit()
-                return False
+                return bool(flushed)
 
             legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
             if not legs:
                 await uow.commit()
-                return False
+                return bool(flushed)
 
             board = await uow.resources.list_for_session(session_id)
             leg_ids = {leg.assignment_id for leg in legs}
@@ -109,9 +122,8 @@ class DdsStageAutomation:
                 if stored.assignment_id in leg_ids
             }
             log = await uow.events.read(session_id)
-            now_ms = running_ms(session, self._clock.now())
 
-            fired = False
+            fired = bool(flushed)
             while True:
                 state = session.stage(stage.role_stage_id).state
                 assert isinstance(state, DDSStageState)

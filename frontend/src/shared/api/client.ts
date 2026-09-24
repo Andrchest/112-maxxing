@@ -533,6 +533,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   VARIANT_NOT_AVAILABLE: 'problemVariantNotAvailable',
   REFERENCE_PACK_UNKNOWN: 'problemReferencePackUnknown',
   SERVICE_UNKNOWN: 'problemServiceUnknown',
+  LESSON_NOT_ACTIVE: 'problemLessonNotActive',
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

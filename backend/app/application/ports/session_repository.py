@@ -17,13 +17,15 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from app.domain.common.ids import SessionId, UserId
+from app.domain.common.ids import IncidentId, LessonId, SessionId, UserId
+from app.domain.dds.card_status import CardStatus
 from app.domain.enums import RoleType, SessionMode, SessionState
 from app.domain.session.session import SimulationSession
 
 __all__ = [
     "ReportRelease",
     "SessionRepository",
+    "StoredIncidentRow",
     "StoredParticipant",
     "StoredSessionListing",
 ]
@@ -80,6 +82,30 @@ class ReportRelease(BaseModel):
     session_id: SessionId
     released_at: datetime
     released_by_user_id: UserId
+
+
+class StoredIncidentRow(BaseModel):
+    """One session as the cross-session incident list sees it (HLD 70 §70.3.6, I3 E4a).
+
+    The session row, its one incident's read-model columns (`display_number`, `card_status`) and
+    the viewer's own participation — everything `listMyIncidents` needs before it reads the log
+    for the deadlines.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    session_id: SessionId
+    incident_id: IncidentId
+    display_number: int
+    lesson_id: LessonId | None
+    lesson_position: int | None
+    card_status: CardStatus
+    session_state: SessionState
+    started_at: datetime | None
+    created_at: datetime
+    created_by_user_id: UserId
+    is_participant: bool
+    my_role_type: RoleType | None
 
 
 @runtime_checkable
@@ -167,6 +193,21 @@ class SessionRepository(Protocol):
         statement rather than of a read-then-write two callers could interleave inside. The
         caller has already checked that the session is `COMPLETED`.
         """
+        ...
+
+    async def get_card_status(self, session_id: SessionId) -> CardStatus | None:
+        """`incidents.card_status` of the session's incident (HLD 70 §70.4.6), or `None`."""
+        ...
+
+    async def set_card_status(self, session_id: SessionId, status: CardStatus) -> None:
+        """Materialise `incidents.card_status` — in the Unit of Work of whatever changed it."""
+        ...
+
+    async def list_incident_rows(
+        self, *, viewer_user_id: UserId, lesson_id: LessonId | None
+    ) -> list[StoredIncidentRow]:
+        """The sessions the viewer participates in or created (optionally of one lesson), each
+        with its incident's read model; newest start first (`listMyIncidents`)."""
         ...
 
     async def save(self, session: SimulationSession) -> None:

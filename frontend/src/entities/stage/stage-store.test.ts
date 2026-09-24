@@ -70,6 +70,8 @@ describe('useStageStore', () => {
           dds_brigade_call: 'OFF',
         },
         scenario_role_chain: ['OPERATOR_112'],
+        lesson_id: null,
+        lesson_position: null,
       },
       my_role_type: 'OPERATOR_112',
       active_role_stage_id: 'stage-1',

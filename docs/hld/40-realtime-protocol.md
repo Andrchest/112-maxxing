@@ -246,6 +246,12 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 48 | `TRANSPORT_RECONNECTED` | ✔ | — | ✔ | — |
 | 49 | `INFERENCE_HEALTH_CHANGED` | — | — | ✔ | operational health belongs to the instructor console (SPEC §37) |
 
+### I3 event types (additive, `70-i3-alignment.md` §70.7)
+
+| # | Event type | OPERATOR_112 | DDS | INSTRUCTOR | Redaction for trainee roles |
+|:--|:--|:--:|:--:|:--:|:--|
+| 50 | `DDS_CARD_STATUS_CHANGED` | ✔ | ✔ | ✔ | — (I3 E4a: SIMULATION, deadline-stamped; the card status both trainee lists render, 70 §70.4.6) |
+
 Consistency rule for implementers: this table and `EVENT_PAYLOAD_CATALOG` are one fact expressed
 twice. A unit test iterates `EventType` and asserts that every member appears in both, with the same
 role set — a new event type that is added to one and not the other must fail the gate, not default to

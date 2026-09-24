@@ -47,6 +47,7 @@ Conventions used throughout:
 | 25 | `recording_purge_audit` | additive (ratified; `50-voice-pipeline.md` §9.2) | retention audit |
 | 26 | `world_engine_states` | additive (E6; D7) | 1 row / incident, engine-written bookkeeping |
 | 27 | `report_explanations` | additive (E16; D11, SPEC §2, §29) | the optional LLM prose about a stored `ScoreReport` |
+| 28 | `lessons` | additive (I3 E4a; D15, `70-i3-alignment.md` §70.3) | scheduling of N ordinary sessions; no event log of its own |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -183,8 +184,11 @@ applies; the session's values come from `SESSION_CREATED.variants`, never from t
 | `report_released_at` *(additive, E16)* | `timestamptz` | yes | |
 | `report_released_by_user_id` *(additive, E16)* | `uuid` | yes | |
 | `variants` *(additive, I3 E1)* | `jsonb` | no | `'{}'::jsonb` |
+| `lesson_id` *(additive, I3 E4a)* | `uuid` | yes | |
+| `lesson_position` *(additive, I3 E4a)* | `integer` | yes | |
 
 PK `(id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`;
+FK `lesson_id → lessons(id) ON DELETE RESTRICT` *(additive, I3 E4a)*;
 FK `created_by_user_id → users(id) ON DELETE RESTRICT`;
 FK `report_released_by_user_id → users(id) ON DELETE RESTRICT` *(additive, E16)*.
 Index `ix_sessions_state (state)`, `ix_sessions_scenario_version (scenario_version_id)`.
@@ -193,7 +197,14 @@ Index `ix_sessions_state (state)`, `ix_sessions_scenario_version (scenario_versi
 `CHECK (time_scale >= 0.1 AND time_scale <= 10)` *(additive, E5)*,
 `CHECK ((report_released_at IS NULL) = (report_released_by_user_id IS NULL))` *(additive, E16)*,
 `CHECK (role_transition_started_offset_ms IS NULL OR role_transition_started_offset_ms >= 0)`
-*(additive, E17)*.
+*(additive, E17)*,
+`CHECK ((lesson_id IS NULL) = (lesson_position IS NULL))` *(additive, I3 E4a)*;
+unique `uq_sessions_lesson_position (lesson_id, lesson_position)` *(additive, I3 E4a)*.
+
+`lesson_id` / `lesson_position` are additive in I3 E4a (migration `0011_lessons`, HLD 70 §70.3.2):
+the lesson a session is a card of and its plan position, both or neither — a single session has
+neither. Written once at creation (`SESSION_CREATED.{lesson_id, lesson_position}` records the same)
+and never updated.
 
 The two release columns (migration `0006_report_release_explain`, epic E16) hold **whether an
 instructor has released this session's report to its trainees**. They are deliberately not the
@@ -276,12 +287,56 @@ Materialized from `ROLE_STAGE_STARTED` / `STAGE_STATE_CHANGED` / `ROLE_STAGE_COM
 | `created_at_offset_ms` | `integer` | no | `0` |
 | `closed_at_offset_ms` | `integer` | yes | |
 | `closure_reason` | `text` | yes | |
+| `card_status` *(additive, I3 E4a)* | `text` | no | `'REGISTERED'` |
+| `display_number` *(additive, I3 E4a)* | `bigint` | no | `nextval('incident_display_number_seq')` |
 
 PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`;
 FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`.
 Unique `uq_incidents_session (session_id)` — one session, one incident (SPEC §13, §42 test 5): the
 uniqueness constraint is what makes "role changes do not create a new incident" structural.
-`CHECK (closure_reason IS NULL OR closure_reason IN ('RESOLVED','FALSE_CALL','TRANSFERRED','CANCELLED_BY_CALLER'))`.
+Unique `uq_incidents_display_number (display_number)` *(additive, I3 E4a)*.
+`CHECK (closure_reason IS NULL OR closure_reason IN ('RESOLVED','FALSE_CALL','TRANSFERRED','CANCELLED_BY_CALLER'))`,
+`CHECK (card_status IN ('REGISTERED','WORKED','CHECKED','NOT_NOTIFIED','REFUSED','NOT_COMPLETED','COMPLETED'))`
+*(additive, I3 E4a)*.
+
+`card_status` and `display_number` are additive in I3 E4a (migration `0011_lessons`, HLD 70 §70.3.6,
+§70.4.6). `card_status` is a **read model**: the derived card status, materialised by the event
+store in the same Unit of Work as the `DDS_CARD_STATUS_CHANGED` it records (the flush-before-append
+rule, HLD 70 §70.3.5); `CHECKED` alone is written by the report release, with no event (§20.3's
+release rule). `score()` never reads it (D5). The migration backfills it for every existing incident
+by the §70.4.6 function with the §70.4.4 picker mirror, over existing columns only. `display_number`
+comes from the sequence `incident_display_number_seq` — the «Происшествие NNNNNNNN» number of the
+lists; every existing incident gets one when the column is added.
+
+### `lessons` (additive, I3 E4a)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | |
+| `title_ru` | `text` | no | |
+| `created_by_user_id` | `uuid` | no | |
+| `session_mode` | `text` | no | |
+| `variants` | `jsonb` | no | `'{}'::jsonb` |
+| `participants` | `jsonb` | no | |
+| `scenario_plan` | `jsonb` | no | |
+| `state` | `text` | no | `'CREATED'` |
+| `created_at` | `timestamptz` | no | `now()` |
+| `started_at` | `timestamptz` | yes | |
+| `completed_at` | `timestamptz` | yes | |
+| `report_released_at` | `timestamptz` | yes | |
+| `report_released_by_user_id` | `uuid` | yes | |
+
+PK `(id)`. FK `created_by_user_id → users(id) ON DELETE RESTRICT`;
+FK `report_released_by_user_id → users(id) ON DELETE RESTRICT`.
+Index `ix_lessons_state (state)`.
+`CHECK (session_mode IN ('SINGLE_ROLE','FULL_CYCLE_SINGLE_TRAINEE','MULTI_TRAINEE','ASSESSMENT'))`,
+`CHECK (state IN ('CREATED','ACTIVE','COMPLETED','ABORTED'))`.
+
+A lesson (занятие, D15) owns N ordinary sessions (`simulation_sessions.lesson_id`), all created at
+lesson creation and started by the `LessonRunner` per `scenario_plan` arrivals. It is scheduling,
+not simulation: no event log of its own — everything that happens in a card is in that card's
+session log. `participants`, `scenario_plan` (the `PlanEntry` list) and `variants` (the lesson-wide
+`VariantsRequest`) are jsonb documents written whole at creation; only `state` and the timestamps
+change afterwards. `completed_at` is when the lesson reached `COMPLETED` or `ABORTED`.
 
 ### `world_engine_states` (additive, E6)
 The world event engine (D7) carries state that is neither a fact about the world nor a fact about
