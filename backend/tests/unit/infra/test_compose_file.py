@@ -147,3 +147,17 @@ def test_the_sip_gateway_is_profiled_gpu_free_and_publishes_exactly_its_ports(
     assert gateway["command"] == ["python", "-m", "voice_agent.sip_gateway"]
     assert gateway["environment"]["SIM_SIP_GATEWAY_HTTP_PORT"] == "8114"
     assert "SIM_SIP_PASSWORD" not in gateway["environment"]  # from `.env` only (SPEC §41)
+
+
+def test_the_sip_gateway_is_wired_to_the_backend_without_a_committed_secret(
+    compose_doc: dict,
+) -> None:
+    """I3 E6e (HLD 80 §80.2.3, D27): the gateway reaches the backend's `/api/v1/telephony/*` and
+    Redis; the service credential and the SIP password come from `.env` only (SPEC §41)."""
+    gateway = compose_doc["services"][SIP_GATEWAY]
+    environment = gateway["environment"]
+    assert environment["SIM_SIP_BACKEND_URL"] == "http://backend:8100"
+    assert environment["SIM_REDIS_URL"] == "redis://redis:6379/0"
+    assert environment["SIM_SIP_INVITE_AUTH"] == "${SIM_SIP_INVITE_AUTH:-challenge}"
+    assert "SIM_SIP_GATEWAY_SECRET" not in environment
+    assert "backend" in gateway["depends_on"]

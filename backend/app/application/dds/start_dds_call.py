@@ -34,8 +34,17 @@ snapshot and nothing else and asks for REQ-5332's checklist (`responder_template
 112 trainee on a second line is owner question Q1 — the reserved hook (`answered_by: TRAINEE`,
 E6g) has no behaviour here: the AI always answers.
 
-**The endpoint** is `BROWSER` in E6b; the softphone endpoint (`SIP`, a live `sip:binding:{user}`)
-is E6e's (§80.3.7). The answer carries the room-scoped token for the browser endpoint.
+**The endpoint (§80.3.7; I3 E6e).** A call placed from the browser button is `SIP` when the
+deployment allows the softphone endpoint and the trainee's user has a live registration
+(`sip:binding:{username}`, `CallEndpointChooser`), else `BROWSER`; a softphone-dialled call
+(`dialFromSip` → this use case with a `SipOrigin`) is `SIP` by construction and records what was
+dialled and why the session was chosen (`selection_reason`). The answer carries the room-scoped
+token for the browser endpoint only — on a `SIP` call the trainee talks on the softphone.
+
+A `SIP` call is not rung here: `guard_dds_call_transport_ready` needs the gateway's `leg UP`
+(`reportSipLeg`). A browser-button `SIP` call instead publishes `voice:join {endpoint: SIP,
+sip_user}` at once, which is what makes the gateway ring the softphone (UAC INVITE, §80.2.3
+step 3); a softphone-dialled one publishes nothing — the gateway already holds it.
 
 After the commit, and only then: `voice:join` for a call that is now `RINGING` (§40.6's rule, per
 call). The command never touches the 112 call or its `session:{id}:call_state` (§80.3.6).
@@ -49,6 +58,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.dds.call_endpoint import BROWSER_ONLY, CallEndpointChooser
 from app.application.dds.command_context import (
     ActionNotAvailableError,
     DdsCommandContext,
@@ -82,6 +92,7 @@ __all__ = [
     "ACTION_ID_BY_KIND",
     "DIALED_112",
     "PersonaOverrideProbe",
+    "SipOrigin",
     "StartDdsCall",
     "StartedDdsCall",
     "claimant_number",
@@ -115,6 +126,15 @@ class DdsCallRequestError(DomainError):
     (`422 VALIDATION_ERROR`)."""
 
     code = "VALIDATION_ERROR"
+
+
+@dataclass(frozen=True)
+class SipOrigin:
+    """A call a registered softphone dialled (I3 E6e, `dialFromSip`): its digits, as dialled, and
+    why its session was the one selected (§80.3.5). Such a call is `SIP` by construction."""
+
+    dialed: str
+    selection_reason: CallSelectionReason
 
 
 @dataclass(frozen=True)
@@ -169,6 +189,7 @@ class StartDdsCall:
         tokens: VoiceTokenService,
         voice_signals: VoiceSignalPublisher | None = None,
         persona_override: PersonaOverrideProbe = _no_override,
+        endpoints: CallEndpointChooser = BROWSER_ONLY,
     ) -> None:
         self._gate = gate
         self._ids = ids
@@ -176,6 +197,7 @@ class StartDdsCall:
         self._tokens = tokens
         self._voice_signals = voice_signals
         self._persona_override = persona_override
+        self._endpoints = endpoints
 
     async def __call__(
         self,
@@ -183,9 +205,16 @@ class StartDdsCall:
         user: AuthenticatedUser,
         kind: DdsCallKind,
         assignment_id: AssignmentId | None = None,
+        *,
+        sip: SipOrigin | None = None,
     ) -> StartedDdsCall:
-        """Start the call; ring it when the transport is up; answer with the view and the token."""
+        """Start the call; ring it when the transport is up; answer with the view and the token.
+
+        `sip` names a softphone-dialled call (I3 E6e); `None` is the browser button."""
         signals: list[CallSignal] = []
+        endpoint = (
+            CallEndpoint.SIP if sip is not None else await self._endpoints.choose(user.username)
+        )
         async with self._gate.open(session_id, user, ACTION_ID_BY_KIND[kind]) as ctx:
             if kind is not DdsCallKind.SERVICE_HEAD and assignment_id is not None:
                 raise DdsCallRequestError(f"a {kind.value} call takes no assignment_id")
@@ -220,11 +249,13 @@ class StartDdsCall:
                 session_id=session_id,
                 kind=kind,
                 direction=DdsCallDirection.OUTBOUND,
-                dialed=dialed,
-                endpoint=CallEndpoint.BROWSER,
+                dialed=dialed if sip is None else sip.dialed,
+                endpoint=endpoint,
                 actor=ctx.actor,
                 now_ms=ctx.now_ms,
-                selection_reason=CallSelectionReason.BROWSER_BUTTON,
+                selection_reason=(
+                    CallSelectionReason.BROWSER_BUTTON if sip is None else sip.selection_reason
+                ),
                 assignment_id=assignment_id,
                 service_type=service_type,
                 persona_id=None if persona is None else persona.id,
@@ -247,6 +278,9 @@ class StartDdsCall:
                 await ctx.append(events)
             if call.state is DdsCallState.RINGING:
                 signals.append(CallSignal(call))
+            elif endpoint is CallEndpoint.SIP and sip is None:
+                # The browser button with a live softphone: the gateway rings it (§80.2.3 step 3).
+                signals.append(CallSignal(call, sip_user=user.username))
         # The gate committed when the block above closed; the signal follows the commit (§40.6).
         await publish_signals(self._voice_signals, session_id, signals)
         voice = (

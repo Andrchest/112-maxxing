@@ -56,6 +56,7 @@ __all__ = [
     "InMemoryReportExplanationRepository",
     "InMemoryRunnerLock",
     "InMemoryScoreRepository",
+    "InMemorySipBindings",
     "InMemoryVoiceSignals",
     "SequentialIdGenerator",
     "StubVoiceTokenService",
@@ -708,6 +709,27 @@ class InMemoryVoiceSignals:
     ) -> None:
         """Record one `voice:cancel:{session_id}`."""
         self.cancels.append((session_id, call_id, reason, at_offset_ms))
+
+
+class InMemorySipBindings:
+    """A `SipBindingDirectory` over a set of usernames (I3 E6e) — the gate's `sip:binding:*`.
+
+    `bind` / `unbind` mirror the gateway's writes; a test "loses" a binding by `unbind`ing it, which
+    is exactly what a Redis flush or an expired key looks like to the reader (§80.3.7).
+    """
+
+    def __init__(self, bound: Iterable[str] = ()) -> None:
+        self.bound: set[str] = set(bound)
+
+    async def is_bound(self, username: str) -> bool:
+        return username in self.bound
+
+    async def bind(self, username: str, *, contact: str, expires_at: float, ttl_s: int) -> None:
+        del contact, expires_at, ttl_s
+        self.bound.add(username)
+
+    async def unbind(self, username: str) -> None:
+        self.bound.discard(username)
 
 
 class InMemoryCallStateCache:

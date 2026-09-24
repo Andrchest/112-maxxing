@@ -413,6 +413,8 @@ class DdsLegViewSchema(ApiModel):
     available_actions: list[ActionDescriptorSchema]
     live_call_id: UUID | None = None
     """I3 E6c: the non-`ENDED` `SERVICE_HEAD` call on this leg, if any (HLD 80 contract delta)."""
+    phone_extension: str | None = None
+    """I3 E6e: the service's dial-plan number («тел. 7012», HLD 80 §80.3.5)."""
 
 
 def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
@@ -432,6 +434,7 @@ def dds_leg_schema(view: DdsLegView) -> DdsLegViewSchema:
         history=[status_entry_schema(entry) for entry in view.history],
         available_actions=action_schemas(view.available_actions),
         live_call_id=view.live_call_id,
+        phone_extension=view.phone_extension,
     )
 
 

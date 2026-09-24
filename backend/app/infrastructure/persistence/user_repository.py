@@ -36,6 +36,7 @@ _COLUMNS = (
     _USERS.c.is_active,
     _USERS.c.password_hash,
     _USERS.c.created_at,
+    _USERS.c.sip_ha1,
 )
 
 
@@ -130,6 +131,16 @@ class SqlAlchemyUserRepository:
         result = await self._session.execute(statement)
         return _stored_user(result.one())
 
+    async def set_sip_ha1(self, username: str, sip_ha1: str | None) -> bool:
+        """`UPDATE users SET sip_ha1 = …` for one username (I3 E6e); `False` if there is none."""
+        result = await self._session.execute(
+            sa.update(_USERS)
+            .where(_USERS.c.username == username)
+            .values(sip_ha1=sip_ha1)
+            .returning(_USERS.c.id)
+        )
+        return result.first() is not None
+
 
 def _stored_user(row: sa.Row[tuple[object, ...]]) -> StoredUser:
     """One `users` row as the application's `StoredUser`."""
@@ -141,4 +152,5 @@ def _stored_user(row: sa.Row[tuple[object, ...]]) -> StoredUser:
         is_active=bool(row.is_active),
         password_hash=str(row.password_hash),
         created_at=row.created_at,
+        sip_ha1=None if row.sip_ha1 is None else str(row.sip_ha1),
     )

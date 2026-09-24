@@ -71,8 +71,15 @@ built from the log. Flagged in the report for the manager to ratify.
 | `role` | `text` | no | `'TRAINEE'` |
 | `is_active` | `boolean` | no | `true` |
 | `created_at` | `timestamptz` | no | `now()` |
+| `sip_ha1` *(additive, I3 E6e, migration `0015_users_sip_ha1`)* | `text` | yes | |
 
 PK `(id)`. Unique `uq_users_username (username)`. `CHECK (role IN ('TRAINEE','INSTRUCTOR','ADMIN'))` (D8).
+*(additive, I3 E6e)* `CHECK (sip_ha1 IS NULL OR sip_ha1 ~ '^[0-9a-f]{32}$')` (`ck_users_sip_ha1_hex`):
+the per-user SIP Digest HA1 `MD5(username:realm:password)`, set by `python -m
+app.tools.set_sip_password`; `NULL` ⇒ the deployment SIP password applies (`80-telephony.md` §80.7,
+D27). A credential digest: read only by `getSipCredential` (the SIP gateway's service credential),
+never rendered by a user view, never logged. Bound to `SIM_SIP_REALM` — a realm change invalidates
+every stored value.
 
 ### `trainee_groups` (additive, I3 E9a)
 | Column | PG type | Null | Default |

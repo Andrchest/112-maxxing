@@ -145,6 +145,38 @@ registrar keeps serving softphones.
    `answer`.
 6. **Echo `999` (E6a).** Handled inside the gateway, no backend, no room: the RTP payload is sent back.
    It is the interop and latency probe.
+7. **INVITE authentication (E6e manager decision 1, D27).** One setting, `SIM_SIP_INVITE_AUTH`. In
+   both modes an INVITE is accepted only from a user with a live registration (`403` otherwise).
+   `challenge` (the default): every INVITE — and every in-dialog re-INVITE — is answered `407 Proxy
+   Authentication Required` with a fresh nonce (the registrar's nonce table); the retried request
+   must carry a valid `Proxy-Authorization` Digest for the **same username as the From /
+   registration**, else `403` (an expired nonce is challenged again with `stale=true`). Reason: the
+   dial plan trusts the SIP username to pick the trainee's session, and source-address trust on UDP
+   is spoofable. `registered_only`: E6a's behaviour (the registration's Digest is the only check).
+   The headless UA and `tools/softphone` answer the `407` themselves.
+8. **Who may register (E6e manager decisions 2 and 3, D27).** A REGISTER's username must be an active
+   `users.username` — an unknown or retired one is `403`, asked of the backend
+   (`GET /api/v1/telephony/sip-credentials/{username}`: `403` unknown, `404` no own password, `200`
+   the HA1). A user with `users.sip_ha1` (migration `0015`, set by `python -m
+   app.tools.set_sip_password`) is checked against that HA1, everyone else against the deployment
+   password. The backend unreachable ⇒ `503` (never a fallback to "anyone"). The same lookup
+   checks the INVITE's `Proxy-Authorization`. Without `SIM_SIP_BACKEND_URL` the gateway runs
+   standalone (E6a: any username, echo only).
+9. **Readings the implementation fixed (E6e).** (a) `leg UP` for an OUTBOUND call whose transport is
+   not ready yet leaves it `DIALING`; the gateway re-reports `UP` every `leg_retry_s` (1 s) for up
+   to the ring timeout, then reports `FAILED`. (b) While a softphone-dialled call waits for
+   `DDS_CALL_ANSWERED`, the gateway re-reads it (`getTelephonyCall`) every `answer_poll_s` (2 s),
+   so a lost Redis event delays the `200 OK` by at most that. (c) A call ended before its answer
+   gives the softphone `486` (`BUSY`), `487` (the trainee's `HANGUP` from the browser) or `480`
+   (`NO_ANSWER`, `ABORT`, `TRANSPORT_LOST`); a `409 DDS_LINE_BUSY` on dial is `486`, any other `409`
+   `480`, a `403` `403`, the backend down `503`. (d) The gateway pattern-subscribes to
+   `voice:cancel:*` and `session:*:events` and drops every message not about a call it bridges. (e)
+   The session selection's candidates also require `dds_brigade_call = ON` (a session without the
+   phone has nobody to ring; D25). (f) A browser-button `SIP` call publishes `voice:join {endpoint:
+   SIP, sip_user}` at `DIALING` (re-published every `VOICE_JOIN_RETRY_MS` until the gateway's `leg
+   UP` rings it); an INBOUND `SIP` call is rung by the tick as before and the softphone's answer
+   (`leg UP`) is the trainee's `answer`. (g) On shutdown the gateway reports `leg FAILED {503}` for
+   every ДДС call it carries.
 
 ### 80.2.4 Plan B and fallback (named, not built)
 

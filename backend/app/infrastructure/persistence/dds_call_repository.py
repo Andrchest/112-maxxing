@@ -69,6 +69,13 @@ class SqlAlchemyDdsCallRepository:
         row = result.first()
         return None if row is None else _from_row(row._mapping)
 
+    async def get_by_id(self, call_id: UUID) -> DdsCall | None:
+        result = await self._session.execute(
+            sa.select(_CALLS).where(_CALLS.c.id == UUID(str(call_id)))
+        )
+        row = result.first()
+        return None if row is None else _from_row(row._mapping)
+
     async def list_for_session(self, session_id: SessionId) -> list[DdsCall]:
         result = await self._session.execute(
             sa.select(_CALLS)

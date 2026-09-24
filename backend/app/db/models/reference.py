@@ -38,10 +38,14 @@ class User(Base):
     role = sa.Column(sa.Text(), nullable=False, server_default=sa.text("'TRAINEE'"))
     is_active = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text("true"))
     created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    #: I3 E6e (HLD 80 §80.7, migration `0015_users_sip_ha1`): the optional per-user SIP Digest
+    #: HA1, `MD5(username:realm:password)`; `NULL` ⇒ the deployment SIP password applies.
+    sip_ha1 = sa.Column(sa.Text(), nullable=True)
 
     __table_args__ = (
         sa.UniqueConstraint("username", name="uq_users_username"),
         sa.CheckConstraint(enum_check("role", USER_ROLES), name="role"),
+        sa.CheckConstraint("sip_ha1 IS NULL OR sip_ha1 ~ '^[0-9a-f]{32}$'", name="sip_ha1_hex"),
     )
 
 

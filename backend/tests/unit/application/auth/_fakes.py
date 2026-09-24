@@ -67,6 +67,13 @@ class InMemoryUserRepository:
             )
         )
 
+    async def set_sip_ha1(self, username: str, sip_ha1: str | None) -> bool:
+        existing = self.by_username.get(username)
+        if existing is None:
+            return False
+        self.by_username[username] = existing.model_copy(update={"sip_ha1": sip_ha1})
+        return True
+
 
 class FakeUnitOfWork:
     """The smallest object satisfying the `UnitOfWork` port for an auth test."""

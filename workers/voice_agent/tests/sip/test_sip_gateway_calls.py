@@ -179,8 +179,10 @@ async def test_an_unknown_number_is_404_and_an_unregistered_caller_403(
 
 
 async def test_an_offer_without_g711_is_488(
-    gateway: SipGateway, make_phone: MakePhone, raw_udp: RawUdp
+    make_gateway: MakeGateway, make_phone: MakePhone, raw_udp: RawUdp
 ) -> None:
+    # A hand-built INVITE carries no `Proxy-Authorization`: E6a's `registered_only` mode.
+    gateway = await make_gateway(invite_auth="registered_only")
     await _registered(make_phone, gateway)
     sdp = b"v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 4000 RTP/AVP 9\r\na=rtpmap:9 G722/8000\r\n"
     raw_udp.send(_invite(raw_udp.port, sdp), gateway.udp_port or 0)
@@ -205,8 +207,11 @@ def _invite(port: int, sdp: bytes, *, call_id: str = "raw-1") -> bytes:
 
 
 async def test_a_reinvite_is_answered_with_the_same_sdp(
-    gateway: SipGateway, make_phone: MakePhone
+    make_gateway: MakeGateway, make_phone: MakePhone
 ) -> None:
+    # A hand-built re-INVITE carries no `Proxy-Authorization`: E6a's `registered_only` mode (the
+    # challenged re-INVITE is `test_sip_dds_calls.py`'s).
+    gateway = await make_gateway(invite_auth="registered_only")
     phone = await _registered(make_phone, gateway)
     call = await phone.call("999")
     assert call.dialog is not None and call.rtp is not None

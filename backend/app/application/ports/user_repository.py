@@ -48,6 +48,10 @@ class StoredUser(BaseModel):
     #: The argon2 digest. Never rendered, never logged, never returned by the API (SPEC §41).
     password_hash: str = Field(repr=False)
     created_at: datetime
+    #: I3 E6e (HLD 80 §80.7): the optional per-user SIP Digest HA1 — `None` ⇒ the deployment SIP
+    #: password applies. A credential digest: never rendered by a user view, never logged; only
+    #: the SIP gateway's `getSipCredential` returns it (SPEC §41).
+    sip_ha1: str | None = Field(default=None, repr=False)
 
 
 @runtime_checkable
@@ -100,5 +104,13 @@ class UserRepository(Protocol):
 
         `user_id` is used only when the row is inserted: an existing account keeps its id, so a
         re-run of `app.tools.seed_users` never orphans the sessions that reference it.
+        """
+        ...
+
+    async def set_sip_ha1(self, username: str, sip_ha1: str | None) -> bool:
+        """Set (or, with `None`, clear) the account's per-user SIP HA1 (I3 E6e, HLD 80 §80.7).
+
+        `False` when no account has this username. `upsert` never touches the column, so a
+        re-run of `app.tools.seed_users` keeps a SIP credential set by `app.tools.set_sip_password`.
         """
         ...

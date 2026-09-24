@@ -30,6 +30,16 @@ Two more duties, both SYSTEM's:
 `ring_now` and `join_extra` are shared with `startDdsCall`, which rings a call in its own command
 when the transport is already up (the common case), so the trainee hears the ringback at once.
 
+**The softphone endpoint (I3 E6e, §80.2.3, §80.3.7).** An OUTBOUND call whose endpoint is `SIP` is
+rung only by the SIP gateway's `leg UP` report (`reportSipLeg`): §80.3.2's
+`guard_dds_call_transport_ready` holds for it when the transport is up **and** the gateway is in the
+room with the softphone connected, so neither `startDdsCall` nor this tick rings it on the transport
+alone (`ring_now(leg_up=False)`). While such a call placed from the browser button waits in
+`DIALING` for the gateway to ring the softphone, `voice:join {endpoint: SIP, sip_user}` is
+re-published every `join_retry_ms` — the same self-healing rule, aimed at the gateway. An
+INBOUND `SIP` call (a brigade's `CALL_IN`) is rung by this tick as before: its `voice:join` is what
+makes the gateway ring the softphone, and the gateway's `leg UP` is then the trainee's `answer`.
+
 `end_live_calls` is SYSTEM's `hang_up` (`ABORT`) of every live call of a session, shared by
 `closeDdsIncident` and `abortSession` (§80.3.2 "session abort, stage completion"): both end the
 line in their own Unit of Work and publish `voice:cancel` after their commit, so no call outlives
@@ -61,6 +71,8 @@ from app.domain.common.ids import SessionId
 from app.domain.common.state_machine import GuardRuntime
 from app.domain.dds.call import (
     DDS_CALL_EVENT_TYPES,
+    CallEndpoint,
+    CallSelectionReason,
     DdsCall,
     DdsCallDirection,
     DdsCallEndReason,
@@ -80,10 +92,12 @@ __all__ = [
     "AdvanceDdsCalls",
     "CallSignal",
     "agent_joined_call",
+    "awaits_gateway_leg",
     "call_persona",
     "claimant_busy",
     "end_live_calls",
     "join_extra",
+    "line_owner_username",
     "publish_signals",
     "ring_now",
 ]
@@ -103,23 +117,45 @@ _CALL_HOLDING_STATES = frozenset({DDSStageState.RECEIVED, DDSStageState.ACKNOWLE
 
 @dataclass(frozen=True)
 class CallSignal:
-    """One Redis signal owed after a commit: `voice:join` or `voice:cancel` for one ДДС call."""
+    """One Redis signal owed after a commit: `voice:join` or `voice:cancel` for one ДДС call.
+
+    `sip_user` is the line owner's `users.username` for a `SIP`-endpoint call (I3 E6e): the SIP
+    gateway rings that user's softphone on `voice:join`."""
 
     call: DdsCall
     cancel_reason: str | None = None
     at_offset_ms: int = 0
+    sip_user: str | None = None
 
 
-def join_extra(call: DdsCall) -> Mapping[str, str | None]:
+def join_extra(call: DdsCall, sip_user: str | None = None) -> Mapping[str, str | None]:
     """`voice:join`'s additive keys for a ДДС call (HLD 80 §80.3.6; `direction` since I3 E6c, so
-    the head of an INBOUND call knows it is the one reporting)."""
-    return {
+    the head of an INBOUND call knows it is the one reporting; `sip_user` for a `SIP`-endpoint
+    call since I3 E6e — absent otherwise, so a browser call's payload is unchanged)."""
+    extra: dict[str, str | None] = {
         "call_kind": call.kind.value,
         "assignment_id": None if call.assignment_id is None else str(call.assignment_id).lower(),
         "persona_id": call.persona_id,
         "endpoint": call.endpoint.value,
         "direction": call.direction.value,
     }
+    if call.endpoint is CallEndpoint.SIP and sip_user is not None:
+        extra["sip_user"] = sip_user
+    return extra
+
+
+def awaits_gateway_leg(call: DdsCall) -> bool:
+    """An OUTBOUND `SIP` call that only the gateway's `leg UP` may ring (I3 E6e, §80.3.2)."""
+    return call.endpoint is CallEndpoint.SIP and call.direction is DdsCallDirection.OUTBOUND
+
+
+async def line_owner_username(uow: UnitOfWork, call: DdsCall) -> str | None:
+    """The `users.username` of the trainee on a `SIP` call's line (the gateway's `sip_user`);
+    `None` for a browser call, whose `voice:join` carries no `sip_user`."""
+    if call.endpoint is not CallEndpoint.SIP or call.actor_user_id is None:
+        return None
+    user = await uow.users.get(call.actor_user_id)
+    return None if user is None else user.username
 
 
 def call_persona(
@@ -162,14 +198,20 @@ async def ring_now(
     transport_ready: bool,
     log: Sequence[SessionEvent],
     persona: Persona | None = None,
+    leg_up: bool = False,
 ) -> tuple[DdsCall, list[DomainEvent]]:
     """`ring` a `DIALING` call when the transport is up, then — for a claimant whose 112 call is
     live, or a persona marked `busy` (I3 E6c) — `busy`. Returns the call as it now stands and the
     events to append (none for `ring`).
 
+    An OUTBOUND `SIP` call also needs the gateway's `leg UP` (`leg_up`, I3 E6e): only
+    `reportSipLeg` passes it.
+
     Persists the moved call through `uow.dds_calls`; the caller appends the events.
     """
     if call.state is not DdsCallState.DIALING or not transport_ready:
+        return call, []
+    if awaits_gateway_leg(call) and not leg_up:
         return call, []
     try:
         rung, _ = fire_call_trigger(
@@ -233,7 +275,7 @@ async def publish_signals(
                 session_id,
                 room=signal.call.room,
                 call_id=signal.call.call_id,
-                extra=join_extra(signal.call),
+                extra=join_extra(signal.call, signal.sip_user),
             )
 
 
@@ -307,7 +349,9 @@ class AdvanceDdsCalls:
                 if (
                     moved.state is DdsCallState.RINGING and call.state is DdsCallState.DIALING
                 ) or self._join_due(moved, log):
-                    signals.append(CallSignal(moved))
+                    signals.append(
+                        CallSignal(moved, sip_user=await line_owner_username(uow, moved))
+                    )
                     self._last_join_ms[moved.call_id] = self._clock.monotonic_ms()
             if fired:
                 await uow.commit()
@@ -359,15 +403,25 @@ class AdvanceDdsCalls:
         return call, []
 
     def _join_due(self, call: DdsCall, log: Sequence[SessionEvent]) -> bool:
-        """§40.6's per-call retry: live, no agent yet, `join_retry_ms` since the last publish."""
+        """§40.6's per-call retry: live, no agent yet, `join_retry_ms` since the last publish —
+        and (I3 E6e) a browser-button `SIP` call still `DIALING`, whose `voice:join` is what tells
+        the gateway to ring the softphone; the gateway's `leg UP` (the `ring`) ends that retry."""
         if self._voice_signals is None:
             return False
-        if call.state not in (DdsCallState.RINGING, DdsCallState.CONNECTED):
+        waiting_for_gateway = (
+            call.state is DdsCallState.DIALING
+            and awaits_gateway_leg(call)
+            and call.selection_reason is CallSelectionReason.BROWSER_BUTTON
+        )
+        if not waiting_for_gateway and call.state not in (
+            DdsCallState.RINGING,
+            DdsCallState.CONNECTED,
+        ):
             return False
         last = self._last_join_ms.get(call.call_id)
         if last is not None and self._clock.monotonic_ms() - last < self._join_retry_ms:
             return False
-        return not agent_joined_call(log, call.call_id)
+        return waiting_for_gateway or not agent_joined_call(log, call.call_id)
 
 
 def _stage_holds_calls(session: SimulationSession) -> bool:

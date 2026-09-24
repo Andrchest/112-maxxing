@@ -1210,6 +1210,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/telephony/dial": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The SIP gateway asks the backend to start the call a registered softphone dialled.
+         * @description (additive, I3 E6e — 80 §80.2.3 step 2, §80.3.5) Resolves the session by the selection
+         *     rule — among the user's ACTIVE sessions where they are a ДДС participant, the DDS stage is
+         *     the active stage and `dds_brigade_call = ON`, the card this user opened last
+         *     (`DDS_CARD_OPENED`) wins, else the oldest — then `dialed` by the pure dial plan (`112`, a
+         *     catalog `code`, `7` + 3 digits, the claimant's number), and runs the same `startDdsCall`
+         *     use case with `endpoint SIP`, `dialed` as dialled and `selection_reason` recorded on
+         *     `DDS_CALL_STARTED`. The call stays `DIALING` until the gateway reports `leg UP`.
+         *     `sip_user` is a `users.username`; an unknown or retired account ⇒ `403`. Unknown number, a
+         *     service with no leg on the selected card, or a leg the user does not play ⇒
+         *     `404 DIAL_NUMBER_UNKNOWN` (the gateway answers SIP `404`); no eligible session ⇒
+         *     `409 NO_ACTIVE_DDS_SESSION` (SIP `480`); every other `startDdsCall` refusal as there
+         *     (`409 DDS_LINE_BUSY` ⇒ SIP `486`). `999` never reaches this endpoint (gateway echo).
+         */
+        post: operations["dialFromSip"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/telephony/calls/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The gateway re-reads a call it bridges (after a Redis reconnect or its own restart).
+         * @description (additive, I3 E6e) One row of the `dds_calls` read model; `available_actions` is empty (the gateway is not a participant).
+         */
+        get: operations["getTelephonyCall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/telephony/calls/{call_id}/leg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The gateway reports its softphone leg of a SIP-endpoint call.
+         * @description (additive, I3 E6e — 80 §80.2.3, §80.3.2) `UP` — the gateway is in the room with the
+         *     softphone connected ⇒ an OUTBOUND call in `DIALING` fires `ring` (guard
+         *     `guard_dds_call_transport_ready`: the transport ready and the gateway's leg up; not ready
+         *     yet ⇒ the call stays `DIALING` and the gateway reports again), an INBOUND call in `RINGING`
+         *     fires `answer` by the TRAINEE on the line (picking up the softphone); otherwise idempotent.
+         *     `FAILED` — the softphone did not answer within 30 s or rejected the call ⇒ `hang_up` by
+         *     SYSTEM, `end_reason ABORT`. `DOWN` — `BYE` or `CANCEL` from the softphone ⇒ `hang_up` by
+         *     TRAINEE, `end_reason HANGUP`. A report on an `ENDED` call (or a session no longer ACTIVE)
+         *     is accepted and ignored (200), so a late `BYE` never fails. A `BROWSER` call ⇒
+         *     `409 INVALID_TRANSITION`. After the commit: `voice:join` for a call just rung,
+         *     `voice:cancel` for a call just ended.
+         */
+        post: operations["reportSipLeg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/telephony/sip-credentials/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-user SIP HA1 for the registrar (migration 0015).
+         * @description (additive, I3 E6e — 80 §80.7) Returns `users.sip_ha1` for `username` (set by
+         *     `python -m app.tools.set_sip_password`); `404` when the account has none — the deployment
+         *     password then applies; `403` for an unknown or retired account — the registrar answers that
+         *     REGISTER `403` (E6e decision 3). Never logged by either side (SPEC §41).
+         */
+        get: operations["getSipCredential"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instructor/sessions/{session_id}/overview": {
         parameters: {
             query?: never;
@@ -1819,7 +1923,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -2380,6 +2484,38 @@ export interface components {
              * @description Required for `SERVICE_HEAD` (the leg), absent / null otherwise (422).
              */
             assignment_id?: string | null;
+        };
+        /** @description (additive, I3 E6e) What a registered softphone dialled (80 §80.2.3 step 2). */
+        SipDialRequest: {
+            /** @description The registered username (= `users.username`). */
+            sip_user: string;
+            dialed: string;
+            /** @description The SIP `Call-ID`, for correlation in logs only. */
+            sip_call_id: string;
+        };
+        /** @description (additive, I3 E6e) The call the gateway bridges the softphone into. */
+        SipDialResponse: {
+            /** Format: uuid */
+            call_id: string;
+            /** Format: uuid */
+            session_id: string;
+            room_name: string;
+            kind: components["schemas"]["DdsCallKind"];
+            persona_id: string | null;
+        };
+        /** @description (additive, I3 E6e) The gateway's softphone leg of a `SIP`-endpoint call. */
+        SipLegReport: {
+            /** @enum {string} */
+            state: "UP" | "FAILED" | "DOWN";
+            /** @description The final SIP response of a FAILED click-to-call (e.g. 486, 408). */
+            sip_status?: number | null;
+        };
+        /** @description (additive, I3 E6e) A per-user SIP Digest HA1 (migration 0015). A credential digest — never logged. */
+        SipCredentialView: {
+            username: string;
+            realm: string;
+            /** @description MD5(username:realm:password); never logged. */
+            ha1: string;
         };
         /** @description (additive, I3 E6b) */
         StartDdsCallResponse: {
@@ -3404,6 +3540,8 @@ export interface components {
              * @description (additive, I3 E6c) The non-`ENDED` `SERVICE_HEAD` call on this leg, if any.
              */
             live_call_id?: string | null;
+            /** @description (additive, I3 E6e) The dial-plan number of this service — the catalog `code` (101…104) or `7` + 3 digits (80 §80.3.5); shown «тел. 7012». `null` for an undisplayed service. */
+            phone_extension?: string | null;
         };
         /** @description (additive, I3 E5a) The memo's pencil form. */
         SetServiceStatusRequest: {
@@ -3678,7 +3816,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description `NOT_FOUND` — no such session, scenario, version, resource or segment. */
+        /** @description `NOT_FOUND` — no such session, scenario, version, resource or segment; (additive, I3 E6e) `DIAL_NUMBER_UNKNOWN` — a softphone-dialled number reaches nobody on the selected card. */
         NotFound: {
             headers: {
                 [name: string]: unknown;
@@ -3697,7 +3835,9 @@ export interface components {
          *     `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
          *     does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
          *     `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
-         *     (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session.
+         *     (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session;
+         *     (additive, I3 E6e) `NO_ACTIVE_DDS_SESSION` — a softphone dialled and the user has no ACTIVE
+         *     session where they are a ДДС participant with a phone.
          */
         Conflict: {
             headers: {
@@ -5253,6 +5393,116 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    dialFromSip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SipDialRequest"];
+            };
+        };
+        responses: {
+            /** @description The call was started; the gateway joins `room_name` with a self-minted token. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SipDialResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getTelephonyCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+                call_id: components["parameters"]["CallIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsCallView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    reportSipLeg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
+                call_id: components["parameters"]["CallIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SipLegReport"];
+            };
+        };
+        responses: {
+            /** @description The call after the report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsCallView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getSipCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The HA1 digest. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SipCredentialView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getInstructorSessionOverview: {

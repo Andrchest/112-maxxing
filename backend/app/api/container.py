@@ -37,6 +37,7 @@ from app.application.dds.acknowledge import AcknowledgeDdsAssignment
 from app.application.dds.acknowledge_notification import AcknowledgeNotification
 from app.application.dds.answer_dds_call import AnswerDdsCall
 from app.application.dds.back_to_acknowledged import BackToDdsAcknowledged
+from app.application.dds.call_endpoint import CallEndpointChooser
 from app.application.dds.close_incident import CloseDdsIncident
 from app.application.dds.command_context import DdsCommandGate
 from app.application.dds.dds_call_flow import AdvanceDdsCalls
@@ -107,6 +108,7 @@ from app.application.ports.llm import LLMClient
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
 from app.application.ports.runner_lock import LessonRunnerLock, RunnerLock
+from app.application.ports.sip_bindings import SipBindingDirectory
 from app.application.ports.token_service import TokenService
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
@@ -146,6 +148,9 @@ from app.application.sessions.start_session import StartSession
 from app.application.simulation.responder_scripts import ScenarioResponderScripts
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
+from app.application.telephony.dial_from_sip import DialFromSip
+from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
+from app.application.telephony.report_sip_leg import ReportSipLeg
 from app.application.voice_token.create_voice_token import CreateVoiceToken
 from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings, get_settings
@@ -178,6 +183,7 @@ from app.infrastructure.transport.livekit_token_service import LiveKitTokenServi
 from app.infrastructure.transport.livekit_transport_status import LiveKitTransportStatus
 from app.infrastructure.transport.local_call_transport_status import LocalCallTransportStatus
 from app.infrastructure.transport.redis_call_state_cache import RedisCallStateCache
+from app.infrastructure.transport.redis_sip_bindings import RedisSipBindings
 from app.infrastructure.transport.redis_voice_signals import RedisVoiceSignals
 from app.infrastructure.weights.heuristic_proposer import HeuristicWeightProposer
 from app.infrastructure.weights.llm_proposer import LlmWeightProposer
@@ -234,6 +240,7 @@ class Container:
         idempotency: IdempotencyStore | None = None,
         reference: ReferencePort | None = None,
         lesson_runner_lock: LessonRunnerLock | None = None,
+        sip_bindings: SipBindingDirectory | None = None,
         owns_engine: bool = True,
         owns_redis: bool = True,
     ) -> None:
@@ -333,6 +340,11 @@ class Container:
             call_state_cache
             if call_state_cache is not None
             else RedisCallStateCache(self.redis, settings.session_cache_ttl_s)
+        )
+        # I3 E6e (HLD 80 §80.3.7): the gateway's mirrored softphone registrations
+        # (`sip:binding:{username}`), read at a ДДС call's `start` to choose its endpoint.
+        self.sip_bindings: SipBindingDirectory = (
+            sip_bindings if sip_bindings is not None else RedisSipBindings(self.redis)
         )
         # -- end E11-B -------------------------------------------------------------------------
         #
@@ -860,6 +872,7 @@ class Container:
             self.tick_session.resolution_condition_met,
             responder_probe=ScenarioResponderScripts(self.unit_of_work),
             reference=self.reference,
+            endpoints=self.call_endpoints(),
         )
 
     async def _dds_stage_automation(self, session_id: SessionId) -> bool:
@@ -882,7 +895,36 @@ class Container:
             # I3 E6c (R42): the persona a scenario names for a service, read runner-side — the
             # command is handed a persona id per service, never the script (INV 3).
             persona_override=ScenarioResponderScripts(self.unit_of_work).persona_override,
+            endpoints=self.call_endpoints(),
         )
+
+    def call_endpoints(self) -> CallEndpointChooser:
+        """§80.3.7's endpoint rule (I3 E6e): `SIM_TELEPHONY_ENDPOINTS` + the mirrored bindings."""
+        return CallEndpointChooser(self.sip_bindings, self.settings.telephony_endpoint_set)
+
+    # -- I3 E6e: the SIP gateway's endpoints (HLD 80 §80.2.3, tag `telephony`) ----------------
+
+    def dial_from_sip(self) -> DialFromSip:
+        """`dialFromSip` — session selection + dial plan, then `startDdsCall` (`SIP`)."""
+        return DialFromSip(self.unit_of_work, self.start_dds_call(), self.reference)
+
+    def report_sip_leg(self) -> ReportSipLeg:
+        """`reportSipLeg` — the gateway's softphone leg `UP` / `FAILED` / `DOWN`."""
+        return ReportSipLeg(
+            self.unit_of_work,
+            self.clock,
+            self.call_transport_status,
+            self.voice_signals,
+            self.reference,
+        )
+
+    def get_telephony_call(self) -> GetTelephonyCall:
+        """`getTelephonyCall`."""
+        return GetTelephonyCall(self.unit_of_work, self.reference)
+
+    def get_sip_credential(self) -> GetSipCredential:
+        """`getSipCredential` — `users.sip_ha1` (migration `0015`)."""
+        return GetSipCredential(self.unit_of_work, self.settings.sip_realm)
 
     def list_dds_calls(self) -> ListDdsCalls:
         """`listDdsCalls` (I3 E6b)."""

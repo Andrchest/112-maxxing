@@ -4,10 +4,14 @@ One class, three uses: the gate's UA against the in-process gateway, the load ge
 latency probe of `benchmarks/benchmark_voip.py`, and — wrapped by `voice_agent.tools.softphone`
 with `--headset` (sox) — the software IP phone of ТЗ ¶175 for manual runs.
 
-UAC only: REGISTER (answering the 401 Digest challenge), INVITE with a PCMA/PCMU offer → ACK,
-CANCEL, BYE; inbound it answers BYE and OPTIONS, and refuses INVITE with `486 Busy Here` (being
-called is E6e's click-to-call). Audio is 8 kHz s16le mono in 20 ms frames on the caller's side of
-`SoftCall.send_pcm` / `SoftCall.received`.
+UAC: REGISTER (answering the 401 Digest challenge), INVITE with a PCMA/PCMU offer → ACK — a
+`407 Proxy Authentication Required` is answered once with `Proxy-Authorization` (I3 E6e,
+`SIM_SIP_INVITE_AUTH=challenge`), so is a re-INVITE's (`SoftCall.reinvite`) — CANCEL, BYE. UAS
+(I3 E6e, being called: the ДДС click-to-call and a brigade's `CALL_IN`): `answer_mode` decides —
+`busy` (the E6a default, `486 Busy Here`), `auto` (`180`, then `200` with an SDP answer after
+`answer_delay_s`) or `ring` (`180` forever: the gateway's ring timeout); every incoming call is put
+on `SoftPhone.incoming`. BYE and OPTIONS are answered in every mode. Audio is 8 kHz s16le mono in
+20 ms frames on the caller's side of `SoftCall.send_pcm` / `SoftCall.received`.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from voice_agent.transport.sip.message import (
     build_authorization,
     build_response,
     build_sdp,
+    choose_codec,
     new_branch,
     new_call_id,
     new_tag,
@@ -43,6 +48,7 @@ from voice_agent.transport.sip.message import (
     parse_message,
     parse_name_addr,
     parse_sdp,
+    user_of,
 )
 from voice_agent.transport.sip.rtp import PortAllocator, RtpPacket, RtpSession, decode
 
@@ -82,6 +88,14 @@ class SoftCall:
     _ended: asyncio.Event = field(default_factory=asyncio.Event)
     _answered: asyncio.Future[SipMessage] | None = None
     ended_by_remote: bool = False
+    #: I3 E6e: `True` for a call the gateway placed to us (click-to-call / `CALL_IN`).
+    incoming: bool = False
+    #: The INVITE was challenged `407` and retried with `Proxy-Authorization`.
+    challenged: bool = False
+    _confirmed: asyncio.Event = field(default_factory=asyncio.Event)
+    #: An incoming call: our To tag and our `200 OK` (re-sent for a retransmitted INVITE).
+    local_tag: str = ""
+    ok: SipMessage | None = None
 
     @property
     def is_up(self) -> bool:
@@ -108,9 +122,19 @@ class SoftCall:
             return b""
         return b"".join(decode(packet.payload, self.codec) for _, packet in self.received)
 
+    async def wait_confirmed(self, timeout_s: float = 10.0) -> bool:
+        """An incoming call: our `200` was ACKed (the dialog is up)."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._confirmed.wait(), timeout_s)
+        return self._confirmed.is_set()
+
     async def cancel(self) -> int:
         """CANCEL the pending INVITE; returns the CANCEL's own final status."""
         return await self.phone._cancel(self)
+
+    async def reinvite(self) -> int:
+        """An in-dialog re-INVITE with the same offer (a session refresh); its final status."""
+        return await self.phone._reinvite(self)
 
     async def hangup(self) -> int:
         """BYE; returns its final status (0 if the call was not up)."""
@@ -137,7 +161,11 @@ class SoftPhone:
         rtp_port_range: str | None = None,
         codecs: tuple[int, ...] = (PT_PCMA, PT_PCMU),
         clock: Callable[[], float] = time.monotonic,
+        answer_mode: str = "busy",
+        answer_delay_s: float = 0.2,
     ) -> None:
+        if answer_mode not in ("busy", "auto", "ring"):
+            raise ValueError(f"unknown answer_mode {answer_mode!r}")
         self.server = server
         self.username = username
         self._password = password
@@ -157,6 +185,10 @@ class SoftPhone:
         self._register_cseq = 0
         self._local_tag = new_tag()
         self.local_port = 0
+        self.answer_mode = answer_mode
+        self.answer_delay_s = answer_delay_s
+        #: Every call the gateway placed to us, in arrival order (I3 E6e).
+        self.incoming: asyncio.Queue[SoftCall] = asyncio.Queue()
 
     # -- lifecycle ------------------------------------------------------------------------------
 
@@ -305,6 +337,21 @@ class SoftPhone:
             if not call._answered.done():
                 call._answered.set_exception(exc)
             return
+        if response.status == 407 and not call.challenged:
+            # I3 E6e: the gateway challenges every INVITE; answer once for the same user.
+            self._ack_non_2xx(call, response)
+            call.challenged = True
+            call.invite = self._authorised_retry(call.invite, response)
+            try:
+                response = await self._transactions.request(
+                    call.invite,
+                    self._channel_or_raise(),
+                    on_provisional=lambda r: call.provisional.append(r.status or 0),
+                )
+            except Exception as exc:
+                if not call._answered.done():
+                    call._answered.set_exception(exc)
+                return
         call.final_status = response.status
         call.final_reason = response.reason
         status = response.status or 0
@@ -319,6 +366,30 @@ class SoftPhone:
         if not call._answered.done():
             call._answered.set_result(response)
 
+    def _authorised_retry(self, request: SipMessage, challenge: SipMessage) -> SipMessage:
+        """The same request, next CSeq, fresh branch, with `Proxy-Authorization` (RFC 3261
+        §22.3) answering `challenge`'s `Proxy-Authenticate`."""
+        _, params = parse_auth_header(challenge.get("Proxy-Authenticate") or "")
+        number, method = request.cseq
+        retry = SipMessage(method=request.method, uri=request.uri, body=request.body)
+        for name, value in request.headers:
+            if name in ("Via", "CSeq", "Proxy-Authorization"):
+                continue
+            retry.add(name, value)
+        retry.headers.insert(0, ("Via", self._via()))
+        retry.set("CSeq", f"{number + 1} {method}")
+        retry.add(
+            "Proxy-Authorization",
+            build_authorization(
+                username=self.username,
+                password=self._password,
+                method=method,
+                uri=request.uri or "",
+                challenge=params,
+            ),
+        )
+        return retry
+
     def _on_invite_2xx(self, call: SoftCall, response: SipMessage) -> None:
         to = parse_name_addr(response.get("To") or "")
         contact = response.get("Contact")
@@ -330,7 +401,7 @@ class SoftPhone:
             remote_uri=to.uri,
             remote_target=parse_name_addr(contact).uri if contact else call.invite.uri or "",
             channel=self._channel_or_raise(),
-            local_cseq=1,
+            local_cseq=call.invite.cseq[0],
         )
         call.dialog = dialog
         try:
@@ -346,7 +417,9 @@ class SoftPhone:
 
     def _send_ack(self, call: SoftCall) -> None:
         assert call.dialog is not None
-        ack = call.dialog.ack_for_2xx(1, via_host=self.local_host, via_port=self.local_port or 5060)
+        ack = call.dialog.ack_for_2xx(
+            call.invite.cseq[0], via_host=self.local_host, via_port=self.local_port or 5060
+        )
         self._channel_or_raise().send_message(ack)
 
     def _ack_non_2xx(self, call: SoftCall, response: SipMessage) -> None:
@@ -357,7 +430,7 @@ class SoftPhone:
         ack.add("From", call.invite.get("From") or "")
         ack.add("To", response.get("To") or call.invite.get("To") or "")
         ack.add("Call-ID", call.call_id)
-        ack.add("CSeq", "1 ACK")
+        ack.add("CSeq", f"{call.invite.cseq[0]} ACK")
         self._channel_or_raise().send_message(ack)
 
     async def _cancel(self, call: SoftCall) -> int:
@@ -367,7 +440,7 @@ class SoftPhone:
         cancel.add("From", call.invite.get("From") or "")
         cancel.add("To", call.invite.get("To") or "")
         cancel.add("Call-ID", call.call_id)
-        cancel.add("CSeq", "1 CANCEL")
+        cancel.add("CSeq", f"{call.invite.cseq[0]} CANCEL")
         response = await self._transactions.request(cancel, self._channel_or_raise())
         return response.status or 0
 
@@ -382,6 +455,48 @@ class SoftPhone:
         response = await self._transactions.request(bye, self._channel_or_raise())
         self._end(call)
         return response.status or 0
+
+    async def _reinvite(self, call: SoftCall) -> int:
+        if call.dialog is None or call.dialog.state is not DialogState.CONFIRMED:
+            return 0
+        request = call.dialog.in_dialog_request(
+            "INVITE", via_host=self.local_host, via_port=self.local_port or 5060
+        )
+        request.add("Contact", self._contact())
+        request.add("User-Agent", USER_AGENT)
+        request.add("Content-Type", "application/sdp")
+        request.body = (call.invite.body if not call.incoming else b"") or build_sdp(
+            address=self.local_host,
+            port=call.rtp.local_port if call.rtp is not None else 0,
+            payload_types=self.codecs,
+            session_id=int(self._clock() * 1000) % 1_000_000_000,
+        )
+        channel = self._channel_or_raise()
+        response = await self._transactions.request(request, channel)
+        if response.status == 407:
+            channel.send_message(self._ack_for(request, response))
+            request = self._authorised_retry(request, response)
+            call.dialog.local_cseq = request.cseq[0]
+            response = await self._transactions.request(request, channel)
+        if 200 <= (response.status or 0) < 300:
+            channel.send_message(
+                call.dialog.ack_for_2xx(
+                    request.cseq[0], via_host=self.local_host, via_port=self.local_port or 5060
+                )
+            )
+        else:
+            channel.send_message(self._ack_for(request, response))
+        return response.status or 0
+
+    def _ack_for(self, request: SipMessage, response: SipMessage) -> SipMessage:
+        ack = SipMessage(method="ACK", uri=request.uri)
+        ack.add("Via", request.get("Via") or "")
+        ack.add("Max-Forwards", "70")
+        ack.add("From", request.get("From") or "")
+        ack.add("To", response.get("To") or request.get("To") or "")
+        ack.add("Call-ID", request.call_id)
+        ack.add("CSeq", f"{request.cseq[0]} ACK")
+        return ack
 
     def _end(self, call: SoftCall) -> None:
         if call.rtp is not None:
@@ -414,9 +529,119 @@ class SoftPhone:
         elif method == "OPTIONS":
             channel.send_message(build_response(message, 200, to_tag=new_tag()))
         elif method == "INVITE":
-            channel.send_message(build_response(message, 486, to_tag=new_tag()))
-        elif method != "ACK":
+            self._on_incoming_invite(message, channel)
+        elif method == "ACK":
+            call = self._calls.get(message.call_id)
+            if call is not None and call.incoming and call.dialog is not None:
+                call.dialog.state = DialogState.CONFIRMED
+                call._confirmed.set()
+        elif method == "CANCEL":
+            call = self._calls.get(message.call_id)
+            channel.send_message(build_response(message, 200 if call else 481))
+            if call is not None and call.incoming and not call._confirmed.is_set():
+                if call.final_status is None:
+                    call.final_status = 487
+                    channel.send_message(build_response(call.invite, 487, to_tag=call.local_tag))
+                call.ended_by_remote = True
+                self._end(call)
+        else:
             channel.send_message(build_response(message, 501, to_tag=new_tag()))
+
+    # -- being called (I3 E6e) ---------------------------------------------------------------
+
+    def _on_incoming_invite(self, invite: SipMessage, channel: Channel) -> None:
+        existing = self._calls.get(invite.call_id)
+        if existing is not None:
+            if existing.incoming and existing.final_status == 200 and existing.ok is not None:
+                channel.send_message(existing.ok)  # a retransmitted INVITE: our 200 again
+            elif existing.incoming and parse_name_addr(invite.get("To") or "").tag:
+                self._answer_reinvite(existing, invite, channel)
+            return
+        if self.answer_mode == "busy":
+            channel.send_message(build_response(invite, 486, to_tag=new_tag()))
+            return
+        task = asyncio.create_task(self._take_call(invite, channel))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _take_call(self, invite: SipMessage, channel: Channel) -> None:
+        try:
+            offer = parse_sdp(invite.body)
+        except ValueError:
+            channel.send_message(build_response(invite, 488, to_tag=new_tag()))
+            return
+        codec = choose_codec(offer, self.codecs)
+        if codec is None:
+            channel.send_message(build_response(invite, 488, to_tag=new_tag()))
+            return
+        rtp = RtpSession(
+            bind_host=self.local_host,
+            allocator=self._allocator,
+            payload_type=codec,
+            clock=self._clock,
+        )
+        await rtp.open()
+        rtp.set_remote((offer.address, offer.port))
+        sender = parse_name_addr(invite.get("From") or "")
+        contact = invite.get("Contact")
+        call = SoftCall(
+            number=user_of(invite.get("From") or "") or "",
+            call_id=invite.call_id,
+            invite=invite,
+            phone=self,
+            rtp=rtp,
+            codec=codec,
+            incoming=True,
+        )
+        call.local_tag = new_tag()
+        rtp.on_packet = call._on_rtp
+        call.dialog = Dialog(
+            call_id=invite.call_id,
+            local_tag=call.local_tag,
+            remote_tag=sender.tag,
+            local_uri=parse_name_addr(invite.get("To") or "").uri,
+            remote_uri=sender.uri,
+            remote_target=parse_name_addr(contact).uri if contact else sender.uri,
+            channel=channel,
+            remote_cseq=invite.cseq[0],
+        )
+        self._calls[invite.call_id] = call
+        channel.send_message(build_response(invite, 180, to_tag=call.local_tag))
+        self.incoming.put_nowait(call)
+        if self.answer_mode == "ring":
+            return
+        await asyncio.sleep(self.answer_delay_s)
+        if call._ended.is_set():
+            return
+        call.ok = build_response(
+            invite,
+            200,
+            to_tag=call.local_tag,
+            headers=[("Contact", self._contact()), ("Content-Type", "application/sdp")],
+            body=build_sdp(
+                address=self.local_host,
+                port=rtp.local_port,
+                payload_types=(codec,),
+                session_id=int(self._clock() * 1000) % 1_000_000_000,
+            ),
+        )
+        call.final_status = 200
+        for _ in range(8):  # RFC 3261 §13.3.1.4, loosely: re-send the 200 until the ACK
+            channel.send_message(call.ok)
+            if await call.wait_confirmed(0.5) or call._ended.is_set():
+                return
+
+    def _answer_reinvite(self, call: SoftCall, invite: SipMessage, channel: Channel) -> None:
+        body = call.ok.body if call.ok is not None else b""
+        channel.send_message(
+            build_response(
+                invite,
+                200,
+                to_tag=call.local_tag,
+                headers=[("Contact", self._contact()), ("Content-Type", "application/sdp")],
+                body=body,
+            )
+        )
 
     def _on_stray_response(self, response: SipMessage, channel: Channel) -> None:
         """A retransmitted 2xx to an INVITE (our ACK was lost): ACK it again."""

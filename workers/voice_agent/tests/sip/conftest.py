@@ -32,6 +32,10 @@ async def make_gateway() -> AsyncIterator[Callable[..., object]]:
         kwargs: dict[str, object] = {"router": router}
         if clock is not None:
             kwargs["clock"] = clock
+        # I3 E6e: the gateway's collaborators (a fake backend, the room, the binding hooks).
+        for name in ("backend", "room_factory", "credentials", "on_bind", "on_unbind"):
+            if name in config:
+                kwargs[name] = config.pop(name)
         gateway = SipGateway(gateway_config(**config), **kwargs)  # type: ignore[arg-type]
         await gateway.start()
         started.append(gateway)

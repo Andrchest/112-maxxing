@@ -15,6 +15,11 @@
 //   (`startDdsCall {kind: OPERATOR_112}`); the AI 112 operator answers («Оператор 112») and asks
 //   for REQ-5332's checklist — what the ДДС says is scored, never shown here.
 //
+// * (I3 E6e, 80 §80.3.4, §80.3.7) beside «Позвонить заявителю» the claimant's number from the frozen
+//   card (`caller.phone`, else `caller.phone_aon`) — what a softphone dials to call them back. A
+//   call whose endpoint is `SIP` (the trainee's softphone is registered) is not joined here: the
+//   widget says the conversation is on the SIP phone, and the buttons still work.
+//
 // The call's state is the server's `DdsCallView` — `listDdsCalls` on mount and on every
 // `DDS_CALL_*` event (the console invalidates `queryKeys.dds.calls`), `startDdsCall` /
 // `hangUpDdsCall` answers in between — held per `call_id` in `entities/call`'s `useDdsCallStore`.
@@ -77,6 +82,15 @@ const END_REASON_LABEL_KEY: Record<NonNullable<DdsCallView['end_reason']>, keyof
   ABORT: 'ddsPhoneEndReasonAbort',
   TRANSPORT_LOST: 'ddsPhoneEndReasonTransportLost',
 };
+
+/** The claimant's number on the frozen card (80 §80.3.4): `caller.phone`, else the AON number. */
+function claimantPhone(cardValues: Record<string, unknown> | undefined): string | null {
+  for (const path of ['caller.phone', 'caller.phone_aon']) {
+    const value = cardValues?.[path];
+    if (typeof value === 'string' && /\d/.test(value)) return value;
+  }
+  return null;
+}
 
 function resolveLiveKitUrl(responseLiveKitUrl: string): string {
   const override = import.meta.env.VITE_LIVEKIT_URL as string | undefined;
@@ -208,6 +222,8 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
     }
   }
 
+  const workItem = useWorkItemStore((state) => state.workItem);
+  const claimantNumber = claimantPhone(workItem?.card_values);
   const lineFree = !call || call.state === 'ENDED';
   const callClaimant = lineFree ? (availableActions.find((action) => action.action_id === 'call_claimant') ?? null) : null;
   const call112 = lineFree ? (availableActions.find((action) => action.action_id === 'call_112') ?? null) : null;
@@ -276,6 +292,11 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
             {callClaimant.label_ru}
           </Button>
         ) : null}
+        {callClaimant && claimantNumber ? (
+          <span className="self-center text-muted-foreground" data-slot="dds-claimant-number">
+            {t('ddsPhoneClaimantNumberLabel')} {formatDialedRu(claimantNumber)}
+          </span>
+        ) : null}
         {call112 ? (
           <Button type="button" size="sm" disabled={pending} data-slot="dds-call-112" onClick={() => void handleCall112()}>
             {call112.label_ru}
@@ -287,6 +308,11 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
           </Button>
         ) : null}
       </span>
+      {call && call.endpoint === 'SIP' && call.state !== 'ENDED' ? (
+        <p className="w-full text-xs text-muted-foreground" data-slot="dds-call-on-softphone">
+          {t('ddsPhoneOnSoftphone')}
+        </p>
+      ) : null}
       {liveCallId && mediaPhase === 'failed' ? (
         <p className="w-full text-xs text-amber-700" data-slot="dds-call-media-failed">
           {t('ddsPhoneMediaFailed')}

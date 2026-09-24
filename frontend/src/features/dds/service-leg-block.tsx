@@ -114,6 +114,12 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
         }`}
       >
         <span className="font-semibold">{leg.service_name_ru}</span>
+        {leg.phone_extension ? (
+          // I3 E6e (HLD 80 §80.3.5): the service's dial-plan number — what a softphone dials.
+          <span className="text-muted-foreground" data-slot="dds-leg-phone-extension">
+            {t('ddsLegPhoneExtensionPrefix')} {leg.phone_extension}
+          </span>
+        ) : null}
         <span className="flex items-center gap-1 text-muted-foreground">
           {leg.response_status_at_offset_ms !== null ? <span>{formatCallDurationMs(leg.response_status_at_offset_ms)}</span> : null}
           <span>{serviceResponseStatusLabelRu(leg.response_status)}</span>

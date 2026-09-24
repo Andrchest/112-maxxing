@@ -508,3 +508,23 @@ voice_agent    -> application, inference, infrastructure
   R2 changes 23 auto lists and only ever adds services.
 - Consequence: rescoring an existing log is unchanged (scoring reads the stored `RECIPIENTS_RESOLVED`,
   never re-resolves); a new session whose card sets a flag may notify more services than before.
+
+## D27. The SIP endpoint's credentials: a challenged INVITE, per-user HA1, known usernames only (I3 E6e — `80-telephony.md` §80.2.3 items 7–9, §80.7)
+
+- Date: 2026-09-24. Manager decisions on E6e; additive to D22 (nothing there is replaced).
+- **INVITE authentication**, one setting `SIM_SIP_INVITE_AUTH`: `challenge` (the default) answers
+  every INVITE and in-dialog re-INVITE `407 Proxy Authentication Required` with a fresh nonce; the
+  retried request must carry a valid `Proxy-Authorization` Digest for the same username as the From
+  / registration, else `403`. `registered_only` keeps E6a's rule (a live registration is enough).
+  Both modes still refuse an unregistered From user (`403`). Reason: the dial plan trusts the SIP
+  username to pick the trainee's session, and source-address trust on UDP is spoofable.
+- **Per-user HA1** (migration `0015_users_sip_ha1`, built): `users.sip_ha1 text NULL`, `CHECK` 32
+  lowercase hex; `NULL` ⇒ the deployment password `SIM_SIP_PASSWORD` applies. Set or cleared by
+  `python -m app.tools.set_sip_password` (the password from a no-echo prompt or an environment
+  variable, never an argument, never logged); served to the gateway only by `GET
+  /api/v1/telephony/sip-credentials/{username}` behind `SIM_SIP_GATEWAY_SECRET`. A realm change
+  invalidates every stored HA1. No credential appears in logs, reports or fixtures in clear text.
+- **An unknown SIP username (not an active `users.username`) is refused at REGISTER (`403`).** The
+  backend unreachable ⇒ `503`, never "anyone".
+- Consequence: `tools/softphone` and the gate's headless UA answer the `407` themselves; a foreign
+  softphone must be configured with the user's SIP password (the deployment one, or its own).

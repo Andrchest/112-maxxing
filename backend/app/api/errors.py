@@ -70,6 +70,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "FORBIDDEN_FOR_SERVICE": 403,
     # 404 — components/responses/NotFound
     "NOT_FOUND": 404,
+    # 404 — I3 E6e addition to NotFound (`i3-telephony-openapi-delta.yaml` `NotFoundE6`)
+    "DIAL_NUMBER_UNKNOWN": 404,
     # 409 — components/responses/Conflict
     "INVALID_TRANSITION": 409,
     "ACTION_NOT_AVAILABLE": 409,
@@ -90,6 +92,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "SERVICE_REMOVAL_FORBIDDEN": 409,
     # 409 — I3 E6b addition to Conflict (`i3-telephony-openapi-delta.yaml` `ConflictE6`)
     "DDS_LINE_BUSY": 409,
+    # 409 — I3 E6e addition to Conflict (`ConflictE6`): a softphone dialled, no eligible session
+    "NO_ACTIVE_DDS_SESSION": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,

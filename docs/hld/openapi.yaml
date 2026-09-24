@@ -60,6 +60,8 @@ tags:
     description: (additive, I3 E4a) Lessons (занятия) — a stream of cards as N ordinary sessions (70 §70.3, D15).
   - name: incidents
     description: (additive, I3 E4a) The caller's cross-session incident list (70 §70.3.6).
+  - name: telephony
+    description: (additive, I3 E6e) The SIP gateway's endpoints — softphone dial, leg reports, call read, per-user HA1 (80 §80.2.3). Service credential only.
 
 paths:
 
@@ -1671,6 +1673,138 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # ----------------------------------------------------------- telephony ----
+  # (additive, I3 E6e — `80-telephony.md` §80.2.3, §80.3.5, §80.7,
+  # `contracts/i3-telephony-openapi-delta.yaml` items `x-epic: E6e`). Called by the SIP gateway
+  # only, with its service credential (`sipGatewaySecret`); never with a user's bearer token.
+  /api/v1/telephony/dial:
+    post:
+      tags: [telephony]
+      operationId: dialFromSip
+      summary: The SIP gateway asks the backend to start the call a registered softphone dialled.
+      description: |
+        (additive, I3 E6e — 80 §80.2.3 step 2, §80.3.5) Resolves the session by the selection
+        rule — among the user's ACTIVE sessions where they are a ДДС participant, the DDS stage is
+        the active stage and `dds_brigade_call = ON`, the card this user opened last
+        (`DDS_CARD_OPENED`) wins, else the oldest — then `dialed` by the pure dial plan (`112`, a
+        catalog `code`, `7` + 3 digits, the claimant's number), and runs the same `startDdsCall`
+        use case with `endpoint SIP`, `dialed` as dialled and `selection_reason` recorded on
+        `DDS_CALL_STARTED`. The call stays `DIALING` until the gateway reports `leg UP`.
+        `sip_user` is a `users.username`; an unknown or retired account ⇒ `403`. Unknown number, a
+        service with no leg on the selected card, or a leg the user does not play ⇒
+        `404 DIAL_NUMBER_UNKNOWN` (the gateway answers SIP `404`); no eligible session ⇒
+        `409 NO_ACTIVE_DDS_SESSION` (SIP `480`); every other `startDdsCall` refusal as there
+        (`409 DDS_LINE_BUSY` ⇒ SIP `486`). `999` never reaches this endpoint (gateway echo).
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: [DDS_CALL_STARTED, DDS_CALL_ENDED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SipDialRequest' }
+      responses:
+        '201':
+          description: The call was started; the gateway joins `room_name` with a self-minted token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SipDialResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/telephony/calls/{call_id}:
+    get:
+      tags: [telephony]
+      operationId: getTelephonyCall
+      summary: The gateway re-reads a call it bridges (after a Redis reconnect or its own restart).
+      description: (additive, I3 E6e) One row of the `dds_calls` read model; `available_actions` is empty (the gateway is not a participant).
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/telephony/calls/{call_id}/leg:
+    post:
+      tags: [telephony]
+      operationId: reportSipLeg
+      summary: The gateway reports its softphone leg of a SIP-endpoint call.
+      description: |
+        (additive, I3 E6e — 80 §80.2.3, §80.3.2) `UP` — the gateway is in the room with the
+        softphone connected ⇒ an OUTBOUND call in `DIALING` fires `ring` (guard
+        `guard_dds_call_transport_ready`: the transport ready and the gateway's leg up; not ready
+        yet ⇒ the call stays `DIALING` and the gateway reports again), an INBOUND call in `RINGING`
+        fires `answer` by the TRAINEE on the line (picking up the softphone); otherwise idempotent.
+        `FAILED` — the softphone did not answer within 30 s or rejected the call ⇒ `hang_up` by
+        SYSTEM, `end_reason ABORT`. `DOWN` — `BYE` or `CANCEL` from the softphone ⇒ `hang_up` by
+        TRAINEE, `end_reason HANGUP`. A report on an `ENDED` call (or a session no longer ACTIVE)
+        is accepted and ignored (200), so a late `BYE` never fails. A `BROWSER` call ⇒
+        `409 INVALID_TRANSITION`. After the commit: `voice:join` for a call just rung,
+        `voice:cancel` for a call just ended.
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: [DDS_CALL_ANSWERED, DDS_CALL_ENDED]
+      parameters:
+        - $ref: '#/components/parameters/CallIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SipLegReport' }
+      responses:
+        '200':
+          description: The call after the report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/telephony/sip-credentials/{username}:
+    get:
+      tags: [telephony]
+      operationId: getSipCredential
+      summary: Per-user SIP HA1 for the registrar (migration 0015).
+      description: |
+        (additive, I3 E6e — 80 §80.7) Returns `users.sip_ha1` for `username` (set by
+        `python -m app.tools.set_sip_password`); `404` when the account has none — the deployment
+        password then applies; `403` for an unknown or retired account — the registrar answers that
+        REGISTER `403` (E6e decision 3). Never logged by either side (SPEC §41).
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: The HA1 digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SipCredentialView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ---------------------------------------------------------- instructor ----
   /api/v1/instructor/sessions/{session_id}/overview:
     get:
@@ -2562,6 +2696,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: HS256 JWT minted by `loginUser`; the secret comes from the environment (D8, SPEC §41).
+    sipGatewaySecret:
+      type: apiKey
+      in: header
+      name: X-Sip-Gateway-Secret
+      description: (additive, I3 E6e) The SIP gateway's service credential, `SIM_SIP_GATEWAY_SECRET` from the environment; accepted only on `/api/v1/telephony/*`. Unset ⇒ every telephony operation answers `401`.
 
   parameters:
     CallIdParam:
@@ -2618,7 +2757,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     NotFound:
-      description: '`NOT_FOUND` — no such session, scenario, version, resource or segment.'
+      description: '`NOT_FOUND` — no such session, scenario, version, resource or segment; (additive, I3 E6e) `DIAL_NUMBER_UNKNOWN` — a softphone-dialled number reaches nobody on the selected card.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2633,7 +2772,9 @@ components:
         `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
         does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
         `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
-        (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session.
+        (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session;
+        (additive, I3 E6e) `NO_ACTIVE_DDS_SESSION` — a softphone dialled and the user has no ACTIVE
+        session where they are a ДДС participant with a phone.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2700,6 +2841,8 @@ components:
         - PROPOSAL_UNKNOWN             # additive, I3 E6c
         - FORBIDDEN_FOR_SERVICE        # additive, I3 E5a
         - DDS_LINE_BUSY                # additive, I3 E6b
+        - DIAL_NUMBER_UNKNOWN          # additive, I3 E6e
+        - NO_ACTIVE_DDS_SESSION        # additive, I3 E6e
 
     Problem:
       type: object
@@ -3647,6 +3790,43 @@ components:
           type: [string, 'null']
           format: uuid
           description: Required for `SERVICE_HEAD` (the leg), absent / null otherwise (422).
+    SipDialRequest:
+      description: (additive, I3 E6e) What a registered softphone dialled (80 §80.2.3 step 2).
+      type: object
+      additionalProperties: false
+      required: [sip_user, dialed, sip_call_id]
+      properties:
+        sip_user: { type: string, minLength: 1, maxLength: 128, description: 'The registered username (= `users.username`).' }
+        dialed: { type: string, minLength: 1, maxLength: 32, pattern: '^[0-9*#+]+$' }
+        sip_call_id: { type: string, minLength: 1, maxLength: 256, description: 'The SIP `Call-ID`, for correlation in logs only.' }
+    SipDialResponse:
+      description: (additive, I3 E6e) The call the gateway bridges the softphone into.
+      type: object
+      additionalProperties: false
+      required: [call_id, session_id, room_name, kind, persona_id]
+      properties:
+        call_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        room_name: { type: string }
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        persona_id: { type: [string, 'null'] }
+    SipLegReport:
+      description: (additive, I3 E6e) The gateway's softphone leg of a `SIP`-endpoint call.
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { type: string, enum: [UP, FAILED, DOWN] }
+        sip_status: { type: [integer, 'null'], minimum: 100, maximum: 699, description: 'The final SIP response of a FAILED click-to-call (e.g. 486, 408).' }
+    SipCredentialView:
+      description: (additive, I3 E6e) A per-user SIP Digest HA1 (migration 0015). A credential digest — never logged.
+      type: object
+      additionalProperties: false
+      required: [username, realm, ha1]
+      properties:
+        username: { type: string }
+        realm: { type: string }
+        ha1: { type: string, pattern: '^[0-9a-f]{32}$', description: 'MD5(username:realm:password); never logged.' }
     StartDdsCallResponse:
       description: (additive, I3 E6b)
       type: object
@@ -5130,6 +5310,9 @@ components:
           type: [string, 'null']
           format: uuid
           description: (additive, I3 E6c) The non-`ENDED` `SERVICE_HEAD` call on this leg, if any.
+        phone_extension:
+          type: [string, 'null']
+          description: (additive, I3 E6e) The dial-plan number of this service — the catalog `code` (101…104) or `7` + 3 digits (80 §80.3.5); shown «тел. 7012». `null` for an undisplayed service.
     SetServiceStatusRequest:
       description: (additive, I3 E5a) The memo's pencil form.
       type: object

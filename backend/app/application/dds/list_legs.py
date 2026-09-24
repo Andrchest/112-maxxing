@@ -40,6 +40,7 @@ from app.domain.dds.responders import plays_leg
 from app.domain.enums import DDSStageState, RoleType, SessionState
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.routing.catalog import ServiceCatalog
+from app.domain.routing.dial_plan import phone_extension
 from app.domain.session.session import RoleStage, SimulationSession
 
 __all__ = ["ListDdsLegs", "assemble_leg_views", "is_dds_participant"]
@@ -111,6 +112,9 @@ async def assemble_leg_views(
                 is_mine=_is_mine(session, stage, leg, viewer),
                 may_act=may_act,
                 live_call_id=live_calls.get(UUID(str(leg.assignment_id))),
+                phone_extension=(
+                    None if catalog is None else phone_extension(catalog, leg.service_type)
+                ),
             )
         )
     return tuple(views)

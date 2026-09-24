@@ -26,7 +26,13 @@ from typing import Any, Protocol
 
 from voice_agent.transport.sip.rtp import CLOCK_RATE, FRAME_BYTES, Resampler
 
-__all__ = ["FakeRoomBridge", "LiveKitRoomBridge", "RoomPort", "sip_participant_identity"]
+__all__ = [
+    "FakeRoomBridge",
+    "LiveKitRoomBridge",
+    "RoomPort",
+    "room_factory_for",
+    "sip_participant_identity",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -189,3 +195,19 @@ class LiveKitRoomBridge:
         if room is not None:
             with contextlib.suppress(Exception):
                 await room.disconnect()
+
+
+def room_factory_for(url: str, api_key: str, api_secret: str) -> Callable[[Any], RoomPort]:
+    """The gateway's `RoomFactory` for real (I3 E6e): a ДДС call's room (`dialed.room_name`),
+    joined as `sip-{call_id}` with a token minted locally by the backend's own
+    `LiveKitTokenService` — no token travels over Redis or from the backend (80 §80.1)."""
+    from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
+
+    tokens = LiveKitTokenService(api_key, api_secret, livekit_url=url, ttl_minutes=10)
+
+    def make(dialed: Any) -> RoomPort:
+        identity = sip_participant_identity(dialed.call_id)
+        token = tokens.mint(room_name=dialed.room_name, participant_identity=identity).token
+        return LiveKitRoomBridge(url=url, token=token, identity=identity)
+
+    return make

@@ -232,6 +232,9 @@ class DdsLegView(DdsView):
     available_actions: tuple[ActionView, ...]
     live_call_id: UUID | None = None
     """The non-`ENDED` `SERVICE_HEAD` call on this leg, if any (HLD 80 contract delta, I3 E6c)."""
+    phone_extension: str | None = None
+    """The service's dial-plan number — its catalog `code` (`101`…`104`) or `7` + 3 digits — shown
+    «тел. 7012» beside the block (HLD 80 §80.3.5, I3 E6e); `None` for an undisplayed service."""
 
 
 class CardIssueView(DdsView):
@@ -448,6 +451,7 @@ def leg_view(
     is_mine: bool,
     may_act: bool,
     live_call_id: UUID | None = None,
+    phone_extension: str | None = None,
 ) -> DdsLegView:
     """Project one leg and its history (`DdsLegView`). `may_act` is whether the stage offers
     `set_service_status` right now; the dropdown is empty unless the leg `is_mine` too."""
@@ -482,6 +486,7 @@ def leg_view(
         history=entries,
         available_actions=(action_views(leg_actions(leg, policy)) if is_mine and may_act else ()),
         live_call_id=live_call_id,
+        phone_extension=phone_extension,
     )
 
 

@@ -48,15 +48,15 @@ def _registrar(clock: FakeClock) -> Registrar:
     return Registrar(realm=TEST_REALM, password=TEST_SIP_PASSWORD, now=clock)
 
 
-def test_register_is_challenged_then_bound_with_the_right_password() -> None:
+async def test_register_is_challenged_then_bound_with_the_right_password() -> None:
     clock = FakeClock()
     registrar = _registrar(clock)
-    challenge = registrar.handle_register(_register(), source=SOURCE, transport="UDP")
+    challenge = await registrar.handle_register(_register(), source=SOURCE, transport="UDP")
     assert challenge.status == 401
     header = challenge.get("WWW-Authenticate") or ""
     assert header.startswith("Digest ") and f'realm="{TEST_REALM}"' in header
     assert 'qop="auth"' in header
-    ok = registrar.handle_register(
+    ok = await registrar.handle_register(
         _authorised(_register(), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
@@ -68,10 +68,10 @@ def test_register_is_challenged_then_bound_with_the_right_password() -> None:
     assert binding.source == SOURCE and binding.transport == "UDP"
 
 
-def test_a_wrong_password_is_403_and_binds_nothing() -> None:
+async def test_a_wrong_password_is_403_and_binds_nothing() -> None:
     registrar = _registrar(FakeClock())
-    challenge = registrar.handle_register(_register(), source=SOURCE, transport="UDP")
-    refused = registrar.handle_register(
+    challenge = await registrar.handle_register(_register(), source=SOURCE, transport="UDP")
+    refused = await registrar.handle_register(
         _authorised(_register(), challenge, password="wrong-test-password"),
         source=SOURCE,
         transport="UDP",
@@ -80,11 +80,13 @@ def test_a_wrong_password_is_403_and_binds_nothing() -> None:
     assert registrar.lookup("trainee") is None
 
 
-def test_a_binding_expires_and_expires_zero_unbinds() -> None:
+async def test_a_binding_expires_and_expires_zero_unbinds() -> None:
     clock = FakeClock()
     registrar = _registrar(clock)
-    challenge = registrar.handle_register(_register(expires=60), source=SOURCE, transport="UDP")
-    registrar.handle_register(
+    challenge = await registrar.handle_register(
+        _register(expires=60), source=SOURCE, transport="UDP"
+    )
+    await registrar.handle_register(
         _authorised(_register(expires=60), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
@@ -95,15 +97,17 @@ def test_a_binding_expires_and_expires_zero_unbinds() -> None:
     assert not registrar.is_registered("trainee")
     assert registrar.bindings() == []
 
-    challenge = registrar.handle_register(_register(), source=SOURCE, transport="UDP")
-    registrar.handle_register(
+    challenge = await registrar.handle_register(_register(), source=SOURCE, transport="UDP")
+    await registrar.handle_register(
         _authorised(_register(), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
     )
     assert registrar.is_registered("trainee")
-    challenge = registrar.handle_register(_register(expires=0), source=SOURCE, transport="UDP")
-    unbound = registrar.handle_register(
+    challenge = await registrar.handle_register(
+        _register(expires=0), source=SOURCE, transport="UDP"
+    )
+    unbound = await registrar.handle_register(
         _authorised(_register(expires=0), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
@@ -112,19 +116,19 @@ def test_a_binding_expires_and_expires_zero_unbinds() -> None:
     assert not registrar.is_registered("trainee")
 
 
-def test_expires_is_capped_and_a_contact_expires_param_wins() -> None:
+async def test_expires_is_capped_and_a_contact_expires_param_wins() -> None:
     clock = FakeClock()
     registrar = _registrar(clock)
     request = _register(expires=99_999, contact="<sip:trainee@10.0.0.5:5062>;expires=120")
-    challenge = registrar.handle_register(request, source=SOURCE, transport="UDP")
+    challenge = await registrar.handle_register(request, source=SOURCE, transport="UDP")
     request = _register(expires=99_999, contact="<sip:trainee@10.0.0.5:5062>;expires=120")
-    ok = registrar.handle_register(
+    ok = await registrar.handle_register(
         _authorised(request, challenge, password=TEST_SIP_PASSWORD), source=SOURCE, transport="UDP"
     )
     assert ok.get("Expires") == "120"
     request = _register(expires=99_999)
-    challenge = registrar.handle_register(request, source=SOURCE, transport="UDP")
-    ok = registrar.handle_register(
+    challenge = await registrar.handle_register(request, source=SOURCE, transport="UDP")
+    ok = await registrar.handle_register(
         _authorised(_register(expires=99_999), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
@@ -132,12 +136,12 @@ def test_expires_is_capped_and_a_contact_expires_param_wins() -> None:
     assert ok.get("Expires") == "3600"
 
 
-def test_a_stale_or_unknown_nonce_is_challenged_again_not_refused() -> None:
+async def test_a_stale_or_unknown_nonce_is_challenged_again_not_refused() -> None:
     clock = FakeClock()
     registrar = _registrar(clock)
-    challenge = registrar.handle_register(_register(), source=SOURCE, transport="UDP")
+    challenge = await registrar.handle_register(_register(), source=SOURCE, transport="UDP")
     clock.advance(NONCE_TTL_S + 1)
-    stale = registrar.handle_register(
+    stale = await registrar.handle_register(
         _authorised(_register(), challenge, password=TEST_SIP_PASSWORD),
         source=SOURCE,
         transport="UDP",
@@ -145,12 +149,14 @@ def test_a_stale_or_unknown_nonce_is_challenged_again_not_refused() -> None:
     assert stale.status == 401 and "stale=true" in (stale.get("WWW-Authenticate") or "")
     forged = _register()
     forged.add("Authorization", 'Digest username="trainee", nonce="made-up", response="00"')
-    assert registrar.handle_register(forged, source=SOURCE, transport="UDP").status == 401
+    assert (await registrar.handle_register(forged, source=SOURCE, transport="UDP")).status == 401
 
 
-def test_a_user_cannot_bind_someone_elses_address_of_record() -> None:
+async def test_a_user_cannot_bind_someone_elses_address_of_record() -> None:
     registrar = _registrar(FakeClock())
-    challenge = registrar.handle_register(_register(user="alice"), source=SOURCE, transport="UDP")
+    challenge = await registrar.handle_register(
+        _register(user="alice"), source=SOURCE, transport="UDP"
+    )
     _, params = parse_auth_header(challenge.get("WWW-Authenticate") or "")
     request = _register(user="alice")
     request.add(
@@ -163,4 +169,4 @@ def test_a_user_cannot_bind_someone_elses_address_of_record() -> None:
             challenge=params,
         ),
     )
-    assert registrar.handle_register(request, source=SOURCE, transport="UDP").status == 403
+    assert (await registrar.handle_register(request, source=SOURCE, transport="UDP")).status == 403

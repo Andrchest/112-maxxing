@@ -162,9 +162,53 @@ every document), `SIM_SIP_REALM` (default `sim112`), `SIM_SIP_PORT`, `SIM_SIP_RT
 - **Stop:** SIGTERM (`docker compose … stop sip-gateway`, or Ctrl-C on a host run) — the gateway
   sends BYE to every live call, then closes every port; re-run the `ss` line to confirm.
 - **Symptoms:** `403` on REGISTER = wrong password or a username binding someone else's address;
-  `403` on INVITE = the caller is not registered; `404` = a number other than `999` (ДДС numbers
-  come with E6e); `488` = the softphone offers no G.711; one-way audio across machines =
+  `403` on INVITE = the caller is not registered; `404` = a number other than `999` on a
+  standalone gateway (the ДДС numbers: «SIP-телефон» below); `488` = the softphone offers no G.711; one-way audio across machines =
   `SIM_SIP_MEDIA_IP` unset or the RTP range firewalled.
+
+## SIP-телефон — the ДДС phone on a softphone (I3 E6e — `docs/hld/80-telephony.md` §80.2.3, §80.3.5, §80.3.7, D27)
+
+The gateway above, wired to the backend: a trainee's registered softphone places and receives the
+ДДС calls the browser widget places and receives (`dds_brigade_call: ON`, memo mode).
+
+- **Settings.** Both processes: the same `SIM_SIP_GATEWAY_SECRET` (the gateway's service credential
+  on `/api/v1/telephony/*`; `.env` only, never committed — [credential redacted]). Gateway:
+  `SIM_SIP_BACKEND_URL` (compose sets `http://backend:8100`; a host run `http://127.0.0.1:8100`),
+  `SIM_REDIS_URL`, `SIM_LIVEKIT_URL` / `SIM_LIVEKIT_API_KEY` / `SIM_LIVEKIT_API_SECRET` (the room
+  token is minted locally), `SIM_SIP_INVITE_AUTH` (`challenge`, the default: every INVITE is
+  `407`-challenged; `registered_only`: E6a's rule). Backend: `SIM_TELEPHONY_ENDPOINTS=browser,sip`
+  (without `sip` every call stays in the browser even with a softphone registered). The gateway
+  refuses to start with a backend URL and no secret.
+- **Accounts.** The SIP username is the trainee's login (`users.username`); an unknown or retired
+  username gets `403` at REGISTER. Password: the deployment `SIM_SIP_PASSWORD`, or the user's own —
+  `uv run python -m app.tools.set_sip_password --username <login>` (prompts twice; or
+  `--password-env NAME`), `--clear` to go back to the deployment one. Only the HA1
+  (`users.sip_ha1`) is stored. **Changing `SIM_SIP_REALM` invalidates every per-user password** —
+  re-run the command for each user.
+- **Numbers** (the ДДС screen shows «тел. …» on each service tab and the claimant's number beside
+  «Позвонить заявителю»): `101`…`104` and `7xxx` — the service head of that service's leg on the
+  card; `112` — the AI 112 operator; the claimant's number (`8…`, `+7…` or 10 digits) — the
+  claimant; `999` — the echo. The session is the one whose card the trainee opened last, else the
+  oldest ACTIVE ДДС session with the phone.
+- **Dial from the softphone:** `uv run python -m voice_agent.tools.softphone --server <host>:5060
+  --register <login> --dial 101 --duration 20 [--headset]` (the password from `SIM_SIP_PASSWORD`
+  or `--password-env`). It rings until the AI party answers (4 s by default), then talks;
+  hang up = `BYE` (the call ends as the trainee's `HANGUP`).
+- **Be called on the softphone:** keep it registered and waiting — `… --register <login> --answer
+  --answer-timeout 600 --duration 30` — then press «Позвонить старшему» / «Позвонить заявителю» /
+  «Позвонить в 112» in the browser (the widget says «Разговор идёт на SIP-телефоне»), or let a
+  brigade's `CALL_IN` step ring. Not answered within 30 s ⇒ the call ends by SYSTEM `ABORT`.
+- **Check:** `curl -s http://127.0.0.1:8114/health` → `"backend": true`, `"dds_calls": N`,
+  `"invite_auth": "challenge"`; `redis-cli --scan --pattern 'sip:binding:*'` lists the registered
+  softphones; the ДДС call's `DDS_CALL_STARTED.endpoint` is `SIP`.
+- **Symptoms:** `480` on dial = no ACTIVE ДДС session with the phone for this login (or the phone not
+  offered in this stage state); `404` = the number reaches nobody on the card (a service with no
+  leg, or a leg another trainee plays); `486` = the trainee already has a live ДДС call; `403` on
+  INVITE = unregistered, or the `407` answered with a wrong password / another user's name; `503`
+  = the backend is unreachable or the secret is wrong on one side; calls ring in the browser
+  although the softphone is registered = `SIM_TELEPHONY_ENDPOINTS` lacks `sip`, or the Redis key
+  expired (re-register); a foreign softphone: account `sip:<login>@<realm>`, outbound proxy
+  `<host>:5060`, the user's SIP password, G.711.
 
 ## E2E screenshot comparison (I3 E7a — the reference look, D20, C9)
 

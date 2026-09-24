@@ -51,6 +51,7 @@ from app.api.routers import (
     scenarios,
     sessions,
     snapshot,
+    telephony,
     users,
 )
 
@@ -114,6 +115,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(lessons.instructor_router)
     app.include_router(incidents.router)
     app.include_router(groups.router)
+    app.include_router(telephony.router)
 
     return app
 

@@ -35,6 +35,10 @@ class DdsCallRepository(Protocol):
         """One call of this session, or `None`."""
         ...
 
+    async def get_by_id(self, call_id: UUID) -> DdsCall | None:
+        """One call by its id alone — the SIP gateway knows a call, not its session (I3 E6e)."""
+        ...
+
     async def list_for_session(self, session_id: SessionId) -> list[DdsCall]:
         """Every call of the session, newest first (`listDdsCalls`)."""
         ...

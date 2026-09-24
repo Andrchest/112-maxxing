@@ -75,6 +75,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from itertools import groupby
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from app.application.dds.call_endpoint import BROWSER_ONLY, CallEndpointChooser
 from app.application.dds.command_context import dds_stage_of, history_entries, is_memo
 from app.application.ports.clock import Clock
 from app.application.ports.reference import ReferencePort
@@ -166,12 +167,16 @@ class DdsStageAutomation:
         resolution_probe: ResolutionProbe,
         responder_probe: ResponderProbe = _no_responders,
         reference: ReferencePort | None = None,
+        endpoints: CallEndpointChooser = BROWSER_ONLY,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._resolution_probe = resolution_probe
         self._responder_probe = responder_probe
         self._reference = reference
+        #: I3 E6e (§80.3.7): a brigade's INBOUND call rings the callee's softphone when it has a
+        #: live registration, else the browser widget.
+        self._endpoints = endpoints
 
     async def __call__(self, session_id: SessionId) -> bool:
         """Advance the DDS stage as far as the board allows; `True` when anything fired."""
@@ -335,7 +340,13 @@ class DdsStageAutomation:
                 if log is None:
                     log = list(await uow.events.read(session.id))
                 at = max(due_at, _line_free_at(log, callee))
-                call, event = self._inbound_call(log, session, leg, call_id, callee, at, responders)
+                callee_user = await uow.users.get(callee)
+                endpoint = await self._endpoints.choose(
+                    None if callee_user is None else callee_user.username
+                )
+                call, event = self._inbound_call(
+                    log, session, leg, call_id, callee, at, responders, endpoint
+                )
                 stored = await uow.events.append(session.id, [event])
                 log.extend(stored)
                 started_id = next(
@@ -355,6 +366,7 @@ class DdsStageAutomation:
         callee: UserId,
         at: int,
         responders: ScriptedResponders | None,
+        endpoint: CallEndpoint = CallEndpoint.BROWSER,
     ) -> tuple[DdsCall, DomainEvent]:
         """`[*] --start--> DIALING` of the brigade's INBOUND call (§80.3.2)."""
         catalog = reference_catalog(self._reference)
@@ -374,7 +386,7 @@ class DdsStageAutomation:
             kind=DdsCallKind.SERVICE_HEAD,
             direction=DdsCallDirection.INBOUND,
             dialed=extension or str(leg.service_type),
-            endpoint=CallEndpoint.BROWSER,
+            endpoint=endpoint,
             actor=_SIMULATION,
             now_ms=at,
             selection_reason=CallSelectionReason.INBOUND_SCRIPT,

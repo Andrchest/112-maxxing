@@ -331,6 +331,44 @@ class Settings(BaseSettings):
     #: or `llm` (the template line reworded by the dialogue model, checked by code, falling back
     #: to the template on any failure). The decision of what is said is code's in both modes.
     responder_dialogue: Literal["template", "llm"] = "template"
+    # -- I3 E6a/E6e: the SIP gateway and the ДДС phone's endpoint (HLD 80 §80.2.1, §80.3.7) ------
+    # The gateway process (`python -m voice_agent.sip_gateway`) reads the same `SIM_SIP_*` keys
+    # through `SipGatewayConfig.from_env` (it needs none of this class's required fields); they are
+    # declared here so the backend and the gateway agree on one name and one default each.
+    #: `SIM_TELEPHONY_ENDPOINTS`: the endpoints a ДДС call may use, comma-separated. `browser`
+    #: (the default) keeps every call in the browser widget; `browser,sip` lets a trainee's live
+    #: softphone registration (`sip:binding:{username}`, HLD 40 §40.6) win (§80.3.7).
+    telephony_endpoints: str = "browser"
+    #: `SIM_SIP_GATEWAY_SECRET`: the gateway's service credential towards `/api/v1/telephony/*`
+    #: (header `X-Sip-Gateway-Secret`). Env only, never committed; empty ⇒ those endpoints refuse
+    #: every request (`401`).
+    sip_gateway_secret: str = Field(default="", repr=False)
+    #: `SIM_SIP_REALM`: the Digest realm. A per-user HA1 (`users.sip_ha1`, migration `0015`) is
+    #: bound to it — changing it invalidates every stored HA1.
+    sip_realm: str = "sim112"
+    #: `SIM_SIP_PASSWORD`: the one deployment SIP password (users without an HA1). Env only.
+    sip_password: str = Field(default="", repr=False)
+    #: `SIM_SIP_INVITE_AUTH`: `challenge` (the default) answers every INVITE / re-INVITE with a
+    #: `407` Digest challenge; `registered_only` accepts an INVITE from a live registration alone
+    #: (E6a's behaviour). HLD 80 §80.2.3, D27.
+    sip_invite_auth: Literal["challenge", "registered_only"] = "challenge"
+    #: `SIM_SIP_BACKEND_URL`: where the gateway reaches this API (`/api/v1/telephony/*`); empty ⇒
+    #: the gateway runs standalone (echo `999` only, E6a).
+    sip_backend_url: str = ""
+    sip_port: int = 5060
+    sip_rtp_port_range: str = "20000-20199"
+    sip_gateway_http_port: int = 8114
+    sip_media_ip: str = ""
+    sip_bind_host: str = "0.0.0.0"
+    sip_jitter_ms: int = 40
+
+    @property
+    def telephony_endpoint_set(self) -> frozenset[str]:
+        """`telephony_endpoints` as a set of lowercase names (`{"browser"}` or with `"sip"`)."""
+        return frozenset(
+            item.strip().lower() for item in self.telephony_endpoints.split(",") if item.strip()
+        )
+
     # -- E13-B2: the caller prompt builder and the response validator (§5.2, §5.3, §7) --------
     #: §5.2's turn window: "the last 6 turns … but never drops below 4" (valid 4-6, SPEC §22).
     dialogue_window_turns: int = 6

@@ -6,6 +6,12 @@ registers with the gateway and dials a number, e.g. the echo extension `999`.
     SIM_SIP_PASSWORD=... python -m voice_agent.tools.softphone \\
         --server 127.0.0.1:5060 --register trainee --dial 999 --duration 5 --capture out.wav
 
+The ДДС numbers (I3 E6e, the gateway wired to the backend): `101`…`104` and `7xxx` reach a service
+head, `112` the AI 112 operator, the claimant's number the claimant; the call is answered when the
+AI party picks up (`--answer-timeout`, default 30 s). `--answer` instead waits to be called — the
+trainee's «Позвонить старшему» in the browser, or a brigade's `CALL_IN` — and picks up after
+`--answer-delay` seconds. The gateway's `407` INVITE challenge is answered automatically.
+
 Without `--headset` it needs no sound card: it sends a 1 kHz tone burst every second (or a WAV
 with `--wav`), writes what comes back to `--capture`, and prints a summary — codec, RTP sent /
 received / lost, sequence and timestamp continuity, jitter, and the echo round trip measured on
@@ -149,6 +155,7 @@ async def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
     local_host = args.local_host or _local_host_for(host)
     codecs = {"pcma": (PT_PCMA, PT_PCMU), "pcmu": (PT_PCMU, PT_PCMA)}[args.codec]
     summary: dict[str, Any] = {"server": f"{host}:{port}", "user": args.register}
+    answer = bool(getattr(args, "answer", False))
     async with SoftPhone(
         server=(host, port),
         username=args.register,
@@ -157,18 +164,32 @@ async def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         local_host=local_host,
         domain=args.domain,
         codecs=codecs,
+        answer_mode="auto" if answer else "busy",
+        answer_delay_s=float(getattr(args, "answer_delay", 1.0)),
     ) as phone:
         registered = await phone.register(expires=args.expires)
         summary["register"] = registered.status
-        if registered.status != 200 or not args.dial:
+        if registered.status != 200 or not (args.dial or answer):
             return summary
         probe = ToneBurstProbe(interval_ms=1000, burst_ms=200)
-        try:
-            call = await phone.call(args.dial, timeout_s=args.answer_timeout)
-        except CallFailed as exc:
-            summary["call"] = {"final": exc.status, "reason": exc.reason}
-            return summary
-        summary["call"] = {"provisional": call.provisional, "final": call.final_status}
+        if answer:
+            try:
+                call = await asyncio.wait_for(phone.incoming.get(), args.answer_timeout)
+            except TimeoutError:
+                summary["call"] = {"incoming": None}
+                return summary
+            confirmed = await call.wait_confirmed(10.0)
+            summary["call"] = {"incoming": call.number, "final": 200 if confirmed else None}
+            if not confirmed:
+                return summary
+        else:
+            try:
+                call = await phone.call(args.dial, timeout_s=args.answer_timeout)
+            except CallFailed as exc:
+                summary["call"] = {"final": exc.status, "reason": exc.reason}
+                return summary
+            summary["call"] = {"provisional": call.provisional, "final": call.final_status}
+            summary["invite_challenged"] = call.challenged  # the gateway's 407 (E6e)
         summary["codec"] = _CODEC_NAMES.get(call.codec) if call.codec is not None else None
         if not args.headset:
             call.on_audio = probe.observe
@@ -219,6 +240,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server", default="127.0.0.1:5060", help="gateway host[:port]")
     parser.add_argument("--register", required=True, metavar="USER", help="SIP username")
     parser.add_argument("--dial", default=None, metavar="NUMBER", help="number to call, e.g. 999")
+    parser.add_argument(
+        "--answer",
+        action="store_true",
+        help="wait to be called (click-to-call, CALL_IN) instead of dialling",
+    )
+    parser.add_argument("--answer-delay", type=float, default=1.0, help="ring this long first")
     parser.add_argument("--password-env", default="SIM_SIP_PASSWORD", metavar="NAME")
     parser.add_argument("--transport", choices=("udp", "tcp"), default="udp")
     parser.add_argument("--codec", choices=("pcma", "pcmu"), default="pcma", help="offer order")
@@ -257,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for key, value in summary.items():
             print(f"{key}: {value}")
     ok = summary.get("register") == 200 and (
-        not args.dial or (summary.get("call") or {}).get("final") == 200
+        not (args.dial or args.answer) or (summary.get("call") or {}).get("final") == 200
     )
     return 0 if ok else 1
 

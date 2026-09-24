@@ -1,4 +1,4 @@
-"""The SIP gateway process core (HLD 80 §80.2.1 `gateway.py`, §80.2.3, D22).
+"""The SIP gateway process core (HLD 80 §80.2.1 `gateway.py`, §80.2.3, D22, D27).
 
 UDP + TCP listeners on `SIM_SIP_PORT`; the registrar; the UAS side of every call (INVITE →
 100/180/200, ACK, BYE, CANCEL, re-INVITE answered with the same SDP, OPTIONS); dial handling
@@ -7,16 +7,34 @@ every live call on `stop()` (SIGTERM, `voice_agent.sip_gateway`).
 
 Dial handling in E6a (`default_router`): `999` is the gateway-local **echo** — no backend, no
 room; every RTP payload is sent straight back re-stamped with the gateway's own SSRC/sequence/
-timestamp, so it is the interop and latency probe (80 §80.2.3 step 6). Every other number is
-`404 Not Found` until E6e routes it through `POST /api/v1/telephony/dial`. A `Route` of kind
-`BRIDGE` connects the call to a `RoomPort` (`FakeRoomBridge` in the gate, `LiveKitRoomBridge`
-for real, used today by `benchmarks/benchmark_voip.py --path sip-livekit`): inbound RTP goes
-through the jitter buffer on a 20 ms playout clock into the room; the room's audio goes out as RTP.
+timestamp, so it is the interop and latency probe (80 §80.2.3 step 6). A `Route` of kind `BRIDGE`
+connects the call to a `RoomPort` (`FakeRoomBridge` in the gate, `LiveKitRoomBridge` for real):
+inbound RTP goes through the jitter buffer on a 20 ms playout clock into the room; the room's audio
+goes out as RTP.
 
-An INVITE is accepted only from a user with a live registration (`403` otherwise): in E6a the
-registration's Digest check is the only credential check there is. A malformed request is
-answered `400` when enough of it survived to address an answer, and never raises out of the
-listener. The gateway logs no credential and no `Authorization` header.
+**The ДДС phone (I3 E6e, §80.2.3 steps 2–5).** With a `TelephonyBackend` (`SIM_SIP_BACKEND_URL`),
+every number but `999` is the backend's (`dialFromSip`): the gateway answers `100 Trying`, asks
+the backend, maps a refusal to the SIP final (`404` unknown number, `480` no eligible session,
+`486` line busy, `403`, `503`), else sends `180 Ringing`, joins the call's room as `sip-{call_id}`
+and reports `leg UP` (repeated while the transport is not ready) — the backend rings the call and
+the agent joins — then sends `200 OK` on `DDS_CALL_ANSWERED` (a Redis event, or the periodic
+`getTelephonyCall` re-read that covers a lost one). A `DDS_CALL_ENDED` before that is the final
+response (`486` busy, `480` no answer / abort, `487` hung up); after it, a `BYE`. `BYE` / `CANCEL`
+from the softphone is `leg DOWN`. The other direction — the browser button with a live softphone
+registration, or a brigade's `CALL_IN` — arrives as `voice:join {endpoint: SIP, sip_user}`: the
+gateway (UAC) INVITEs that user's registered contact, reports `leg UP` on its `200` (the ring of an
+OUTBOUND call, the trainee's answer of an INBOUND one), and `leg FAILED {sip_status}` when the
+softphone rejects or does not answer within `ring_timeout_s` (30 s).
+
+**INVITE authentication (E6e decision 1, `SIM_SIP_INVITE_AUTH`).** An INVITE is accepted only from
+a user with a live registration (`403` otherwise) in both modes. `challenge` (the default)
+additionally answers every INVITE and in-dialog re-INVITE `407 Proxy Authentication Required` with
+a fresh nonce; the retried request must carry a valid `Proxy-Authorization` Digest **for the From
+user** (the dial plan trusts that username to pick the trainee's session, and a UDP source address
+is spoofable), else `403`. `registered_only` is E6a's behaviour: the registration's Digest check is
+the only one. A malformed request is answered `400` when enough of it survived to address an
+answer, and never raises out of the listener. The gateway logs no credential, no HA1, no token and
+no `Authorization` / `Proxy-Authorization` header.
 """
 
 from __future__ import annotations
@@ -24,14 +42,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import enum
+import inspect
 import json
 import logging
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
-from voice_agent.transport.sip.bridge import RoomPort
+from voice_agent.transport.sip.bridge import FakeRoomBridge, RoomPort
 from voice_agent.transport.sip.dialog import (
     Channel,
     ClientTransactions,
@@ -43,19 +63,29 @@ from voice_agent.transport.sip.dialog import (
     stamp_received,
 )
 from voice_agent.transport.sip.message import (
+    PT_PCMA,
+    PT_PCMU,
     SipMessage,
     SipParseError,
     build_response,
     build_sdp,
     choose_codec,
+    new_branch,
+    new_call_id,
     new_tag,
+    parse_auth_header,
     parse_message,
     parse_name_addr,
     parse_sdp,
     parse_uri,
     user_of,
 )
-from voice_agent.transport.sip.registrar import Registrar
+from voice_agent.transport.sip.registrar import (
+    Binding,
+    CredentialSource,
+    DigestCheck,
+    Registrar,
+)
 from voice_agent.transport.sip.rtp import (
     FRAME_BYTES,
     PTIME_MS,
@@ -65,14 +95,24 @@ from voice_agent.transport.sip.rtp import (
     RtpSession,
     decode,
 )
+from voice_agent.transport.sip.telephony import (
+    BackendCredentials,
+    BackendUnavailableError,
+    DialedCall,
+    DialRefused,
+    TelephonyBackend,
+)
 
 __all__ = [
     "ECHO_EXTENSION",
+    "INVITE_AUTH_MODES",
+    "RoomFactory",
     "Route",
     "RouteKind",
     "SipGateway",
     "SipGatewayConfig",
     "default_router",
+    "sip_status_for_end_reason",
 ]
 
 logger = logging.getLogger(__name__)
@@ -82,6 +122,15 @@ ALLOW = "INVITE, ACK, BYE, CANCEL, OPTIONS, REGISTER"
 SERVER_NAME = "sim112-sip-gateway"
 _STOP_BYE_TIMEOUT_S = 2.0
 _UNACKED_2XX_TIMEOUT_S = 32.0
+INVITE_AUTH_MODES = ("challenge", "registered_only")
+_END_REASON_SIP_STATUS = {"BUSY": 486, "NO_ANSWER": 480, "HANGUP": 487}
+
+
+def sip_status_for_end_reason(reason: str | None) -> int:
+    """The final response to a softphone INVITE whose ДДС call ended before it was answered:
+    `BUSY` ⇒ `486`, `NO_ANSWER` ⇒ `480`, the trainee's `HANGUP` (from the browser) ⇒ `487`,
+    `ABORT` / `TRANSPORT_LOST` ⇒ `480`."""
+    return _END_REASON_SIP_STATUS.get(reason or "", 480)
 
 
 @dataclass(frozen=True)
@@ -89,12 +138,12 @@ class SipGatewayConfig:
     """The gateway's settings (80 §80.2.1's `SIM_SIP_*` keys).
 
     Read from the environment by `from_env()` (process env first, then the `.env` file `Settings`
-    reads). They are not `app.config.settings.Settings` fields in E6a: the gateway needs none of
-    the backend's required settings (database, Redis, JWT secret), and moving them into `Settings`
-    is left to the epic that first needs both (E6e) — the key names are identical either way.
+    reads). They are declared on `app.config.settings.Settings` too (I3 E6e) — same names, same
+    defaults — but read here directly: the gateway needs none of the backend's required settings
+    (database, JWT secret), so it never instantiates `Settings`.
     """
 
-    password: str
+    password: str = field(repr=False)
     realm: str = "sim112"
     bind_host: str = "0.0.0.0"
     sip_port: int = 5060
@@ -104,6 +153,22 @@ class SipGatewayConfig:
     jitter_ms: int = 40
     udp: bool = True
     tcp: bool = True
+    #: I3 E6e (`SIM_SIP_INVITE_AUTH`): `challenge` (407 on every INVITE) or `registered_only`.
+    invite_auth: str = "challenge"
+    #: I3 E6e (`SIM_SIP_BACKEND_URL`): empty ⇒ standalone (echo `999` only, E6a).
+    backend_url: str | None = None
+    #: I3 E6e (`SIM_SIP_GATEWAY_SECRET`): the service credential towards the backend.
+    gateway_secret: str = field(default="", repr=False)
+    #: How long a softphone may ring (click-to-call / `CALL_IN`) before `leg FAILED` (§80.2.3).
+    ring_timeout_s: float = 30.0
+    #: How often `leg UP` is re-reported while the backend cannot ring yet (transport not ready).
+    leg_retry_s: float = 1.0
+    #: How often a waiting call is re-read (`getTelephonyCall`) — covers a lost Redis event.
+    answer_poll_s: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.invite_auth not in INVITE_AUTH_MODES:
+            raise ValueError(f"SIM_SIP_INVITE_AUTH must be one of {INVITE_AUTH_MODES}")
 
     @classmethod
     def from_env(cls, read: Callable[[str], str | None] | None = None) -> SipGatewayConfig:
@@ -125,6 +190,9 @@ class SipGatewayConfig:
             http_port=_int("SIM_SIP_GATEWAY_HTTP_PORT", 8114),
             media_ip=read("SIM_SIP_MEDIA_IP") or None,
             jitter_ms=_int("SIM_SIP_JITTER_MS", 40),
+            invite_auth=read("SIM_SIP_INVITE_AUTH") or "challenge",
+            backend_url=read("SIM_SIP_BACKEND_URL") or None,
+            gateway_secret=read("SIM_SIP_GATEWAY_SECRET") or "",
         )
 
 
@@ -145,7 +213,8 @@ class Route:
     answer_after_ms: int = 0
 
 
-Router = Callable[[str, str | None], Route]
+Router = Callable[[str, str | None], Route | Awaitable[Route]]
+RoomFactory = Callable[[DialedCall], RoomPort]
 
 
 def default_router(dialed: str, from_user: str | None) -> Route:
@@ -174,6 +243,18 @@ class _Call:
     answered: bool = False
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    #: I3 E6e: the ДДС call this dialog carries (`DdsCall.call_id`), and whether we placed it (UAC).
+    dds_call_id: str | None = None
+    uac: bool = False
+    #: Set when the backend's call was answered / ended, or the softphone cancelled: wakes a waiter.
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    dds_answered: bool = False
+    dds_ended: str | None = None
+
+
+def _record_room(_dialed: DialedCall) -> RoomPort:
+    """The standalone / gate default room of a ДДС call: records what the softphone says."""
+    return FakeRoomBridge(mode="record")
 
 
 class SipGateway:
@@ -185,13 +266,32 @@ class SipGateway:
         *,
         router: Router = default_router,
         clock: Callable[[], float] = time.monotonic,
+        backend: TelephonyBackend | None = None,
+        room_factory: RoomFactory | None = None,
+        credentials: CredentialSource | None = None,
+        on_bind: Callable[[Binding], Awaitable[None] | None] | None = None,
+        on_unbind: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> None:
         self.config = config
         self._router = router
         self._clock = clock
-        self.registrar = Registrar(realm=config.realm, password=config.password, now=clock)
+        self._backend = backend
+        self._room_factory: RoomFactory = room_factory or _record_room
+        self.registrar = Registrar(
+            realm=config.realm,
+            password=config.password,
+            now=clock,
+            credentials=credentials
+            if credentials is not None
+            else (BackendCredentials(backend) if backend is not None else None),
+            on_bind=on_bind,
+            on_unbind=on_unbind,
+        )
         self._endpoint = SipEndpoint(self._on_datagram)
         self._transactions = ClientTransactions()
+        self._transactions.on_stray_response = self._on_stray_response
+        #: `DdsCall.call_id` → its dialog (I3 E6e), for the Redis signals and the backend's reads.
+        self._dds: dict[str, _Call] = {}
         self._server_cache = ServerTransactionCache(now=clock)
         self._allocator = PortAllocator(config.rtp_port_range)
         self._calls: dict[str, _Call] = {}
@@ -237,13 +337,24 @@ class SipGateway:
         )
 
     async def stop(self) -> None:
-        """BYE every answered call, refuse every ringing one, then close every socket."""
+        """BYE every answered call, refuse every ringing one, then close every socket.
+
+        A ДДС call this gateway carries is reported `leg FAILED {503}` (best effort): the backend
+        ends it by SYSTEM `ABORT` rather than leaving it live with no softphone behind it."""
         self._stopping = True
+        if self._backend is not None:
+            for call in list(self._dds.values()):
+                if call.dds_call_id is not None and call.dds_ended is None:
+                    call.dds_ended = "ABORT"
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(
+                            self._backend.report_leg(call.dds_call_id, "FAILED", 503), 2.0
+                        )
         byes = []
         for call in list(self._calls.values()):
             if call.final_sent and call.answered:
                 byes.append(self._send_bye(call))
-            elif not call.final_sent:
+            elif not call.final_sent and not call.uac:
                 self._final(call, 480, "Gateway shutting down")
         if byes:
             await asyncio.gather(*byes, return_exceptions=True)
@@ -270,6 +381,9 @@ class SipGateway:
             "sip_tcp_port": self.tcp_port,
             "registrations": len(self.registrar.bindings()),
             "calls": self.live_calls,
+            "dds_calls": len(self._dds),
+            "backend": self._backend is not None,
+            "invite_auth": self.config.invite_auth,
         }
 
     async def _serve_http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -326,6 +440,10 @@ class SipGateway:
             if cached is not None:
                 channel.send(cached)
             return
+        if method in ("REGISTER", "INVITE"):
+            # Both are answered after an await (credentials, the backend): mark the transaction
+            # in flight so a retransmission is dropped instead of executed twice.
+            self._server_cache.remember(message, None)
         handler = {
             "REGISTER": self._on_register,
             "INVITE": self._on_invite,
@@ -355,10 +473,46 @@ class SipGateway:
         channel.send_message(response)
 
     def _on_register(self, request: SipMessage, channel: Channel) -> None:
-        response = self.registrar.handle_register(
-            request, source=channel.peer, transport=channel.kind
+        self._spawn(self._register(request, channel), "register")
+
+    async def _register(self, request: SipMessage, channel: Channel) -> None:
+        response = await self.registrar.handle_register(
+            request, source=channel.peer, transport=channel.kind, channel=channel
         )
         self._respond(request, channel, response)
+
+    async def _authorise_invite(
+        self, request: SipMessage, channel: Channel, from_user: str | None
+    ) -> bool:
+        """E6e decision 1: under `challenge`, a valid `Proxy-Authorization` for the From user.
+
+        Answers the request itself (`407` / `403` / `503`) and returns `False` when it is not.
+        """
+        if self.config.invite_auth != "challenge":
+            return True
+        to_tag = None if parse_name_addr(request.get("To") or "").tag else new_tag()
+        header = request.get("Proxy-Authorization")
+        verdict = DigestCheck.CHALLENGE
+        if header is not None:
+            scheme, params = parse_auth_header(header)
+            if scheme.lower() == "digest":
+                verdict, _ = await self.registrar.verify_digest(
+                    params, method="INVITE", expected_user=from_user
+                )
+        if verdict is DigestCheck.OK:
+            return True
+        if verdict in (DigestCheck.CHALLENGE, DigestCheck.STALE):
+            challenge = self.registrar.challenge_value(stale=verdict is DigestCheck.STALE)
+            response = build_response(
+                request, 407, to_tag=to_tag, headers=[("Proxy-Authenticate", challenge)]
+            )
+        elif verdict is DigestCheck.UNAVAILABLE:
+            response = build_response(request, 503, to_tag=to_tag)
+        else:
+            logger.info("INVITE from %s refused: bad Proxy-Authorization", from_user)
+            response = build_response(request, 403, to_tag=to_tag)
+        self._respond(request, channel, response)
+        return False
 
     def _on_options(self, request: SipMessage, channel: Channel) -> None:
         response = build_response(
@@ -376,7 +530,7 @@ class SipGateway:
             if call is None or call.dialog.local_tag != to.tag:
                 self._respond(request, channel, build_response(request, 481))
                 return
-            self._on_reinvite(call, request, channel)
+            self._spawn(self._reinvite(call, request, channel), "reinvite")
             return
         if request.call_id in self._calls:  # a retransmission after its cache entry expired
             return
@@ -393,6 +547,8 @@ class SipGateway:
             logger.info("INVITE %s from unregistered user %s refused", dialed, from_user)
             self._respond(request, channel, build_response(request, 403, to_tag=new_tag()))
             return
+        if not await self._authorise_invite(request, channel, from_user):
+            return
         try:
             offer = parse_sdp(request.body)
         except ValueError as exc:
@@ -404,14 +560,34 @@ class SipGateway:
             logger.info("INVITE %s: no PCMA/PCMU in offer %s", dialed, offer.payload_types)
             self._respond(request, channel, build_response(request, 488, to_tag=new_tag()))
             return
-        route = self._router(dialed, from_user)
-        if route.kind is RouteKind.REJECT:
-            logger.info("INVITE %s from %s rejected %d", dialed, from_user, route.status)
-            self._respond(request, channel, build_response(request, route.status, to_tag=new_tag()))
-            return
-
-        trying = build_response(request, 100)
-        self._respond(request, channel, trying)
+        dds: DialedCall | None = None
+        if self._backend is not None and dialed != ECHO_EXTENSION and from_user is not None:
+            # I3 E6e: the backend's dial plan (§80.2.3 step 2). `100 Trying` first — the
+            # backend's answer is a network round trip away.
+            self._respond(request, channel, build_response(request, 100))
+            try:
+                dds = await self._backend.dial(from_user, dialed, request.call_id)
+            except DialRefused as exc:
+                logger.info("INVITE %s from %s: dial refused %s", dialed, from_user, exc.code)
+                self._respond(
+                    request, channel, build_response(request, exc.sip_status, to_tag=new_tag())
+                )
+                return
+            except BackendUnavailableError as exc:
+                logger.warning("INVITE %s from %s: backend unavailable: %s", dialed, from_user, exc)
+                self._respond(request, channel, build_response(request, 503, to_tag=new_tag()))
+                return
+            route = Route(RouteKind.BRIDGE)
+        else:
+            routed = self._router(dialed, from_user)
+            route = await routed if inspect.isawaitable(routed) else routed
+            if route.kind is RouteKind.REJECT:
+                logger.info("INVITE %s from %s rejected %d", dialed, from_user, route.status)
+                self._respond(
+                    request, channel, build_response(request, route.status, to_tag=new_tag())
+                )
+                return
+            self._respond(request, channel, build_response(request, 100))
         contact = request.get("Contact")
         remote_target = parse_name_addr(contact).uri if contact else from_header.uri
         dialog = Dialog(
@@ -432,6 +608,9 @@ class SipGateway:
             from_user=from_user,
             started_at=self._clock(),
         )
+        if dds is not None:
+            call.dds_call_id = dds.call_id.lower()
+            self._dds[call.dds_call_id] = call
         self._calls[request.call_id] = call
         logger.info(
             "INVITE %s from %s (%r) codec=%s call-id=%s",
@@ -463,6 +642,10 @@ class SipGateway:
                 request, 180, to_tag=dialog.local_tag, headers=[self._contact(call, channel)]
             )
             self._respond(request, channel, ringing)
+            if dds is not None:
+                if await self._await_dds_answer(call, dds):
+                    self._send_ok(call, request, channel)
+                return
             if route.answer_after_ms > 0:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(call.cancelled.wait(), route.answer_after_ms / 1000)
@@ -475,29 +658,40 @@ class SipGateway:
                 call.bridge = bridge
             if call.cancelled.is_set():
                 return
-            ok = build_response(
-                request,
-                200,
-                to_tag=dialog.local_tag,
-                headers=[
-                    self._contact(call, channel),
-                    ("Allow", ALLOW),
-                    ("Content-Type", "application/sdp"),
-                ],
-                body=call.answer_sdp,
-            )
-            call.ok_response = ok
-            call.final_sent = True
-            call.answered = True
-            self._respond(request, channel, ok)
-            logger.info("200 OK %s call-id=%s rtp=%d", dialed, request.call_id, rtp.local_port)
-            if not channel.reliable:
-                call.tasks.append(self._spawn(self._retransmit_2xx(call), "2xx-retransmit"))
+            self._send_ok(call, request, channel)
         except Exception:
             logger.exception("INVITE %s failed", request.call_id)
             if not call.final_sent:
                 self._final(call, 500)
             await self._terminate(call, "setup failed")
+
+    def _send_ok(self, call: _Call, request: SipMessage, channel: Channel) -> None:
+        """The `200 OK` with our SDP answer (retransmitted over UDP until the ACK)."""
+        ok = build_response(
+            request,
+            200,
+            to_tag=call.dialog.local_tag,
+            headers=[
+                self._contact(call, channel),
+                ("Allow", ALLOW),
+                ("Content-Type", "application/sdp"),
+            ],
+            body=call.answer_sdp,
+        )
+        call.ok_response = ok
+        call.final_sent = True
+        call.answered = True
+        self._respond(request, channel, ok)
+        port = call.rtp.local_port if call.rtp is not None else 0
+        logger.info("200 OK %s call-id=%s rtp=%d", call.dialed, request.call_id, port)
+        if not channel.reliable:
+            call.tasks.append(self._spawn(self._retransmit_2xx(call), "2xx-retransmit"))
+
+    async def _reinvite(self, call: _Call, request: SipMessage, channel: Channel) -> None:
+        """A re-INVITE, challenged like an INVITE under `challenge` (E6e decision 1)."""
+        if not await self._authorise_invite(request, channel, user_of(request.get("From") or "")):
+            return
+        self._on_reinvite(call, request, channel)
 
     def _on_reinvite(self, call: _Call, request: SipMessage, channel: Channel) -> None:
         """A re-INVITE (hold, refresh): answered with the same SDP; the far RTP address updates."""
@@ -530,6 +724,7 @@ class SipGateway:
             return
         self._respond(request, channel, build_response(request, 200))
         self._spawn(self._terminate(call, "BYE from the far end"), "bye")
+        self._report_down(call)
 
     def _on_cancel(self, request: SipMessage, channel: Channel) -> None:
         call = self._calls.get(request.call_id)
@@ -542,14 +737,321 @@ class SipGateway:
         if call.final_sent:
             return  # too late: CANCEL has no effect once a final response went out
         call.cancelled.set()
+        call.wake.set()
         self._final(call, 487)
         logger.info("CANCEL call-id=%s: 487 Request Terminated", request.call_id)
         self._spawn(self._terminate(call, "CANCEL"), "cancel")
+        self._report_down(call)
 
     def _final(self, call: _Call, status: int, reason: str | None = None) -> None:
         response = build_response(call.invite, status, reason, to_tag=call.dialog.local_tag)
         call.final_sent = True
         self._respond(call.invite, call.dialog.channel, response)
+
+    # -- the ДДС phone: the backend's calls (I3 E6e, §80.2.3) -------------------------------------
+
+    def bridges(self, call_id: str) -> bool:
+        """This gateway carries the ДДС call `call_id` (the Redis signals' filter)."""
+        return call_id.lower() in self._dds
+
+    def on_call_answered(self, call_id: str) -> None:
+        """`DDS_CALL_ANSWERED`: a softphone-dialled call waiting for its `200 OK` gets it."""
+        call = self._dds.get(call_id.lower())
+        if call is not None:
+            call.dds_answered = True
+            call.wake.set()
+
+    def on_call_ended(self, call_id: str, reason: str) -> None:
+        """`DDS_CALL_ENDED` or `voice:cancel`: a final response, a `CANCEL` or a `BYE`."""
+        call = self._dds.get(call_id.lower())
+        if call is None or call.dds_ended is not None:
+            return
+        call.dds_ended = reason or "ABORT"
+        call.wake.set()
+        if call.uac and not call.answered:
+            call.cancelled.set()  # the softphone is still ringing: `_invite_softphone` CANCELs
+        elif call.answered and call.final_sent:
+            self._spawn(self._bye_and_terminate(call, f"ДДС call ended ({reason})"), "dds-bye")
+
+    def on_join(self, payload: dict[str, Any]) -> None:
+        """`voice:join {endpoint: SIP, sip_user}`: ring that user's softphone (UAC INVITE)."""
+        call_id = str(payload.get("call_id", "")).lower()
+        sip_user = payload.get("sip_user")
+        if not call_id or not sip_user or call_id in self._dds or self._stopping:
+            return
+        if self._backend is None:
+            return
+        self._spawn(self._ring_softphone(call_id, str(sip_user), payload), f"ring-{call_id}")
+
+    async def _bye_and_terminate(self, call: _Call, why: str) -> None:
+        await self._send_bye(call)
+        await self._terminate(call, why)
+
+    def _report_down(self, call: _Call) -> None:
+        """`BYE` / `CANCEL` from the softphone ⇒ `leg DOWN` (unless the backend ended it first)."""
+        if call.dds_call_id is None or call.dds_ended is not None or self._backend is None:
+            return
+        call.dds_ended = "HANGUP"
+        self._spawn(self._report(call.dds_call_id, "DOWN"), "leg-down")
+
+    async def _report(self, call_id: str, state: str, sip_status: int | None = None) -> str | None:
+        """One `reportSipLeg`; `None` when the backend is unreachable (logged, never raised)."""
+        assert self._backend is not None
+        try:
+            return await self._backend.report_leg(call_id, state, sip_status)
+        except BackendUnavailableError as exc:
+            logger.warning("leg %s of ДДС call %s not reported: %s", state, call_id, exc)
+            return None
+
+    async def _wait_wake(self, call: _Call, timeout_s: float) -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(call.wake.wait(), timeout_s)
+        call.wake.clear()
+
+    async def _refresh(self, call: _Call) -> None:
+        """The periodic re-read (`getTelephonyCall`) that covers a lost Redis event."""
+        assert self._backend is not None and call.dds_call_id is not None
+        try:
+            view = await self._backend.get_call(call.dds_call_id)
+        except BackendUnavailableError:
+            return
+        if view.get("state") == "CONNECTED":
+            call.dds_answered = True
+        elif view.get("state") == "ENDED" and call.dds_ended is None:
+            call.dds_ended = str(view.get("end_reason") or "ABORT")
+
+    async def _join_room(self, call: _Call, dialed: DialedCall) -> None:
+        call.jitter = JitterBuffer(self.config.jitter_ms)
+        bridge = self._room_factory(dialed)
+        await bridge.open(lambda pcm: self._from_room(call, pcm))
+        call.bridge = bridge
+
+    async def _await_dds_answer(self, call: _Call, dialed: DialedCall) -> bool:
+        """A softphone-dialled call (UAS): join the room, `leg UP` until rung, then wait for
+        `DDS_CALL_ANSWERED`. `True` ⇒ send the `200 OK`; `False` ⇒ a final response went out (or
+        the softphone cancelled) and the call is torn down."""
+        assert self._backend is not None and call.dds_call_id is not None
+        await self._join_room(call, dialed)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.config.ring_timeout_s
+        while not call.cancelled.is_set() and call.dds_ended is None:
+            state = await self._report(call.dds_call_id, "UP")
+            if state == "ENDED":
+                await self._refresh(call)
+                call.dds_ended = call.dds_ended or "ABORT"
+            elif state == "CONNECTED":
+                call.dds_answered = True
+            if state not in (None, "DIALING"):
+                break
+            if loop.time() >= deadline:  # the transport never came up: give the phone back
+                await self._report(call.dds_call_id, "FAILED", 480)
+                call.dds_ended = "ABORT"
+                break
+            await self._wait_wake(call, self.config.leg_retry_s)
+        while not (call.cancelled.is_set() or call.dds_answered or call.dds_ended is not None):
+            await self._wait_wake(call, self.config.answer_poll_s)
+            if not (call.cancelled.is_set() or call.dds_answered or call.dds_ended is not None):
+                await self._refresh(call)
+        if call.cancelled.is_set():
+            return False  # `_on_cancel` answered 487, reported DOWN and terminates the call
+        if call.dds_ended is not None and not call.dds_answered:
+            status = sip_status_for_end_reason(call.dds_ended)
+            logger.info("ДДС call %s ended (%s) before it was answered", call.dds_call_id, status)
+            self._final(call, status)
+            await self._terminate(call, f"ДДС call ended {call.dds_ended}")
+            return False
+        return True
+
+    async def _ring_softphone(self, call_id: str, sip_user: str, payload: dict[str, Any]) -> None:
+        """UAC: INVITE `sip_user`'s registered contact for the ДДС call `call_id` (§80.2.3 step 3,
+        step 5); `leg UP` on its `200`, `leg FAILED {status}` on a refusal or no answer."""
+        binding = self.registrar.lookup(sip_user)
+        if binding is None:
+            logger.info("ДДС call %s: %s has no live registration", call_id, sip_user)
+            await self._report(call_id, "FAILED", 480)
+            return
+        channel = binding.channel
+        if not isinstance(channel, Channel) or channel.closed or not channel.reliable:
+            channel = self._endpoint.udp_channel(binding.source)
+        host = self._advertised_ip(binding.source[0])
+        port = (self.tcp_port if channel.reliable else self.udp_port) or 0
+        kind = str(payload.get("call_kind") or "dds").lower()
+        local_uri = f"sip:{kind}@{self.config.realm}"
+        sip_call_id = new_call_id(host)
+        invite = SipMessage(method="INVITE", uri=binding.contact)
+        invite.add("Via", f"SIP/2.0/{channel.kind} {host}:{port};branch={new_branch()};rport")
+        invite.add("Max-Forwards", "70")
+        local_tag = new_tag()
+        invite.add("From", f"<{local_uri}>;tag={local_tag}")
+        invite.add("To", f"<{binding.aor}>")
+        invite.add("Call-ID", sip_call_id)
+        invite.add("CSeq", "1 INVITE")
+        transport = ";transport=tcp" if channel.reliable else ""
+        invite.add("Contact", f"<sip:{kind}@{host}:{port}{transport}>")
+        invite.add("User-Agent", SERVER_NAME)
+        invite.add("Content-Type", "application/sdp")
+        dialog = Dialog(
+            call_id=sip_call_id,
+            local_tag=local_tag,
+            remote_tag=None,
+            local_uri=local_uri,
+            remote_uri=binding.aor,
+            remote_target=binding.contact,
+            channel=channel,
+        )
+        call = _Call(
+            dialog=dialog,
+            invite=invite,
+            route=Route(RouteKind.BRIDGE),
+            dialed=sip_user,
+            from_user=sip_user,
+            started_at=self._clock(),
+            dds_call_id=call_id,
+            uac=True,
+        )
+        self._dds[call_id] = call
+        self._calls[sip_call_id] = call
+        try:
+            rtp = RtpSession(
+                bind_host=self.config.bind_host,
+                allocator=self._allocator,
+                payload_type=PT_PCMA,
+                on_packet=lambda packet, arrival: self._on_rtp(call, packet, arrival),
+                clock=self._clock,
+            )
+            await rtp.open()
+            call.rtp = rtp
+            invite.body = build_sdp(
+                address=host,
+                port=rtp.local_port,
+                payload_types=(PT_PCMA, PT_PCMU),
+                session_id=int(self._clock() * 1000) % 1_000_000_000,
+            )
+            logger.info("ДДС call %s: INVITE %s at %s", call_id, sip_user, binding.contact)
+            response = await self._invite_softphone(call, channel)
+        except Exception:
+            logger.exception("ДДС call %s: ringing %s failed", call_id, sip_user)
+            await self._report(call_id, "FAILED", 500)
+            await self._terminate(call, "UAC setup failed")
+            return
+        status = 0 if response is None else (response.status or 0)
+        if response is None or not 200 <= status < 300:
+            if call.dds_ended is None:
+                await self._report(call_id, "FAILED", status or 408)
+            await self._terminate(call, f"softphone answered {status or 'nothing'}")
+            return
+        await self._on_softphone_answered(call, response, dialed=payload)
+
+    async def _invite_softphone(self, call: _Call, channel: Channel) -> SipMessage | None:
+        """Send the INVITE; the final response, or `None` after a `CANCEL` (ring timeout, or the
+        ДДС call ended while the softphone rang)."""
+        request = asyncio.ensure_future(
+            self._transactions.request(
+                call.invite, channel, timeout_s=self.config.ring_timeout_s + 5.0
+            )
+        )
+        waker = asyncio.ensure_future(call.cancelled.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {request, waker},
+                timeout=self.config.ring_timeout_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if request in done:
+                with contextlib.suppress(TransactionTimeout):
+                    response = request.result()
+                    if not 200 <= (response.status or 0) < 300:
+                        channel.send_message(_ack_non_2xx(call.invite, response))
+                    return response
+                return None
+            # Timed out, or the backend ended the call: CANCEL the ringing INVITE.
+            if call.dds_ended is None:
+                call.dds_ended = "NO_ANSWER"
+                await self._report(call.dds_call_id or "", "FAILED", 408)
+            await self._send_cancel(call, channel)
+            with contextlib.suppress(Exception):
+                response = await asyncio.wait_for(request, 5.0)
+                if 200 <= (response.status or 0) < 300:  # answered as we cancelled: hang up
+                    await self._on_softphone_answered(call, response, dialed={}, report=False)
+                    await self._send_bye(call)
+                else:
+                    channel.send_message(_ack_non_2xx(call.invite, response))
+            return None
+        finally:
+            waker.cancel()
+            if not request.done():
+                request.cancel()
+
+    async def _send_cancel(self, call: _Call, channel: Channel) -> None:
+        cancel = SipMessage(method="CANCEL", uri=call.invite.uri)
+        cancel.add("Via", call.invite.get("Via") or "")
+        cancel.add("Max-Forwards", "70")
+        cancel.add("From", call.invite.get("From") or "")
+        cancel.add("To", call.invite.get("To") or "")
+        cancel.add("Call-ID", call.dialog.call_id)
+        cancel.add("CSeq", "1 CANCEL")
+        with contextlib.suppress(TransactionTimeout):
+            await self._transactions.request(cancel, channel, timeout_s=_STOP_BYE_TIMEOUT_S)
+
+    async def _on_softphone_answered(
+        self,
+        call: _Call,
+        response: SipMessage,
+        *,
+        dialed: dict[str, Any],
+        report: bool = True,
+    ) -> None:
+        """The softphone took the call: ACK, RTP towards its answer, join the room, `leg UP`."""
+        to = parse_name_addr(response.get("To") or "")
+        contact = response.get("Contact")
+        call.dialog.remote_tag = to.tag
+        if contact:
+            call.dialog.remote_target = parse_name_addr(contact).uri
+        call.dialog.state = DialogState.CONFIRMED
+        call.answered = True
+        call.final_sent = True
+        self._send_uac_ack(call)
+        with contextlib.suppress(ValueError, IndexError):
+            answer = parse_sdp(response.body)
+            if call.rtp is not None:
+                call.rtp.payload_type = answer.payload_types[0]
+                call.rtp.set_remote((answer.address, answer.port))
+        if not report or call.dds_call_id is None:
+            return
+        await self._join_room(
+            call,
+            DialedCall(
+                call_id=call.dds_call_id,
+                session_id=str(dialed.get("session_id", "")),
+                room_name=str(dialed.get("room", "")),
+                kind=str(dialed.get("call_kind", "")),
+                persona_id=dialed.get("persona_id"),
+            ),
+        )
+        state = await self._report(call.dds_call_id, "UP")
+        logger.info("ДДС call %s: softphone answered, leg UP -> %s", call.dds_call_id, state)
+        if state == "ENDED" or call.dds_ended is not None:
+            await self._bye_and_terminate(call, "ДДС call ended while the softphone answered")
+
+    def _send_uac_ack(self, call: _Call) -> None:
+        channel = call.dialog.channel
+        port = (self.tcp_port if channel.reliable else self.udp_port) or 0
+        ack = call.dialog.ack_for_2xx(
+            call.invite.cseq[0], via_host=self._advertised_ip(channel.peer[0]), via_port=port
+        )
+        channel.send_message(ack)
+
+    def _on_stray_response(self, response: SipMessage, channel: Channel) -> None:
+        """A retransmitted `200` to our own INVITE (our ACK was lost): ACK it again."""
+        call = self._calls.get(response.call_id)
+        try:
+            method = response.cseq[1]
+        except ValueError:
+            return
+        if call is None or not call.uac or method != "INVITE":
+            return
+        if 200 <= (response.status or 0) < 300 and call.dialog.state is DialogState.CONFIRMED:
+            self._send_uac_ack(call)
 
     # -- media ----------------------------------------------------------------------------------
 
@@ -620,6 +1122,8 @@ class SipGateway:
             logger.info("BYE call-id=%s: no answer", call.dialog.call_id)
 
     async def _terminate(self, call: _Call, why: str) -> None:
+        if call.dds_call_id is not None and self._dds.get(call.dds_call_id) is call:
+            del self._dds[call.dds_call_id]
         if self._calls.get(call.dialog.call_id) is not call:
             return
         del self._calls[call.dialog.call_id]
@@ -667,6 +1171,18 @@ class SipGateway:
         transport = ";transport=tcp" if channel.reliable else ""
         host = self._advertised_ip(channel.peer[0])
         return ("Contact", f"<sip:{call.dialed or 'gateway'}@{host}:{port}{transport}>")
+
+
+def _ack_non_2xx(invite: SipMessage, response: SipMessage) -> SipMessage:
+    """RFC 3261 §17.1.1.3: the ACK of a non-2xx final belongs to the INVITE transaction."""
+    ack = SipMessage(method="ACK", uri=invite.uri)
+    ack.add("Via", invite.get("Via") or "")
+    ack.add("Max-Forwards", "70")
+    ack.add("From", invite.get("From") or "")
+    ack.add("To", response.get("To") or invite.get("To") or "")
+    ack.add("Call-ID", invite.call_id)
+    ack.add("CSeq", f"{invite.cseq[0]} ACK")
+    return ack
 
 
 def to_uri(request: SipMessage) -> str:

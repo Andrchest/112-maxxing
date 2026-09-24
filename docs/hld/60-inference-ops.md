@@ -1275,6 +1275,18 @@ this task's report for the timed result)
   E6a, same key names.
 - Depends on `livekit` (started) and `redis` (healthy; used from E6e on). In E6a it answers only the
   echo extension `999` (the interop and latency probe); every other number is `404` until E6e.
+- *(additive, I3 E6e — HLD 80 §80.2.3, §80.3.7, D27)* Wired to the domain: `SIM_SIP_BACKEND_URL`
+  (compose: `http://backend:8100`) + `SIM_SIP_GATEWAY_SECRET` (from `.env` only; the process refuses
+  to start with a backend URL and no secret) route every number but `999` to
+  `/api/v1/telephony/*`; `SIM_SIP_INVITE_AUTH` (`challenge` default — `407` on every INVITE and
+  re-INVITE — or `registered_only`); a REGISTER's username must be an active `users.username`
+  (per-user HA1 from `users.sip_ha1`, else the deployment password). It subscribes to
+  `voice:join` (`endpoint: SIP` only), `voice:cancel:*` and `session:*:events` on `SIM_REDIS_URL`,
+  mirrors every registration to `sip:binding:{username}` (HLD 40 §40.6), and joins a ДДС call's
+  room as `sip-{call_id}` with a token minted locally from `SIM_LIVEKIT_*`. Depends on `backend`
+  (started) too. The backend side needs `SIM_TELEPHONY_ENDPOINTS=browser,sip` for a registered
+  softphone to take the ДДС calls, and the same `SIM_SIP_GATEWAY_SECRET`. Health gains
+  `dds_calls`, `backend`, `invite_auth`.
 
 ### `tts-qwen3` worker (E14-B; now its own compose service, E18-E — additive eighth, `profiles:
 ["qwen3-tts"]`; Dockerfile written, UNVERIFIED-BUILD, same posture as `voice-agent` above)

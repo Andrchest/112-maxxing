@@ -935,4 +935,9 @@ export const ru = {
   reportTimelineCallFilterLabel: 'Звонок',
   reportTimelineCallFilterAll: 'Все звонки',
   reportCallPartyUnknown: 'Звонок',
+  ddsLegPhoneExtensionPrefix: 'тел.',
+  ddsPhoneClaimantNumberLabel: 'Заявитель: тел.',
+  ddsPhoneOnSoftphone: 'Разговор идёт на SIP-телефоне.',
+  problemDialNumberUnknown: 'Набранный номер не найден в карточке.',
+  problemNoActiveDdsSession: 'Нет активного занятия ДДС с телефоном.',
 } as const;
