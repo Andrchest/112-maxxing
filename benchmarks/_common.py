@@ -50,6 +50,7 @@ __all__ = [
     "BenchmarkHonestyError",
     "Envelope",
     "NvmlSampler",
+    "ProcCpuSampler",
     "aggregate",
     "cer",
     "ensure_backend_on_path",
@@ -320,6 +321,87 @@ class NvmlSampler:
             if reading is not None:
                 self.samples.append(reading)
             self._stop.wait(self._interval_s)
+
+
+# ---------------------------------------------------------------------------------------------
+# Per-process CPU sampling (I3 E6f, HLD 80 §80.8.3 "gateway / SFU CPU (`/proc`)")
+# ---------------------------------------------------------------------------------------------
+
+
+class ProcCpuSampler:
+    """Polls one PID's CPU% from `/proc/<pid>/stat` (`utime`+`stime`, field 14/15) on a background
+    thread — stdlib only, no `psutil` (not installed, no network download to add it).
+
+    The PID is always a **captured** one (`subprocess.Popen.pid`, `docker inspect .State.Pid`, or
+    the caller's own `os.getpid()`), never a name/command-line pattern that could match an
+    unrelated process — the mistake E6e's teardown made once with `pgrep -f` (see that task's
+    report). One sample is `100 * (Δutime+Δstime ticks / SC_CLK_TCK) / Δwall_seconds` — percent of
+    one core, so a multi-threaded process can read above 100. `available` is `False` (no reading,
+    no number, same contract as `NvmlSampler`) when `/proc/<pid>/stat` cannot be read even once —
+    the PID does not exist, `/proc` is unavailable (non-Linux), or permission is refused.
+    """
+
+    def __init__(self, pid: int, *, interval_ms: int = 200) -> None:
+        self._pid = pid
+        self._interval_s = max(interval_ms, 1) / 1000.0
+        self._clk_tck = _clock_ticks_per_s()
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        #: Every CPU% reading, in order (percent of one core).
+        self.samples: list[float] = []
+        self._prev = self._read_ticks()
+        self._prev_at = time.monotonic()
+
+    def _read_ticks(self) -> int | None:
+        try:
+            with open(f"/proc/{self._pid}/stat", encoding="utf-8") as handle:
+                fields = handle.read().split()
+            return int(fields[13]) + int(fields[14])  # utime (14th) + stime (15th), 1-indexed
+        except (OSError, IndexError, ValueError):
+            return None
+
+    @property
+    def available(self) -> bool:
+        """False when `/proc/<pid>/stat` could not be read even once — no number may be reported."""
+        return self._read_ticks() is not None
+
+    def start(self) -> None:
+        """Begin polling. A no-op when the PID is not readable at all."""
+        if not self.available or self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="proc-cpu-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> dict[str, Any]:
+        """Stop polling; returns the `aggregate()` shape over the raw CPU% readings."""
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join(timeout=5)
+            self._thread = None
+        return aggregate(self.samples)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self._stop.wait(self._interval_s)
+            ticks = self._read_ticks()
+            if ticks is None or self._prev is None:
+                self._prev = ticks
+                self._prev_at = time.monotonic()
+                continue
+            now = time.monotonic()
+            elapsed = now - self._prev_at
+            if elapsed > 0:
+                percent = 100.0 * ((ticks - self._prev) / self._clk_tck) / elapsed
+                self.samples.append(max(0.0, percent))
+            self._prev, self._prev_at = ticks, now
+
+
+def _clock_ticks_per_s() -> int:
+    try:
+        return os.sysconf("SC_CLK_TCK")
+    except (ValueError, OSError, AttributeError):
+        return 100  # the near-universal Linux default; only a fallback if sysconf is unavailable
 
 
 def _text(value: Any) -> str | None:

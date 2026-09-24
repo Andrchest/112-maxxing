@@ -84,6 +84,41 @@ def _dump_yaml(data: dict) -> str:
     return yaml.safe_dump(data)
 
 
+# -- voip.* (I3 E6f, HLD 80 §80.8.3) --------------------------------------------------------------
+
+
+def test_voip_block_defaults_to_all_none_when_a_profile_does_not_declare_it() -> None:
+    """Every shipped profile predates E6f; `voip` must be optional and unmeasured by default
+    (SPEC §27: no number a script did not produce)."""
+    profile = load_profile("DEV_3060TI_SHARED")
+
+    assert profile.voip.one_way_delay_ms_p50 is None
+    assert profile.voip.one_way_delay_ms_p95 is None
+    assert profile.voip.concurrent_calls_measured is None
+
+
+def test_voip_block_accepts_measured_numbers() -> None:
+    base = load_profile("DEV_3060TI").model_dump(mode="json")
+    base["voip"] = {
+        "one_way_delay_ms_p50": 110.2,
+        "one_way_delay_ms_p95": 120.3,
+        "concurrent_calls_measured": 40,
+    }
+    profile = ModelProfile(**base)
+
+    assert profile.voip.one_way_delay_ms_p50 == 110.2
+    assert profile.voip.one_way_delay_ms_p95 == 120.3
+    assert profile.voip.concurrent_calls_measured == 40
+
+
+def test_an_unknown_voip_key_is_refused() -> None:
+    base = load_profile("DEV_3060TI").model_dump(mode="json")
+    base["voip"] = {"not_a_real_key": True}
+
+    with pytest.raises(Exception, match=r"not_a_real_key|extra"):
+        ModelProfile(**base)
+
+
 # -- validate_vram_margin (HLD 60 §2.5) ----------------------------------------------------------
 
 

@@ -167,3 +167,20 @@ latency_targets:
 health:
   failure_threshold: 3
   rewarm_interval_s: 30
+
+# I3 E6f (HLD 80 §80.8.3, ТЗ ¶161 REQ-2139). MEASURED 2026-09-24, benchmark_voip.py --path
+# sip-livekit --concurrent 1 (the real SIP-leg + SFU path, one host clock, GPU-free):
+# docs/benchmarks/results/voip-DEV_3060TI-20260924T162420139Z.json, docs/benchmarks/voip.md. This
+# is the highest concurrency at which sip-livekit's own p95 <= 150 ms and RTP/burst loss < 1 % —
+# --concurrent 5 already misses the delay target (p95 1319 ms) and --concurrent 10 additionally
+# shows real burst-detection loss (47.7 %), both measured and recorded in voip.md, not hidden here
+# because this field is singular (one N, one p50/p95 triple) per HLD 80 §80.8.3. The `sip-loopback`
+# gateway-only reference meets target through the full swept range (up to 40, also in voip.md) —
+# the ceiling below is this benchmark's own single-process harness sharing the gateway, N SIP UAs
+# and 2N LiveKit room connections in one interpreter, not a SIP/RTP-gateway or SFU capacity number
+# (voip.md's "Why sip-livekit degrades" section); REQ-2138's "20 simultaneous sessions" is
+# therefore UNMEASURED as a real multi-process/AI-in-the-loop figure (docs/AUDIT.md).
+voip:
+  one_way_delay_ms_p50: 95.831
+  one_way_delay_ms_p95: 108.561
+  concurrent_calls_measured: 1

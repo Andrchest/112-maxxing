@@ -924,6 +924,32 @@ p95 4622 ms over 29 turns, `discarded_nonpositive_count: 0`** — the DEV p95 ta
     `SCHEMA_INVALID` (the real walk heard `}I не знаю…`). A consequence: the caller cannot quote
     with `"` (Russian speech uses «»).
 
+34. **REQ-2139 (ТЗ ¶161, VoIP one-way delay ≤ 150 ms) and REQ-2138 (ТЗ ¶160, «≥ 20 одновременных
+    сессий») — I3 E6f, measured 2026-09-24, `docs/benchmarks/voip.md`.** These are the ТЗ's own
+    organizer requirement ids (`requirements/normalized/SRC-001-formal-docs.md`), outside SPEC's
+    §1-§47 numbering that the rest of this table uses; recorded here because this task's brief asks
+    for it, not because SPEC names them. Two paths were swept with `benchmark_voip.py --concurrent
+    N` for N ∈ {1, 5, 10, 20, 40}: `sip-loopback` (the real SIP/RTP gateway alone, in its own
+    subprocess) stays sub-millisecond delay and 0 % RTP loss through **N=40**, the largest N
+    tested — REQ-2139's 150 ms target is met with wide headroom at every tested concurrency on the
+    gateway itself. `sip-livekit` (the SIP leg *and* the SFU together, the real voice path ТЗ ¶161
+    means) meets the target only at **N=1** (p50/p95 95.8/108.6 ms); N=5 misses it by roughly 9x
+    (p95 1319 ms, still 0 % RTP loss); N=10 additionally shows 47.7 % burst-detection loss
+    (`PARTIAL`); N=20/N=40 are `NOT_RUN` — the benchmark's own single-process harness (the gateway,
+    N SIP user agents and 2N LiveKit SDK room connections sharing one Python interpreter) did not
+    complete a run within 250 s, a harness limitation `voip.md` distinguishes explicitly from a
+    SIP/RTP-gateway or SFU capacity finding (both components' own CPU stayed low throughout).
+    **REQ-2138's «≥ 20 concurrent sessions» is therefore not demonstrated by this measurement on
+    the real voice path**, and this epic explicitly leaves two things UNMEASURED rather than
+    estimating them: (1) a real multi-process/multi-host load generator for `sip-livekit` beyond
+    N=10 (this epic's harness cannot separate its own process contention from genuine SFU/gateway
+    capacity above that N); (2) **AI-in-the-loop concurrency** — N simultaneous calls each running
+    its own LLM/ASR/TTS inference and consuming VRAM on the single 8 GB dev card — which is E19's
+    VRAM-benchmark territory (`docs/benchmarks/vram.md`, itself only measured for one session's
+    turn sequence, §3 item 8 above) and was never in this epic's scope. `DEV_3060TI.yaml`'s
+    `voip.concurrent_calls_measured: 1` records exactly the `sip-livekit` figure above, not a
+    system-wide session count.
+
 ## 4. HLD-gap fold (every report's "HLD gaps"/"For the manager" section, R10)
 
 Reports read in full per R10: e7-d, e11-a §7, e11-b §8, e12-a §6, e13-a §8, e13-b1/b2/b3/b4, e14-a/b/c/d,

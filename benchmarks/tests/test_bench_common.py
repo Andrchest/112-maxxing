@@ -270,3 +270,41 @@ def test_the_nvml_stub_is_deterministic_and_never_claims_a_real_card() -> None:
     sampler = common.NvmlSampler(stub=True)
     assert sampler.available and sampler.mode == "stub"
     assert sampler.read() == (0, 8192)
+
+
+# -- ProcCpuSampler (I3 E6f, HLD 80 §80.8.3 "gateway / SFU CPU (`/proc`)") -----------------------
+
+
+def test_proc_cpu_sampler_is_unavailable_for_a_pid_that_does_not_exist() -> None:
+    """No `/proc/<pid>/stat` to read is the same honest-empty contract as `NvmlSampler`: no
+    reading, no number — never a fabricated 0%."""
+    sampler = common.ProcCpuSampler(pid=999_999_999, interval_ms=10)
+    assert not sampler.available
+    sampler.start()  # a no-op: nothing to poll
+    assert sampler.stop() == {
+        "n": 0,
+        "p50": None,
+        "p95": None,
+        "p99": None,
+        "mean": None,
+        "max": None,
+    }
+
+
+def test_proc_cpu_sampler_reads_a_real_pid() -> None:
+    """The caller's own PID — a **captured** PID, exactly the contract this class documents
+    (never a `pgrep`/name-pattern match)."""
+    import os
+    import time as _time
+
+    sampler = common.ProcCpuSampler(pid=os.getpid(), interval_ms=10)
+    assert sampler.available
+    sampler.start()
+    total = 0
+    for i in range(2_000_000):  # keep this PID busy while the sampler polls
+        total += i
+    assert total > 0
+    _time.sleep(0.05)  # let at least a couple of 10 ms polling intervals land
+    aggregates = sampler.stop()
+    assert aggregates["n"] >= 1
+    assert aggregates["p50"] is not None and aggregates["p50"] >= 0.0

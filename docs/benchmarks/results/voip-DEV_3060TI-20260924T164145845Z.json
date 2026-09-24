@@ -1,0 +1,1492 @@
+{
+  "schema_version": 1,
+  "benchmark": "voip",
+  "status": "PARTIAL",
+  "profile": "DEV_3060TI",
+  "git_sha": "2008feaf4b6bba90764d98fa8b4a40361fabf24a",
+  "started_at": "2026-09-24T16:40:35.641+00:00",
+  "finished_at": "2026-09-24T16:41:45.845+00:00",
+  "hardware": {
+    "gpu_name": null,
+    "driver": null,
+    "total_vram_mb": null
+  },
+  "config": {
+    "path": "sip-livekit",
+    "concurrent": 10,
+    "bursts": 30,
+    "burst_interval_ms": 2000,
+    "burst_ms": 100,
+    "warmup_ms": 1000,
+    "jitter_buffer_ms": 40,
+    "codec": "PCMA",
+    "ptime_ms": 20,
+    "target_one_way_p95_ms": 150.0,
+    "tag": "",
+    "livekit_url": "ws://127.0.0.1:7880",
+    "concurrent_ramp_s": 0.15
+  },
+  "samples": [
+    {
+      "id": "sip-livekit:10:0:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 272.84
+    },
+    {
+      "id": "sip-livekit:10:0:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 1856.907
+    },
+    {
+      "id": "sip-livekit:10:0:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1586.047
+    },
+    {
+      "id": "sip-livekit:10:0:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 1688.064
+    },
+    {
+      "id": "sip-livekit:10:0:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 1866.619
+    },
+    {
+      "id": "sip-livekit:10:0:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 1667.201
+    },
+    {
+      "id": "sip-livekit:10:0:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 1988.118
+    },
+    {
+      "id": "sip-livekit:10:0:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 1596.852
+    },
+    {
+      "id": "sip-livekit:10:0:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1503.706
+    },
+    {
+      "id": "sip-livekit:10:0:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 1766.446
+    },
+    {
+      "id": "sip-livekit:10:0:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 1294.369
+    },
+    {
+      "id": "sip-livekit:10:0:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1036.584
+    },
+    {
+      "id": "sip-livekit:10:0:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 1785.82
+    },
+    {
+      "id": "sip-livekit:10:0:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 1929.208
+    },
+    {
+      "id": "sip-livekit:10:0:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 0,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 435.145
+    },
+    {
+      "id": "sip-livekit:10:1:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 303.797
+    },
+    {
+      "id": "sip-livekit:10:1:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 423.995
+    },
+    {
+      "id": "sip-livekit:10:1:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 688.428
+    },
+    {
+      "id": "sip-livekit:10:1:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 345.367
+    },
+    {
+      "id": "sip-livekit:10:1:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 375.718
+    },
+    {
+      "id": "sip-livekit:10:1:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 420.892
+    },
+    {
+      "id": "sip-livekit:10:1:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 371.457
+    },
+    {
+      "id": "sip-livekit:10:1:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 403.916
+    },
+    {
+      "id": "sip-livekit:10:1:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 321.256
+    },
+    {
+      "id": "sip-livekit:10:1:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 250.263
+    },
+    {
+      "id": "sip-livekit:10:1:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 1202.016
+    },
+    {
+      "id": "sip-livekit:10:1:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1900.149
+    },
+    {
+      "id": "sip-livekit:10:1:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 137.31
+    },
+    {
+      "id": "sip-livekit:10:1:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 1,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 555.125
+    },
+    {
+      "id": "sip-livekit:10:2:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 546.47
+    },
+    {
+      "id": "sip-livekit:10:2:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 1834.795
+    },
+    {
+      "id": "sip-livekit:10:2:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 73.729
+    },
+    {
+      "id": "sip-livekit:10:2:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 259.377
+    },
+    {
+      "id": "sip-livekit:10:2:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 1828.24
+    },
+    {
+      "id": "sip-livekit:10:2:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 68.521
+    },
+    {
+      "id": "sip-livekit:10:2:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 43.317
+    },
+    {
+      "id": "sip-livekit:10:2:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 1561.95
+    },
+    {
+      "id": "sip-livekit:10:2:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1836.697
+    },
+    {
+      "id": "sip-livekit:10:2:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 284.824
+    },
+    {
+      "id": "sip-livekit:10:2:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 2,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 611.978
+    },
+    {
+      "id": "sip-livekit:10:3:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 551.423
+    },
+    {
+      "id": "sip-livekit:10:3:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 289.381
+    },
+    {
+      "id": "sip-livekit:10:3:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1857.14
+    },
+    {
+      "id": "sip-livekit:10:3:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 210.354
+    },
+    {
+      "id": "sip-livekit:10:3:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 1829.713
+    },
+    {
+      "id": "sip-livekit:10:3:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 87.787
+    },
+    {
+      "id": "sip-livekit:10:3:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 45.957
+    },
+    {
+      "id": "sip-livekit:10:3:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 1646.473
+    },
+    {
+      "id": "sip-livekit:10:3:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1841.337
+    },
+    {
+      "id": "sip-livekit:10:3:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 283.648
+    },
+    {
+      "id": "sip-livekit:10:3:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 3,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 610.397
+    },
+    {
+      "id": "sip-livekit:10:4:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 558.918
+    },
+    {
+      "id": "sip-livekit:10:4:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 288.145
+    },
+    {
+      "id": "sip-livekit:10:4:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1865.905
+    },
+    {
+      "id": "sip-livekit:10:4:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 80.496
+    },
+    {
+      "id": "sip-livekit:10:4:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 297.927
+    },
+    {
+      "id": "sip-livekit:10:4:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 7.154
+    },
+    {
+      "id": "sip-livekit:10:4:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 231.194
+    },
+    {
+      "id": "sip-livekit:10:4:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 11.321
+    },
+    {
+      "id": "sip-livekit:10:4:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 86.481
+    },
+    {
+      "id": "sip-livekit:10:4:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 54.702
+    },
+    {
+      "id": "sip-livekit:10:4:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 1657.193
+    },
+    {
+      "id": "sip-livekit:10:4:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1888.529
+    },
+    {
+      "id": "sip-livekit:10:4:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 320.67
+    },
+    {
+      "id": "sip-livekit:10:4:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 4,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 662.401
+    },
+    {
+      "id": "sip-livekit:10:5:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 600.251
+    },
+    {
+      "id": "sip-livekit:10:5:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 326.468
+    },
+    {
+      "id": "sip-livekit:10:5:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1807.353
+    },
+    {
+      "id": "sip-livekit:10:5:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 116.002
+    },
+    {
+      "id": "sip-livekit:10:5:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 4.733
+    },
+    {
+      "id": "sip-livekit:10:5:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 8.423
+    },
+    {
+      "id": "sip-livekit:10:5:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 342.545
+    },
+    {
+      "id": "sip-livekit:10:5:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 254.316
+    },
+    {
+      "id": "sip-livekit:10:5:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1800.303
+    },
+    {
+      "id": "sip-livekit:10:5:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 48.694
+    },
+    {
+      "id": "sip-livekit:10:5:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 30.379
+    },
+    {
+      "id": "sip-livekit:10:5:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1554.365
+    },
+    {
+      "id": "sip-livekit:10:5:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 1838.477
+    },
+    {
+      "id": "sip-livekit:10:5:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 299.174
+    },
+    {
+      "id": "sip-livekit:10:5:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 5,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 621.324
+    },
+    {
+      "id": "sip-livekit:10:6:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 556.562
+    },
+    {
+      "id": "sip-livekit:10:6:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 296.694
+    },
+    {
+      "id": "sip-livekit:10:6:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1854.061
+    },
+    {
+      "id": "sip-livekit:10:6:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 88.922
+    },
+    {
+      "id": "sip-livekit:10:6:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 13.452
+    },
+    {
+      "id": "sip-livekit:10:6:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 307.011
+    },
+    {
+      "id": "sip-livekit:10:6:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 22.933
+    },
+    {
+      "id": "sip-livekit:10:6:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 240.668
+    },
+    {
+      "id": "sip-livekit:10:6:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 315.608
+    },
+    {
+      "id": "sip-livekit:10:6:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 7.572
+    },
+    {
+      "id": "sip-livekit:10:6:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 16.907
+    },
+    {
+      "id": "sip-livekit:10:6:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 33.318
+    },
+    {
+      "id": "sip-livekit:10:6:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 55.594
+    },
+    {
+      "id": "sip-livekit:10:6:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 1564.034
+    },
+    {
+      "id": "sip-livekit:10:6:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 1810.231
+    },
+    {
+      "id": "sip-livekit:10:6:15",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 15,
+      "measure": "one_way",
+      "one_way_delay_ms": 271.309
+    },
+    {
+      "id": "sip-livekit:10:6:16",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 6,
+      "burst_index": 16,
+      "measure": "one_way",
+      "one_way_delay_ms": 574.34
+    },
+    {
+      "id": "sip-livekit:10:7:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 170.611
+    },
+    {
+      "id": "sip-livekit:10:7:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 223.268
+    },
+    {
+      "id": "sip-livekit:10:7:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 176.998
+    },
+    {
+      "id": "sip-livekit:10:7:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 493.191
+    },
+    {
+      "id": "sip-livekit:10:7:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 154.486
+    },
+    {
+      "id": "sip-livekit:10:7:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 485.424
+    },
+    {
+      "id": "sip-livekit:10:7:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 182.669
+    },
+    {
+      "id": "sip-livekit:10:7:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 280.266
+    },
+    {
+      "id": "sip-livekit:10:7:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 583.599
+    },
+    {
+      "id": "sip-livekit:10:7:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 131.627
+    },
+    {
+      "id": "sip-livekit:10:7:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 134.592
+    },
+    {
+      "id": "sip-livekit:10:7:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 155.229
+    },
+    {
+      "id": "sip-livekit:10:7:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 435.444
+    },
+    {
+      "id": "sip-livekit:10:7:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 176.101
+    },
+    {
+      "id": "sip-livekit:10:7:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 1289.374
+    },
+    {
+      "id": "sip-livekit:10:7:15",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 15,
+      "measure": "one_way",
+      "one_way_delay_ms": 1432.549
+    },
+    {
+      "id": "sip-livekit:10:7:16",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 16,
+      "measure": "one_way",
+      "one_way_delay_ms": 1812.515
+    },
+    {
+      "id": "sip-livekit:10:7:17",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 17,
+      "measure": "one_way",
+      "one_way_delay_ms": 121.947
+    },
+    {
+      "id": "sip-livekit:10:7:18",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 18,
+      "measure": "one_way",
+      "one_way_delay_ms": 143.923
+    },
+    {
+      "id": "sip-livekit:10:7:19",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 7,
+      "burst_index": 19,
+      "measure": "one_way",
+      "one_way_delay_ms": 142.683
+    },
+    {
+      "id": "sip-livekit:10:8:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 1188.396
+    },
+    {
+      "id": "sip-livekit:10:8:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 1405.156
+    },
+    {
+      "id": "sip-livekit:10:8:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 967.451
+    },
+    {
+      "id": "sip-livekit:10:8:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 1051.551
+    },
+    {
+      "id": "sip-livekit:10:8:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 1174.285
+    },
+    {
+      "id": "sip-livekit:10:8:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 1273.315
+    },
+    {
+      "id": "sip-livekit:10:8:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 975.851
+    },
+    {
+      "id": "sip-livekit:10:8:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 1317.996
+    },
+    {
+      "id": "sip-livekit:10:8:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1114.454
+    },
+    {
+      "id": "sip-livekit:10:8:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 1242.678
+    },
+    {
+      "id": "sip-livekit:10:8:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 879.152
+    },
+    {
+      "id": "sip-livekit:10:8:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1144.862
+    },
+    {
+      "id": "sip-livekit:10:8:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 915.45
+    },
+    {
+      "id": "sip-livekit:10:8:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 970.882
+    },
+    {
+      "id": "sip-livekit:10:8:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 932.745
+    },
+    {
+      "id": "sip-livekit:10:8:15",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 15,
+      "measure": "one_way",
+      "one_way_delay_ms": 540.751
+    },
+    {
+      "id": "sip-livekit:10:8:16",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 16,
+      "measure": "one_way",
+      "one_way_delay_ms": 1767.261
+    },
+    {
+      "id": "sip-livekit:10:8:17",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 17,
+      "measure": "one_way",
+      "one_way_delay_ms": 1841.982
+    },
+    {
+      "id": "sip-livekit:10:8:18",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 18,
+      "measure": "one_way",
+      "one_way_delay_ms": 320.519
+    },
+    {
+      "id": "sip-livekit:10:8:19",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 8,
+      "burst_index": 19,
+      "measure": "one_way",
+      "one_way_delay_ms": 679.212
+    },
+    {
+      "id": "sip-livekit:10:9:0",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 0,
+      "measure": "one_way",
+      "one_way_delay_ms": 1195.253
+    },
+    {
+      "id": "sip-livekit:10:9:1",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 1,
+      "measure": "one_way",
+      "one_way_delay_ms": 939.709
+    },
+    {
+      "id": "sip-livekit:10:9:2",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 2,
+      "measure": "one_way",
+      "one_way_delay_ms": 1071.21
+    },
+    {
+      "id": "sip-livekit:10:9:3",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 3,
+      "measure": "one_way",
+      "one_way_delay_ms": 1169.445
+    },
+    {
+      "id": "sip-livekit:10:9:4",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 4,
+      "measure": "one_way",
+      "one_way_delay_ms": 1263.389
+    },
+    {
+      "id": "sip-livekit:10:9:5",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 5,
+      "measure": "one_way",
+      "one_way_delay_ms": 949.141
+    },
+    {
+      "id": "sip-livekit:10:9:6",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 6,
+      "measure": "one_way",
+      "one_way_delay_ms": 1079.127
+    },
+    {
+      "id": "sip-livekit:10:9:7",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 7,
+      "measure": "one_way",
+      "one_way_delay_ms": 1068.378
+    },
+    {
+      "id": "sip-livekit:10:9:8",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 8,
+      "measure": "one_way",
+      "one_way_delay_ms": 1296.579
+    },
+    {
+      "id": "sip-livekit:10:9:9",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 9,
+      "measure": "one_way",
+      "one_way_delay_ms": 1388.184
+    },
+    {
+      "id": "sip-livekit:10:9:10",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 10,
+      "measure": "one_way",
+      "one_way_delay_ms": 867.276
+    },
+    {
+      "id": "sip-livekit:10:9:11",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 11,
+      "measure": "one_way",
+      "one_way_delay_ms": 1144.566
+    },
+    {
+      "id": "sip-livekit:10:9:12",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 12,
+      "measure": "one_way",
+      "one_way_delay_ms": 944.248
+    },
+    {
+      "id": "sip-livekit:10:9:13",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 13,
+      "measure": "one_way",
+      "one_way_delay_ms": 969.13
+    },
+    {
+      "id": "sip-livekit:10:9:14",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 14,
+      "measure": "one_way",
+      "one_way_delay_ms": 920.548
+    },
+    {
+      "id": "sip-livekit:10:9:15",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 15,
+      "measure": "one_way",
+      "one_way_delay_ms": 536.611
+    },
+    {
+      "id": "sip-livekit:10:9:16",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 16,
+      "measure": "one_way",
+      "one_way_delay_ms": 1758.328
+    },
+    {
+      "id": "sip-livekit:10:9:17",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 17,
+      "measure": "one_way",
+      "one_way_delay_ms": 1808.425
+    },
+    {
+      "id": "sip-livekit:10:9:18",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 18,
+      "measure": "one_way",
+      "one_way_delay_ms": 308.304
+    },
+    {
+      "id": "sip-livekit:10:9:19",
+      "path": "sip-livekit",
+      "concurrency": 10,
+      "call_index": 9,
+      "burst_index": 19,
+      "measure": "one_way",
+      "one_way_delay_ms": 584.561
+    }
+  ],
+  "aggregates": {
+    "concurrency": 10,
+    "one_way_delay_ms": {
+      "n": 157,
+      "p50": 583.599,
+      "p95": 1856.907,
+      "p99": 1929.208,
+      "mean": 799.7645796178344,
+      "max": 1988.118
+    },
+    "bursts_sent": 300,
+    "bursts_detected": 157,
+    "burst_loss_rate": 0.4767,
+    "target_one_way_p95_ms": 150.0,
+    "meets_target": false,
+    "rtp_sent": 30500,
+    "rtp_lost": 0,
+    "rtp_packet_loss_rate": 0.0,
+    "rtp_jitter_ms": {
+      "n": 10,
+      "p50": 5.667233486727009,
+      "p95": 8.609595169272573,
+      "p99": 8.609595169272573,
+      "mean": 5.091942756538919,
+      "max": 8.609595169272573
+    },
+    "gateway_cpu_percent": {
+      "n": 348,
+      "p50": 157.48738950804469,
+      "p95": 204.53413773811087,
+      "p99": 264.76229903635664,
+      "mean": 154.2887733497183,
+      "max": 474.61788753340403
+    },
+    "sfu_cpu_percent": {
+      "n": 348,
+      "p50": 9.964083563252688,
+      "p95": 19.941355062363797,
+      "p99": 44.903233093818386,
+      "mean": 10.526724736051422,
+      "max": 64.92499018185916
+    }
+  },
+  "notes": [
+    "delay excludes a softphone's own capture/playout buffering and a hardware phone's jitter buffer, same as the single-call paths; `--provider` is irrelevant (no model runs)",
+    "sip-livekit --concurrent 10: 10 independent softphones -> ONE in-process gateway (as the single-call sip-livekit path) -> 10 dedicated LiveKit rooms -> the SFU ws://127.0.0.1:7880, concurrently; gateway_cpu_percent below samples this whole harness process (the UA-driving loop included, not gateway-isolated CPU) — sip-loopback's --concurrent run gives an isolated gateway figure instead"
+  ],
+  "reason": "143 of 300 bursts not detected across 10 calls"
+}

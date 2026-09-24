@@ -50,6 +50,7 @@ __all__ = [
     "TtsProfile",
     "VadProfile",
     "VoiceTurnProfile",
+    "VoipProfile",
     "WarmupProfile",
     "active_profile",
     "apply_profile",
@@ -241,6 +242,20 @@ class LatencyTargetsProfile(BaseModel):
     p95_ms: int
 
 
+class VoipProfile(BaseModel):
+    """`voip.*` (I3 E6f, HLD 80 §80.8.3). Read straight off `ModelProfile` by report/audit code —
+    no `Settings` counterpart, no provider reads it. Every field is `None` until
+    `benchmarks/benchmark_voip.py` actually measures it (SPEC §27's "no number a script did not
+    produce"); this block exists so that measured number, once it exists, has one committed home
+    instead of living only in `docs/benchmarks/voip.md` prose."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    one_way_delay_ms_p50: float | None = None
+    one_way_delay_ms_p95: float | None = None
+    concurrent_calls_measured: int | None = None
+
+
 class HealthProfile(BaseModel):
     """ADDITIVE (E18-A, R1/DO item 1): HLD 60 §4.1's `health.failure_threshold` /
     `health.rewarm_interval_s`, read directly off `ModelProfile` by
@@ -274,6 +289,7 @@ class ModelProfile(BaseModel):
     warmup: WarmupProfile
     latency_targets: LatencyTargetsProfile
     health: HealthProfile = Field(default_factory=HealthProfile)
+    voip: VoipProfile = Field(default_factory=VoipProfile)
 
 
 def load_profile(name: str) -> ModelProfile:

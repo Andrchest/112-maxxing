@@ -508,6 +508,14 @@ it):
 - **Where the numbers go**: `docs/benchmarks/voip.md`; `DEV_3060TI.yaml` gains
   `voip.one_way_delay_ms_p50 / p95` and `voip.concurrent_calls_measured` (measured, or absent).
 
+**Result (I3 E6f, 2026-09-24, `docs/benchmarks/voip.md`).** `sip-loopback` (gateway-only, its own
+subprocess): p50/p95 stay sub-millisecond and 0 % RTP loss at every swept N — 1: 0.22/0.35 ms;
+5: 0.21/0.32 ms; 10: 0.13/0.23 ms; 20: 0.17/0.34 ms; 40: 0.16/0.36 ms. `sip-livekit` (the full
+SIP+SFU path): N=1 p50/p95 95.8/108.6 ms (meets target); N=5 1298.7/1319.2 ms (target missed,
+0 % RTP loss); N=10 583.6/1856.9 ms with 47.7 % burst-detection loss (PARTIAL); N=20/N=40
+`NOT_RUN` — this benchmark's single-process harness did not complete a run within 250 s. Highest N
+meeting p95 ≤ 150 ms and loss < 1 %: `sip-loopback` 40 (largest tested), `sip-livekit` 1.
+
 ## 80.9 Invariants and decisions kept
 
 | Rule | Held by |
