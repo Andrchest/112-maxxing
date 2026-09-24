@@ -6,7 +6,7 @@
 // types it consumes carry none of it either.
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
@@ -28,7 +28,22 @@ import { DispatchTray } from './dispatch-tray';
 import { NotificationsPanel } from './notifications-panel';
 import { RadioLog } from './radio-log';
 import { StatusUpdateForm } from './status-update-form';
+import { LegsPanel } from './legs-panel';
+import { CardIssueButton } from './card-issue-button';
+import { DdsHeaderStrip } from './dds-header-strip';
+import { DdsSideDrawer } from './dds-side-drawer';
 import { ddsStageStateLabelRu } from './dds-labels';
+
+// I3 E5c: events that mean "the legs list (or a leg's history) may have changed elsewhere" —
+// broadcast, so another ДДС participant's command must reach this caller's read too
+// (REQ-5294/5295). Re-fetched through react-query invalidation, the same "server's response, not
+// a local fold" doctrine `STAGE_REFRESH_EVENT_TYPES` already applies to the stage snapshot.
+const LEGS_REFRESH_EVENT_TYPES = new Set([
+  'DDS_CARD_OPENED',
+  'DDS_SERVICE_STATUS_SET',
+  'DDS_CARD_ISSUE_FLAGGED',
+  'DDS_CARD_STATUS_CHANGED',
+]);
 
 /** Event types this page re-fetches the snapshot for, rather than folding (D12 design decision
  * #1: "no optimistic stage changes" — a re-fetch is still "the server's response"). Mirrors
@@ -52,6 +67,7 @@ const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
 
 export function DdsConsolePage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
   // D4: the header role chip is the signed-in account's role, not the simulation role.
@@ -67,10 +83,15 @@ export function DdsConsolePage() {
     enabled: sessionId !== undefined,
   });
 
+  // I3 E5c: the resource board/dispatch tray (and the board data behind them) are kept entirely
+  // behind `dds_mode: RESOURCE_PICKER` — a memo session never fetches the resource board.
   const resourcesQuery = useQuery({
     queryKey: queryKeys.dds.resources(sessionId ?? ''),
     queryFn: () => listDdsResources(sessionId ?? ''),
-    enabled: sessionId !== undefined && snapshotQuery.data?.work_item != null,
+    enabled:
+      sessionId !== undefined &&
+      snapshotQuery.data?.work_item != null &&
+      snapshotQuery.data.session.variants.dds_mode !== 'MEMO_STATUSES',
   });
 
   useEffect(() => {
@@ -104,6 +125,9 @@ export function DdsConsolePage() {
         useRadioStore.setState((state) => ({ messages: applyRadioMessageEvent(state.messages, event, { incidentId }) }));
         if (STAGE_REFRESH_EVENT_TYPES.has(event.event_type)) {
           void snapshotQuery.refetch();
+        }
+        if (LEGS_REFRESH_EVENT_TYPES.has(event.event_type)) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.dds.legs(snapshot.session.id) });
         }
       },
       onStatusChange: setConnectionStatus,
@@ -169,6 +193,40 @@ export function DdsConsolePage() {
     );
   }
 
+  // I3 E5c (70 §70.4, D16): the memo's per-service blocks replace the resource board/dispatch
+  // tray under `dds_mode: MEMO_STATUSES`; `RESOURCE_PICKER` keeps today's UI exactly (the brief's
+  // "kept behind dds_mode = RESOURCE_PICKER"). `dds_mode` is immutable per session (D16), so
+  // reading it off the snapshot's own `SessionVariants` needs no store of its own.
+  const isMemoMode = snapshot.session.variants.dds_mode === 'MEMO_STATUSES';
+
+  // I3 E5c (manager review): the memo layout follows the reference's shape (header strip on top,
+  // a two-column card summary, the services tab bar spanning the bottom, product-only panels in a
+  // closed-by-default drawer) — `RESOURCE_PICKER` keeps today's three-column console unchanged.
+  if (isMemoMode) {
+    return (
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+        {workItem ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <Badge variant="outline" data-slot="dds-stage-badge">
+              {t('ddsStageLabel')}: {ddsStageStateLabelRu(workItem.state)}
+            </Badge>
+            <div className="flex flex-wrap gap-2">
+              <StageActionBar sessionId={sessionId} />
+              <CloseDialog sessionId={sessionId} />
+              <CardIssueButton sessionId={sessionId} />
+              <DdsSideDrawer sessionId={sessionId} />
+            </div>
+          </div>
+        ) : null}
+        <div className="flex flex-col gap-4">
+          {workItem ? <DdsHeaderStrip sessionId={sessionId} workItem={workItem} /> : null}
+          <WorkItemPanel />
+          <LegsPanel sessionId={sessionId} />
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
       {workItem ? (
@@ -183,6 +241,7 @@ export function DdsConsolePage() {
           <div className="flex flex-wrap gap-2">
             <StageActionBar sessionId={sessionId} />
             <CloseDialog sessionId={sessionId} />
+            <CardIssueButton sessionId={sessionId} />
           </div>
           <WorkItemPanel />
         </div>

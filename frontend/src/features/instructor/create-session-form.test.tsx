@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreateSessionForm } from './create-session-form';
 import { ru } from '@/shared/i18n/ru';
-import type { HealthReadyResponse, SessionDetail } from '@/shared/api';
+import { useServiceCatalogStore } from '@/entities/service-catalog';
+import type { HealthReadyResponse, SessionDetail, ServiceCatalogEntry } from '@/shared/api';
 
 const HEALTH_READY_RESPONSE: HealthReadyResponse = {
   overall: 'READY',
@@ -151,9 +152,27 @@ async function fillInScenarioVersionAndParticipant(user: ReturnType<typeof userE
   await user.selectOptions(participantSelect, 'trainee-user-id-1');
 }
 
+function catalogEntry(id: string, nameRu: string): ServiceCatalogEntry {
+  return {
+    id,
+    name_ru: nameRu,
+    full_name_ru: nameRu,
+    kind: 'CITY',
+    code: null,
+    okrug: null,
+    district: null,
+    classifier_org_id: null,
+    status_policy: 'DEFAULT',
+    display: true,
+    deprecated: false,
+    phone: null,
+  };
+}
+
 describe('CreateSessionForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    useServiceCatalogStore.getState().reset();
   });
 
   it('issues exactly the documented createSession and startSession requests', async () => {
@@ -473,5 +492,56 @@ describe('CreateSessionForm', () => {
     await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(ru.problemVariantNotAvailable);
+  });
+
+  // I3 E5c (70 §70.4.5, D16): several ДДС trainees, each bound to a distinct service.
+  it('MULTI_TRAINEE: adding a DDS participant offers a service select from the catalog', async () => {
+    const user = userEvent.setup();
+    useServiceCatalogStore.getState().setEntries([catalogEntry('FIRE_RESCUE', 'Fire service')]);
+    const twoTrainees = {
+      items: [...TRAINEES_RESPONSE.items, { id: 'trainee-user-id-2', username: 'trainee2', display_name_ru: 'Trainee Two', user_role: 'TRAINEE', created_at: '2026-09-21T00:00:00Z' }],
+      total: 2,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/v1/users?role=TRAINEE') return jsonResponse(twoTrainees);
+      return fetchMockWithVersions(TWO_STAGE_VERSIONS_RESPONSE)(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await pickScenarioAndVersion(user);
+    await user.selectOptions(await screen.findByLabelText(ru.instructorModeLabel), 'MULTI_TRAINEE');
+
+    await user.selectOptions(
+      await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeOperator112}`),
+      'trainee-user-id-1',
+    );
+    await user.selectOptions(
+      await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`),
+      'trainee-user-id-2',
+    );
+    await user.selectOptions(screen.getByLabelText(ru.instructorParticipantServiceLabel), 'FIRE_RESCUE');
+
+    await user.click(screen.getByRole('button', { name: ru.instructorAddDdsParticipantButton }));
+    const ddsSelects = screen.getAllByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`);
+    expect(ddsSelects).toHaveLength(2);
+    await user.selectOptions(ddsSelects[1]!, 'trainee-user-id-1');
+
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([callUrl, callInit]) => String(callUrl) === '/api/v1/sessions' && (callInit as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    const body = JSON.parse(createCall[1].body as string) as { participants: unknown[] };
+    expect(body.participants).toEqual([
+      { user_id: 'trainee-user-id-1', assigned_role_type: 'OPERATOR_112' },
+      { user_id: 'trainee-user-id-2', assigned_role_type: 'DDS', assigned_service_id: 'FIRE_RESCUE' },
+      { user_id: 'trainee-user-id-1', assigned_role_type: 'DDS' },
+    ]);
   });
 });

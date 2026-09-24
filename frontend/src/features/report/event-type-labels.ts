@@ -61,6 +61,7 @@ export const EVENT_TYPE_LABEL_KEY: Record<EventType, keyof typeof ru> = {
   RECIPIENTS_RESOLVED: 'eventTypeRecipientsResolved', // I3 E2b′
   DDS_CARD_OPENED: 'eventTypeDdsCardOpened', // I3 E5a
   DDS_SERVICE_STATUS_SET: 'eventTypeDdsServiceStatusSet', // I3 E5a
+  DDS_CARD_ISSUE_FLAGGED: 'eventTypeDdsCardIssueFlagged', // I3 E5b
 };
 
 export function eventTypeLabelRu(value: EventType): string {

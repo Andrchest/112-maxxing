@@ -4,7 +4,7 @@
 // "every value listed, unsupported ones disabled" reading of `ScenarioVariantsView`
 // (`create-session-form.tsx`'s own comment). `createLesson` validates the whole plan and creates
 // every session at once (openapi.yaml); nothing here computes a card status or a session state.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
@@ -13,6 +13,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
+import { useServiceCatalogStore } from '@/entities/service-catalog';
 import {
   createLesson,
   listScenarios,
@@ -117,13 +118,15 @@ function effectiveRoleChain(roleChain: readonly RoleType[], cardSource: CardSour
 interface ParticipantRow {
   userId: string;
   assignedRoleType: RoleType | null;
+  /** I3 E5c (70 §70.4.5, D16) — same field, same reading, as `create-session-form.tsx`. */
+  assignedServiceId: string;
 }
 
 function buildParticipantRows(mode: SessionMode, roleChain: readonly RoleType[]): ParticipantRow[] {
   if (mode === 'FULL_CYCLE_SINGLE_TRAINEE') {
-    return [{ userId: '', assignedRoleType: null }];
+    return [{ userId: '', assignedRoleType: null, assignedServiceId: '' }];
   }
-  return roleChain.map((roleType) => ({ userId: '', assignedRoleType: roleType }));
+  return roleChain.map((roleType) => ({ userId: '', assignedRoleType: roleType, assignedServiceId: '' }));
 }
 
 interface PlanEntryRow {
@@ -348,6 +351,13 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     queryFn: () => listUsers({ role: 'TRAINEE' }),
   });
 
+  // I3 E5c (70 §70.4.5, D16): same app-wide catalog `create-session-form.tsx` reads.
+  const serviceCatalogEntries = useServiceCatalogStore((state) => state.entries);
+  const serviceCatalogOptions = useMemo(
+    () => Object.values(serviceCatalogEntries).filter((entry) => entry.display && !entry.deprecated),
+    [serviceCatalogEntries],
+  );
+
   const createMutation = useMutation({
     mutationFn: createLesson,
     onSuccess: (lesson) => {
@@ -410,6 +420,18 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     setParticipants((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, userId } : row)));
   }
 
+  function updateParticipantServiceId(index: number, assignedServiceId: string) {
+    setParticipants((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, assignedServiceId } : row)));
+  }
+
+  function addDdsParticipant() {
+    setParticipants((rows) => [...rows, { userId: '', assignedRoleType: 'DDS', assignedServiceId: '' }]);
+  }
+
+  function removeParticipant(index: number) {
+    setParticipants((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+  }
+
   const entriesValid =
     entries.length > 0 &&
     entries.every((row) => row.versionId !== '') &&
@@ -429,6 +451,11 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
       participants: participants.map((row) => ({
         user_id: row.userId.trim(),
         assigned_role_type: row.assignedRoleType,
+        // `undefined` (not `null`) when unbound — same "drop the key" reading `create-session-
+        // form.tsx` uses, so an unbound/non-DDS row's JSON is unchanged from before this epic.
+        ...(row.assignedRoleType === 'DDS' && row.assignedServiceId.trim() !== ''
+          ? { assigned_service_id: row.assignedServiceId.trim() }
+          : {}),
       })),
       // The generated type requires this even though the backend defaults it to 1 (same
       // `create-session-form.tsx` note: openapi's `default: 1` does not make a property optional).
@@ -502,30 +529,60 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium">{t('lessonFormParticipantsLabel')}</span>
             {participants.map((row, index) => (
-              <div key={index} className="flex items-end gap-2">
-                <div className="flex flex-1 flex-col gap-1.5">
-                  <Label htmlFor={`lesson-participant-${index}`}>
-                    {row.assignedRoleType
-                      ? `${t('instructorParticipantUserIdLabel')} — ${t(ROLE_TYPE_LABEL_KEY[row.assignedRoleType])}`
-                      : t('instructorParticipantUserIdLabel')}
-                  </Label>
-                  <select
-                    id={`lesson-participant-${index}`}
-                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    value={row.userId}
-                    onChange={(event) => updateParticipantUserId(index, event.target.value)}
-                    disabled={traineesQuery.isLoading}
-                  >
-                    <option value="">{t('lessonFormSelectTraineePlaceholder')}</option>
-                    {(traineesQuery.data?.items ?? []).map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.display_name_ru}
-                      </option>
-                    ))}
-                  </select>
+              <div key={index} className="flex flex-col gap-1.5 rounded-md border border-border p-2">
+                <div className="flex items-end gap-2">
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label htmlFor={`lesson-participant-${index}`}>
+                      {row.assignedRoleType
+                        ? `${t('instructorParticipantUserIdLabel')} — ${t(ROLE_TYPE_LABEL_KEY[row.assignedRoleType])}`
+                        : t('instructorParticipantUserIdLabel')}
+                    </Label>
+                    <select
+                      id={`lesson-participant-${index}`}
+                      className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                      value={row.userId}
+                      onChange={(event) => updateParticipantUserId(index, event.target.value)}
+                      disabled={traineesQuery.isLoading}
+                    >
+                      <option value="">{t('lessonFormSelectTraineePlaceholder')}</option>
+                      {(traineesQuery.data?.items ?? []).map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.display_name_ru}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {row.assignedRoleType === 'DDS' && participants.filter((p) => p.assignedRoleType === 'DDS').length > 1 ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => removeParticipant(index)}>
+                      {t('instructorRemoveDdsParticipantButton')}
+                    </Button>
+                  ) : null}
                 </div>
+                {row.assignedRoleType === 'DDS' ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`lesson-participant-${index}-service`}>{t('instructorParticipantServiceLabel')}</Label>
+                    <select
+                      id={`lesson-participant-${index}-service`}
+                      className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                      value={row.assignedServiceId}
+                      onChange={(event) => updateParticipantServiceId(index, event.target.value)}
+                    >
+                      <option value="">{t('instructorParticipantServiceUnboundOption')}</option>
+                      {serviceCatalogOptions.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name_ru}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
               </div>
             ))}
+            {sessionMode === 'MULTI_TRAINEE' && participants.some((row) => row.assignedRoleType === 'DDS') ? (
+              <Button type="button" variant="outline" size="sm" onClick={addDdsParticipant}>
+                {t('instructorAddDdsParticipantButton')}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 

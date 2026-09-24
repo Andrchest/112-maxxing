@@ -161,6 +161,14 @@ export type DispatchResultView = components['schemas']['DispatchResultView'];
 export type StatusUpdateKind = components['schemas']['StatusUpdateKind'];
 export type StatusUpdateRequest = components['schemas']['StatusUpdateRequest'];
 export type StatusUpdateView = components['schemas']['StatusUpdateView'];
+// -- I3 E5a/E5b: the memo's per-leg statuses and card-check flags (70 §70.4.2/§70.4.3/§70.7, D16) --
+export type DdsLegView = components['schemas']['DdsLegView'];
+export type ServiceResponseStatus = components['schemas']['ServiceResponseStatus'];
+export type ServiceStatusEntryView = components['schemas']['ServiceStatusEntryView'];
+export type SetServiceStatusRequest = components['schemas']['SetServiceStatusRequest'];
+export type CardIssueKind = components['schemas']['CardIssueKind'];
+export type FlagCardIssueRequest = components['schemas']['FlagCardIssueRequest'];
+export type CardIssueView = components['schemas']['CardIssueView'];
 export type NotificationSeverity = components['schemas']['NotificationSeverity'];
 export type NotificationView = components['schemas']['NotificationView'];
 export type RadioMessageView = components['schemas']['RadioMessageView'];
@@ -245,6 +253,38 @@ export function dispatchDdsResources(sessionId: string, body: DispatchRequest = 
 
 export function sendDdsStatusUpdate(sessionId: string, body: StatusUpdateRequest): Promise<StatusUpdateView> {
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/status-updates`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `GET /dds/legs` (`listDdsLegs`, I3 E5a) — every notified service's block, broadcast to every
+ * ДДС participant; only `is_mine`/`available_actions` are the caller's own (§70.4.3). */
+export function listDdsLegs(sessionId: string): Promise<DdsLegView[]> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/legs`);
+}
+
+/** `POST /dds/legs/{id}/open` (`openDdsCard`, I3 E5a) — `ADDED --receive--> RECEIVED`; idempotent
+ * past `ADDED` (§70.4.2). */
+export function openDdsCard(sessionId: string, assignmentId: string): Promise<DdsLegView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/legs/${encodeURIComponent(assignmentId)}/open`, {
+    method: 'POST',
+  });
+}
+
+/** `POST /dds/legs/{id}/status` (`setDdsServiceStatus`, I3 E5a) — the memo's pencil form: fires
+ * one `SERVICE_RESPONSE_TRANSITIONS` trigger (§70.4.2). */
+export function setDdsServiceStatus(sessionId: string, assignmentId: string, body: SetServiceStatusRequest): Promise<DdsLegView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/legs/${encodeURIComponent(assignmentId)}/status`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `POST /dds/card-issues` (`flagDdsCardIssue`, I3 E5b) — «Отметить ошибку в карточке», offered
+ * only under `dds_card_check: ON` (§70.4.4, §70.7, C1). */
+export function flagDdsCardIssue(sessionId: string, body: FlagCardIssueRequest): Promise<CardIssueView> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/card-issues`, {
     method: 'POST',
     body: JSON.stringify(body),
   });

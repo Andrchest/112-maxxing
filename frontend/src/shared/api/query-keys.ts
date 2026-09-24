@@ -34,6 +34,9 @@ export const queryKeys = {
     resources: (sessionId: string) => ['dds', sessionId, 'resources'] as const,
     notifications: (sessionId: string) => ['dds', sessionId, 'notifications'] as const,
     radioMessages: (sessionId: string) => ['dds', sessionId, 'radio-messages'] as const,
+    // I3 E5c: the memo's per-service legs list (`listDdsLegs`) — one cache entry per session,
+    // shared by every component that reads or invalidates it.
+    legs: (sessionId: string) => ['dds', sessionId, 'legs'] as const,
   },
   // -- E16: post-session report and replay (SPEC §29; openapi `reports` tag) ------------------
   reports: {

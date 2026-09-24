@@ -26,6 +26,7 @@ import { FinalCardSection } from './final-card-section';
 import { TruthDiffSection } from './truth-diff-section';
 import { HandoffSection } from './handoff-section';
 import { DdsDecisionsSection } from './dds-decisions-section';
+import { DdsParticipantTotalsSection } from './dds-participant-totals-section';
 import { ResourceTimelineSection } from './resource-timeline-section';
 import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
@@ -167,6 +168,9 @@ export function ReportPage() {
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <DdsDecisionsSection decisions={report.dds_decisions} />
         <ResourceTimelineSection entries={report.resource_timeline} />
+      </div>
+      <div className="mt-4">
+        <DdsParticipantTotalsSection totals={report.dds_participant_totals} />
       </div>
       <div className="mt-4">
         <TimingMetricsSection sessionId={sessionId} timingMetrics={report.timing_metrics} />

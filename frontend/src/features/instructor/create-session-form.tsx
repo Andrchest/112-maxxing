@@ -6,6 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
+import { useServiceCatalogStore } from '@/entities/service-catalog';
 import {
   createSession,
   getHealthReady,
@@ -123,6 +124,10 @@ function effectiveRoleChain(roleChain: readonly RoleType[], cardSource: CardSour
 interface ParticipantRow {
   userId: string;
   assignedRoleType: RoleType | null;
+  /** I3 E5c (70 §70.4.5, D16): a ДДС participant's bound service; `''` = unbound (the scenario's
+   * scripted responder plays that service, or — with nobody bound — one trainee plays every leg).
+   * Always `''` for a non-DDS row; `handleCreate` sends `null` for those. */
+  assignedServiceId: string;
 }
 
 /**
@@ -137,9 +142,9 @@ interface ParticipantRow {
  */
 function buildParticipantRows(mode: SessionMode, roleChain: readonly RoleType[]): ParticipantRow[] {
   if (mode === 'FULL_CYCLE_SINGLE_TRAINEE') {
-    return [{ userId: '', assignedRoleType: null }];
+    return [{ userId: '', assignedRoleType: null, assignedServiceId: '' }];
   }
-  return roleChain.map((roleType) => ({ userId: '', assignedRoleType: roleType }));
+  return roleChain.map((roleType) => ({ userId: '', assignedRoleType: roleType, assignedServiceId: '' }));
 }
 
 function ProblemAlert({ error }: { error: unknown }) {
@@ -190,6 +195,14 @@ export function CreateSessionForm() {
     queryKey: queryKeys.users.list('TRAINEE'),
     queryFn: () => listUsers({ role: 'TRAINEE' }),
   });
+
+  // I3 E5c (70 §70.4.5, D16): the app-wide service catalog (`ServiceCatalogLoader` loads it once
+  // at sign-in) — every ДДС participant row's service select is built from it.
+  const serviceCatalogEntries = useServiceCatalogStore((state) => state.entries);
+  const serviceCatalogOptions = useMemo(
+    () => Object.values(serviceCatalogEntries).filter((entry) => entry.display && !entry.deprecated),
+    [serviceCatalogEntries],
+  );
 
   // R9 (SPEC §37): the Start button is disabled unless inference readiness is either satisfied
   // (`overall === 'READY'`) or not required at all. `HealthReadyResponse.require_inference_ready`
@@ -285,6 +298,23 @@ export function CreateSessionForm() {
     setParticipants((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, userId } : row)));
   }
 
+  function updateParticipantServiceId(index: number, assignedServiceId: string) {
+    setParticipants((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, assignedServiceId } : row)));
+  }
+
+  // I3 E5c (70 §70.4.5): `MULTI_TRAINEE` may bind several ДДС participants to distinct services in
+  // the one DDS stage — `buildParticipantRows` gives one row per `role_chain` entry, so a second
+  // (or further) ДДС trainee is an explicit addition/removal the instructor makes here.
+  function addDdsParticipant() {
+    setParticipants((rows) => [...rows, { userId: '', assignedRoleType: 'DDS', assignedServiceId: '' }]);
+    setSession(null);
+  }
+
+  function removeParticipant(index: number) {
+    setParticipants((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+    setSession(null);
+  }
+
   function handleCreate() {
     if (!versionId || participants.length === 0 || participants.some((row) => row.userId.trim() === '')) {
       return;
@@ -295,6 +325,12 @@ export function CreateSessionForm() {
       participants: participants.map((row) => ({
         user_id: row.userId.trim(),
         assigned_role_type: row.assignedRoleType,
+        // `undefined` (not `null`) when unbound: `JSON.stringify` drops the key, keeping every
+        // non-DDS/unbound request byte-identical to before this epic (a bound DDS row is the only
+        // one that ever carries `assigned_service_id`).
+        ...(row.assignedRoleType === 'DDS' && row.assignedServiceId.trim() !== ''
+          ? { assigned_service_id: row.assignedServiceId.trim() }
+          : {}),
       })),
       // The generated type requires this even though the backend defaults it to 1 (openapi's
       // `default: 1` does not make a property optional) — pass the same value explicitly.
@@ -426,28 +462,53 @@ export function CreateSessionForm() {
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium">{t('instructorParticipantsLabel')}</span>
             {participants.map((row, index) => (
-              <div key={index} className="flex items-end gap-2">
-                <div className="flex flex-1 flex-col gap-1.5">
-                  <Label htmlFor={`instructor-participant-${index}`}>
-                    {row.assignedRoleType
-                      ? `${t('instructorParticipantUserIdLabel')} — ${t(ROLE_TYPE_LABEL_KEY[row.assignedRoleType])}`
-                      : t('instructorParticipantUserIdLabel')}
-                  </Label>
-                  <select
-                    id={`instructor-participant-${index}`}
-                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    value={row.userId}
-                    onChange={(event) => updateParticipantUserId(index, event.target.value)}
-                    disabled={traineesQuery.isLoading}
-                  >
-                    <option value="">{t('instructorSelectTraineePlaceholder')}</option>
-                    {(traineesQuery.data?.items ?? []).map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.display_name_ru}
-                      </option>
-                    ))}
-                  </select>
+              <div key={index} className="flex flex-col gap-1.5 rounded-md border border-border p-2">
+                <div className="flex items-end gap-2">
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label htmlFor={`instructor-participant-${index}`}>
+                      {row.assignedRoleType
+                        ? `${t('instructorParticipantUserIdLabel')} — ${t(ROLE_TYPE_LABEL_KEY[row.assignedRoleType])}`
+                        : t('instructorParticipantUserIdLabel')}
+                    </Label>
+                    <select
+                      id={`instructor-participant-${index}`}
+                      className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                      value={row.userId}
+                      onChange={(event) => updateParticipantUserId(index, event.target.value)}
+                      disabled={traineesQuery.isLoading}
+                    >
+                      <option value="">{t('instructorSelectTraineePlaceholder')}</option>
+                      {(traineesQuery.data?.items ?? []).map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.display_name_ru}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {row.assignedRoleType === 'DDS' && participants.filter((p) => p.assignedRoleType === 'DDS').length > 1 ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => removeParticipant(index)}>
+                      {t('instructorRemoveDdsParticipantButton')}
+                    </Button>
+                  ) : null}
                 </div>
+                {row.assignedRoleType === 'DDS' ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`instructor-participant-${index}-service`}>{t('instructorParticipantServiceLabel')}</Label>
+                    <select
+                      id={`instructor-participant-${index}-service`}
+                      className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                      value={row.assignedServiceId}
+                      onChange={(event) => updateParticipantServiceId(index, event.target.value)}
+                    >
+                      <option value="">{t('instructorParticipantServiceUnboundOption')}</option>
+                      {serviceCatalogOptions.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name_ru}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
               </div>
             ))}
             {traineesQuery.isLoading ? (
@@ -455,6 +516,11 @@ export function CreateSessionForm() {
             ) : null}
             {traineesQuery.data && traineesQuery.data.items.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t('instructorNoUsers')}</p>
+            ) : null}
+            {sessionMode === 'MULTI_TRAINEE' && participants.some((row) => row.assignedRoleType === 'DDS') ? (
+              <Button type="button" variant="outline" size="sm" onClick={addDdsParticipant}>
+                {t('instructorAddDdsParticipantButton')}
+              </Button>
             ) : null}
           </div>
         ) : null}

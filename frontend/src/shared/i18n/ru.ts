@@ -98,6 +98,12 @@ export const ru = {
   instructorLoadingUsers: 'Загрузка пользователей…',
   instructorNoUsers: 'Нет доступных пользователей.',
 
+  // -- instructor: ДДС participant -> service binding (I3 E5c, 70 §70.4.5) --
+  instructorParticipantServiceLabel: 'Служба ДДС',
+  instructorParticipantServiceUnboundOption: 'Не назначено (играет по сценарию)',
+  instructorAddDdsParticipantButton: 'Добавить участника ДДС',
+  instructorRemoveDdsParticipantButton: 'Убрать',
+
   // -- sessions: trainee "my sessions" landing (E8-B) -----------------------
   sessionsTitle: 'Мои занятия',
   sessionsLoading: 'Загрузка занятий…',
@@ -261,6 +267,7 @@ export const ru = {
 
   ddsWorkItemTitle: 'Заявка от оператора 112',
   ddsWorkItemRecipientsLabel: 'Получатели',
+  ddsWorkItemReceivedLabel: 'Получено',
   ddsMissingFieldNotice: 'не указано оператором',
   ddsAcknowledgeButton: 'Принять к исполнению',
 
@@ -359,6 +366,51 @@ export const ru = {
   ddsAddMoreForcesButton: 'Добавить силы',
   ddsBackToAcknowledgedButton: 'Назад',
 
+  // -- I3 E5c: ДДС memo workstation — per-service leg blocks (70 §70.4, D16, ui-check D-10) -----
+  ddsLegsPanelTitle: 'Службы',
+  ddsLegsEmpty: 'Оповещённых служб нет.',
+  ddsLegHistoryShowButton: 'История',
+  ddsLegHistoryHideButton: 'Скрыть историю',
+  ddsLegHistoryEmpty: 'Записей пока нет.',
+  ddsLegEditButton: 'Изменить статус',
+  ddsLegOrderNumberLabel: 'Номер наряда',
+  ddsLegCommentLabel: 'Комментарий',
+  ddsLegStatusLabel: 'Статус',
+  ddsLegFormConfirmButton: 'Подтвердить',
+  ddsLegFormCancelButton: 'Отмена',
+  ddsLegCommentRequiredNotice: 'Укажите комментарий.',
+  ddsLegNoActionsNotice: 'Сейчас нет доступных действий.',
+
+  serviceResponseStatusAdded: 'Добавлена',
+  serviceResponseStatusReceived: 'Получена службой',
+  serviceResponseStatusAccepted: 'Принята',
+  serviceResponseStatusNotAccepted: 'Не принята',
+  serviceResponseStatusResponseStarted: 'Начало реагирования',
+  serviceResponseStatusArrived: 'Прибытие',
+  serviceResponseStatusWorking: 'Проведение работ',
+  serviceResponseStatusCompleted: 'Работы завершены',
+  serviceResponseStatusRefused: 'Отказ от выполнения работ',
+
+  ddsCardIssueButton: 'Отметить ошибку в карточке',
+  ddsCardIssueDialogTitle: 'Отметить ошибку в карточке',
+  ddsCardIssueServiceLabel: 'Служба',
+  ddsCardIssueKindLabel: 'Тип ошибки',
+  ddsCardIssueFieldPathLabel: 'Поле карточки (необязательно)',
+  ddsCardIssueCommentLabel: 'Комментарий',
+  ddsCardIssueCommentRequiredNotice: 'Укажите комментарий.',
+  ddsCardIssueSubmitButton: 'Отправить',
+  ddsCardIssueCancelButton: 'Отмена',
+
+  // -- I3 E5c (manager review): the memo workstation's side drawer (Уведомления/Радиообмен/
+  // Отправить статус — no reference counterpart) ------------------------------------------------
+  ddsSideDrawerToggleButton: 'Уведомления и радиообмен',
+  ddsSideDrawerTitle: 'Уведомления и радиообмен',
+  ddsSideDrawerCloseButton: 'Закрыть',
+  cardIssueKindMissing: 'Отсутствует',
+  cardIssueKindWrong: 'Неверно',
+  cardIssueKindContradiction: 'Противоречие',
+  cardIssueKindOther: 'Другое',
+
   // -- E16: post-session report and replay (SPEC §29, §2; D11, D12) -------------------------
   reportLoading: 'Загрузка отчёта…',
   reportNotReleasedTitle: 'Отчёт ещё не открыт инструктором',
@@ -424,6 +476,26 @@ export const ru = {
   reportDdsAdditionalDispatchBadge: 'Доп. направление',
   reportDdsStatusUpdatesLabel: 'Статусные сообщения',
   reportDdsClosureLabel: 'Закрытие',
+
+  // -- I3 E5c: memo per-leg status history + responder in the DDS decisions section -------------
+  reportDdsResponseStatusLabel: 'Статус',
+  reportDdsResponderLabel: 'Кто отвечал',
+  reportDdsResponderTrainee: 'Стажёр',
+  reportDdsResponderScripted: 'По сценарию',
+  reportDdsHistoryLabel: 'История статусов',
+  reportDdsCardIssuesLabel: 'Отметки об ошибках в карточке',
+
+  // -- I3 E5c: per-participant ДДС totals (70 §70.4.5) -------------------------------------------
+  reportDdsParticipantTotalsTitle: 'Итоги ДДС по участникам',
+  reportDdsParticipantTotalsEmpty: 'Нет данных по участникам ДДС.',
+  reportDdsParticipantTotalsServiceLabel: 'Служба',
+  reportDdsParticipantTotalsLegsLabel: 'Заявок',
+  reportDdsParticipantTotalsStatusEntriesLabel: 'Статусов отправлено',
+  reportDdsParticipantTotalsAcceptedLabel: 'Принято',
+  reportDdsParticipantTotalsNotAcceptedLabel: 'Не принято',
+  reportDdsParticipantTotalsRefusedLabel: 'Отказов',
+  reportDdsParticipantTotalsCompletedLabel: 'Завершено',
+  reportDdsParticipantTotalsCardIssuesLabel: 'Отметок об ошибках',
 
   reportResourceTimelineTitle: 'Хронология ресурсов',
   reportResourceTimelineEmpty: 'Изменений статуса ресурсов нет.',
@@ -652,6 +724,7 @@ export const ru = {
   eventTypeRecipientsResolved: 'Определён список оповещения',
   eventTypeDdsCardOpened: 'ДДС открыла карточку',
   eventTypeDdsServiceStatusSet: 'Изменён статус службы',
+  eventTypeDdsCardIssueFlagged: 'ДДС отметила ошибку в карточке',
 
   // -- I3 E4b: card status (memo p.27, 70 §70.4.6) — server-derived only, never computed here --
   lessonCardStatusRegistered: 'Зарегистрирована',

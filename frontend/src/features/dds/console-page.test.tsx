@@ -9,7 +9,7 @@ import { useWorkItemStore } from '@/entities/work-item';
 import { useResourceStore } from '@/entities/resource';
 import { useNotificationStore } from '@/entities/notification';
 import { useRadioStore } from '@/entities/radio';
-import { ACTIONS_BY_DDS_STAGE_STATE, makeWorkItem, makeResource } from './test-fixtures';
+import { ACTIONS_BY_DDS_STAGE_STATE, makeWorkItem, makeResource, makeLeg } from './test-fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -31,7 +31,7 @@ class InertSocket {
   }
 }
 
-function makeSnapshot(overrides: Record<string, unknown> = {}) {
+function makeSnapshot(overrides: Record<string, unknown> = {}, sessionOverrides: Record<string, unknown> = {}) {
   return {
     session: {
       id: 'sess-1',
@@ -56,6 +56,10 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
       last_seq_no: 3,
       transition_pause_seconds: 0,
       transition_continue_available_at_offset_ms: null,
+      // I3 E5c: `console-page.tsx` reads `session.variants.dds_mode` to pick the memo/picker
+      // layout — every existing test here exercises the `RESOURCE_PICKER` resource-board flow.
+      variants: { card_source: 'CALLER_VOICE', dds_mode: 'RESOURCE_PICKER', dds_card_check: 'OFF', dds_brigade_call: 'OFF' },
+      ...sessionOverrides,
     },
     my_role_type: 'DDS',
     active_role_stage_id: 'stage-dds-1',
@@ -244,5 +248,51 @@ describe('DdsConsolePage — refresh restore (SPEC §39, §42 test 13)', () => {
       }),
     });
     await waitFor(() => expect(snapshotCalls).toBeGreaterThan(1));
+  });
+});
+
+// I3 E5c's own vitest: both `dds_mode` variants render. `RESOURCE_PICKER` is already exercised
+// above (the resource board/dispatch flow); this covers `MEMO_STATUSES` — the legs panel replaces
+// the resource board, and the old picker UI is not fetched at all.
+describe('DdsConsolePage — dds_mode: MEMO_STATUSES renders the memo workstation (70 §70.4, D16)', () => {
+  afterEach(() => {
+    useWorkItemStore.getState().reset();
+    useResourceStore.getState().reset();
+    useNotificationStore.getState().reset();
+    useRadioStore.getState().reset();
+    useSessionEventsStore.getState().reset('none', 0);
+    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+    vi.unstubAllGlobals();
+  });
+
+  it('renders LegsPanel instead of the resource board, and never calls /dds/resources', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const resourcesFetch = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () =>
+          jsonResponse(
+            makeSnapshot(
+              { available_actions: ACTIONS_BY_DDS_STAGE_STATE.ACKNOWLEDGED, work_item: makeWorkItem({ state: 'ACKNOWLEDGED' }) },
+              { variants: { card_source: 'GENERATED_CARD', dds_mode: 'MEMO_STATUSES', dds_card_check: 'OFF', dds_brigade_call: 'OFF' } },
+            ),
+          ),
+        '/dds/legs': () => jsonResponse([makeLeg({ service_name_ru: 'Fire service' })]),
+        '/dds/resources': () => {
+          resourcesFetch();
+          return jsonResponse({ items: [], total: 0 });
+        },
+        '/incidents': () => jsonResponse({ items: [], total: 0 }),
+      }),
+    );
+
+    renderConsole();
+
+    expect(await screen.findByRole('tab')).toBeInTheDocument();
+    expect(await screen.findByText('Fire service')).toBeInTheDocument();
+    expect(screen.queryByText(ru.ddsResourceBoardTitle)).not.toBeInTheDocument();
+    expect(resourcesFetch).not.toHaveBeenCalled();
   });
 });

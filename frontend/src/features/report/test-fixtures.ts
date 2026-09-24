@@ -143,6 +143,32 @@ export function makeDdsDecision(overrides: Partial<DdsDecisionView> = {}): DdsDe
     status_updates: [],
     closure_reason: 'RESOLVED',
     closed_at_offset_ms: 9000,
+    response_status: 'COMPLETED',
+    responder: 'TRAINEE',
+    bound_user_id: null,
+    status_history: [],
+    card_issues: [],
+    ...overrides,
+  };
+}
+
+// I3 E5c: `DdsParticipantTotalsView` is not (yet) a named export of `client.ts` — derived from
+// `SessionReport` itself, the same way every other report fixture here types off a generated
+// schema member.
+type DdsParticipantTotals = SessionReport['dds_participant_totals'][number];
+
+export function makeDdsParticipantTotals(overrides: Partial<DdsParticipantTotals> = {}): DdsParticipantTotals {
+  return {
+    user_id: 'trainee-1',
+    display_name_ru: 'Иванов',
+    assigned_service_id: 'FIRE_RESCUE',
+    legs: 1,
+    status_entries: 4,
+    accepted: 1,
+    not_accepted: 0,
+    refused: 0,
+    completed: 1,
+    card_issues: 0,
     ...overrides,
   };
 }
@@ -267,6 +293,7 @@ export function makeSessionReport(overrides: Partial<SessionReport> = {}): Sessi
     timing_metrics: makeTimingMetrics(),
     explanation_available: false,
     released: false,
+    dds_participant_totals: [],
     ...overrides,
   };
 }

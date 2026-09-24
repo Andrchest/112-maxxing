@@ -27,6 +27,43 @@ describe('DdsDecisionsSection — renders dds_decisions verbatim', () => {
     expect(screen.getByText(new RegExp(ru.closureReasonResolved))).toBeInTheDocument();
   });
 
+  // I3 E5c: the memo's leg status + responder + history + card issues (70 §70.4, D16).
+  it('renders the response status, responder and the status history/card issues', () => {
+    render(
+      <DdsDecisionsSection
+        decisions={[
+          makeDdsDecision({
+            response_status: 'ACCEPTED',
+            responder: 'SCRIPTED',
+            status_history: [
+              {
+                event_id: 'e1',
+                previous_status: 'RECEIVED',
+                new_status: 'ACCEPTED',
+                order_number: '23',
+                comment_ru: null,
+                completion_reason: null,
+                source: 'SCRIPTED_RESPONDER',
+                actor_user_id: null,
+                actor_display_ru: 'Fire service',
+                at_offset_ms: 15000,
+              },
+            ],
+            card_issues: [
+              { event_id: 'issue-1', assignment_id: 'assignment-1', field_path: 'address.house', issue_kind: 'WRONG', comment_ru: 'Wrong house number', at_offset_ms: 5000 },
+            ],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getAllByText(new RegExp(ru.serviceResponseStatusAccepted)).length).toBeGreaterThan(0);
+    expect(screen.getByText(new RegExp(ru.reportDdsResponderScripted))).toBeInTheDocument();
+    expect(screen.getAllByText('Fire service').length).toBeGreaterThan(0);
+    expect(screen.getByText(/23/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(ru.cardIssueKindWrong))).toBeInTheDocument();
+    expect(screen.getByText(/Wrong house number/)).toBeInTheDocument();
+  });
+
   it('renders status updates with their kind label and text_ru', () => {
     render(
       <DdsDecisionsSection

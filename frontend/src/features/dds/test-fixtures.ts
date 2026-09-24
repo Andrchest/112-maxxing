@@ -5,7 +5,7 @@ import type { DdsWorkItem, DDSStageState } from '@/entities/work-item';
 import type { EmergencyResourceView } from '@/entities/resource';
 import type { NotificationView } from '@/entities/notification';
 import type { RadioMessageView } from '@/entities/radio';
-import type { ActionDescriptor, CardFieldSpec } from '@/shared/api';
+import type { ActionDescriptor, CardFieldSpec, DdsLegView, ServiceStatusEntryView } from '@/shared/api';
 
 // A v1 `field_specs` slice matching `makeWorkItem`'s default `card_values` (+ `caller.phone`, its
 // default `missing_field_paths` entry) — `WorkItemPanel` renders from `field_specs` only since I3
@@ -114,6 +114,45 @@ export function makeNotification(overrides: Partial<NotificationView> = {}): Not
     body_ru: 'Fire moved to the next room.',
     created_at_offset_ms: 1000,
     acknowledged_at_offset_ms: null,
+    ...overrides,
+  };
+}
+
+// -- I3 E5c: the memo's per-leg blocks (`legs-panel.tsx`, `service-leg-block.tsx`) --------------
+export function makeStatusEntry(overrides: Partial<ServiceStatusEntryView> = {}): ServiceStatusEntryView {
+  return {
+    event_id: 'entry-1',
+    previous_status: 'ADDED',
+    new_status: 'RECEIVED',
+    order_number: null,
+    comment_ru: null,
+    completion_reason: null,
+    source: 'SYSTEM',
+    actor_user_id: null,
+    actor_display_ru: 'Система',
+    at_offset_ms: 1000,
+    ...overrides,
+  };
+}
+
+export function makeLeg(overrides: Partial<DdsLegView> = {}): DdsLegView {
+  return {
+    assignment_id: 'assign-1',
+    service_type: 'FIRE_RESCUE',
+    service_name_ru: 'Пожарно-спасательная служба',
+    response_status: 'RECEIVED',
+    response_status_at_offset_ms: 1000,
+    order_number: null,
+    last_comment_ru: null,
+    accept_missed: false,
+    responder: 'TRAINEE',
+    bound_user_id: null,
+    is_mine: true,
+    history: [makeStatusEntry()],
+    available_actions: [
+      { action_id: 'accept', label_ru: 'Принята', permission: 'SET_SERVICE_STATUS', trigger: 'accept' },
+      { action_id: 'decline', label_ru: 'Не принята', permission: 'SET_SERVICE_STATUS', trigger: 'decline' },
+    ],
     ...overrides,
   };
 }
