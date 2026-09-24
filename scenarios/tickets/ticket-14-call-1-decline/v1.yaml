@@ -26,17 +26,18 @@ provenance: { source: TICKET, ticket: 14, call: 1, generation_candidate: true }
 
 # GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
 # Memo statuses only: the ticket names no resources, so the picker is not offered.
+# The ДДС phone (dds_brigade_call, HLD 80 §80.5) is ON by default: owner decision 2026-09-25 (D28).
 variants:
   supported:
     card_source: [GENERATED_CARD, CALLER_VOICE]
     dds_mode: [MEMO_STATUSES]
     dds_card_check: ["OFF", "ON"]
-    dds_brigade_call: ["OFF"]
+    dds_brigade_call: ["OFF", "ON"]
   default:
     card_source: GENERATED_CARD
     dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
-    dds_brigade_call: "OFF"
+    dds_brigade_call: "ON"
 
 world_truth:
   scene_summary_ru: "Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС, Потапов Иван Сергеевич (работник АЗС), 916-123-98-78 Адрес: МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш. (при уточнении адреса – 25 км по столбам в сторону Москвы, вл.2)"

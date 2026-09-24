@@ -22,12 +22,12 @@ import {
   type DdsMode,
   type ProblemCode,
   type RoleType,
-  type ScenarioVariantsView,
   type SessionDetail,
   type SessionMode,
   type SessionVariants,
 } from '@/shared/api';
 import { sessionStateLabelRu } from './instructor-labels';
+import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -56,7 +56,6 @@ const ROLE_TYPE_LABEL_KEY: Record<RoleType, keyof typeof ru> = {
 // view's `supported` list is disabled with a Russian note (either the scenario does not support it
 // or the product does not implement it yet — the server answers 409 for both, and this form never
 // sends one). The view's `default` is preselected.
-type VariantSwitch = keyof SessionVariants;
 
 const VARIANT_SWITCHES: readonly VariantSwitch[] = [
   'card_source',
@@ -104,10 +103,6 @@ function variantValues(variantSwitch: VariantSwitch): string[] {
 function variantValueLabel(variantSwitch: VariantSwitch, value: string): string {
   const key = (VARIANT_VALUE_LABEL_KEYS[variantSwitch] as Record<string, keyof typeof ru>)[value];
   return key ? t(key) : value;
-}
-
-function isSupported(view: ScenarioVariantsView, variantSwitch: VariantSwitch, value: string): boolean {
-  return (view.supported[variantSwitch] as readonly string[]).includes(value);
 }
 
 /**
@@ -260,7 +255,7 @@ export function CreateSessionForm() {
     setVersionId(nextVersionId);
     setSession(null);
     const nextVersion = versionsQuery.data?.items.find((version) => version.id === nextVersionId) ?? null;
-    const nextVariants = nextVersion?.variants.default ?? null;
+    const nextVariants = nextVersion ? withoutPickerPhone(nextVersion.variants.default) : null;
     setVariants(nextVariants);
     setParticipants(
       buildParticipantRows(
@@ -280,7 +275,7 @@ export function CreateSessionForm() {
 
   function handleVariantChange(variantSwitch: VariantSwitch, value: string) {
     if (!variants) return;
-    const nextVariants = { ...variants, [variantSwitch]: value } as SessionVariants;
+    const nextVariants = withoutPickerPhone({ ...variants, [variantSwitch]: value } as SessionVariants);
     setVariants(nextVariants);
     setSession(null);
     if (variantSwitch === 'card_source') {
@@ -439,7 +434,7 @@ export function CreateSessionForm() {
                   onChange={(event) => handleVariantChange(variantSwitch, event.target.value)}
                 >
                   {variantValues(variantSwitch).map((value) => {
-                    const supported = isSupported(selectedVersion.variants, variantSwitch, value);
+                    const supported = isVariantSelectable(selectedVersion.variants, variants, variantSwitch, value);
                     return (
                       <option key={value} value={value} disabled={!supported}>
                         {supported
@@ -452,7 +447,7 @@ export function CreateSessionForm() {
               </div>
             ))}
             {VARIANT_SWITCHES.some((variantSwitch) =>
-              variantValues(variantSwitch).some((value) => !isSupported(selectedVersion.variants, variantSwitch, value)),
+              variantValues(variantSwitch).some((value) => !isVariantSelectable(selectedVersion.variants, variants, variantSwitch, value)),
             ) ? (
               <p className="text-xs text-muted-foreground" data-slot="variant-unavailable-note">
                 {t('instructorVariantUnavailableNote')}

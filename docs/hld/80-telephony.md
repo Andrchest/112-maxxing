@@ -25,7 +25,7 @@ environment, written here as [credential redacted].
 | F1 | Our own **Python SIP/RTP gateway** (registrar + UAS/UAC + RTP G.711) that registers softphones and bridges each call into the call's LiveKit room as one more participant; own process / compose service `sip-gateway` under `profiles: ["sip"]`; ports 5060 udp+tcp, RTP 20000–20199/udp, health 8114. `SipCallTransport` stays the reserved plan B; Asterisk-AudioSocket is the named fallback. | D22 | §80.2 |
 | F2 | An additive **`DdsCall`** keyed by `call_id` with `DDS_CALL_TRANSITIONS`, kinds `SERVICE_HEAD` / `CLAIMANT` / `OPERATOR_112`, the endpoint recorded on the event; events `DDS_CALL_STARTED / ANSWERED / ENDED / STATUS_PROPOSED / ASSERTION`; the per-turn pipeline events reused under `call_id`; the agent keys `_calls` by `(session_id, call_id)`; a claimant call reuses the frozen caller pipeline unchanged. | D23 | §80.3, §80.6 |
 | F3 | Persona from the sha-pinned `reference/personas/v1.yaml`, resolved by catalog category (`code` > `kind`); the service head knows only the script plus the snapshot (INV 1/2/3/14 held by constructor and signature tests); template responder by default, LLM paraphrase optional (`Settings.responder_dialogue`); under `ON` the trainee's own leg's script is voiced (heard), not applied, and a heard status is proposed and confirmed by the trainee. | D24 | §80.4 |
-| F4 | `dds_brigade_call: ON` = "the ДДС workstation has a phone" (memo mode only, R41; persona override R42). Browser vs SIP is an endpoint per call, not a switch. Default stays `OFF` (C7). | D25 | §80.5 |
+| F4 | `dds_brigade_call: ON` = "the ДДС workstation has a phone" (memo mode only, R41; persona override R42). Browser vs SIP is an endpoint per call, not a switch. Default `ON` for memo scenarios (D28, owner 2026-09-25, supersedes C7's `OFF`); picker-only and schema-1 scenarios stay `{OFF}`. | D25, D28 | §80.5 |
 | F5 | Gate: a headless Python UA proves REGISTER / INVITE / RTP / BYE against the in-process gateway, and the call use cases run on fakes (GPU-free, no network). Manual: our own `tools/softphone --headset` (sox). `benchmarks/benchmark_voip.py` measures one-way delay (ТЗ ¶161 ≤ 150 ms) and a 1/5/10/20/40 concurrent sweep. | D22 (verification clause) | §80.8 |
 
 ## 80.1 Facts the design rests on
@@ -275,9 +275,13 @@ live call); any other trigger not in the table ⇒ `409 INVALID_TRANSITION`.
 - **112** (`kind = OPERATOR_112`, `dialed = "112"`): answered by an **AI 112 operator** (E6d) following
   REQ-5332's checklist — self-identification (ФИО, должность, служба), address, reason, "working a card
   already routed", the change, answering the operator's questions. The persona's knowledge is the
-  snapshot and nothing else; each checklist item the trainee covers is a `DDS_CALL_ASSERTION` with a
-  memo-item `field_path` (`call.self_identification`, `call.card_reference`, `address.street`,
-  `incident.change`, …) so `WORKFLOW_ACTION` rules score the script. The human-112-trainee variant is
+  snapshot and nothing else — plus the card's «Происшествие N» number (`incidents.display_number`,
+  the number the ДДС header strip shows; I4 E21); each checklist item the trainee covers is a
+  `DDS_CALL_ASSERTION` with a memo-item `field_path` (`call.self_identification`,
+  `call.card_reference`, `address.street`, `incident.change`, …) so `WORKFLOW_ACTION` rules score
+  the script. `call.card_reference` has `matches_snapshot: true` only when a number said after the
+  card is named («карточка N», «происшествие N») is that display number, `false` otherwise (no
+  number, or another one); until it matches, a later mention on the call is asserted again. The human-112-trainee variant is
   owner question Q1 (§80.10).
 
 ### 80.3.5 Dial plan — `backend/app/domain/routing/dial_plan.py` (pure; E6b, used by E6e)
@@ -386,7 +390,7 @@ spoken — «Пока в пути, доложу позже» (INV 2 by construct
 
 `ON` means **the ДДС workstation has a phone and the brigade is reachable on it**.
 
-| Aspect | `OFF` (E5b, default) | `ON` (E6b+) |
+| Aspect | `OFF` (E5b) | `ON` (E6b+; the memo default since D28) |
 |:--|:--|:--|
 | `available_actions` (memo mode) | as 70 §70.4.4 | + `call_service_head` «Позвонить старшему» on each leg the user plays; `call_claimant` «Позвонить заявителю» and `call_112` «Позвонить в 112» on the stage; `hang_up` «Положить трубку» and (INBOUND) `answer` «Ответить» on a live `DdsCall` |
 | Trainee leg's `responders` script | unused | voiced by the head; `CALL_IN` steps ring the trainee |
@@ -409,7 +413,13 @@ endpoint per call (§80.3.7), recorded on `DDS_CALL_STARTED.endpoint` (P4 withou
 settings may only remove `dds_brigade_call: ON` when no telephony transport is configured" is satisfied
 trivially: the browser endpoint exists wherever LiveKit does.
 
-Default: `OFF` for schema-2 scenarios until the owner answers Q2 (C7). Schema 1: `{OFF}` forever (P5).
+Default (**D28**, owner 2026-09-25, supersedes C7's `OFF`): `ON` for memo scenarios — every ticket
+scenario (`scenarios/tickets/**`, supported `{OFF, ON}`) and `street-rubbish-fire` declare
+`default: ON`, so a new session with no override has the phone. `ON` stays memo-only: a session
+resolved to `RESOURCE_PICKER` without a phone value gets `OFF` (`resolve_variants`); an explicit `ON`
+with the picker is still `409` (R41). Picker-only and schema-1 scenarios: `{OFF}` forever (P5).
+Revert: set the default back to `OFF` in `scenarios/tickets/*/v1.yaml` and `street-rubbish-fire` (the
+ticket generator is not in the repo), or `git revert` the I4 E21 commit.
 Permission addition: `PLACE_DDS_CALL` (DDS module, under `ON`).
 
 ## 80.6 Events — new and changed (for HLD 10 §10.13 and HLD 40 §40.4, by the epic named)
@@ -532,7 +542,7 @@ meeting p95 ≤ 150 ms and loss < 1 %: `sip-loopback` 40 (largest tested), `sip-
 | D5, P2, P4 | All new payloads self-sufficient; scoring reads events only; endpoint, persona and selection recorded on the event. |
 | D13 | Fakes in the gate: `FakeRoomBridge`, headless UA, `FakeCallTransport`; real runs `requires_livekit`, GPU under the lock. |
 | SPEC §15 | LiveKit remains the media plane; the SIP server complements it; no PSTN. `SipCallTransport` stays the reserved seam (plan B). |
-| C7 | Default `OFF`; `ON` implemented by E6b (`IMPLEMENTED_VARIANT_VALUES`). |
+| C7 | `ON` implemented by E6b (`IMPLEMENTED_VARIANT_VALUES`); C7's default `OFF` is superseded by D28 (default `ON` for memo scenarios, owner 2026-09-25). |
 | Machine rules | Ports 5060, 20000–20199, 8114 — none of 8000/8001/8011/8012/5000; no GPU in the gate; no downloads. |
 
 Nothing above replaces a D-decision or an invariant.
@@ -546,8 +556,8 @@ Nothing above replaces a D-decision or an invariant.
    OPERATOR_112`, `answered_by: TRAINEE`) and listed as the later sub-epic **E6g**, not in I3.
 2. **Default of `dds_brigade_call` for schema-2 scenarios once `ON` exists** (C7). `OFF` = the memo
    world (statuses only, E5b); `ON` = the customer's phone world (the trainee's own leg is heard, not
-   applied). The choice changes what every generated ticket scenario (E8) trains by default. Default
-   stays `OFF` until answered.
+   applied). The choice changes what every generated ticket scenario (E8) trains by default.
+   **Answered by the owner 2026-09-25: `ON` for memo scenarios (D28).**
 
 Defaulted, stated so the owner can veto: no third-party softphone download (`baresip` `NOT_RUN` unless
 present offline); one deployment SIP password for all trainee usernames (per-user HA1 optional in E6e);

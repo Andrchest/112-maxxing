@@ -47,6 +47,7 @@ async def _session(
     card_check: str | None,
     assigned_service_id: str | None = None,
     dds_mode: str | None = None,
+    brigade_call: str | None = None,
 ) -> UUID:
     member = participant(users["trainee2"], "DDS")
     if assigned_service_id is not None:
@@ -56,7 +57,11 @@ async def _session(
         "session_mode": "SINGLE_ROLE",
         "participants": [member],
     }
-    variants = {"dds_card_check": card_check, "dds_mode": dds_mode}
+    variants = {
+        "dds_card_check": card_check,
+        "dds_mode": dds_mode,
+        "dds_brigade_call": brigade_call,
+    }
     if any(value is not None for value in variants.values()):
         body["variants"] = {key: value for key, value in variants.items() if value is not None}
     created = await client.post(API, headers=auth(tokens["instructor1"]), json=body)
@@ -132,7 +137,10 @@ async def test_card_check_on_records_a_flag_against_the_snapshot(
     rubbish_version_id: ScenarioVersionId,
 ) -> None:
     token = tokens["trainee2"]
-    session_id = await _session(client, tokens, users, rubbish_version_id, card_check="ON")
+    # The phone (ON by default, D28) would add its call actions to the list pinned below.
+    session_id = await _session(
+        client, tokens, users, rubbish_version_id, card_check="ON", brigade_call="OFF"
+    )
     fire = (await _legs(client, token, session_id))["FIRE_RESCUE"]
 
     # Offered in memo ACKNOWLEDGED only: before the first decision the stage is RECEIVED.

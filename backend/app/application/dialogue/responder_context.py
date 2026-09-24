@@ -29,7 +29,9 @@ are matched to those values by code (`ResponderTemplates`), never by a model.
 same chain with the same loader: its knowledge is **the session's snapshot and nothing else** — the
 frozen card the ДДС holds (the DDS stage's legs share one `handoff_snapshots` row), the catalog
 entries of the services the card was routed to (reference data, to recognise the service a ДДС
-names when it introduces itself), the address items of the snapshot, and which REQ-5332 checklist
+names when it introduces itself), the address items of the snapshot, the card's «Происшествие N»
+number (`incidents.display_number`, I3 E4a — the number the ДДС's header strip shows and the 112
+system gave the card; I4 E21, to check the number the ДДС names), and which REQ-5332 checklist
 items the trainee has already stated on this call (its own `DDS_CALL_ASSERTION`s). The script
 probe is never called for it: no script step, no leg status, no proposal.
 """
@@ -143,6 +145,9 @@ class ResponderKnowledge:
     stated_on_this_call: Mapping[str, bool] = field(default_factory=dict)
     """112 only: `field_path → matched the snapshot at least once` of this call's
     `DDS_CALL_ASSERTION`s — the REQ-5332 items the trainee has already covered."""
+    display_number: int | None = None
+    """112 only: the card's «Происшествие N» number (`incidents.display_number`, I3 E4a) — what
+    `call.card_reference` is checked against (I4 E21)."""
 
 
 def checklist_of(
@@ -186,12 +191,20 @@ class ResponderContextLoader:
             call = await uow.dds_calls.get(session_id, call_id)
             if call is not None and call.kind is DdsCallKind.OPERATOR_112:
                 values, recipients_ids, received_at = await _session_snapshot(uow, session)
+                display_number = await uow.sessions.get_display_number(session_id)
                 log = list(await uow.events.read(session_id))
                 now_ms = running_ms(session, self._clock.now())
                 await uow.commit()
                 # I3 E6d: the snapshot and nothing else — the script probe is never asked.
                 return self._operator_knowledge(
-                    session_id, call, values, recipients_ids, received_at, log, now_ms
+                    session_id,
+                    call,
+                    values,
+                    recipients_ids,
+                    received_at,
+                    log,
+                    now_ms,
+                    display_number=display_number,
                 )
             if call is None or call.assignment_id is None:
                 raise ResponderNotFoundError(f"service-head call {call_id}")
@@ -276,9 +289,12 @@ class ResponderContextLoader:
         received_at_offset_ms: int,
         log: Sequence[SessionEvent],
         now_ms: int,
+        *,
+        display_number: int | None,
     ) -> ResponderKnowledge:
         """The AI 112 operator's knowledge (I3 E6d, §80.3.4): the snapshot, the recipients' catalog
-        entries, the snapshot's address items and what this call has covered so far."""
+        entries, the snapshot's address items, the card's number (I4 E21) and what this call has
+        covered so far."""
         catalog = reference_catalog(self._reference)
         pack_id = session_pack_id(log)
         services = catalog.services(pack_id)
@@ -328,6 +344,7 @@ class ResponderContextLoader:
             kind=DdsCallKind.OPERATOR_112,
             recipients=recipients,
             stated_on_this_call=_stated_on(log, wanted),
+            display_number=display_number,
         )
 
 

@@ -22,17 +22,18 @@ provenance: { source: TICKET, ticket: 18, call: 2, generation_candidate: true }
 
 # GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
 # Memo statuses only: the ticket names no resources, so the picker is not offered.
+# The ДДС phone (dds_brigade_call, HLD 80 §80.5) is ON by default: owner decision 2026-09-25 (D28).
 variants:
   supported:
     card_source: [GENERATED_CARD, CALLER_VOICE]
     dds_mode: [MEMO_STATUSES]
     dds_card_check: ["OFF", "ON"]
-    dds_brigade_call: ["OFF"]
+    dds_brigade_call: ["OFF", "ON"]
   default:
     card_source: GENERATED_CARD
     dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
-    dds_brigade_call: "OFF"
+    dds_brigade_call: "ON"
 
 world_truth:
   scene_summary_ru: "Не может разбудить мужа. Муж издает хрипы. Титов Александр Петрович, 10.08.1977г, 916 896 3254 Адрес: МО, Красногорск, ул. Пионерская, дом 19, кв. 5, под 1, эт. 2, код 5в"

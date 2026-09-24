@@ -268,6 +268,47 @@ def test_brigade_call_on_with_the_picker_is_not_supported() -> None:
     assert (excinfo.value.switch, excinfo.value.value) == ("dds_brigade_call", "ON")
 
 
+PHONE_BY_DEFAULT = ALL_SUPPORTED.model_copy(
+    update={
+        "default": PRODUCT_DEFAULT_VARIANTS.model_copy(
+            update={"dds_brigade_call": DdsBrigadeCall.ON}
+        )
+    }
+)
+"""A memo scenario with the ДДС phone ON by default (D28, owner 2026-09-25)."""
+
+
+def test_a_memo_scenario_with_the_phone_by_default_gives_a_new_session_the_phone() -> None:
+    """D28: no override ⇒ the scenario default `ON` (memo mode)."""
+    resolved = resolve_variants(PartialVariants(), PHONE_BY_DEFAULT)
+    assert (resolved.dds_mode, resolved.dds_brigade_call) == (
+        DdsMode.MEMO_STATUSES,
+        DdsBrigadeCall.ON,
+    )
+
+
+def test_the_phone_default_does_not_follow_a_requested_picker() -> None:
+    """D28: `ON` is a memo-mode default — a picker request that names no phone value gets `OFF`,
+    not R41's `409`; an explicit `ON` with the picker is still refused."""
+    picker = resolve_variants(PartialVariants(dds_mode=DdsMode.RESOURCE_PICKER), PHONE_BY_DEFAULT)
+    assert (picker.dds_mode, picker.dds_brigade_call) == (
+        DdsMode.RESOURCE_PICKER,
+        DdsBrigadeCall.OFF,
+    )
+    with pytest.raises(VariantNotSupportedError):
+        resolve_variants(
+            PartialVariants(dds_brigade_call=DdsBrigadeCall.ON, dds_mode=DdsMode.RESOURCE_PICKER),
+            PHONE_BY_DEFAULT,
+        )
+
+
+def test_the_phone_can_still_be_switched_off() -> None:
+    resolved = resolve_variants(
+        PartialVariants(dds_brigade_call=DdsBrigadeCall.OFF), PHONE_BY_DEFAULT
+    )
+    assert resolved.dds_brigade_call is DdsBrigadeCall.OFF
+
+
 # ---------------------------------------------------------------------------------------------
 # The effective chain (§70.2.4 "Flow") and the record (§70.2.2 home 3)
 # ---------------------------------------------------------------------------------------------

@@ -150,6 +150,74 @@ describe('LessonCreateForm — the instructor plan editor (70 §70.3.1-§70.3.3)
     });
   });
 
+  it('an entry switched to the picker has no phone: ON becomes OFF, is disabled, and is sent OFF (R41, D28)', async () => {
+    // `street-rubbish-fire`'s shape since I4 E21: a memo scenario whose phone is ON by default.
+    const phoneDefault = {
+      items: [
+        {
+          ...VERSIONS_RESPONSE.items[0],
+          variants: {
+            supported: {
+              card_source: ['GENERATED_CARD'],
+              dds_mode: ['MEMO_STATUSES', 'RESOURCE_PICKER'],
+              dds_card_check: ['OFF', 'ON'],
+              dds_brigade_call: ['OFF', 'ON'],
+            },
+            default: { card_source: 'GENERATED_CARD', dds_mode: 'MEMO_STATUSES', dds_card_check: 'OFF', dds_brigade_call: 'ON' },
+          },
+        },
+      ],
+      total: 1,
+    };
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios?limit=200' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/trainee-groups?limit=200' && method === 'GET') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(phoneDefault);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/lessons' && method === 'POST') return jsonResponse(makeLesson(), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await user.type(screen.getByLabelText(ru.lessonFormTitleFieldLabel), 'Picker drill');
+    const scenarioSelect = await screen.findByLabelText(ru.lessonFormEntryScenarioLabel);
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
+    await user.selectOptions(scenarioSelect, 's1');
+    const versionSelect = await screen.findByLabelText(ru.lessonFormEntryVersionLabel);
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
+    await user.selectOptions(versionSelect, 'v1');
+
+    const phone = await screen.findByLabelText(ru.instructorVariantDdsBrigadeCallLabel);
+    expect(phone).toHaveValue('ON');
+    await user.selectOptions(screen.getByLabelText(ru.instructorVariantDdsModeLabel), 'RESOURCE_PICKER');
+    expect(phone).toHaveValue('OFF');
+    const suffix = ` — ${ru.instructorVariantUnavailableSuffix}`;
+    expect(screen.getByRole('option', { name: `${ru.variantDdsBrigadeCallOn}${suffix}` })).toBeDisabled();
+
+    const participantSelect = await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`);
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(participantSelect, 'trainee-1');
+    await user.click(screen.getByRole('button', { name: ru.lessonFormCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/lessons' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string).scenario_plan[0].variants).toEqual({
+      card_source: 'GENERATED_CARD',
+      dds_mode: 'RESOURCE_PICKER',
+      dds_card_check: 'OFF',
+      dds_brigade_call: 'OFF',
+    });
+  });
+
   it('adding a second card offers AFTER_PREVIOUS_SESSION/AFTER_PREVIOUS_112_STAGE alongside AT_OFFSET', async () => {
     const user = userEvent.setup();
     vi.stubGlobal(

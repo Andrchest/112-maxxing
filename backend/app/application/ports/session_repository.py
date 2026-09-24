@@ -203,6 +203,11 @@ class SessionRepository(Protocol):
         """Materialise `incidents.card_status` — in the Unit of Work of whatever changed it."""
         ...
 
+    async def get_display_number(self, session_id: SessionId) -> int | None:
+        """`incidents.display_number` — the «Происшествие N» number (HLD 70 §70.3.6) — of the
+        session's incident, or `None`."""
+        ...
+
     async def list_incident_rows(
         self, *, viewer_user_id: UserId, lesson_id: LessonId | None
     ) -> list[StoredIncidentRow]:

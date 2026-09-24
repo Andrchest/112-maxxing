@@ -32,8 +32,10 @@ knowledge (the snapshot and the catalog entries of the services it was routed to
 * `call.self_identification` — a position or an introduction was said; `matches_snapshot` is
   whether the service named is one the card was routed to;
 * `address.*` — the snapshot's address values, matched exactly as a service head matches them;
-* `call.card_reference` — the card was mentioned (a stated number is the value); `true` — the
-  snapshot holds no card number to compare it with;
+* `call.card_reference` — the card was named («карточка», «происшествие»); `true` only when a
+  number said after that is the card's «Происшествие N» number (`knowledge.display_number`, I4
+  E21; the number is then the value), `false` otherwise — no number, or another one (the
+  utterance is the value). Until it matches, a later mention on the same call is asserted again;
 * `incident.change` — a change was reported; `false` — a change is what the card does not say.
 
 The operator then asks for the first item still missing on this call, in the memo's order, and
@@ -154,6 +156,8 @@ _POSITION_MARKERS = (
 )
 _INTRODUCTION_MARKERS = ("меня зовут", "фамилия", "беспокоит")
 _CARD_MARKER = "карточк"
+_CARD_NUMBER_MARKERS = (_CARD_MARKER, "происшеств")
+"""What names the card before its number: «карточка N», «происшествие N» (the header's label)."""
 _CHANGE_MARKERS = (
     "измен",
     "ситуаци",
@@ -517,9 +521,13 @@ class ResponderTemplates:
         ):
             if not stated.get(assertion.field_path, False):
                 found.append(assertion)
-        if _CARD_MARKER in lowered and CARD_REFERENCE_PATH not in stated:
-            number = next((word for word in words if word.isdigit() and len(word) >= 4), None)
-            found.append(ResponderAssertion(CARD_REFERENCE_PATH, number or said, True))
+        numbers = _card_numbers_stated(utterance)
+        card_number = None if knowledge.display_number is None else str(knowledge.display_number)
+        names_the_card = card_number is not None and card_number in numbers
+        mentioned = any(marker in lowered for marker in _CARD_NUMBER_MARKERS)
+        if mentioned and not stated.get(CARD_REFERENCE_PATH, False):
+            value = card_number if names_the_card and card_number is not None else said
+            found.append(ResponderAssertion(CARD_REFERENCE_PATH, value, names_the_card))
         changed = any(marker in lowered for marker in _CHANGE_MARKERS)
         if changed and INCIDENT_CHANGE_PATH not in stated:
             found.append(ResponderAssertion(INCIDENT_CHANGE_PATH, said, False))
@@ -546,6 +554,33 @@ def missing_112_items(
         elif path not in stated:
             missing.append(path)
     return tuple(missing)
+
+
+def _card_numbers_stated(utterance: str) -> tuple[str, ...]:
+    """The numbers said after the card is named («карточка», «происшествие»), as digits (I4 E21):
+    each numeric token (numerals folded, `text_normalization`; «36-81-48-51» read as its digits)
+    and each run of adjacent numeric tokens read together — a number dictated in groups
+    («36 814 851») is one number. A number said before the card is named (a house number) is
+    not the card's."""
+    tokens = _canonical_tokens(utterance)
+    first = next(
+        (index for index, token in enumerate(tokens) if token.startswith(_CARD_NUMBER_MARKERS)),
+        len(tokens),
+    )
+    numbers: list[str] = []
+    run: list[str] = []
+    for token in (*tokens[first + 1 :], ""):
+        digits = token.replace("-", "")
+        if digits.isdigit():
+            run.append(digits)
+            continue
+        for start in range(len(run)):
+            for end in range(start + 1, len(run) + 1):
+                joined = "".join(run[start:end])
+                if joined not in numbers:
+                    numbers.append(joined)
+        run = []
+    return tuple(numbers)
 
 
 def _clip(utterance: str) -> str:

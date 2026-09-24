@@ -160,7 +160,9 @@ IMPLEMENTED_VARIANT_VALUES: Mapping[str, frozenset[str]] = {
 }
 """What the product can run today; grows per epic (§70.11): E5a added `MEMO_STATUSES`, E5b card
 check `ON` («Отметить ошибку в карточке», `flagDdsCardIssue`), E6b brigade call `ON` — "the ДДС
-has a phone", memo mode only (HLD 80 §80.5, D25, R41). The product default stays `OFF` (C7)."""
+has a phone", memo mode only (HLD 80 §80.5, D25, R41). Memo scenarios declare `ON` as their default
+(D28, owner 2026-09-25, superseding C7); the derived default above stays `OFF` because a derived
+support is picker-only and never contains `ON`."""
 
 
 class VariantNotAvailableError(DomainError):
@@ -294,12 +296,21 @@ def resolve_variants(
 
     The implemented-values check runs over all four switches before the support check, so an
     unimplemented value never reaches content validation. A resolution to `dds_brigade_call: ON`
-    with `dds_mode: RESOURCE_PICKER` is `VARIANT_NOT_SUPPORTED` (R41, I3 E6b).
+    with `dds_mode: RESOURCE_PICKER` is `VARIANT_NOT_SUPPORTED` (R41, I3 E6b) — unless `ON` came
+    from the scenario default and was not requested: the phone is a memo-mode default (D28), so a
+    picker session that names no phone value runs with `OFF`.
     """
     chosen: dict[str, Enum] = {}
     for switch in SWITCHES:
         value: Enum | None = getattr(requested, switch)
         chosen[switch] = value if value is not None else getattr(scenario.default, switch)
+    if (
+        requested.dds_brigade_call is None
+        and chosen["dds_brigade_call"] is DdsBrigadeCall.ON
+        and chosen["dds_mode"] is DdsMode.RESOURCE_PICKER
+    ):
+        # D28 (owner 2026-09-25): `ON` is the default of memo scenarios only (R41).
+        chosen["dds_brigade_call"] = DdsBrigadeCall.OFF
     for switch in SWITCHES:
         if chosen[switch].value not in implemented.get(switch, ()):
             raise VariantNotAvailableError(switch, chosen[switch].value)

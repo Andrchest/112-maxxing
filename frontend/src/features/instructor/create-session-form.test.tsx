@@ -86,6 +86,33 @@ const TWO_STAGE_VERSIONS_RESPONSE = {
   total: 1,
 };
 
+// `street-rubbish-fire`'s shape since I4 E21 (D28): a DDS-only memo scenario whose phone is ON by
+// default, with the picker still selectable.
+const PHONE_DEFAULT_VERSIONS_RESPONSE = {
+  items: [
+    {
+      ...VERSIONS_RESPONSE.items[0],
+      schema_version: 2,
+      role_chain: ['DDS'],
+      variants: {
+        supported: {
+          card_source: ['GENERATED_CARD'],
+          dds_mode: ['MEMO_STATUSES', 'RESOURCE_PICKER'],
+          dds_card_check: ['OFF', 'ON'],
+          dds_brigade_call: ['OFF', 'ON'],
+        },
+        default: {
+          card_source: 'GENERATED_CARD',
+          dds_mode: 'MEMO_STATUSES',
+          dds_card_check: 'OFF',
+          dds_brigade_call: 'ON',
+        },
+      },
+    },
+  ],
+  total: 1,
+};
+
 function makeSessionDetail(overrides: Partial<SessionDetail>): SessionDetail {
   return {
     id: 'sess-1',
@@ -466,6 +493,44 @@ describe('CreateSessionForm', () => {
       participants: [{ user_id: 'trainee-user-id-1', assigned_role_type: 'DDS' }],
       time_scale: 1,
       variants: { ...CALLER_VOICE_DEFAULT, card_source: 'GENERATED_CARD' },
+    });
+  });
+
+  it('the picker has no phone: ON becomes OFF, is disabled, and the request sends OFF (R41, D28)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetchMockWithVersions(PHONE_DEFAULT_VERSIONS_RESPONSE);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await pickScenarioAndVersion(user);
+    const phone = await screen.findByLabelText(ru.instructorVariantDdsBrigadeCallLabel);
+    expect(phone).toHaveValue('ON');
+    expect(screen.getByRole('option', { name: ru.variantDdsBrigadeCallOn })).toBeEnabled();
+
+    await user.selectOptions(screen.getByLabelText(ru.instructorVariantDdsModeLabel), 'RESOURCE_PICKER');
+    expect(phone).toHaveValue('OFF');
+    const suffix = ` — ${ru.instructorVariantUnavailableSuffix}`;
+    expect(screen.getByRole('option', { name: `${ru.variantDdsBrigadeCallOn}${suffix}` })).toBeDisabled();
+
+    const ddsParticipant = await screen.findByLabelText(
+      `${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`,
+    );
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(ddsParticipant, 'trainee-user-id-1');
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/sessions' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string).variants).toEqual({
+      card_source: 'GENERATED_CARD',
+      dds_mode: 'RESOURCE_PICKER',
+      dds_card_check: 'OFF',
+      dds_brigade_call: 'OFF',
     });
   });
 

@@ -22,17 +22,18 @@ provenance: { source: TICKET, ticket: 30, call: 1, generation_candidate: true }
 
 # GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
 # Memo statuses only: the ticket names no resources, so the picker is not offered.
+# The ДДС phone (dds_brigade_call, HLD 80 §80.5) is ON by default: owner decision 2026-09-25 (D28).
 variants:
   supported:
     card_source: [GENERATED_CARD, CALLER_VOICE]
     dds_mode: [MEMO_STATUSES]
     dds_card_check: ["OFF", "ON"]
-    dds_brigade_call: ["OFF"]
+    dds_brigade_call: ["OFF", "ON"]
   default:
     card_source: GENERATED_CARD
     dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
-    dds_brigade_call: "OFF"
+    dds_brigade_call: "ON"
 
 world_truth:
   scene_summary_ru: "Угон машины, видели в последний раз вчера вечером, тойота синяя А128НА 177, Соколов Иван Петрович, 916 896 3254 Адрес: Москва, ул. Ташкентская дом 25, корп.1, двор от 7 подъезда."

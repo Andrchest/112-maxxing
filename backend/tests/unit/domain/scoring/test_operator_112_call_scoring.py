@@ -64,10 +64,12 @@ def call_112_log(
     brigade_call: str = "ON",
     covered: tuple[str, ...] = tuple(ITEMS),
     wrong_address: bool = False,
+    wrong_card_number: bool = False,
 ) -> tuple[Any, ...]:
     """A memo run with the phone: the ДДС calls 112 at 10 s, the AI operator answers at 14 s, and
     the ДДС covers exactly the `covered` items, one turn each — plus, with `wrong_address`, an
-    address the code matched to no snapshot value."""
+    address the code matched to no snapshot value, and with `wrong_card_number`, a card number
+    that is not the card's (I4 E21)."""
     log = LogBuilder()
     log.add(
         EventType.SESSION_CREATED,
@@ -145,6 +147,20 @@ def call_112_log(
             actor_type=ActorType.MODEL,
             offset_ms=offset,
         )
+    if wrong_card_number:
+        log.add(
+            EventType.DDS_CALL_ASSERTION,
+            {
+                "call_id": str(CALL),
+                "turn_id": str(det_uuid("turn-wrong-card-number")),
+                "field_path": "call.card_reference",
+                "value_ru": "11112222",
+                "matches_snapshot": False,
+                "at_offset_ms": offset,
+            },
+            actor_type=ActorType.MODEL,
+            offset_ms=offset,
+        )
     log.add(
         EventType.DDS_CALL_ENDED,
         {"call_id": str(CALL), "reason": "HANGUP", "duration_ms": 30_000, "at_offset_ms": 44_000},
@@ -204,7 +220,8 @@ CHECKLIST_RULES: dict[str, ScoringRule] = {
     ),
     "card_reference": _rule(
         "named_the_routed_card_to_112",
-        {"field_path": "call.card_reference"},
+        # I4 E21: the number said is the card's «Происшествие N» number.
+        {"field_path": "call.card_reference", "matches_snapshot": True},
         "DDS_CALL_ASSERTION",
     ),
     "change": _rule(
@@ -256,6 +273,14 @@ def test_an_address_that_matches_no_snapshot_value_earns_nothing() -> None:
     log = call_112_log(covered=("self_identification",), wrong_address=True)
     results = _by_id(log)
     assert results["named_the_address_to_112"].points_awarded == PENALTY
+
+
+def test_a_card_number_that_is_not_the_cards_earns_nothing() -> None:
+    """I4 E21: `call.card_reference` with a number other than the card's (`matches_snapshot:
+    false`) does not name the routed card."""
+    log = call_112_log(covered=("self_identification",), wrong_card_number=True)
+    results = _by_id(log)
+    assert results["named_the_routed_card_to_112"].points_awarded == PENALTY
 
 
 def test_off_scores_every_112_rule_not_applicable() -> None:

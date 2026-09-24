@@ -54,6 +54,8 @@ from tests.unit.application.dialogue.conftest import (
 )
 
 PACK = "v046_24-r1"
+DISPLAY_NUMBER = 36814851
+"""The card's «Происшествие N» number (`incidents.display_number`, I3 E4a; I4 E21)."""
 PROMPTS = dict(OPERATOR_112_CHECKLIST)
 VALUES = {
     "address.street": "Академика Королёва",
@@ -104,6 +106,7 @@ def knowledge(store: DialogueStore) -> ResponderKnowledge:
         now_ms=70_000,
         kind=DdsCallKind.OPERATOR_112,
         recipients=(service("FIRE_RESCUE"), service("POLICE")),
+        display_number=DISPLAY_NUMBER,
     )
 
 
@@ -305,6 +308,84 @@ async def test_an_item_is_asserted_once_per_call(clock: FakeClock) -> None:
     await say(head, context, lines)
     paths = [payload["field_path"] for payload in store.payloads("DDS_CALL_ASSERTION")]
     assert paths.count(SELF_IDENTIFICATION_PATH) == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# The card number (I4 E21): `call.card_reference` matches the card's «Происшествие N» only
+# ---------------------------------------------------------------------------------------------
+
+
+async def card_references(clock: FakeClock, lines: list[str]) -> list[tuple[str, bool]]:
+    store = make_store()
+    head, context = operator(store, clock, len(lines))
+    await say(head, context, lines)
+    return [
+        (str(payload["value_ru"]), bool(payload["matches_snapshot"]))
+        for payload in store.payloads("DDS_CALL_ASSERTION")
+        if payload["field_path"] == CARD_REFERENCE_PATH
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Работаем по вашей карточке номер 36814851",
+        "Карточка 36 814 851",
+        "Номер карточки 36-81-48-51",
+        "Работаем по происшествию 36814851",
+    ],
+)
+async def test_the_cards_own_number_matches(clock: FakeClock, line: str) -> None:
+    """Said whole, in groups or with dashes — or with no «карточка» at all — the card's number
+    is the routed card."""
+    assert await card_references(clock, [line]) == [("36814851", True)]
+
+
+async def test_another_number_does_not_match(clock: FakeClock) -> None:
+    """Another number is not the card's: the utterance is the evidence."""
+    line = "Работаем по карточке номер 36814850"
+    assert await card_references(clock, [line]) == [(line, False)]
+
+
+async def test_a_number_said_before_the_card_is_named_is_not_its_number(clock: FakeClock) -> None:
+    """«дом 36814851, карточка» — the number belongs to the address, not the card."""
+    line = "Дом 36814851, работаем по карточке"
+    assert await card_references(clock, [line]) == [(line, False)]
+
+
+async def test_a_card_mentioned_without_its_number_does_not_match(clock: FakeClock) -> None:
+    assert await card_references(clock, ["Работаем по вашей карточке"]) == [
+        ("Работаем по вашей карточке", False)
+    ]
+
+
+async def test_the_right_number_after_a_wrong_one_is_asserted_again(clock: FakeClock) -> None:
+    """Until the number matches, a later mention on the same call is asserted again; after it
+    matched, it is not."""
+    lines = [
+        "Работаем по карточке номер 11112222",
+        "Поправка: карточка 36814851",
+        "Карточка 36814851",
+    ]
+    assert await card_references(clock, lines) == [(lines[0], False), ("36814851", True)]
+
+
+async def test_without_a_card_number_nothing_matches(clock: FakeClock) -> None:
+    """A knowledge with no `display_number` (none read) never matches a number."""
+    store = make_store()
+    base = replace(knowledge(store), display_number=None)
+    llm = FakeLLM([interpretation()])
+    uow_factory = make_uow_factory(store, clock)
+    head = ServiceHeadResponder(
+        loader=StoreLoader(store, base),  # type: ignore[arg-type]
+        interpreter=DialogueInterpreter(llm, NullMetricsRecorder(), config=InterpreterConfig()),
+        sink=NullCallerSpeechSink(),
+        uow_factory=uow_factory,  # type: ignore[arg-type]
+        llm=llm,
+    )
+    await say(head, make_turn_context(store, clock, uow_factory), ["Карточка 36814851"])
+    [reference] = store.payloads("DDS_CALL_ASSERTION")
+    assert (reference["value_ru"], reference["matches_snapshot"]) == ("Карточка 36814851", False)
 
 
 async def test_the_operator_never_reads_a_card_value_out(clock: FakeClock) -> None:

@@ -19,8 +19,9 @@ reference_pack: v046_24-r1
 
 # The ДДС works in the memo's per-service statuses by default (I3 E5b, HLD 70 §70.11); the resource
 # picker stays selectable. Card check defaults OFF (customer answer 23.09) and may be switched ON.
-# The ДДС phone (`dds_brigade_call: ON`, I3 E6b, HLD 80 §80.5) may be switched ON too — memo mode
-# only (R41); the default stays OFF (C7).
+# The ДДС phone (`dds_brigade_call: ON`, I3 E6b, HLD 80 §80.5) is ON by default (owner decision
+# 2026-09-25, D28) — memo mode only (R41): a RESOURCE_PICKER session that names no phone value runs
+# without it, and may be switched OFF.
 variants:
   supported:
     card_source: [GENERATED_CARD]
@@ -31,7 +32,7 @@ variants:
     card_source: GENERATED_CARD
     dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
-    dds_brigade_call: "OFF"
+    dds_brigade_call: "ON"
 
 world_truth:
   scene_summary_ru: >

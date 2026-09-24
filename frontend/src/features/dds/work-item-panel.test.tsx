@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkItemPanel } from './work-item-panel';
 import { useWorkItemStore } from '@/entities/work-item';
@@ -34,11 +34,25 @@ describe('WorkItemPanel — frozen card values, never a guessed value', () => {
     expect(screen.getByText(ru.ddsMissingFieldNotice)).toBeInTheDocument();
   });
 
-  it('renders the recipient services', () => {
+  // I4 E21 (owner decision 2026-09-25): the memo card has no «Получатели» badge row — the services
+  // tab bar shows the recipients (`console-page.test.tsx`). Only the picker console, which has no
+  // tab bar, asks for the row.
+  // (The fixture's v1 card also carries a `recipients.services` card field, rendered as a card
+  // group like any other schema field — that is the frozen card, not the badge row.)
+  it('renders no recipients badge row by default', () => {
     useWorkItemStore.setState({ workItem: makeWorkItem({ recipient_services: ['FIRE_RESCUE', 'AMBULANCE'] }) });
-    render(<WorkItemPanel />);
-    expect(screen.getByText(ru.serviceTypeFireRescue)).toBeInTheDocument();
-    expect(screen.getByText(ru.serviceTypeAmbulance)).toBeInTheDocument();
+    const { container } = render(<WorkItemPanel />);
+    expect(container.querySelector('[data-slot="dds-recipients-row"]')).toBeNull();
+  });
+
+  it('renders the recipient services as badges when the picker console asks for them', () => {
+    useWorkItemStore.setState({ workItem: makeWorkItem({ recipient_services: ['FIRE_RESCUE', 'AMBULANCE'] }) });
+    const { container } = render(<WorkItemPanel showRecipients />);
+    const row = container.querySelector<HTMLElement>('[data-slot="dds-recipients-row"]');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText(ru.ddsWorkItemRecipientsLabel)).toBeInTheDocument();
+    expect(within(row!).getByText(ru.serviceTypeFireRescue)).toBeInTheDocument();
+    expect(within(row!).getByText(ru.serviceTypeAmbulance)).toBeInTheDocument();
   });
 
   it('renders every field label from field_specs, not a hard-coded catalog (ui-check D-9)', () => {

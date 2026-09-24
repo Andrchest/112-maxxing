@@ -244,8 +244,10 @@ async def off_session(
     users: dict[str, UserId],
     rubbish_version_id: ScenarioVersionId,
 ) -> UUID:
-    """The same example with the scenario's default — brigade call `OFF` (C7)."""
-    return await started_session(client, tokens, users, rubbish_version_id)
+    """The same example with the phone switched `OFF` (the scenario default is `ON` since D28)."""
+    return await started_session(
+        client, tokens, users, rubbish_version_id, {"dds_brigade_call": "OFF"}
+    )
 
 
 def dds(tokens: dict[str, str]) -> dict[str, str]:
@@ -344,6 +346,26 @@ async def test_an_off_session_offers_no_call_action_and_appends_no_dds_call_even
     assert not {t for t in types if t.startswith("DDS_CALL_")}
     listed = await client.get(f"{API}/{off_session}/dds-calls", headers=dds(tokens))
     assert listed.status_code == 200 and listed.json() == []
+
+
+# ---------------------------------------------------------------------------------------------
+# The default: ON (D28, owner 2026-09-25)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_new_session_without_an_override_has_the_phone(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    users: dict[str, UserId],
+    rubbish_version_id: ScenarioVersionId,
+) -> None:
+    """D28: the memo scenario's default is `ON` — no `variants` in the request, the phone exists."""
+    session_id = await started_session(client, tokens, users, rubbish_version_id)
+    snapshot = await client.get(f"{API}/{session_id}/snapshot", headers=dds(tokens))
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["session"]["variants"]["dds_brigade_call"] == "ON"
+    actions = {action["action_id"] for action in snapshot.json()["available_actions"]}
+    assert {"call_claimant", "call_112"} <= actions
 
 
 # ---------------------------------------------------------------------------------------------

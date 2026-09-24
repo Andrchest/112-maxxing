@@ -304,6 +304,7 @@ async def test_every_checklist_item_becomes_an_assertion_matched_against_the_sna
     clock: FakeClock,
 ) -> None:
     call_id = await connected_112_call(client, tokens, container, clock, on_session)
+    number = await display_number_of(container, on_session)
     outcomes = await operator_hears(
         container,
         clock,
@@ -313,7 +314,7 @@ async def test_every_checklist_item_becomes_an_assertion_matched_against_the_sna
             "Алло, 112?",
             "Дежурный пожарно-спасательной службы Иванов",
             "Адрес: улица Щукинская, дом 2",
-            "Работаем по вашей карточке номер 36814851",
+            f"Работаем по вашей карточке номер {number}",
             "Обстановка изменилась, огонь перекинулся на гаражи, нужна полиция",
         ],
     )
@@ -333,7 +334,9 @@ async def test_every_checklist_item_becomes_an_assertion_matched_against_the_sna
     assert by_path[SELF_IDENTIFICATION_PATH]["matches_snapshot"] is True
     assert by_path["address.street"]["matches_snapshot"] is True
     assert by_path["address.house"]["matches_snapshot"] is True
-    assert by_path[CARD_REFERENCE_PATH]["value_ru"] == "36814851"
+    # I4 E21: the number said is the card's «Происшествие N» number.
+    assert by_path[CARD_REFERENCE_PATH]["value_ru"] == str(number)
+    assert by_path[CARD_REFERENCE_PATH]["matches_snapshot"] is True
     assert by_path[INCIDENT_CHANGE_PATH]["matches_snapshot"] is False
     assert {item["payload"]["call_id"] for item in assertions} == {call_id}
     assert all(item["actor_type"] == "MODEL" for item in assertions)
@@ -384,6 +387,44 @@ async def test_the_operator_asks_for_the_self_identification_the_dds_omitted(
 # ---------------------------------------------------------------------------------------------
 
 
+async def display_number_of(container: Container, session_id: UUID) -> int:
+    """The session's «Происшествие N» number (`incidents.display_number`, I3 E4a)."""
+    async with container.unit_of_work() as uow:
+        number = await uow.sessions.get_display_number(SessionId(session_id))
+        await uow.commit()
+    assert number is not None
+    return number
+
+
+async def test_a_card_number_that_is_not_the_cards_does_not_match(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    on_session: UUID,
+    container: Container,
+    clock: FakeClock,
+) -> None:
+    """I4 E21: `call.card_reference` is `false` for another number, `true` for the card's."""
+    call_id = await connected_112_call(client, tokens, container, clock, on_session)
+    number = await display_number_of(container, on_session)
+    await operator_hears(
+        container,
+        clock,
+        on_session,
+        call_id,
+        [f"Работаем по карточке номер {number + 1}", f"Поправка: карточка {number}"],
+    )
+    assertions = await of_type(client, tokens, on_session, "DDS_CALL_ASSERTION")
+    references = [
+        (item["payload"]["value_ru"], item["payload"]["matches_snapshot"])
+        for item in assertions
+        if item["payload"]["field_path"] == CARD_REFERENCE_PATH
+    ]
+    assert references == [
+        (f"Работаем по карточке номер {number + 1}", False),
+        (str(number), True),
+    ]
+
+
 async def test_the_operator_knows_the_snapshot_and_nothing_else(
     client: httpx.AsyncClient,
     tokens: dict[str, str],
@@ -417,6 +458,8 @@ async def test_the_operator_knows_the_snapshot_and_nothing_else(
         None,
     )
     assert knowledge.persona is not None and knowledge.persona.id == "OPERATOR_112"
+    # I4 E21: and the card's «Происшествие N» number, to check the one the ДДС names.
+    assert knowledge.display_number == await display_number_of(container, on_session)
 
 
 # ---------------------------------------------------------------------------------------------

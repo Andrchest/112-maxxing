@@ -295,4 +295,40 @@ describe('DdsConsolePage — dds_mode: MEMO_STATUSES renders the memo workstatio
     expect(screen.queryByText(ru.ddsResourceBoardTitle)).not.toBeInTheDocument();
     expect(resourcesFetch).not.toHaveBeenCalled();
   });
+
+  // I4 E21 (owner decision 2026-09-25): was work-item-panel's "renders the recipient services"
+  // badge-row test — the memo card has no «Получатели» row, the tab bar shows each recipient.
+  it('shows the recipient services as tabs of the tab bar, with no recipients badge row', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () =>
+          jsonResponse(
+            makeSnapshot(
+              {
+                available_actions: ACTIONS_BY_DDS_STAGE_STATE.ACKNOWLEDGED,
+                work_item: makeWorkItem({ state: 'ACKNOWLEDGED', recipient_services: ['FIRE_RESCUE', 'AMBULANCE'] }),
+              },
+              { variants: { card_source: 'GENERATED_CARD', dds_mode: 'MEMO_STATUSES', dds_card_check: 'OFF', dds_brigade_call: 'OFF' } },
+            ),
+          ),
+        '/dds/legs': () =>
+          jsonResponse([
+            makeLeg({ assignment_id: 'leg-fire', service_type: 'FIRE_RESCUE', service_name_ru: ru.serviceTypeFireRescue }),
+            makeLeg({ assignment_id: 'leg-ambulance', service_type: 'AMBULANCE', service_name_ru: ru.serviceTypeAmbulance }),
+          ]),
+        '/incidents': () => jsonResponse({ items: [], total: 0 }),
+      }),
+    );
+
+    renderConsole();
+
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toHaveTextContent(ru.serviceTypeFireRescue);
+    expect(tabs[1]).toHaveTextContent(ru.serviceTypeAmbulance);
+    expect(document.querySelector('[data-slot="dds-recipients-row"]')).toBeNull();
+  });
 });

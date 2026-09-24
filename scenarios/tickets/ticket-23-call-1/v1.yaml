@@ -22,17 +22,18 @@ provenance: { source: TICKET, ticket: 23, call: 1, generation_candidate: true }
 
 # GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
 # Memo statuses only: the ticket names no resources, so the picker is not offered.
+# The ДДС phone (dds_brigade_call, HLD 80 §80.5) is ON by default: owner decision 2026-09-25 (D28).
 variants:
   supported:
     card_source: [GENERATED_CARD, CALLER_VOICE]
     dds_mode: [MEMO_STATUSES]
     dds_card_check: ["OFF", "ON"]
-    dds_brigade_call: ["OFF"]
+    dds_brigade_call: ["OFF", "ON"]
   default:
     card_source: GENERATED_CARD
     dds_mode: MEMO_STATUSES
     dds_card_check: "OFF"
-    dds_brigade_call: "OFF"
+    dds_brigade_call: "ON"
 
 world_truth:
   scene_summary_ru: "Скандал с пьяным мужем, требуется скорая для женщины, 28 лет, Петровой Елены Михайловны, травма головы, кровотечение, Соколов Иван Петрович (сосед),916 896 3254 Адрес: Москва, ул. Тихомирова дом 15 корп.1, кв.79, под.2, эт.4 , код 80В"

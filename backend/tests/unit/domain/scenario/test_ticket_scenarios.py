@@ -20,7 +20,7 @@ from app.domain.events.types import EventType
 from app.domain.routing.resolve import notification_list, pack_routing
 from app.domain.scenario.sections import CALLS_PER_TICKET, TICKET_COUNT, ProvenanceSource
 from app.domain.scenario.version import ScenarioVersion
-from app.domain.session.variants import CardSource, DdsCardCheck, DdsMode
+from app.domain.session.variants import CardSource, DdsBrigadeCall, DdsCardCheck, DdsMode
 from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 from app.infrastructure.scenarios.yaml_loader import discover, load_scenario_version, scenario_slug
 
@@ -98,6 +98,9 @@ def test_schema_2_on_the_v046_pack_with_the_e8_variants(slug: str) -> None:
     assert set(supported.dds_card_check) == {DdsCardCheck.OFF, DdsCardCheck.ON}
     expected_check = DdsCardCheck.ON if slug.endswith("-card-error") else DdsCardCheck.OFF
     assert default.dds_card_check is expected_check
+    # D28 (owner 2026-09-25): the ДДС phone is ON by default and may be switched OFF.
+    assert set(supported.dds_brigade_call) == {DdsBrigadeCall.OFF, DdsBrigadeCall.ON}
+    assert default.dds_brigade_call is DdsBrigadeCall.ON
     assert version.expected_response.prefab_handoff is not None
 
 

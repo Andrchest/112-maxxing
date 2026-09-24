@@ -389,7 +389,8 @@ voice_agent    -> application, inference, infrastructure
 - C2 no control-department role: «Отказ» from the leg alone; «Проверена» = instructor report release.
 - C3/C4 the 48-h and 3-minute norms are scenario timer data with the memo/room values as defaults.
 - C5/C6 SPEC §1/§13 and §7 kept; the stream is a lesson, the memo statuses live per leg.
-- C7 `dds_brigade_call` default `OFF` until H2/E6 (owner to confirm).
+- C7 `dds_brigade_call` default `OFF` until H2/E6 (owner to confirm). Superseded by D28: default `ON`
+  for memo scenarios.
 - C8 `UTILITY_EMERGENCY` kept as a deprecated catalog entry, hidden from the v2 picker.
 - C10 removal refused under schema v2; `SERVICE_DESELECTED` kept for v1 and old logs.
 - C11 automatic routing is a table lookup, not an LLM decision.
@@ -488,7 +489,8 @@ voice_agent    -> application, inference, infrastructure
   **R42**.
 - Browser vs SIP is the endpoint per call (a live softphone registration wins, else the browser widget),
   recorded on `DDS_CALL_STARTED.endpoint` — not a variant value and not a `SIM_CALL_TRANSPORT` value.
-- The default stays `OFF` (C7) until the owner answers Q2 (80 §80.10).
+- Default: `ON` for memo scenarios since D28 (owner 2026-09-25, answering Q2 of 80 §80.10); C7's
+  `OFF` is superseded. Picker-only and schema-1 scenarios stay `{OFF}`.
 
 ## D26. The classifier's feature sub-columns are read "base plus flags" (R2) (I3 E8 — `70-i3-alignment.md` §70.6.4)
 
@@ -528,3 +530,17 @@ voice_agent    -> application, inference, infrastructure
   backend unreachable ⇒ `503`, never "anyone".
 - Consequence: `tools/softphone` and the gate's headless UA answer the `407` themselves; a foreign
   softphone must be configured with the user's SIP password (the deployment one, or its own).
+
+## D28. The ДДС phone is on by default in memo scenarios (I4 E21 — `80-telephony.md` §80.5, §80.10 Q2)
+
+- Date: 2026-09-25. **Owner decision.** Supersedes C7's default `OFF` (D19, D25); nothing else in D25
+  changes.
+- Decision: `dds_brigade_call` defaults to `ON` for memo scenarios. Every ticket scenario
+  (`scenarios/tickets/**`) supports `{OFF, ON}` with `default: ON`; `street-rubbish-fire` defaults to
+  `ON`. A new session with no override has the phone (the service-head, claimant and 112 calls and
+  the SIP endpoint). `ON` stays memo-only (R41): a session resolved to `RESOURCE_PICKER` without a
+  phone value gets `OFF` (`resolve_variants`); an explicit `ON` with the picker is still `409`.
+  Picker-only and schema-1 scenarios stay `{OFF}`; the derived product default is unchanged.
+- Revertible: set `variants.default.dds_brigade_call` back to `"OFF"` in `scenarios/tickets/*/v1.yaml`
+  (108 files) and `scenarios/examples/street-rubbish-fire/v1.yaml`, or `git revert` the I4 E21 commit.
+  The ticket YAMLs were produced by a generator that is not in the repo, so edit the YAMLs directly.

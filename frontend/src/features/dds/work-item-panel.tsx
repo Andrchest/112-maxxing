@@ -14,6 +14,11 @@
 // other group (a v1 schema's derived groups, `services`/`recipients` overflow fields) rendered
 // below both columns so nothing the schema sends is ever silently dropped.
 //
+// I4 E21 (owner decision 2026-09-25, docs/owner-decisions.md): the memo workstation has no «Получатели»
+// badge row — the reference screen has none, and the services tab bar (`legs-panel.tsx`) already
+// shows one tab per recipient service. `RESOURCE_PICKER`, which has no tab bar and keeps its UI
+// unchanged, still passes `showRecipients`.
+//
 // `DdsWorkItem` is manager-ruled to be ONE stage-wide work item — several recipient services
 // inside it, resource-id lists unioned across them — so this panel never renders "N work items";
 // it renders the one `work_item` the store holds.
@@ -113,7 +118,12 @@ function ValueSentence({ fields, values, missing }: FieldSentenceProps) {
   );
 }
 
-export function WorkItemPanel() {
+interface WorkItemPanelProps {
+  /** The «Получатели» badge row: only the `RESOURCE_PICKER` console, which has no tab bar. */
+  showRecipients?: boolean;
+}
+
+export function WorkItemPanel({ showRecipients = false }: WorkItemPanelProps) {
   const workItem = useWorkItemStore((state) => state.workItem);
 
   if (!workItem) {
@@ -156,16 +166,18 @@ export function WorkItemPanel() {
         <h2 className="font-heading text-base leading-snug font-medium">{t('ddsWorkItemTitle')}</h2>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            {t('ddsWorkItemRecipientsLabel')}
-          </span>
-          {workItem.recipient_services.map((service) => (
-            <Badge key={service} variant="outline">
-              {serviceTypeLabelRu(service)}
-            </Badge>
-          ))}
-        </div>
+        {showRecipients ? (
+          <div className="flex flex-wrap items-center gap-2" data-slot="dds-recipients-row">
+            <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              {t('ddsWorkItemRecipientsLabel')}
+            </span>
+            {workItem.recipient_services.map((service) => (
+              <Badge key={service} variant="outline">
+                {serviceTypeLabelRu(service)}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Left: applicant, address, a dated description entry (the reference's applicant/

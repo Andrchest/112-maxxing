@@ -62,6 +62,8 @@ async def _run_one(
     detail = created.json()
     assert detail["variants"]["card_source"] == "GENERATED_CARD", slug
     assert detail["variants"]["dds_mode"] == "MEMO_STATUSES", slug
+    # D28 (owner 2026-09-25): no override ⇒ the ДДС phone.
+    assert detail["variants"]["dds_brigade_call"] == "ON", slug
     session_id = detail["id"]
     started = await client.post(f"{API}/{session_id}/start", headers=auth(tokens["instructor1"]))
     assert started.status_code == 200, f"{slug}: {started.text}"

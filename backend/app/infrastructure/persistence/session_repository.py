@@ -211,6 +211,16 @@ class SqlAlchemySessionRepository:
         value = result.scalar_one_or_none()
         return None if value is None else CardStatus(str(value))
 
+    async def get_display_number(self, session_id: SessionId) -> int | None:
+        """`incidents.display_number` of the session's one incident, or `None`."""
+        result = await self._session.execute(
+            sa.select(_INCIDENTS.c.display_number).where(
+                _INCIDENTS.c.session_id == UUID(str(session_id))
+            )
+        )
+        value = result.scalar_one_or_none()
+        return None if value is None else int(value)
+
     async def set_card_status(self, session_id: SessionId, status: CardStatus) -> None:
         """Materialise `incidents.card_status`, inside the caller's transaction."""
         await self._session.execute(

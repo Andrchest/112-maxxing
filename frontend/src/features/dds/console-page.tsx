@@ -273,7 +273,8 @@ export function DdsConsolePage() {
             <CloseDialog sessionId={sessionId} />
             <CardIssueButton sessionId={sessionId} />
           </div>
-          <WorkItemPanel />
+          {/* I4 E21: no tab bar in the picker console, so the recipients stay on the card. */}
+          <WorkItemPanel showRecipients />
         </div>
         <div className="flex flex-col gap-4">
           <ResourceBoard sessionId={sessionId} />

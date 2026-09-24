@@ -40,13 +40,13 @@ import {
   type ProblemCode,
   type RoleType,
   type ScenarioSummary,
-  type ScenarioVariantsView,
   type ScenarioVersionListItem,
   type SessionMode,
   type SessionVariants,
   type TraineeGroup,
 } from '@/shared/api';
 import { arrivalKindLabelRu } from '@/features/lesson/lesson-labels';
+import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -70,7 +70,6 @@ const ROLE_TYPE_LABEL_KEY: Record<RoleType, keyof typeof ru> = {
 
 // Same picker set/labels `create-session-form.tsx` uses (70 §70.2) — every value of the switch is
 // listed, a value outside the version's `supported` list is disabled with the same Russian note.
-type VariantSwitch = keyof SessionVariants;
 
 const VARIANT_SWITCHES: readonly VariantSwitch[] = ['card_source', 'dds_mode', 'dds_card_check', 'dds_brigade_call'];
 
@@ -112,10 +111,6 @@ function variantValues(variantSwitch: VariantSwitch): string[] {
 function variantValueLabel(variantSwitch: VariantSwitch, value: string): string {
   const key = (VARIANT_VALUE_LABEL_KEYS[variantSwitch] as Record<string, keyof typeof ru>)[value];
   return key ? t(key) : value;
-}
-
-function isSupported(view: ScenarioVariantsView, variantSwitch: VariantSwitch, value: string): boolean {
-  return (view.supported[variantSwitch] as readonly string[]).includes(value);
 }
 
 /** Same reading `create-session-form.tsx` uses: under `GENERATED_CARD` only the `role_chain`
@@ -236,12 +231,17 @@ function PlanEntryFields({ row, index, isFirst, canRemove, difficultyFilter, onC
 
   function handleVersionChange(nextVersionId: string) {
     const nextVersion = versionsQuery.data?.items.find((version) => version.id === nextVersionId) ?? null;
-    onChange({ versionId: nextVersionId, version: nextVersion, variants: nextVersion?.variants.default ?? null });
+    onChange({
+      versionId: nextVersionId,
+      version: nextVersion,
+      variants: nextVersion ? withoutPickerPhone(nextVersion.variants.default) : null,
+    });
   }
 
   function handleVariantChange(variantSwitch: VariantSwitch, value: string) {
     if (!row.variants) return;
-    onChange({ variants: { ...row.variants, [variantSwitch]: value } as SessionVariants });
+    // I4 E21 (D28, R41): switching the entry to the picker turns its phone off.
+    onChange({ variants: withoutPickerPhone({ ...row.variants, [variantSwitch]: value } as SessionVariants) });
   }
 
   return (
@@ -346,7 +346,7 @@ function PlanEntryFields({ row, index, isFirst, canRemove, difficultyFilter, onC
                 onChange={(event) => handleVariantChange(variantSwitch, event.target.value)}
               >
                 {variantValues(variantSwitch).map((value) => {
-                  const supported = isSupported(row.version!.variants, variantSwitch, value);
+                  const supported = isVariantSelectable(row.version!.variants, row.variants!, variantSwitch, value);
                   return (
                     <option key={value} value={value} disabled={!supported}>
                       {supported
