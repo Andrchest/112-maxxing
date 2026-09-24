@@ -25,6 +25,7 @@ export function RegisterPage() {
       role={roleLabel}
       userLabel={user?.display_name_ru}
       connectionIndicatorHidden
+      referenceTheme
     >
       <h1 className="text-lg font-semibold tracking-tight">{t('registerPageTitle')}</h1>
       <div className="mt-3">

@@ -1,15 +1,15 @@
 // The v2 card layout (I3 E3b, HLD 70 §70.5.2–§70.5.4; ui-check D-3…D-7): header strip on top, an
-// applicant/address/description column and an incident/questionnaire column below it, and the
-// services bar (E2b′'s `ServicesPanel`, embedded verbatim — its own logic, only its markup and
-// position are this epic's to decide) at the bottom, matching the reference's left/right/bottom-bar
-// layout (`screenshot-card112/image1.png`). E7a applies the reference colours/theme on top of this
-// structure; nothing here is themed.
+// applicant/address/description column and an incident/questionnaire column below it, matching
+// the reference's left/right layout (`screenshot-card112/image1.png`). The services bar (E2b′'s
+// `ServicesPanel`) used to be embedded here at the bottom of this same column; I3 E7a (manager
+// review) hoisted it to `console-page.tsx` instead, full page width and pinned to the true
+// viewport bottom like the reference — this component no longer renders it (still renders
+// `recipients.comment`, the one `services`-group field that isn't the panel's own).
 import type { OperatorCardView } from '@/entities/card';
 import { groupVisibleCardFields } from '@/entities/card';
 import { FieldGroupSection, type FieldGroupLayout } from './field-group-section';
 import { CardHeaderStrip } from './card-header-strip';
 import { CardField } from './card-field';
-import { ServicesPanel } from '../services-panel';
 import type { CommitCardField } from './use-card-field-commit';
 
 interface CardFormV2Props {
@@ -74,10 +74,8 @@ export function CardFormV2({ sessionId, card, disabled, onCommit, answeredAtOffs
       {otherGroups.map((group) => (
         <FieldGroupSection key={group.key} groupKey={group.key} fields={group.fields} card={card} disabled={disabled} onCommit={onCommit} />
       ))}
-      {/* Manager review: one bottom bar spanning the card — `ServicesPanel` (E2b′'s own file,
-          restyled to a bar; its select/deselect logic is untouched), plus recipients.comment
-          directly under it when the schema carries it, with no second services card around it. */}
-      <ServicesPanel sessionId={sessionId} />
+      {/* `recipients.comment`, when the schema has it — the services bar itself now lives at the
+          page level (`console-page.tsx`), not here (I3 E7a manager review). */}
       {serviceCommentFields.map((spec) => (
         <CardField key={spec.field_path} spec={spec} confirmedValue={card.values[spec.field_path]} disabled={disabled} onCommit={onCommit} />
       ))}

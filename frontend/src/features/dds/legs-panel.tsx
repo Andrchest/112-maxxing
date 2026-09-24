@@ -33,11 +33,23 @@ export function LegsPanel({ sessionId }: LegsPanelProps) {
 
   const legs = legsQuery.data ?? [];
 
+  // I3 E7a carry-over fix (a, manager review of E5c/E7a): pinned to the true viewport bottom —
+  // rendered as the last, non-scrolling flex child of `AppShell`'s `fillHeight` `main`
+  // (`console-page.tsx`), with the card summary above it in its own `overflow-y-auto` region, so
+  // the bar sits at the bottom even when the content above it is shorter than the viewport (a
+  // `position: sticky` bar alone cannot do that — it only pins once there is something to
+  // scroll). Colour (D20, ui-check reference palette): the DDS card's own bottom bar,
+  // `--reference-dds-bar` (`src/index.css`), a fixed accent used only here (this bar only ever
+  // renders inside a `referenceTheme` route); each tab (`service-leg-block.tsx`) keeps the shared
+  // `bg-card` chip colour against it.
   return (
-    <div className="flex flex-col gap-1" data-slot="dds-services-tab-bar">
-      <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('ddsLegsPanelTitle')}:</span>
+    <div
+      className="flex shrink-0 flex-col gap-1 bg-[var(--reference-dds-bar)] px-2 pt-1 pb-2 text-[var(--reference-dds-bar-foreground)]"
+      data-slot="dds-services-tab-bar"
+    >
+      <span className="text-xs font-semibold tracking-wide uppercase opacity-90">{t('ddsLegsPanelTitle')}:</span>
       {legs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('ddsLegsEmpty')}</p>
+        <p className="text-sm opacity-90">{t('ddsLegsEmpty')}</p>
       ) : (
         <div className="flex flex-wrap items-end gap-1" role="tablist" aria-label={t('ddsLegsPanelTitle')}>
           {legs.map((leg) => (

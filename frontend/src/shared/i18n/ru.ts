@@ -834,4 +834,12 @@ export const ru = {
   operatorCardAddIncidentType: 'добавить тип происшествия',
   operatorCardIncidentTypeSearchPlaceholder: 'Введите тип происшествия / что случилось?',
   operatorCardChipRemove: 'Убрать тип происшествия',
+
+  // -- I3 E7a (manager review): the reference's own visible bar label, «Службы:» — distinct from
+  // `operatorServicesTitle` ('Службы-получатели'), which stays the list's own accessible name
+  // (`aria-label`) so `services-panel.test.tsx`'s `findByRole('list', {name: ...})` keeps finding
+  // it; only the bar's own printed text changes.
+  operatorServicesBarLabel: 'Службы:',
+  operatorCardTimerMinutesLabel: 'минут',
+  operatorCardTimerSecondsLabel: 'секунд',
 } as const;

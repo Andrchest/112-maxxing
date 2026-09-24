@@ -24,7 +24,7 @@ import { ru } from '@/shared/i18n/ru';
 import { useWorkItemStore } from '@/entities/work-item';
 import { formatCallDurationMs } from '@/entities/call';
 import type { CardFieldSpec, FactValue } from '@/entities/card';
-import { formatCardValueRu, groupVisibleCardFields, isCardValueFilled, serviceTypeLabelRu } from './card-schema-render';
+import { cardOptionLabelRu, formatCardValueRu, groupVisibleCardFields, isCardValueFilled, serviceTypeLabelRu } from './card-schema-render';
 
 const GROUP_LABEL_KEY: Record<string, keyof typeof ru> = {
   // v1 groups (derived from the `field_path` prefix — v1's `group` is always `null`)
@@ -55,6 +55,15 @@ const DARK_BAR_GROUPS = ['q_fire', 'q_gas', 'q_explosion'];
 const RIGHT_COLUMN_GROUPS = [...DARK_BAR_GROUPS, 'incident'];
 const KNOWN_GROUPS = new Set(['header', ...LEFT_COLUMN_GROUPS, 'flags', ...RIGHT_COLUMN_GROUPS]);
 
+// I3 E7a (manager review): the dark bar's own title IS the selected incident type's label (the
+// reference's «Происшествие 101»), not a static group heading — the same three questionnaire-
+// backed `incident.types` codes `card-schema-render.ts`'s own override table keys off.
+const DARK_BAR_GROUP_TO_INCIDENT_TYPE_CODE: Record<string, string> = {
+  q_fire: '1',
+  q_gas: '13',
+  q_explosion: '3',
+};
+
 interface FieldSentenceProps {
   fields: readonly CardFieldSpec[];
   values: Readonly<Record<string, FactValue>>;
@@ -82,6 +91,28 @@ function FieldSentence({ fields, values, missing }: FieldSentenceProps) {
   );
 }
 
+/** One "value . value ." line — no labels, the reference's own dark-bar sentence shape
+ * (`screenshot-dds/image6.png`: «Дом . Открытое пламя / Дым (дом), Запах гари (дом) . …»,
+ * manager review). Still driven entirely by `field_specs`/`values` — only the label prefix
+ * `FieldSentence` prints is dropped. */
+function ValueSentence({ fields, values, missing }: FieldSentenceProps) {
+  return (
+    <p className="text-sm leading-relaxed">
+      {fields.map((spec) => {
+        const isMissing = missing.has(spec.field_path);
+        return (
+          <span key={spec.field_path} className="mr-1">
+            <span className={isMissing ? 'text-amber-400' : undefined}>
+              {isMissing ? t('ddsMissingFieldNotice') : formatCardValueRu(spec, values[spec.field_path])}
+            </span>
+            <span className="opacity-80"> .</span>
+          </span>
+        );
+      })}
+    </p>
+  );
+}
+
 export function WorkItemPanel() {
   const workItem = useWorkItemStore((state) => state.workItem);
 
@@ -99,6 +130,25 @@ export function WorkItemPanel() {
   const byKey = new Map(groups.map((group) => [group.key, group.fields]));
   const otherGroups = groups.filter((group) => !KNOWN_GROUPS.has(group.key));
   const flagsFields = byKey.get('flags') ?? [];
+
+  // I3 E7a (manager review): incident.types is the dark bar's own title now, never a separate
+  // "label: value" line under it — dropped from the incident group's other fields
+  // (incident.classifier_code, and a v1 card's own incident.type), which still render as their
+  // own separate light rows below the bar(s), as the reference shows. A type with no
+  // questionnaire branch of its own (no schema TODO covers it, v2.yaml) still shows its label
+  // somewhere — as a plain line, only when no dark bar rendered at all.
+  const incidentGroupFields = byKey.get('incident') ?? [];
+  const incidentTypesField = incidentGroupFields.find((spec) => spec.field_path === 'incident.types');
+  const otherIncidentFields = incidentGroupFields.filter((spec) => spec.field_path !== 'incident.types');
+  const renderedDarkBarKeys = DARK_BAR_GROUPS.filter((key) => (byKey.get(key)?.length ?? 0) > 0);
+
+  function darkBarTitle(key: string): string {
+    const code = DARK_BAR_GROUP_TO_INCIDENT_TYPE_CODE[key];
+    if (incidentTypesField && code) {
+      return cardOptionLabelRu(incidentTypesField, code);
+    }
+    return groupLabel(key);
+  }
 
   return (
     <Card>
@@ -163,19 +213,40 @@ export function WorkItemPanel() {
                 })}
               </div>
             ) : null}
-            {DARK_BAR_GROUPS.map((key) => {
-              const fields = byKey.get(key);
-              if (!fields || fields.length === 0) return null;
+            {renderedDarkBarKeys.map((key) => {
+              const fields = byKey.get(key)!;
               return (
-                <div key={key} className="flex flex-col gap-1 rounded-md bg-foreground/90 p-2 text-background" data-slot="dds-questionnaire-bar">
-                  <h3 className="text-xs font-semibold tracking-wide uppercase">{groupLabel(key)}</h3>
-                  <FieldSentence fields={fields} values={workItem.card_values} missing={missing} />
+                // I3 E7a (D20, ui-check D-9, manager review): solid `bg-foreground` — the
+                // reference's dark bar is a flat fill, not translucent (sampled pixel-exact
+                // against `screenshot-dds/image6.png`: `#303335`, this theme's own `--foreground`
+                // in `.reference-light`, `src/index.css`). The title IS the selected incident
+                // type's own label (`darkBarTitle`, not a static small-caps group heading — the
+                // reference's «Происшествие 101» is normal case), and the sentence under it is
+                // values only (`ValueSentence`), never "label: value" pairs.
+                <div key={key} className="flex flex-col gap-1 rounded-md bg-foreground p-2 text-background" data-slot="dds-questionnaire-bar">
+                  <h3 className="text-sm font-semibold">{darkBarTitle(key)}</h3>
+                  <ValueSentence fields={fields} values={workItem.card_values} missing={missing} />
                 </div>
               );
             })}
-            {byKey.get('incident') && byKey.get('incident')!.length > 0 ? (
-              <FieldSentence fields={byKey.get('incident')!} values={workItem.card_values} missing={missing} />
+            {/* A type with no questionnaire branch of its own (so no dark bar rendered above it
+                at all) still shows its own label somewhere, never silently dropped. */}
+            {incidentTypesField && renderedDarkBarKeys.length === 0 ? (
+              <FieldSentence fields={[incidentTypesField]} values={workItem.card_values} missing={missing} />
             ) : null}
+            {/* «Класс.:» (and, for a v1 card, its own `incident.type`) — separate light rows
+                under the bar(s), as the reference shows (manager review). */}
+            {otherIncidentFields.map((spec) => {
+              const isMissing = missing.has(spec.field_path);
+              return (
+                <p key={spec.field_path} className="text-sm" data-slot="dds-incident-field-line">
+                  <span className="text-muted-foreground">{spec.label_ru}: </span>
+                  <span className={isMissing ? 'text-amber-600' : undefined}>
+                    {isMissing ? t('ddsMissingFieldNotice') : formatCardValueRu(spec, workItem.card_values[spec.field_path])}
+                  </span>
+                </p>
+              );
+            })}
           </div>
         </div>
 

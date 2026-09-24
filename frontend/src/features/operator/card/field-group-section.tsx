@@ -68,10 +68,21 @@ export function FieldGroupSection({ groupKey, fields, card, disabled, onCommit, 
     );
   }
 
+  // I3 E7a (D20, ui-check D-5; manager review): the reference's dark «Происшествие 101» banner
+  // over the per-type questionnaire block — `bg-foreground text-background` reuses the same
+  // dark-title-bar convention `features/dds/work-item-panel.tsx`'s `DARK_BAR_GROUPS` already
+  // applies on the ДДС side (both read `--foreground`, which `.reference-light` sets to the
+  // reference's own dark block-header colour, `src/index.css`). Every other group keeps the plain
+  // muted label — the reference does not bar those. Normal case, not small-caps uppercase — the
+  // reference's own bar text is title case.
+  const isDarkBar = layout === 'row';
+
   return (
     <Card data-slot={`card-group-${groupKey}`}>
-      <CardHeader>
-        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{groupLabelRu(groupKey)}</h3>
+      <CardHeader className={isDarkBar ? 'rounded-t-xl bg-foreground py-2' : undefined}>
+        <h3 className={isDarkBar ? 'text-sm font-semibold text-background' : 'text-xs font-semibold tracking-wide text-muted-foreground uppercase'}>
+          {groupLabelRu(groupKey)}
+        </h3>
       </CardHeader>
       <CardContent>{body}</CardContent>
     </Card>

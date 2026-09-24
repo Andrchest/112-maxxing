@@ -107,9 +107,22 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
   // (the reference has no such block; a bottom «Службы:» bar with a «+» is what it shows,
   // `screenshot-card112/image1.png`/`image4.png`). Only this markup changed; every command, every
   // query and the v1/v2 removal-allowed rule above are untouched.
+  //
+  // I3 E7a carry-over fix (a, manager review of E5c/E7a): pinned to the true viewport bottom —
+  // rendered as the last, non-scrolling flex child of `AppShell`'s `fillHeight` `main`
+  // (`console-page.tsx`), spanning the full page width like the reference, with the card content
+  // above it in its own `overflow-y-auto` region (a `position: sticky` bar alone only pins once
+  // there is something to scroll, which left empty space below it when the content was short —
+  // the manager's review). Colour (D20): the reference's orange bottom bar, `#EC653B` —
+  // `--reference-bar-orange` (`src/index.css`), a fixed accent used only here (this bar only ever
+  // renders inside a `referenceTheme` route). Label text: the reference's own «Службы:», not the
+  // list's accessible name (`operatorServicesTitle`, kept for `services-panel.test.tsx`).
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" data-slot="services-bar">
-      <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('operatorServicesTitle')}</span>
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-[var(--reference-bar-orange)] p-2 text-[var(--reference-bar-orange-foreground)]"
+      data-slot="services-bar"
+    >
+      <span className="text-xs font-semibold tracking-wide uppercase opacity-90">{t('operatorServicesBarLabel')}</span>
       <Button
         type="button"
         size="icon-sm"
@@ -121,7 +134,7 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
         +
       </Button>
       {listed.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('operatorServicesEmpty')}</p>
+        <p className="text-sm opacity-90">{t('operatorServicesEmpty')}</p>
       ) : (
         <ul aria-label={t('operatorServicesTitle')} className="flex flex-wrap items-center gap-1.5">
           {listed.map((service) => {
@@ -150,7 +163,7 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
         </ul>
       )}
       {resolution && resolution.informed.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs opacity-90">
           {t('operatorServicesInformed')}: {resolution.informed.map((service) => serviceLabelRu(service)).join(', ')}
         </p>
       ) : null}

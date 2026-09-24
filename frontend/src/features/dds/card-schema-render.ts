@@ -68,9 +68,28 @@ export function isCardFieldVisible(spec: CardFieldSpec, values: Readonly<Record<
   return spec.visible_when ? evaluateCardCondition(spec.visible_when, values) : true;
 }
 
+// I3 E7a carry-over fix (b, manager review of E5c): `reference/card-schema/v2.yaml`'s own
+// `label_ru` for these three questionnaire-backed «Что случилось?» codes is the bare numeral
+// («101»/«104») or a short form («Взрыв»), not the reference card's own wording (ui-check D-5/
+// D-9: «Происшествие 101» / «Происшествие 104» / «Взрыв») — the same override
+// `features/operator/card/chips-control.tsx`'s `CHIP_LABEL_OVERRIDE` table applies on the
+// operator side. Duplicated here rather than imported across features (this codebase's
+// established one-copy-per-feature convention, e.g. `features/dds/use-dds-display-number.ts`).
+const INCIDENT_TYPES_OPTION_LABEL_OVERRIDE: Record<string, keyof typeof ru> = {
+  '1': 'operatorGroupQFire',
+  '13': 'operatorGroupQGas',
+  '3': 'operatorGroupQExplosion',
+};
+
 /** An option's `label_ru` by `code`, or the raw code when the spec carries no matching option
- * (defensive fallback, never a blank label). */
+ * (defensive fallback, never a blank label). `incident.types`' three questionnaire-backed codes
+ * use the reference's own wording instead of the schema's bare option label (see the override
+ * table above). */
 export function cardOptionLabelRu(spec: CardFieldSpec, code: string): string {
+  if (spec.field_path === 'incident.types') {
+    const overrideKey = INCIDENT_TYPES_OPTION_LABEL_OVERRIDE[code];
+    if (overrideKey) return t(overrideKey);
+  }
   const option = spec.options?.find((candidate) => candidate.code === code);
   return option ? option.label_ru : code;
 }

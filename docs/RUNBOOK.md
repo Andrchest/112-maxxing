@@ -166,6 +166,67 @@ every document), `SIM_SIP_REALM` (default `sim112`), `SIM_SIP_PORT`, `SIM_SIP_RT
   come with E6e); `488` = the softphone offers no G.711; one-way audio across machines =
   `SIM_SIP_MEDIA_IP` unset or the RTP range firewalled.
 
+## E2E screenshot comparison (I3 E7a — the reference look, D20, C9)
+
+`frontend/e2e/reference-look.e2e.ts` (Playwright, `@playwright/test`, pinned in
+`frontend/package.json` to the version whose Chromium build is already cached in
+`~/.cache/ms-playwright`) compares small, near-solid colour regions of the 112 card and the ДДС
+memo workstation — the orange services bar, a selected blue questionnaire tag, the fill-deadline
+timer (both states), and the dark title bars — against crops taken from the organizer's own
+extracted screenshots (`frontend/e2e/reference/*.png`, cropped to the compared region; not
+whole-page pixel equality — fonts/OS chrome differ from the organizer's real system). It needs a
+real fake-provider backend + Vite dev server already running (the `_common.md` UI-check recipe
+this task also used) — **it is not part of `make gate`** (vitest never starts a backend) and does
+not start the stack itself.
+
+**Start the stack** (fake providers, no GPU, ports 8100/5174 — never 8000/8001/8011/8012/5000):
+
+```
+# 1. A scratch Postgres database and a free Redis logical DB on the already-running test stack
+#    (sim112test-postgres-1 :55432, sim112test-redis-1 :56379) — or your own dev stack (D1: dev
+#    Postgres/Redis are 15432/16379). Pick any DB name / logical index not already in use.
+docker exec sim112test-postgres-1 psql -U sim -d sim_test -c "CREATE DATABASE sim_e2e_ui"
+
+# 2. Migrate, seed the three demo accounts and import the example scenarios — SIM_ENV_FILE points
+#    at a scratch env file (copy .env.example, override SIM_DATABASE_URL / SIM_REDIS_URL to the
+#    scratch DB above, SIM_JWT_SECRET / SIM_LIVEKIT_API_SECRET to real random values >= 32 bytes,
+#    and SIM_SEED_{TRAINEE,INSTRUCTOR,ADMIN}_PASSWORD to your own — never a literal in a committed
+#    file, SPEC §41). From backend/:
+export SIM_ENV_FILE=/path/to/scratch.env
+uv run alembic upgrade head
+uv run python -m app.tools.seed_users
+uv run python -m app.tools.import_scenarios ../scenarios/examples
+
+# 3. Backend (same SIM_ENV_FILE, plus the fake providers — from backend/):
+SIM_CALL_TRANSPORT=fake SIM_ASR_PROVIDER=fake SIM_LLM_PROVIDER=fake SIM_TTS_PROVIDER=fake \
+SIM_EXPLANATION_LLM_PROVIDER=fake SIM_VAD_PROVIDER=energy SIM_REQUIRE_INFERENCE_READY=false \
+  uv run uvicorn app.api.main:create_app --factory --host 127.0.0.1 --port 8100 &
+
+# 4. Vite dev server (from frontend/):
+VITE_API_PROXY_TARGET=http://127.0.0.1:8100 npx vite --port 5174 --strictPort --host 127.0.0.1 &
+```
+
+**Run the suite** (from `frontend/`; `SIM_SEED_TRAINEE_PASSWORD` / `SIM_SEED_INSTRUCTOR_PASSWORD`
+are the same values the scratch env file above carries):
+
+```
+SIM_SEED_TRAINEE_PASSWORD=... SIM_SEED_INSTRUCTOR_PASSWORD=... UI_BASE=http://127.0.0.1:5174 \
+  npm run e2e
+```
+
+Each test creates its own session through the instructor UI (`apartment-fire` for the 112 card —
+the only schema-2 *operator* scenario is E3a′'s own TODO, so the test answers a real call and then
+swaps only the snapshot's `card` for one built from the live `GET /reference/card-schema/v2`
+through `page.route`, the same technique the I3 E3b task report verified end-to-end; `street-
+rubbish-fire` for the ДДС memo workstation, a real schema-2 `GENERATED_CARD` scenario, no fake
+needed) and tears nothing else down — drop the scratch database and flush the scratch Redis DB
+yourself when done, the same way you created them, and stop the backend/Vite processes you started
+(never the `sim112test-*` containers, never ports 8000/8001/8011/8012/5000).
+
+**No browser download**: `npm install` never re-fetches a browser build
+(`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, set once when the `@playwright/test` devDependency was
+added) — `~/.cache/ms-playwright` must show no new directory after `npm install` or `npm run e2e`.
+
 ## §46 demo walk
 
 The full SPEC §46 Definition-of-Done walk (16 items, exercised for real against the stack) is

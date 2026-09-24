@@ -72,12 +72,24 @@ export function CardHeaderStrip({
             </span>
           ) : null}
           {remainingMs !== null ? (
+            // I3 E7a (manager review): the reference's timer block is red always — sampled
+            // pixel-exact (`#FF0000`) from BOTH a mid-count and a run-over screenshot
+            // (`screenshot-card112/image2.png`, `image4.png`) — not a dark "normal" state that
+            // turns red; only the overdue state gets a visual delta, a static darker ring rather
+            // than an animation (a flashing box would make the screenshot comparison flaky).
+            // Large white "MM:SS" digits with «минут»/«секунд» captions underneath, as the
+            // reference shows (`--reference-timer-bg`/`-foreground`, `src/index.css`, fixed
+            // accents — this header only ever renders inside a `referenceTheme` route).
             <span
-              className={`rounded-md border border-border px-3 py-1.5 font-mono text-lg ${overdue ? 'border-destructive text-destructive' : ''}`}
+              className={`flex flex-col items-center rounded-md bg-[var(--reference-timer-bg)] px-3 py-1 text-[var(--reference-timer-foreground)] ${overdue ? 'ring-2 ring-inset ring-black/50' : ''}`}
               data-slot="card-fill-timer"
               data-overdue={overdue}
             >
-              {formatCallDurationMs(Math.abs(remainingMs))}
+              <span className="font-mono text-2xl leading-none font-bold">{formatCallDurationMs(Math.abs(remainingMs))}</span>
+              <span className="flex w-full justify-between text-[9px] tracking-wide uppercase opacity-90">
+                <span>{t('operatorCardTimerMinutesLabel')}</span>
+                <span>{t('operatorCardTimerSecondsLabel')}</span>
+              </span>
             </span>
           ) : null}
         </div>

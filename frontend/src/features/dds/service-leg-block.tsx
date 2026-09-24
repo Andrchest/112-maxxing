@@ -72,14 +72,22 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
 
   return (
     <div className="relative" data-slot="dds-leg-tab">
+      {/* I3 E7a (manager review): the tab's own text must set its own colour — the surrounding
+          bar (`legs-panel.tsx`) sets a light `--reference-dds-bar-foreground` for ITS OWN empty
+          background, which the tab's light `bg-card` (matches the reference exactly, pixel-
+          sampled) would otherwise inherit, reading as near-invisible light-on-light. `aria-
+          selected` (the currently-open tab) gets a visibly distinct ring/background, not just a
+          different chevron. */}
       <button
         type="button"
         role="tab"
         aria-selected={expanded}
         onClick={onToggle}
-        className="flex min-w-36 flex-col items-start gap-0.5 rounded-t-md border border-border bg-card px-2.5 py-1.5 text-left text-xs hover:bg-accent"
+        className={`flex min-w-36 flex-col items-start gap-0.5 rounded-t-md border px-2.5 py-1.5 text-left text-xs text-card-foreground hover:bg-accent ${
+          expanded ? 'border-primary bg-accent ring-2 ring-primary ring-inset' : 'border-border bg-card'
+        }`}
       >
-        <span className="font-medium">{leg.service_name_ru}</span>
+        <span className="font-semibold">{leg.service_name_ru}</span>
         <span className="flex items-center gap-1 text-muted-foreground">
           {leg.response_status_at_offset_ms !== null ? <span>{formatCallDurationMs(leg.response_status_at_offset_ms)}</span> : null}
           <span>{serviceResponseStatusLabelRu(leg.response_status)}</span>

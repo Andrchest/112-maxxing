@@ -150,7 +150,7 @@ export function DdsConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('ddsConsoleLoading')}</p>
       </AppShell>
     );
@@ -160,7 +160,7 @@ export function DdsConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -174,7 +174,7 @@ export function DdsConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot && (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED')) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -187,7 +187,7 @@ export function DdsConsolePage() {
 
   if (!snapshot || snapshot.work_item === null) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('ddsConsoleNoWorkItem')}</p>
       </AppShell>
     );
@@ -203,32 +203,40 @@ export function DdsConsolePage() {
   // a two-column card summary, the services tab bar spanning the bottom, product-only panels in a
   // closed-by-default drawer) — `RESOURCE_PICKER` keeps today's three-column console unchanged.
   if (isMemoMode) {
+    // I3 E7a (manager review): a full-height layout — `AppShell`'s `fillHeight` stops `main`
+    // itself from scrolling, so the tab bar (`LegsPanel`, pinned as the last, non-scrolling flex
+    // child below) always sits at the true viewport bottom, including when the card summary
+    // above it is shorter than the viewport (a `position: sticky` bar alone only pins once there
+    // is something to scroll, which is the bug the manager's review reported). Everything above
+    // the bar lives in its own `overflow-y-auto` region instead.
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
-        {workItem ? (
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <Badge variant="outline" data-slot="dds-stage-badge">
-              {t('ddsStageLabel')}: {ddsStageStateLabelRu(workItem.state)}
-            </Badge>
-            <div className="flex flex-wrap gap-2">
-              <StageActionBar sessionId={sessionId} />
-              <CloseDialog sessionId={sessionId} />
-              <CardIssueButton sessionId={sessionId} />
-              <DdsSideDrawer sessionId={sessionId} />
+      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+          {workItem ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <Badge variant="outline" data-slot="dds-stage-badge">
+                {t('ddsStageLabel')}: {ddsStageStateLabelRu(workItem.state)}
+              </Badge>
+              <div className="flex flex-wrap gap-2">
+                <StageActionBar sessionId={sessionId} />
+                <CloseDialog sessionId={sessionId} />
+                <CardIssueButton sessionId={sessionId} />
+                <DdsSideDrawer sessionId={sessionId} />
+              </div>
             </div>
+          ) : null}
+          <div className="flex flex-col gap-4">
+            {workItem ? <DdsHeaderStrip sessionId={sessionId} workItem={workItem} /> : null}
+            <WorkItemPanel />
           </div>
-        ) : null}
-        <div className="flex flex-col gap-4">
-          {workItem ? <DdsHeaderStrip sessionId={sessionId} workItem={workItem} /> : null}
-          <WorkItemPanel />
-          <LegsPanel sessionId={sessionId} />
         </div>
+        <LegsPanel sessionId={sessionId} />
       </AppShell>
     );
   }
 
   return (
-    <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+    <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
       {workItem ? (
         <div className="mb-3">
           <Badge variant="outline" data-slot="dds-stage-badge">

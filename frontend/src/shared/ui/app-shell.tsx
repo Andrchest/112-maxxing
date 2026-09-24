@@ -56,6 +56,23 @@ interface AppShellProps {
    * with no socket at all reads as "lost connection" when nothing was ever connected.
    */
   connectionIndicatorHidden?: boolean;
+  /**
+   * I3 E7a (D20, C9): renders this route in the organizer's reference look (light theme, `.reference-
+   * light`, `src/index.css`) instead of D12's dense dark console — scoped per route, never a global
+   * flip. Set only by the screens with a reference counterpart (the 112 operator console/card, the
+   * ДДС workstation, the 112 «реестр» / ДДС «Список происшествий»); every other route omits it and
+   * keeps the dark look.
+   */
+  referenceTheme?: boolean;
+  /**
+   * I3 E7a (manager review): a route with its own pinned-to-the-viewport-bottom bar (the 112
+   * «Службы:» bar, the ДДС services tab bar) needs `main` itself to stop scrolling and instead
+   * hand that job to the caller's own inner scroll region, so the bar sits at the true viewport
+   * bottom always — including when the content above it is shorter than the viewport, which a
+   * `position: sticky` bar alone cannot do (it only pins once there is something to scroll).
+   * Default `false`: `main` scrolls and pads itself, unchanged for every other route.
+   */
+  fillHeight?: boolean;
   children: ReactNode;
 }
 
@@ -74,10 +91,15 @@ export function AppShell({
   connectionStatus,
   readiness,
   connectionIndicatorHidden = false,
+  referenceTheme = false,
+  fillHeight = false,
   children,
 }: AppShellProps) {
   return (
-    <div className="flex min-h-svh flex-col bg-background text-foreground">
+    <div
+      className={`flex min-h-svh flex-col bg-background text-foreground ${referenceTheme ? 'reference-light' : ''}`}
+      data-theme={referenceTheme ? 'reference-light' : undefined}
+    >
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
         <span className="text-sm font-semibold tracking-tight">{t('appName')}</span>
         <Separator orientation="vertical" className="h-5" />
@@ -121,7 +143,7 @@ export function AppShell({
           )}
         </div>
       </header>
-      <main className="flex-1 overflow-auto p-4">{children}</main>
+      <main className={fillHeight ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex-1 overflow-auto p-4'}>{children}</main>
     </div>
   );
 }

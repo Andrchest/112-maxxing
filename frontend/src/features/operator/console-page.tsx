@@ -217,7 +217,7 @@ export function OperatorConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleLoading')}</p>
       </AppShell>
     );
@@ -227,7 +227,7 @@ export function OperatorConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -266,7 +266,7 @@ export function OperatorConsolePage() {
 
   if (snapshot.card === null) {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleWrongRole')}</p>
       </AppShell>
     );
@@ -276,7 +276,7 @@ export function OperatorConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED') {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -291,35 +291,54 @@ export function OperatorConsolePage() {
   // — the same test `card-form.tsx` uses to pick its own layout.
   const isV2Card = snapshot.card.field_specs.some((spec) => spec.group !== null && spec.group !== undefined);
 
+  const consoleColumns = (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr_320px]">
+      <div className="flex flex-col gap-4">
+        <PhoneWidget sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
+        <StageActionBar sessionId={sessionId} onCommandNeedsRefresh={() => void snapshotQuery.refetch()} />
+      </div>
+      <div>
+        {stageState === 'HANDOFF_PREPARATION' ? (
+          <HandoffPreparationView sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
+        ) : (
+          <CardForm sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
+        )}
+      </div>
+      <div className="flex flex-col gap-4">
+        {/* I3 E3b/E7a: a v2 card's services bar is hoisted to the page level below, full width and
+            pinned to the true viewport bottom (manager review) — rendering it again here would
+            double-commit nothing but would show the same list twice. A v1 card keeps it in this
+            sidebar exactly as before. */}
+        {isV2Card ? null : <ServicesPanel sessionId={sessionId} />}
+        <TranscriptPanel sessionId={sessionId} />
+        <NotificationsPlaceholder sessionId={sessionId} />
+      </div>
+    </div>
+  );
+
+  if (isV2Card) {
+    // I3 E7a (manager review): a full-height layout — `AppShell`'s `fillHeight` stops `main`
+    // itself from scrolling, so the services bar (pinned as the last, non-scrolling flex child
+    // below) always sits at the true viewport bottom, full page width, including when the
+    // console above it is shorter than the viewport (a `position: sticky` bar alone only pins
+    // once there is something to scroll, which is the bug the manager's review reported).
+    return (
+      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{consoleColumns}</div>
+        <ServicesPanel sessionId={sessionId} />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
       title={t('operatorTitle')}
       role={roleLabel}
       userLabel={userLabel}
       connectionStatus={connectionStatus}
+      referenceTheme
     >
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr_320px]">
-        <div className="flex flex-col gap-4">
-          <PhoneWidget sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
-          <StageActionBar sessionId={sessionId} onCommandNeedsRefresh={() => void snapshotQuery.refetch()} />
-        </div>
-        <div>
-          {stageState === 'HANDOFF_PREPARATION' ? (
-            <HandoffPreparationView sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
-          ) : (
-            <CardForm sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
-          )}
-        </div>
-        <div className="flex flex-col gap-4">
-          {/* I3 E3b: a v2 card embeds `ServicesPanel` itself as the reference's bottom services
-              bar (`CardFormV2`) — rendering it again here would double-commit nothing (it is
-              read-only display plus its own commands) but would show the same list twice. A v1
-              card's `CardForm` never embeds it, so this sidebar keeps it exactly as before. */}
-          {isV2Card ? null : <ServicesPanel sessionId={sessionId} />}
-          <TranscriptPanel sessionId={sessionId} />
-          <NotificationsPlaceholder sessionId={sessionId} />
-        </div>
-      </div>
+      {consoleColumns}
     </AppShell>
   );
 }

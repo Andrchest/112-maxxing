@@ -66,15 +66,32 @@ describe('cardOptionLabelRu / formatCardValueRu — v2 options over v1 enum fall
     label_ru: 'Что случилось',
     scoring_relevant: false,
     required_for_handoff: false,
-    options: [{ code: '1', label_ru: 'Пожар (открытое пламя / дым)' }],
+    // code '5' is deliberately outside the reference-wording override table below (it only
+    // covers '1'/'13'/'3') — this case exercises the plain "option code -> its own label_ru" path.
+    options: [{ code: '5', label_ru: 'Пожар (открытое пламя / дым)' }],
   };
 
   it('maps a STRING_LIST option code to its label_ru', () => {
-    expect(formatCardValueRu(chip, ['1'])).toBe('Пожар (открытое пламя / дым)');
+    expect(formatCardValueRu(chip, ['5'])).toBe('Пожар (открытое пламя / дым)');
   });
 
   it('cardOptionLabelRu falls back to the raw code for an unknown option', () => {
     expect(cardOptionLabelRu(chip, '99')).toBe('99');
+  });
+
+  it('I3 E7a carry-over fix (b): the questionnaire-backed «Что случилось?» codes render the reference wording, not the schema’s bare option label', () => {
+    const questionnaireChip: CardFieldSpec = {
+      ...chip,
+      options: [
+        { code: '1', label_ru: '101' },
+        { code: '13', label_ru: '104' },
+        { code: '3', label_ru: 'Взрыв' },
+      ],
+    };
+    expect(formatCardValueRu(questionnaireChip, ['1'])).toBe(ru.operatorGroupQFire);
+    expect(formatCardValueRu(questionnaireChip, ['13'])).toBe(ru.operatorGroupQGas);
+    expect(formatCardValueRu(questionnaireChip, ['3'])).toBe(ru.operatorGroupQExplosion);
+    expect(formatCardValueRu(questionnaireChip, ['1'])).not.toBe('101');
   });
 
   it('falls back to the v1 enum_name table when a field has no options', () => {

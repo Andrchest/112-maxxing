@@ -117,6 +117,50 @@
     --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* I3 E7a (D20, C9): the reference organizer look for the 112 card and ДДС screens — a light theme
+ * scoped to a `.reference-light` wrapper class (`shared/ui/app-shell.tsx`'s `referenceTheme` prop),
+ * never a global flip of `:root`/`.dark` above. Every component already reads the semantic shadcn
+ * tokens (`bg-background`, `text-foreground`, `bg-card`, `border-border`, …), so redefining them on
+ * a scoped ancestor re-themes that whole subtree for free, the same way `.dark` already does for
+ * `<html>`. Colours sampled from the organizer files (ui-check REPORT.md (d), reference palette):
+ * page `#C9CED1`, panels `#EFEFEF`, dark block headers `#303335`. */
+.reference-light {
+    --background: #c9ced1;
+    --foreground: #303335;
+    --card: #efefef;
+    --card-foreground: #303335;
+    --popover: #efefef;
+    --popover-foreground: #303335;
+    --primary: #157dbd;
+    --primary-foreground: #ffffff;
+    --secondary: #e2e4e6;
+    --secondary-foreground: #303335;
+    --muted: #dadfe2;
+    --muted-foreground: #55606a;
+    --accent: #dadfe2;
+    --accent-foreground: #303335;
+    --destructive: #d1352b;
+    --border: #b7bec3;
+    --input: #ffffff;
+    --ring: #157dbd;
+}
+
+:root {
+    /* I3 E7a: fixed reference accent colours (D20) used by the 112 card's services bar and the ДДС
+     * memo workstation's own bars/timer — not swapped between the dark and reference-light themes,
+     * since the components that use them only ever render inside `.reference-light` routes. */
+    --reference-bar-orange: #ec653b;
+    --reference-bar-orange-foreground: #ffffff;
+    --reference-dds-bar: #49555d;
+    --reference-dds-bar-foreground: #ffffff;
+    /* I3 E7a (manager review): the reference's fill-timer box is red always, not a dark "normal"
+     * state — pixel-sampled `#FF0000` from two independent reference screenshots
+     * (`screenshot-card112/image2.png`, `image4.png`, one mid-count and one run-over). The
+     * overdue state gets a static ring, not a second background colour. */
+    --reference-timer-bg: #ff0000;
+    --reference-timer-foreground: #ffffff;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

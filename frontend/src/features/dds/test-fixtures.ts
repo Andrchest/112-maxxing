@@ -39,7 +39,10 @@ export const THREAT_TO_LIFE_HIDDEN_FIELD_SPEC: CardFieldSpec = {
 };
 
 // A v2 `STRING_LIST` fixture (the «Что случилось» chips, §70.5.3) for the "option code renders as
-// label_ru" test.
+// label_ru" test. `options[0].label_ru` is the schema's real bare numeral (`reference/card-schema/
+// v2.yaml`: `{code: '1', label_ru: '101'}`) — I3 E7a carry-over fix (b) overrides it to the
+// reference's own wording («Происшествие 101»), so this fixture deliberately keeps the raw '101'
+// label to exercise that override rather than mask it behind a friendlier fixture label.
 export const INCIDENT_TYPES_CHIP_FIELD_SPEC: CardFieldSpec = {
   field_path: 'incident.types',
   value_type: 'STRING_LIST',
@@ -48,7 +51,34 @@ export const INCIDENT_TYPES_CHIP_FIELD_SPEC: CardFieldSpec = {
   scoring_relevant: false,
   required_for_handoff: false,
   group: 'incident',
-  options: [{ code: '1', label_ru: 'Пожар' }],
+  options: [{ code: '1', label_ru: '101' }],
+};
+
+// I3 E7a carry-over fix (b): `incident.classifier_code` («Класс.:», `reference/card-schema/
+// v2.yaml`, group `incident`) for the "renders the classifier value when present" test.
+export const CLASSIFIER_CODE_FIELD_SPEC: CardFieldSpec = {
+  field_path: 'incident.classifier_code',
+  value_type: 'STRING',
+  enum_name: null,
+  label_ru: 'Класс.',
+  scoring_relevant: true,
+  required_for_handoff: false,
+  group: 'incident',
+};
+
+// I3 E7a (manager review): a `q_fire`-grouped field (`reference/card-schema/v2.yaml`'s
+// `q.fire.where`) for the "dark bar renders values only, titled by the selected incident type"
+// test — `label_ru` deliberately differs from any option's own label, so a test can tell whether
+// the rendered text is the field's label (must NOT appear under the bar) or its value.
+export const Q_FIRE_WHERE_FIELD_SPEC: CardFieldSpec = {
+  field_path: 'q.fire.where',
+  value_type: 'STRING_LIST',
+  enum_name: null,
+  label_ru: 'Где',
+  scoring_relevant: true,
+  required_for_handoff: false,
+  group: 'q_fire',
+  options: [{ code: 'на улице', label_ru: 'Улица' }],
 };
 
 export function makeWorkItem(overrides: Partial<DdsWorkItem> = {}): DdsWorkItem {
