@@ -28,6 +28,7 @@ from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import RoleType
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
+from app.domain.session.variants import ScenarioVariants, derive_scenario_variants
 from app.infrastructure.persistence.mappers import (
     scenario_version_row_values,
     scoring_rule_row_values,
@@ -179,7 +180,9 @@ class SqlAlchemyScenarioRepository:
         """The `scenario_versions` presentation columns joined with the owning scenario's slug.
 
         `content` is deliberately absent: no listing endpoint may serialise a scenario document
-        (D3, D4).
+        (D3, D4). Two derived facts are read out of it instead — the declared `variants` key and
+        whether a prefab handoff exists — which is all `derive_scenario_variants` needs for the
+        `ScenarioVariantsView` (HLD 70 §70.2.2).
         """
         return sa.select(
             _VERSIONS.c.id,
@@ -194,6 +197,8 @@ class SqlAlchemyScenarioRepository:
             _VERSIONS.c.content_sha256,
             _VERSIONS.c.locked_at,
             _VERSIONS.c.created_at,
+            _VERSIONS.c.content["variants"].label("declared_variants"),
+            _VERSIONS.c.content["expected_response"]["prefab_handoff"].label("prefab_handoff"),
         ).select_from(_VERSIONS.join(_SCENARIOS, _SCENARIOS.c.id == _VERSIONS.c.scenario_id))
 
     async def add_scenario(self, scenario_id: ScenarioId, slug: str, title_ru: str) -> None:
@@ -274,4 +279,14 @@ def _version_detail(row: sa.Row[tuple[Any, ...]]) -> StoredScenarioVersionDetail
         content_sha256=str(row.content_sha256),
         locked_at=row.locked_at,
         created_at=row.created_at,
+        variants=derive_scenario_variants(
+            schema_version=int(row.schema_version),
+            role_chain=tuple(RoleType(value) for value in row.role_chain),
+            has_prefab_handoff=row.prefab_handoff is not None,
+            declared=(
+                ScenarioVariants.model_validate(row.declared_variants)
+                if row.declared_variants is not None
+                else None
+            ),
+        ),
     )

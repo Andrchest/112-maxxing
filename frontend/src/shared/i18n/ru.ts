@@ -75,6 +75,24 @@ export const ru = {
   // -- instructor: Start-button readiness gate (E18-D, SPEC §37/R9) ---------
   instructorStartNotReadyReason: 'Начало занятия недоступно: не готовы модельные сервисы',
 
+  // -- instructor: variant switches (I3 E1, 70 §70.2) -----------------------
+  instructorVariantsLabel: 'Варианты занятия',
+  instructorVariantCardSourceLabel: 'Источник карточки',
+  instructorVariantDdsModeLabel: 'Режим работы ДДС',
+  instructorVariantDdsCardCheckLabel: 'Проверка карточки в ДДС',
+  instructorVariantDdsBrigadeCallLabel: 'Звонок ДДС — бригаде',
+  variantCardSourceGeneratedCard: 'Сгенерированная карточка (без звонка)',
+  variantCardSourceCallerVoice: 'Звонок заявителя (голос ИИ)',
+  variantDdsModeMemoStatuses: 'Статусы служб (по памятке ДДС)',
+  variantDdsModeResourcePicker: 'Подбор сил и средств',
+  variantDdsCardCheckOff: 'Выключена',
+  variantDdsCardCheckOn: 'Включена',
+  variantDdsBrigadeCallOff: 'Выключен',
+  variantDdsBrigadeCallOn: 'Включён',
+  instructorVariantUnavailableSuffix: 'недоступно',
+  instructorVariantUnavailableNote:
+    'Недоступные варианты не поддерживаются этим сценарием или ещё не реализованы в тренажёре.',
+
   // -- instructor: trainee picker (E8-B) -----------------------------------
   instructorSelectTraineePlaceholder: 'Выберите стажёра',
   instructorLoadingUsers: 'Загрузка пользователей…',
@@ -181,6 +199,8 @@ export const ru = {
   problemLlmUnavailable: 'Языковая модель недоступна.',
   problemAudioPurged: 'Аудиозапись удалена по сроку хранения.',
   problemRangeNotSatisfiable: 'Запрошенный диапазон аудио недоступен.',
+  problemVariantNotSupported: 'Этот вариант занятия не поддерживается выбранным сценарием.',
+  problemVariantNotAvailable: 'Этот вариант занятия пока недоступен в данной версии тренажёра.',
   problemUnknown: 'Неизвестная ошибка. Попробуйте ещё раз.',
 
   // -- operator 112: handoff dialog + role transition (E10; SPEC §10, §10.10) ----------------

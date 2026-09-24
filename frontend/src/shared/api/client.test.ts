@@ -30,6 +30,8 @@ const ALL_PROBLEM_CODES: readonly ProblemCode[] = [
   'LLM_UNAVAILABLE',
   'AUDIO_PURGED',
   'RANGE_NOT_SATISFIABLE',
+  'VARIANT_NOT_SUPPORTED',
+  'VARIANT_NOT_AVAILABLE',
 ];
 
 describe('problemMessageRu', () => {

@@ -12,13 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.state_machine import StateMachine
 from app.domain.enums import RoleType
 from app.domain.roles.visibility import DataVisibilityPolicy
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; `roles` must not initialise `session` early
+    from app.domain.session.variants import SessionVariants
 
 
 class Permission(str, Enum):
@@ -62,7 +65,12 @@ class RoleModule(Protocol):
     visibility_policy: DataVisibilityPolicy
     ui_schema: Mapping[str, Any]
 
-    def available_actions(self, stage_state: Enum) -> tuple[ActionDescriptor, ...]: ...
+    def available_actions(
+        self, stage_state: Enum, *, variants: SessionVariants | None = None
+    ) -> tuple[ActionDescriptor, ...]:
+        """The actions of `stage_state`. `variants` is the session's (HLD 70 §70.2.4): `None`
+        keeps today's behaviour, and a module whose actions no switch changes ignores it."""
+        ...
 
     def initial_state(self) -> Enum: ...
 

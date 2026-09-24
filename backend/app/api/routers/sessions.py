@@ -50,6 +50,7 @@ from app.application.sessions.queries import assemble_session_detail
 from app.domain.common.ids import ScenarioVersionId, SessionId, UserId
 from app.domain.enums import SessionState
 from app.domain.session.session import SimulationSession
+from app.domain.session.variants import PartialVariants
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -71,6 +72,11 @@ async def create_session(
     A `role_chain` of `[DDS]` under `SINGLE_ROLE` or `ASSESSMENT` without
     `expected_response.prefab_handoff` is refused with `409 PREFAB_HANDOFF_REQUIRED` by the domain
     factory (D6, §10.10) — this endpoint does not re-decide it.
+
+    `variants` (every switch optional) is resolved request → scenario default by the use case
+    (HLD 70 §70.2.2): an unimplemented value is `409 VARIANT_NOT_AVAILABLE`, one outside the
+    scenario's `supported` is `409 VARIANT_NOT_SUPPORTED`. Under `card_source: GENERATED_CARD`
+    the stages are the chain suffix starting at DDS.
     """
     session = await container.create_session()(
         CreateSessionCommand(
@@ -83,6 +89,9 @@ async def create_session(
             ),
             session_seed=body.session_seed,
             time_scale=body.time_scale,
+            variants=(
+                body.variants.to_domain() if body.variants is not None else PartialVariants()
+            ),
         )
     )
     return await _detail(container, session, user)

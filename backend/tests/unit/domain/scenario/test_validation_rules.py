@@ -1,4 +1,5 @@
-"""One failing fixture per §30.8 rule R01-R31 (`docs/hld/30-scenario-format.md`).
+"""One failing fixture per §30.8 rule R01-R31 and I3's R32-R36, R40
+(`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
 document (`scenarios/examples/apartment-fire/v1.yaml`). The test asserts that the resulting
@@ -16,6 +17,7 @@ from typing import Any
 import pytest
 from app.domain.common.errors import ScenarioValidationError
 from app.domain.scenario.validation import (
+    VALIDATION_RULE_NUMBERS,
     scenario_version_violations,
     validate_scenario_document,
     validate_scenario_version,
@@ -210,6 +212,67 @@ def _r31_available_after_condition_needs_world_truth(document: Document) -> None
     }
 
 
+def _schema_2(document: Document, **overrides: Any) -> dict[str, Any]:
+    """Turn the demo into a clean schema-2 document with an explicit `variants` key.
+
+    The support is the demo's own (a caller *and* a prefab; the picker, which the demo's
+    resources and resolution condition satisfy), the default is the product default;
+    `overrides` replaces `supported.<switch>` (`supported_<switch>=`) or `default.<switch>`
+    (`default_<switch>=`). Returns the `variants` mapping so a mutation can adjust it further.
+    """
+    variants: dict[str, Any] = {
+        "supported": {
+            "card_source": ["CALLER_VOICE", "GENERATED_CARD"],
+            "dds_mode": ["RESOURCE_PICKER"],
+            "dds_card_check": ["OFF"],
+            "dds_brigade_call": ["OFF"],
+        },
+        "default": {
+            "card_source": "GENERATED_CARD",
+            "dds_mode": "RESOURCE_PICKER",
+            "dds_card_check": "OFF",
+            "dds_brigade_call": "OFF",
+        },
+    }
+    for key, value in overrides.items():
+        section, switch = key.split("_", 1)
+        variants[section][switch] = value
+    document["schema_version"] = 2
+    document["variants"] = variants
+    return variants
+
+
+def _r32_default_outside_supported(document: Document) -> None:
+    _schema_2(
+        document, supported_card_source=["GENERATED_CARD"], default_card_source="CALLER_VOICE"
+    )
+
+
+def _r33_caller_voice_without_a_112_stage(document: Document) -> None:
+    # The chain starts at DDS and the demo's prefab exists, so rule 29 holds; only the caller
+    # variant has no 112 stage to talk to.
+    _schema_2(document)
+    document["role_chain"] = ["DDS"]
+
+
+def _r34_generated_card_without_a_prefab(document: Document) -> None:
+    _schema_2(document)
+    del document["expected_response"]["prefab_handoff"]
+
+
+def _r35_picker_without_a_resolution_condition(document: Document) -> None:
+    _schema_2(document)
+    del document["expected_response"]["resolution_condition"]
+
+
+def _r36_memo_statuses_without_responders(document: Document) -> None:
+    _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
+
+
+def _r40_applies_to_variants_names_an_unknown_value(document: Document) -> None:
+    _rule(document, "fact_victim_inside")["applies_to_variants"] = {"dds_mode": ["BOGUS_MODE"]}
+
+
 MUTATIONS: dict[int, Mutation] = {
     1: _r01_unknown_top_level_key,
     2: _r02_caller_fact_without_world_fact,
@@ -242,12 +305,21 @@ MUTATIONS: dict[int, Mutation] = {
     29: _r29_dds_chain_without_prefab_handoff,
     30: _r30_empty_deterministic_seed,
     31: _r31_available_after_condition_needs_world_truth,
+    32: _r32_default_outside_supported,
+    33: _r33_caller_voice_without_a_112_stage,
+    34: _r34_generated_card_without_a_prefab,
+    35: _r35_picker_without_a_resolution_condition,
+    36: _r36_memo_statuses_without_responders,
+    40: _r40_applies_to_variants_names_an_unknown_value,
 }
 
 # Rule numbers a fixture may additionally report because the second rule is logically implied by
-# the first. Every mutation in `MUTATIONS` is currently isolated enough that this table is empty;
-# a new fixture that needs an entry must state the implication here rather than widen the check.
-ALSO_ALLOWED: dict[int, frozenset[int]] = {}
+# the first. A new fixture that needs an entry must state the implication here rather than widen
+# the check.
+ALSO_ALLOWED: dict[int, frozenset[int]] = {
+    # R35's picker needs `resolution_condition`, whose absence is R28's own violation too.
+    35: frozenset({28}),
+}
 
 
 def _rule_numbers(violations: list[str]) -> set[int]:
@@ -275,8 +347,84 @@ def test_each_rule_has_a_failing_fixture(rule_no: int) -> None:
     assert not unexpected, f"R{rule_no:02d} fixture is not minimal, also reported {unexpected}"
 
 
-def test_mutation_table_covers_exactly_rules_1_to_31() -> None:
-    assert sorted(MUTATIONS) == list(range(1, 32))
+def test_mutation_table_covers_exactly_the_rule_registry() -> None:
+    """Every rule the validator runs has a failing fixture, and no fixture names a rule it does
+    not run (R37-R39 arrive with E2/E4 and register themselves then, HLD 70 §70.2.3)."""
+    assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
+
+
+def test_the_rule_registry_after_e1() -> None:
+    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 37), 40]
+
+
+def test_a_schema_2_document_with_variants_loads_clean() -> None:
+    document = demo_document()
+    _schema_2(document)
+    assert validate_scenario_document(document) == []
+    version = ScenarioVersion.model_validate(document)
+    assert version.variants is not None
+    assert version.scenario_variants == version.variants
+
+
+def test_a_schema_2_document_without_variants_derives_them_with_the_product_default() -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    assert validate_scenario_document(document) == []
+    derived = ScenarioVersion.model_validate(document).scenario_variants
+    assert derived.default.card_source.value == "GENERATED_CARD"
+    assert derived.default.dds_mode.value == "RESOURCE_PICKER"
+
+
+def test_r01_refuses_the_variants_key_in_a_schema_1_document() -> None:
+    document = demo_document()
+    _schema_2(document)
+    document["schema_version"] = 1
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {1}
+    assert any("variants" in violation for violation in violations)
+
+
+@pytest.mark.parametrize("key", ["timers", "reference_pack"])
+def test_r01_refuses_the_later_schema_2_top_level_keys(key: str) -> None:
+    """E1 leaves `timers` (E4) and `reference_pack` (E2) refused in every document."""
+    for schema_version in (1, 2):
+        document = demo_document()
+        document["schema_version"] = schema_version
+        document[key] = {} if key == "timers" else "v046_24-r1"
+        assert _rule_numbers(validate_scenario_document(document)) == {1}
+
+
+def test_r01_refuses_expected_response_responders() -> None:
+    """E1 leaves `expected_response.responders` (E5b) refused."""
+    document = demo_document()
+    _schema_2(document)
+    document["expected_response"]["responders"] = "DEFAULT"
+    assert _rule_numbers(validate_scenario_document(document)) == {1}
+
+
+def test_r32_reports_an_empty_and_a_duplicated_support_list() -> None:
+    document = demo_document()
+    _schema_2(document, supported_dds_card_check=[], supported_dds_brigade_call=["OFF", "OFF"])
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {32}
+    assert any("dds_card_check is empty" in violation for violation in violations)
+    assert any("dds_brigade_call lists 'OFF' twice" in violation for violation in violations)
+
+
+def test_r40_refuses_an_unknown_switch() -> None:
+    document = demo_document()
+    _rule(document, "fact_victim_inside")["applies_to_variants"] = {"colour": ["RED"]}
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {40}
+
+
+def test_a_known_applies_to_variants_passes() -> None:
+    document = demo_document()
+    _rule(document, "fact_victim_inside")["applies_to_variants"] = {
+        "card_source": ["CALLER_VOICE"],
+        "dds_mode": ["RESOURCE_PICKER", "MEMO_STATUSES"],
+    }
+    assert validate_scenario_document(document) == []
 
 
 def test_demo_scenario_has_no_violations() -> None:

@@ -3,7 +3,8 @@
 
 Two public entry points:
 
-* `validate_scenario_version(version, *, role_modules=ROLE_MODULES)` — the thirty rules of §30.8
+* `validate_scenario_version(version, *, role_modules=ROLE_MODULES)` — the rules of §30.8 (R01-R31,
+  plus I3's R32-R36 and R40, HLD 70 §70.2.3)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -24,7 +25,7 @@ of a model must not silently drop a rule.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 from pydantic import ValidationError
@@ -46,10 +47,18 @@ from app.domain.roles.module import RoleModule
 from app.domain.scenario.sections import CallerFactSpec, WorldFactSpec
 from app.domain.scenario.version import SUPPORTED_SCHEMA_VERSIONS, ScenarioVersion
 from app.domain.scoring.evaluators.registry import parse_rule_config
+from app.domain.session.variants import (
+    SWITCH_ENUMS,
+    SWITCHES,
+    CardSource,
+    DdsMode,
+    ScenarioVariants,
+)
 from app.domain.world.conditions import Condition
 from app.domain.world.events import WorldEventDefinition
 
 __all__ = [
+    "VALIDATION_RULE_NUMBERS",
     "build_fact_definitions",
     "scenario_version_violations",
     "scenario_version_warnings",
@@ -175,6 +184,15 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
         out.append(
             f"R01: schema_version {version.schema_version} is not supported "
             f"(supported: {supported})"
+        )
+    # R01 (extended, HLD 70 §70.2.3): a key schema 2 introduced is refused in a schema-1
+    # document. `variants` is the one such key a model carries today; `timers`, `reference_pack`
+    # and `expected_response.responders` are not model fields yet, so `extra="forbid"` refuses
+    # them in every document until their epics (E4, E2, E5b) add them.
+    if version.schema_version < 2 and version.variants is not None:
+        out.append(
+            f"R01: variants is a schema_version 2 key; schema_version {version.schema_version} "
+            f"does not allow it"
         )
 
 
@@ -586,6 +604,89 @@ def _check_available_after_condition_kinds(version: ScenarioVersion, out: list[s
             )
 
 
+def _check_variants(version: ScenarioVersion, out: list[str]) -> None:
+    """Rules R32-R36 (HLD 70 §70.2.3) over a schema-2 document's `variants`.
+
+    Declared or, when the key is omitted, derived. A schema-1 document is exempt: its variants
+    are always derived from the document itself (P5 — every schema-1 scenario loads unchanged).
+    """
+    if version.schema_version < 2:
+        return
+    variants = version.scenario_variants
+    _check_variant_support(variants, out)
+    supported = variants.supported
+    facts = (
+        version.world_truth.facts,
+        version.caller_knowledge.facts,
+        version.disclosure_rules.facts,
+    )
+    if CardSource.CALLER_VOICE in supported.card_source and (
+        RoleType.OPERATOR_112 not in version.role_chain or not all(facts)
+    ):
+        out.append(
+            "R33: variants.supported.card_source has CALLER_VOICE, so role_chain must contain "
+            "OPERATOR_112 and world_truth, caller_knowledge and disclosure_rules must be non-empty"
+        )
+    if (
+        CardSource.GENERATED_CARD in supported.card_source
+        and version.expected_response.prefab_handoff is None
+    ):
+        out.append(
+            "R34: variants.supported.card_source has GENERATED_CARD, so "
+            "expected_response.prefab_handoff is required"
+        )
+    if DdsMode.RESOURCE_PICKER in supported.dds_mode and (
+        not version.available_resources or version.expected_response.resolution_condition is None
+    ):
+        out.append(
+            "R35: variants.supported.dds_mode has RESOURCE_PICKER, so available_resources must be "
+            "non-empty and expected_response.resolution_condition present"
+        )
+    if DdsMode.MEMO_STATUSES in supported.dds_mode:
+        # `expected_response.responders` arrives with E5b; until then no document can carry it,
+        # so a scenario cannot support MEMO_STATUSES yet.
+        out.append(
+            "R36: variants.supported.dds_mode has MEMO_STATUSES, so "
+            "expected_response.responders is required"
+        )
+
+
+def _check_variant_support(variants: ScenarioVariants, out: list[str]) -> None:
+    """Rule R32: `default` ∈ `supported`; every `supported` tuple non-empty, duplicate-free."""
+    for switch in SWITCHES:
+        values: tuple[object, ...] = getattr(variants.supported, switch)
+        if not values:
+            out.append(f"R32: variants.supported.{switch} is empty")
+        for duplicate in sorted(str(getattr(v, "value", v)) for v in _duplicates(values)):
+            out.append(f"R32: variants.supported.{switch} lists '{duplicate}' twice")
+        default = getattr(variants.default, switch)
+        if default not in values:
+            out.append(
+                f"R32: variants.default.{switch} '{default.value}' is not in "
+                f"variants.supported.{switch}"
+            )
+
+
+def _check_applies_to_variants(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R40: every `applies_to_variants` key is a switch and every value a member of it."""
+    for rule in version.scoring_rules:
+        for switch, values in rule.applies_to_variants.items():
+            enum = SWITCH_ENUMS.get(switch)
+            if enum is None:
+                out.append(
+                    f"R40: scoring_rules['{rule.rule_id}'].applies_to_variants names "
+                    f"'{switch}', which is not a SessionVariants field"
+                )
+                continue
+            members = {member.value for member in enum}
+            for value in values:
+                if value not in members:
+                    out.append(
+                        f"R40: scoring_rules['{rule.rule_id}'].applies_to_variants.{switch} "
+                        f"lists '{value}', which is not a {enum.__name__} member"
+                    )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -596,6 +697,36 @@ def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+_Check = Callable[[ScenarioVersion, Mapping[RoleType, RoleModule], list[str]], None]
+
+_CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
+    ((1,), lambda version, _modules, out: _check_schema_version(version, out)),
+    ((2, 3, 4), lambda version, _modules, out: _check_fact_sections(version, out)),
+    ((5, 6, 7, 8, 9, 10), lambda version, _modules, out: _check_knowledge_states(version, out)),
+    ((11, 12, 13), lambda version, _modules, out: _check_fact_references(version, out)),
+    ((14,), lambda version, _modules, out: _check_card_field_paths(version, out)),
+    ((15, 16, 17), lambda version, _modules, out: _check_resources(version, out)),
+    ((18,), _check_role_chain),
+    ((19, 20), lambda version, _modules, out: _check_scoring_rules(version, out)),
+    ((21, 22, 23, 24, 25), lambda version, _modules, out: _check_world_events(version, out)),
+    ((26,), lambda version, _modules, out: _check_conditions_parse(version, out)),
+    ((27,), lambda version, _modules, out: _check_emotion_rules(version, out)),
+    ((28, 29), lambda version, _modules, out: _check_expected_response(version, out)),
+    ((31,), lambda version, _modules, out: _check_available_after_condition_kinds(version, out)),
+    ((30,), lambda version, _modules, out: _check_seed(version, out)),
+    ((32, 33, 34, 35, 36), lambda version, _modules, out: _check_variants(version, out)),
+    ((40,), lambda version, _modules, out: _check_applies_to_variants(version, out)),
+)
+"""The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
+it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_NUMBERS` — hence
+`ScenarioValidationReport.checked_rule_count` — follows."""
+
+VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
+    sorted({number for numbers, _check in _CHECKS for number in numbers})
+)
+"""Every §30.8 rule number a validation run executes (R01-R36 and R40 after I3 E1)."""
+
+
 def scenario_version_violations(
     version: ScenarioVersion,
     *,
@@ -603,20 +734,8 @@ def scenario_version_violations(
 ) -> list[str]:
     """Every §30.8 violation in `version`, sorted by rule number then message."""
     out: list[str] = []
-    _check_schema_version(version, out)
-    _check_fact_sections(version, out)
-    _check_knowledge_states(version, out)
-    _check_fact_references(version, out)
-    _check_card_field_paths(version, out)
-    _check_resources(version, out)
-    _check_role_chain(version, role_modules, out)
-    _check_scoring_rules(version, out)
-    _check_world_events(version, out)
-    _check_conditions_parse(version, out)
-    _check_emotion_rules(version, out)
-    _check_expected_response(version, out)
-    _check_available_after_condition_kinds(version, out)
-    _check_seed(version, out)
+    for _numbers, check in _CHECKS:
+        check(version, role_modules, out)
     return sorted(out)
 
 
@@ -729,6 +848,8 @@ def _rule_for_parse_error(loc: tuple[int | str, ...], message: str) -> str:
         # — and "this rule names a role that does not exist" is a scoring-rule violation, not a
         # generic unknown-key one.
         return "R20"
+    if "scoring_rules" in names and "applies_to_variants" in names:
+        return "R40"
     return "R01"
 
 

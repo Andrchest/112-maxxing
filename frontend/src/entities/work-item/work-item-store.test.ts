@@ -73,6 +73,13 @@ describe('useWorkItemStore', () => {
         last_seq_no: 7,
         transition_pause_seconds: 0,
         transition_continue_available_at_offset_ms: null,
+        variants: {
+          card_source: 'GENERATED_CARD',
+          dds_mode: 'RESOURCE_PICKER',
+          dds_card_check: 'OFF',
+          dds_brigade_call: 'OFF',
+        },
+        scenario_role_chain: ['DDS'],
       },
       my_role_type: 'DDS',
       active_role_stage_id: 'stage-dds-1',

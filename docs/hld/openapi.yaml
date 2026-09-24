@@ -308,6 +308,13 @@ paths:
         session machine trigger `validate` (`CREATED → READY`). A `role_chain` of `[DDS]` under
         `SINGLE_ROLE` or `ASSESSMENT` without `expected_response.prefab_handoff` is refused with
         `409 PREFAB_HANDOFF_REQUIRED` (D6, §10.10).
+
+        (additive, I3 E1) `variants` (every field optional) is resolved per switch as
+        request → scenario default → product default (70 §70.2.2). A value outside
+        `IMPLEMENTED_VARIANT_VALUES` is `409 VARIANT_NOT_AVAILABLE` (checked first); a value outside
+        the scenario's `supported` set is `409 VARIANT_NOT_SUPPORTED`. The resolved variants are
+        recorded in `SESSION_CREATED.variants` and returned in `SessionDetail.variants`. Under
+        `card_source: GENERATED_CARD` the effective role chain is the suffix starting at DDS.
       x-action: '-'
       x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
       requestBody:
@@ -1687,7 +1694,8 @@ components:
         `ACTION_NOT_AVAILABLE` when the `RoleModule` does not offer the action in the current
         stage state, plus `SCENARIO_VERSION_LOCKED`, `SCENARIO_VERSION_EXISTS`,
         `PREFAB_HANDOFF_REQUIRED`, `RECIPIENT_SERVICES_EMPTY`, `HANDOFF_ALREADY_CREATED`,
-        `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`.
+        `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
+        `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1738,6 +1746,8 @@ components:
         - LLM_UNAVAILABLE
         - AUDIO_PURGED
         - RANGE_NOT_SATISFIABLE
+        - VARIANT_NOT_SUPPORTED        # additive, I3 E1
+        - VARIANT_NOT_AVAILABLE        # additive, I3 E1
 
     Problem:
       type: object
@@ -1778,6 +1788,22 @@ components:
     SessionState:
       type: string
       enum: [CREATED, READY, ACTIVE, ROLE_TRANSITION, COMPLETED, ABORTED]
+    CardSource:
+      description: (additive, I3 E1) Variant switch `card_source` (70 §70.2.1).
+      type: string
+      enum: [GENERATED_CARD, CALLER_VOICE]
+    DdsMode:
+      description: (additive, I3 E1) Variant switch `dds_mode` (70 §70.2.1).
+      type: string
+      enum: [MEMO_STATUSES, RESOURCE_PICKER]
+    DdsCardCheck:
+      description: (additive, I3 E1) Variant switch `dds_card_check` (70 §70.2.1).
+      type: string
+      enum: ['OFF', 'ON']
+    DdsBrigadeCall:
+      description: (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1).
+      type: string
+      enum: ['OFF', 'ON']
     Operator112StageState:
       type: string
       enum: [WAITING_FOR_CALL, RINGING, CONNECTED, INTERVIEW, HANDOFF_PREPARATION, HANDED_OFF, STAGE_COMPLETED]
@@ -2085,6 +2111,7 @@ components:
         - content_sha256
         - locked_at
         - created_at
+        - variants
       properties:
         id: { type: string, format: uuid }
         scenario_id: { type: string, format: uuid }
@@ -2102,6 +2129,7 @@ components:
           format: date-time
           description: Set in the transaction that creates the first session using this version (D4).
         created_at: { type: string, format: date-time }
+        variants: { $ref: '#/components/schemas/ScenarioVariantsView' }
 
     ScenarioVersionTraineeSummary:
       type: object
@@ -2125,6 +2153,7 @@ components:
         - caller_relationship
         - estimated_duration_seconds
         - resource_count
+        - variants
       properties:
         id: { type: string, format: uuid }
         scenario_id: { type: string, format: uuid }
@@ -2147,6 +2176,47 @@ components:
           type: integer
           minimum: 0
           description: How many resources the DDS board will show — a count, never the list.
+        variants: { $ref: '#/components/schemas/ScenarioVariantsView' }
+
+    ScenarioVariantsView:
+      description: |
+        (additive, I3 E1) What a scenario version supports and defaults to, after the schema-1
+        derivation and the implemented-values filter (70 §70.2.2).
+      type: object
+      additionalProperties: false
+      required: [supported, default]
+      properties:
+        supported:
+          type: object
+          additionalProperties: false
+          required: [card_source, dds_mode, dds_card_check, dds_brigade_call]
+          properties:
+            card_source: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardSource' } }
+            dds_mode: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsMode' } }
+            dds_card_check: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsCardCheck' } }
+            dds_brigade_call: { type: array, minItems: 1, items: { $ref: '#/components/schemas/DdsBrigadeCall' } }
+        default: { $ref: '#/components/schemas/SessionVariants' }
+
+    SessionVariants:
+      description: (additive, I3 E1) The resolved, recorded variants of one session (immutable after creation).
+      type: object
+      additionalProperties: false
+      required: [card_source, dds_mode, dds_card_check, dds_brigade_call]
+      properties:
+        card_source: { $ref: '#/components/schemas/CardSource' }
+        dds_mode: { $ref: '#/components/schemas/DdsMode' }
+        dds_card_check: { $ref: '#/components/schemas/DdsCardCheck' }
+        dds_brigade_call: { $ref: '#/components/schemas/DdsBrigadeCall' }
+
+    VariantsRequest:
+      description: (additive, I3 E1) Every field optional; a missing one takes the scenario default, then the product default.
+      type: object
+      additionalProperties: false
+      properties:
+        card_source: { $ref: '#/components/schemas/CardSource' }
+        dds_mode: { $ref: '#/components/schemas/DdsMode' }
+        dds_card_check: { $ref: '#/components/schemas/DdsCardCheck' }
+        dds_brigade_call: { $ref: '#/components/schemas/DdsBrigadeCall' }
 
     ScenarioImportRequest:
       type: object
@@ -2172,8 +2242,11 @@ components:
         rule_number:
           type: integer
           minimum: 1
-          maximum: 30
-          description: The §30.8 rule number that failed.
+          maximum: 40
+          description: |
+            The §30.8 rule number that failed. (changed, I3 E1) The bound is the highest rule
+            number that exists or is reserved: R40 (`70-i3-alignment.md` §70.2.3; R32–R36 and R40
+            exist from E1, R37–R39 are reserved for E2/E4).
         severity:
           type: string
           enum: [ERROR, WARNING]
@@ -2201,8 +2274,12 @@ components:
           items: { $ref: '#/components/schemas/ScenarioValidationIssue' }
         checked_rule_count:
           type: integer
-          const: 30
-          description: The complete §30.8 list is always run; a partial run is never reported as valid.
+          minimum: 1
+          description: |
+            The complete §30.8 list is always run; a partial run is never reported as valid.
+            (changed, I3 E1) The number of rules the run executed, derived from the validation
+            rule registry — no longer a const: I3 epics register further rules (E1: R32–R36, R40;
+            later R37–R39).
 
     # ---------------------------------------------------------- sessions ----
     ParticipantAssignment:
@@ -2245,6 +2322,7 @@ components:
           description: |
             Multiplier applied to simulated time only. It scales world-event scheduling and ETA
             countdowns; it never scales the audio path, which is realtime by nature.
+        variants: { $ref: '#/components/schemas/VariantsRequest' }
 
     SessionParticipantView:
       type: object
@@ -2320,6 +2398,8 @@ components:
         - last_seq_no
         - transition_pause_seconds
         - transition_continue_available_at_offset_ms
+        - variants
+        - scenario_role_chain
       properties:
         id: { type: string, format: uuid }
         scenario_version_id: { type: string, format: uuid }
@@ -2364,6 +2444,13 @@ components:
           description: |
             When `state` is `ROLE_TRANSITION`, the offset at which `continueToNextStage` stops
             being refused. `null` otherwise.
+        variants: { $ref: '#/components/schemas/SessionVariants' }
+        scenario_role_chain:
+          description: |
+            (additive, I3 E1) The scenario's `role_chain`; `role_chain` above is the session's
+            effective chain (the suffix starting at DDS under `card_source: GENERATED_CARD`).
+          type: array
+          items: { $ref: '#/components/schemas/RoleType' }
 
     AbortSessionRequest:
       type: object

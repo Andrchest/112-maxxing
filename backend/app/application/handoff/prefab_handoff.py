@@ -1,5 +1,10 @@
 """The scenario's prefab handoff, materialised when a DDS-only chain starts (D6, §30.5, §10.10).
 
+Two ways reach it (HLD 70 §70.2.4): a scenario whose `role_chain` is `[DDS]`, and any scenario run
+under `card_source: GENERATED_CARD`, whose **effective** chain is the suffix starting at DDS — on
+the demo, `[OPERATOR_112, DDS]` runs as `[DDS]`. Either way the session's first stage is DDS and
+this module does exactly the same thing; it never reads the variants itself.
+
 A `role_chain` of `[DDS]` has no Operator 112 stage, so nothing produces the `HandoffSnapshot`
 the DDS work item is built from. D6 answers that with `expected_response.prefab_handoff`: a
 scenario-authored 112 handoff, "deliberately imperfect where the exercise wants it to be"

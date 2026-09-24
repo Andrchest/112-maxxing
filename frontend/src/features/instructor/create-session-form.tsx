@@ -15,10 +15,16 @@ import {
   problemMessageRu,
   queryKeys,
   startSession,
+  type CardSource,
+  type DdsBrigadeCall,
+  type DdsCardCheck,
+  type DdsMode,
   type ProblemCode,
   type RoleType,
+  type ScenarioVariantsView,
   type SessionDetail,
   type SessionMode,
+  type SessionVariants,
 } from '@/shared/api';
 import { sessionStateLabelRu } from './instructor-labels';
 
@@ -41,6 +47,78 @@ const ROLE_TYPE_LABEL_KEY: Record<RoleType, keyof typeof ru> = {
   DDS: 'roleTypeDds',
   EDDS: 'roleTypeEdds',
 };
+
+// -- I3 E1: variant pickers (70 §70.2) --------------------------------------------------------
+// One picker per `SessionVariants` switch, fed by `ScenarioVersionListItem.variants`
+// (`ScenarioVariantsView`: the scenario's support after the server's implemented-values filter).
+// Every value of the switch is listed so the instructor sees what exists; a value outside the
+// view's `supported` list is disabled with a Russian note (either the scenario does not support it
+// or the product does not implement it yet — the server answers 409 for both, and this form never
+// sends one). The view's `default` is preselected.
+type VariantSwitch = keyof SessionVariants;
+
+const VARIANT_SWITCHES: readonly VariantSwitch[] = [
+  'card_source',
+  'dds_mode',
+  'dds_card_check',
+  'dds_brigade_call',
+];
+
+const VARIANT_SWITCH_LABEL_KEY: Record<VariantSwitch, keyof typeof ru> = {
+  card_source: 'instructorVariantCardSourceLabel',
+  dds_mode: 'instructorVariantDdsModeLabel',
+  dds_card_check: 'instructorVariantDdsCardCheckLabel',
+  dds_brigade_call: 'instructorVariantDdsBrigadeCallLabel',
+};
+
+// Exhaustive `generated union -> ru.ts key` tables: a new enum member fails `tsc` until labelled.
+const CARD_SOURCE_LABEL_KEY: Record<CardSource, keyof typeof ru> = {
+  GENERATED_CARD: 'variantCardSourceGeneratedCard',
+  CALLER_VOICE: 'variantCardSourceCallerVoice',
+};
+const DDS_MODE_LABEL_KEY: Record<DdsMode, keyof typeof ru> = {
+  MEMO_STATUSES: 'variantDdsModeMemoStatuses',
+  RESOURCE_PICKER: 'variantDdsModeResourcePicker',
+};
+const DDS_CARD_CHECK_LABEL_KEY: Record<DdsCardCheck, keyof typeof ru> = {
+  OFF: 'variantDdsCardCheckOff',
+  ON: 'variantDdsCardCheckOn',
+};
+const DDS_BRIGADE_CALL_LABEL_KEY: Record<DdsBrigadeCall, keyof typeof ru> = {
+  OFF: 'variantDdsBrigadeCallOff',
+  ON: 'variantDdsBrigadeCallOn',
+};
+
+const VARIANT_VALUE_LABEL_KEYS: { [K in VariantSwitch]: Record<SessionVariants[K], keyof typeof ru> } = {
+  card_source: CARD_SOURCE_LABEL_KEY,
+  dds_mode: DDS_MODE_LABEL_KEY,
+  dds_card_check: DDS_CARD_CHECK_LABEL_KEY,
+  dds_brigade_call: DDS_BRIGADE_CALL_LABEL_KEY,
+};
+
+function variantValues(variantSwitch: VariantSwitch): string[] {
+  return Object.keys(VARIANT_VALUE_LABEL_KEYS[variantSwitch]);
+}
+
+function variantValueLabel(variantSwitch: VariantSwitch, value: string): string {
+  const key = (VARIANT_VALUE_LABEL_KEYS[variantSwitch] as Record<string, keyof typeof ru>)[value];
+  return key ? t(key) : value;
+}
+
+function isSupported(view: ScenarioVariantsView, variantSwitch: VariantSwitch, value: string): boolean {
+  return (view.supported[variantSwitch] as readonly string[]).includes(value);
+}
+
+/**
+ * The stages a session will run (70 §70.2.4): under `GENERATED_CARD` the `role_chain` suffix
+ * starting at DDS, otherwise the whole chain. The server decides the real chain
+ * (`SessionDetail.role_chain`); this only shapes the participant rows the request needs.
+ */
+function effectiveRoleChain(roleChain: readonly RoleType[], cardSource: CardSource | undefined): RoleType[] {
+  if (cardSource !== 'GENERATED_CARD') return [...roleChain];
+  const ddsIndex = roleChain.indexOf('DDS');
+  return ddsIndex < 0 ? [] : roleChain.slice(ddsIndex);
+}
 
 interface ParticipantRow {
   userId: string;
@@ -87,6 +165,7 @@ export function CreateSessionForm() {
   const [versionId, setVersionId] = useState('');
   const [sessionMode, setSessionMode] = useState<SessionMode>('SINGLE_ROLE');
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
+  const [variants, setVariants] = useState<SessionVariants | null>(null);
   const [session, setSession] = useState<SessionDetail | null>(null);
 
   const scenariosQuery = useQuery({
@@ -161,19 +240,45 @@ export function CreateSessionForm() {
     setVersionId('');
     setSession(null);
     setParticipants([]);
+    setVariants(null);
   }
 
   function handleVersionChange(nextVersionId: string) {
     setVersionId(nextVersionId);
     setSession(null);
     const nextVersion = versionsQuery.data?.items.find((version) => version.id === nextVersionId) ?? null;
-    setParticipants(buildParticipantRows(sessionMode, nextVersion?.role_chain ?? []));
+    const nextVariants = nextVersion?.variants.default ?? null;
+    setVariants(nextVariants);
+    setParticipants(
+      buildParticipantRows(
+        sessionMode,
+        effectiveRoleChain(nextVersion?.role_chain ?? [], nextVariants?.card_source),
+      ),
+    );
   }
 
   function handleModeChange(nextMode: SessionMode) {
     setSessionMode(nextMode);
     setSession(null);
-    setParticipants(buildParticipantRows(nextMode, selectedVersion?.role_chain ?? []));
+    setParticipants(
+      buildParticipantRows(nextMode, effectiveRoleChain(selectedVersion?.role_chain ?? [], variants?.card_source)),
+    );
+  }
+
+  function handleVariantChange(variantSwitch: VariantSwitch, value: string) {
+    if (!variants) return;
+    const nextVariants = { ...variants, [variantSwitch]: value } as SessionVariants;
+    setVariants(nextVariants);
+    setSession(null);
+    if (variantSwitch === 'card_source') {
+      // The card source changes which stages run, so the participant rows follow it.
+      setParticipants(
+        buildParticipantRows(
+          sessionMode,
+          effectiveRoleChain(selectedVersion?.role_chain ?? [], nextVariants.card_source),
+        ),
+      );
+    }
   }
 
   function updateParticipantUserId(index: number, userId: string) {
@@ -194,6 +299,7 @@ export function CreateSessionForm() {
       // The generated type requires this even though the backend defaults it to 1 (openapi's
       // `default: 1` does not make a property optional) — pass the same value explicitly.
       time_scale: 1,
+      ...(variants ? { variants } : {}),
     });
   }
 
@@ -278,6 +384,43 @@ export function CreateSessionForm() {
             ))}
           </select>
         </div>
+
+        {selectedVersion && variants ? (
+          <fieldset className="flex flex-col gap-2" data-slot="variant-pickers">
+            <legend className="text-sm font-medium">{t('instructorVariantsLabel')}</legend>
+            {VARIANT_SWITCHES.map((variantSwitch) => (
+              <div key={variantSwitch} className="flex flex-col gap-1.5">
+                <Label htmlFor={`instructor-variant-${variantSwitch}`}>
+                  {t(VARIANT_SWITCH_LABEL_KEY[variantSwitch])}
+                </Label>
+                <select
+                  id={`instructor-variant-${variantSwitch}`}
+                  className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                  value={variants[variantSwitch]}
+                  onChange={(event) => handleVariantChange(variantSwitch, event.target.value)}
+                >
+                  {variantValues(variantSwitch).map((value) => {
+                    const supported = isSupported(selectedVersion.variants, variantSwitch, value);
+                    return (
+                      <option key={value} value={value} disabled={!supported}>
+                        {supported
+                          ? variantValueLabel(variantSwitch, value)
+                          : `${variantValueLabel(variantSwitch, value)} — ${t('instructorVariantUnavailableSuffix')}`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            ))}
+            {VARIANT_SWITCHES.some((variantSwitch) =>
+              variantValues(variantSwitch).some((value) => !isSupported(selectedVersion.variants, variantSwitch, value)),
+            ) ? (
+              <p className="text-xs text-muted-foreground" data-slot="variant-unavailable-note">
+                {t('instructorVariantUnavailableNote')}
+              </p>
+            ) : null}
+          </fieldset>
+        ) : null}
 
         {participants.length > 0 ? (
           <div className="flex flex-col gap-2">

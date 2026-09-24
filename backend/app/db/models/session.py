@@ -73,6 +73,11 @@ class SimulationSession(Base):
     report_released_by_user_id = sa.Column(
         UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
+    #: Additive in I3 E1 (HLD 70 §70.2.2, migration `0009_session_variants`): the resolved
+    #: `SessionVariants`, a materialised copy of `SESSION_CREATED.variants` like `time_scale`.
+    #: `'{}'` (every session created before E1) reads as the schema-1 derivation of the
+    #: session's own stage chain (`app.domain.session.variants.legacy_session_variants`).
+    variants = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
 
     __table_args__ = (
         sa.Index("ix_sessions_state", "state"),

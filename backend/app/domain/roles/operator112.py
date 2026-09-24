@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.domain.common.state_machine import StateMachine
 from app.domain.enums import Operator112StageState, RoleType
@@ -26,6 +26,9 @@ from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
 from app.domain.session.guards import OPERATOR_112_GUARDS
 from app.domain.session.transitions import OPERATOR_112_TRANSITIONS
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.domain.session.variants import SessionVariants
 
 _ANSWER = ActionDescriptor(
     action_id="answer", label_ru="Ответить", permission=Permission.ANSWER_CALL, trigger="answer"
@@ -157,7 +160,9 @@ class Operator112Module:
             ),
         )
 
-    def available_actions(self, stage_state: Enum) -> tuple[ActionDescriptor, ...]:
+    def available_actions(
+        self, stage_state: Enum, *, variants: SessionVariants | None = None
+    ) -> tuple[ActionDescriptor, ...]:
         assert isinstance(stage_state, Operator112StageState)
         return _AVAILABLE_ACTIONS[stage_state]
 

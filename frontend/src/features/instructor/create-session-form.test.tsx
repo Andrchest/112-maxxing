@@ -28,6 +28,13 @@ const TRAINEES_RESPONSE = {
   total: 1,
 };
 
+const CALLER_VOICE_DEFAULT = {
+  card_source: 'CALLER_VOICE',
+  dds_mode: 'RESOURCE_PICKER',
+  dds_card_check: 'OFF',
+  dds_brigade_call: 'OFF',
+} as const;
+
 const VERSIONS_RESPONSE = {
   items: [
     {
@@ -42,6 +49,37 @@ const VERSIONS_RESPONSE = {
       content_sha256: 'abc123',
       locked_at: null,
       created_at: '2026-09-21T00:00:00Z',
+      variants: {
+        supported: {
+          card_source: ['CALLER_VOICE'],
+          dds_mode: ['RESOURCE_PICKER'],
+          dds_card_check: ['OFF'],
+          dds_brigade_call: ['OFF'],
+        },
+        default: CALLER_VOICE_DEFAULT,
+      },
+    },
+  ],
+  total: 1,
+};
+
+// The demo's shape (70 §70.2.2): a 112 → DDS chain with a prefab, so both card sources are
+// supported; the caller is the schema-1 default. The server has already filtered the
+// unimplemented values out of `supported`.
+const TWO_STAGE_VERSIONS_RESPONSE = {
+  items: [
+    {
+      ...VERSIONS_RESPONSE.items[0],
+      role_chain: ['OPERATOR_112', 'DDS'],
+      variants: {
+        supported: {
+          card_source: ['CALLER_VOICE', 'GENERATED_CARD'],
+          dds_mode: ['RESOURCE_PICKER'],
+          dds_card_check: ['OFF'],
+          dds_brigade_call: ['OFF'],
+        },
+        default: CALLER_VOICE_DEFAULT,
+      },
     },
   ],
   total: 1,
@@ -71,6 +109,13 @@ function makeSessionDetail(overrides: Partial<SessionDetail>): SessionDetail {
     last_seq_no: 0,
     transition_pause_seconds: 0,
     transition_continue_available_at_offset_ms: null,
+    variants: {
+      card_source: 'CALLER_VOICE',
+      dds_mode: 'RESOURCE_PICKER',
+      dds_card_check: 'OFF',
+      dds_brigade_call: 'OFF',
+    },
+    scenario_role_chain: ['OPERATOR_112'],
     ...overrides,
   };
 }
@@ -154,6 +199,7 @@ describe('CreateSessionForm', () => {
       session_mode: 'SINGLE_ROLE',
       participants: [{ user_id: 'trainee-user-id-1', assigned_role_type: 'OPERATOR_112' }],
       time_scale: 1,
+      variants: CALLER_VOICE_DEFAULT,
     });
 
     await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateReady}`);
@@ -295,5 +341,135 @@ describe('CreateSessionForm', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: ru.instructorStartButton })).toBeEnabled();
     });
+  });
+
+  // -- I3 E1: variant pickers fed by `ScenarioVariantsView` (70 §70.2) ------------------------
+
+  function fetchMockWithVersions(versions: unknown) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios' && method === 'GET') {
+        return jsonResponse(SCENARIOS_RESPONSE);
+      }
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') {
+        return jsonResponse(versions);
+      }
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') {
+        return jsonResponse(TRAINEES_RESPONSE);
+      }
+      if (url === '/api/v1/health/ready' && method === 'GET') {
+        return jsonResponse(HEALTH_READY_RESPONSE);
+      }
+      if (url === '/api/v1/sessions' && method === 'POST') {
+        return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+  }
+
+  async function pickScenarioAndVersion(user: ReturnType<typeof userEvent.setup>) {
+    const scenarioSelect = await screen.findByLabelText(ru.instructorScenarioLabel);
+    await screen.findByRole('option', { name: 'Fire test scenario' });
+    await user.selectOptions(scenarioSelect, 's1');
+    const versionSelect = await screen.findByLabelText(ru.instructorVersionLabel);
+    await screen.findByRole('option', { name: 'Fire scenario v1 (v1)' });
+    await user.selectOptions(versionSelect, 'v1');
+  }
+
+  it('shows one Russian-labelled picker per switch with the scenario default preselected', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', fetchMockWithVersions(TWO_STAGE_VERSIONS_RESPONSE));
+
+    renderForm();
+    await pickScenarioAndVersion(user);
+
+    const cardSource = await screen.findByLabelText(ru.instructorVariantCardSourceLabel);
+    expect(cardSource).toHaveValue('CALLER_VOICE');
+    expect(screen.getByLabelText(ru.instructorVariantDdsModeLabel)).toHaveValue('RESOURCE_PICKER');
+    expect(screen.getByLabelText(ru.instructorVariantDdsCardCheckLabel)).toHaveValue('OFF');
+    expect(screen.getByLabelText(ru.instructorVariantDdsBrigadeCallLabel)).toHaveValue('OFF');
+
+    expect(screen.getByRole('option', { name: ru.variantCardSourceCallerVoice })).toBeEnabled();
+    expect(screen.getByRole('option', { name: ru.variantCardSourceGeneratedCard })).toBeEnabled();
+    expect(screen.getByRole('option', { name: ru.variantDdsModeResourcePicker })).toBeEnabled();
+  });
+
+  it('shows values outside the supported list disabled with a Russian note', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', fetchMockWithVersions(TWO_STAGE_VERSIONS_RESPONSE));
+
+    renderForm();
+    await pickScenarioAndVersion(user);
+    await screen.findByLabelText(ru.instructorVariantDdsModeLabel);
+
+    const suffix = ` — ${ru.instructorVariantUnavailableSuffix}`;
+    expect(screen.getByRole('option', { name: `${ru.variantDdsModeMemoStatuses}${suffix}` })).toBeDisabled();
+    expect(screen.getByRole('option', { name: `${ru.variantDdsCardCheckOn}${suffix}` })).toBeDisabled();
+    expect(screen.getByRole('option', { name: `${ru.variantDdsBrigadeCallOn}${suffix}` })).toBeDisabled();
+    expect(screen.getByText(ru.instructorVariantUnavailableNote)).toBeInTheDocument();
+  });
+
+  it('a generated card runs the DDS stage only and is sent as the chosen variants', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetchMockWithVersions(TWO_STAGE_VERSIONS_RESPONSE);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await pickScenarioAndVersion(user);
+    await user.selectOptions(
+      await screen.findByLabelText(ru.instructorVariantCardSourceLabel),
+      'GENERATED_CARD',
+    );
+
+    expect(
+      screen.queryByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeOperator112}`),
+    ).not.toBeInTheDocument();
+    const ddsParticipant = await screen.findByLabelText(
+      `${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`,
+    );
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(ddsParticipant, 'trainee-user-id-1');
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/sessions' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string)).toEqual({
+      scenario_version_id: 'v1',
+      session_mode: 'SINGLE_ROLE',
+      participants: [{ user_id: 'trainee-user-id-1', assigned_role_type: 'DDS' }],
+      time_scale: 1,
+      variants: { ...CALLER_VOICE_DEFAULT, card_source: 'GENERATED_CARD' },
+    });
+  });
+
+  it('renders the Russian VARIANT_NOT_AVAILABLE message when creation is refused', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url === '/api/v1/sessions' && method === 'POST') {
+          return jsonResponse(
+            { title: 'Conflict', status: 409, code: 'VARIANT_NOT_AVAILABLE' },
+            409,
+            'application/problem+json',
+          );
+        }
+        return fetchMockWithVersions(VERSIONS_RESPONSE)(input, init);
+      }),
+    );
+
+    renderForm();
+    await fillInScenarioVersionAndParticipant(user);
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(ru.problemVariantNotAvailable);
   });
 });

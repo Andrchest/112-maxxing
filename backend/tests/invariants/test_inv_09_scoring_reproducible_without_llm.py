@@ -185,3 +185,73 @@ def test_two_scenario_versions_of_the_same_log_differ_only_by_their_rules() -> N
     events = good_log()
 
     assert report_checksum(score(version, events)) != report_checksum(score(softened, events))
+
+
+# ---------------------------------------------------------------------------------------------
+# I3 E1 — logs written before `SESSION_CREATED.variants` existed (HLD 70 §70.2.5)
+# ---------------------------------------------------------------------------------------------
+
+
+def _with_recorded_variants(
+    events: tuple[SessionEvent, ...], variants: dict[str, str]
+) -> tuple[SessionEvent, ...]:
+    """The same log, as E1 would have written it: `SESSION_CREATED` carries `variants`."""
+    first = events[0]
+    assert first.event_type.value == "SESSION_CREATED"
+    recorded = first.model_copy(
+        update={
+            "payload": {
+                **first.payload,
+                "variants": variants,
+                "scenario_role_chain": first.payload["role_chain"],
+            }
+        }
+    )
+    return (recorded, *events[1:])
+
+
+def test_a_pre_e1_log_rescores_identically_to_the_same_log_with_its_derived_variants() -> None:
+    """`SESSION_CREATED.variants` missing ⇒ the schema-1 derivation (§70.2.5): a log written
+    before E1 scores exactly as the same session recorded by E1 would, rule by rule."""
+    version = demo_scenario()
+    pre_e1 = good_log()
+    derived = version.scenario_variants.default
+    recorded = _with_recorded_variants(
+        pre_e1,
+        {
+            "card_source": derived.card_source.value,
+            "dds_mode": derived.dds_mode.value,
+            "dds_card_check": derived.dds_card_check.value,
+            "dds_brigade_call": derived.dds_brigade_call.value,
+        },
+    )
+
+    before = score(version, pre_e1)
+    after = score(version, recorded)
+
+    assert "variants" not in pre_e1[0].payload
+    assert report_checksum(before) == report_checksum(after)
+    assert before.results == after.results
+
+
+def test_a_pre_e1_log_rescores_identically_when_rules_name_variants() -> None:
+    """Rules gaining `applies_to_variants` for the derived picker/caller values change nothing on
+    a pre-E1 log: those rules still apply, with the same points."""
+    version = demo_scenario()
+    tagged = version.model_copy(
+        update={
+            "scoring_rules": tuple(
+                rule.model_copy(
+                    update={
+                        "applies_to_variants": {
+                            "dds_mode": ("RESOURCE_PICKER",),
+                            "card_source": ("CALLER_VOICE",),
+                        }
+                    }
+                )
+                for rule in version.scoring_rules
+            )
+        }
+    )
+
+    assert report_checksum(score(tagged, good_log())) == report_checksum(score(version, good_log()))

@@ -28,6 +28,14 @@ from app.domain.enums import (
     SessionState,
 )
 from app.domain.session.session import RoleStage
+from app.domain.session.variants import (
+    CardSource,
+    DdsBrigadeCall,
+    DdsCardCheck,
+    DdsMode,
+    PartialVariants,
+    SessionVariants,
+)
 
 __all__ = [
     "AbortSessionRequestSchema",
@@ -37,6 +45,8 @@ __all__ = [
     "SessionDetailSchema",
     "SessionListItemSchema",
     "SessionParticipantViewSchema",
+    "SessionVariantsSchema",
+    "VariantsRequestSchema",
     "session_detail_schema",
     "session_list_item_schema",
 ]
@@ -57,6 +67,41 @@ class ParticipantAssignmentSchema(ApiModel):
     assigned_role_type: RoleType | None = None
 
 
+class VariantsRequestSchema(ApiModel):
+    """`openapi.yaml`'s `VariantsRequest` — every switch optional (HLD 70 §70.2.2)."""
+
+    card_source: CardSource | None = None
+    dds_mode: DdsMode | None = None
+    dds_card_check: DdsCardCheck | None = None
+    dds_brigade_call: DdsBrigadeCall | None = None
+
+    def to_domain(self) -> PartialVariants:
+        return PartialVariants(
+            card_source=self.card_source,
+            dds_mode=self.dds_mode,
+            dds_card_check=self.dds_card_check,
+            dds_brigade_call=self.dds_brigade_call,
+        )
+
+
+class SessionVariantsSchema(ApiModel):
+    """`openapi.yaml`'s `SessionVariants` — the resolved, recorded switches."""
+
+    card_source: CardSource
+    dds_mode: DdsMode
+    dds_card_check: DdsCardCheck
+    dds_brigade_call: DdsBrigadeCall
+
+    @classmethod
+    def of(cls, variants: SessionVariants) -> SessionVariantsSchema:
+        return cls(
+            card_source=variants.card_source,
+            dds_mode=variants.dds_mode,
+            dds_card_check=variants.dds_card_check,
+            dds_brigade_call=variants.dds_brigade_call,
+        )
+
+
 class SessionCreateRequestSchema(ApiModel):
     """`openapi.yaml`'s `SessionCreateRequest`."""
 
@@ -65,6 +110,7 @@ class SessionCreateRequestSchema(ApiModel):
     participants: list[ParticipantAssignmentSchema] = Field(min_length=1)
     session_seed: str | None = None
     time_scale: float = Field(default=1.0, ge=0.1, le=10)
+    variants: VariantsRequestSchema | None = None
 
 
 class AbortSessionRequestSchema(ApiModel):
@@ -133,6 +179,8 @@ class SessionDetailSchema(ApiModel):
     last_seq_no: int = Field(ge=0)
     transition_pause_seconds: int = Field(ge=0)
     transition_continue_available_at_offset_ms: int | None = None
+    variants: SessionVariantsSchema
+    scenario_role_chain: list[RoleType]
 
 
 class SessionScopeQuery(ApiModel):
@@ -208,4 +256,6 @@ def session_detail_schema(view: SessionDetailView) -> SessionDetailSchema:
         transition_continue_available_at_offset_ms=(
             view.transition_continue_available_at_offset_ms
         ),
+        variants=SessionVariantsSchema.of(session.variants),
+        scenario_role_chain=list(view.scenario_role_chain),
     )

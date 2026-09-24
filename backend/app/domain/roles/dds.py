@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.domain.common.state_machine import StateMachine
 from app.domain.enums import DDSStageState, RoleType
@@ -32,6 +32,9 @@ from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
 from app.domain.session.guards import DDS_GUARDS
 from app.domain.session.transitions import DDS_TRANSITIONS
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.domain.session.variants import SessionVariants
 
 _ACKNOWLEDGE = ActionDescriptor(
     action_id="acknowledge",
@@ -185,7 +188,11 @@ class DDSModule:
             ),
         )
 
-    def available_actions(self, stage_state: Enum) -> tuple[ActionDescriptor, ...]:
+    def available_actions(
+        self, stage_state: Enum, *, variants: SessionVariants | None = None
+    ) -> tuple[ActionDescriptor, ...]:
+        """§10.9's picker table. `variants` selects the table per `dds_mode` (HLD 70 §70.4.4);
+        `RESOURCE_PICKER` is the only implemented mode until E5, so every session gets it."""
         assert isinstance(stage_state, DDSStageState)
         return _AVAILABLE_ACTIONS[stage_state]
 

@@ -63,6 +63,10 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "time_scale": "float",
             "role_chain": "list[RoleType]",
             "created_by_user_id": "uuid",
+            # Additive, I3 E1 (HLD 70 §70.2.2, §70.7): the resolved switches and the scenario's
+            # own chain; `role_chain` above is the session's effective chain.
+            "variants": "SessionVariants",
+            "scenario_role_chain": "list[RoleType]",
         },
         visible_to=frozenset({_INSTRUCTOR}),
     ),

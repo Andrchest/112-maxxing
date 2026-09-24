@@ -106,6 +106,9 @@ class ScoringRule(Base):
     applies_to_roles = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'[]'::jsonb"))
     """The `RoleType` values this rule scores; `[]` (the default) means it always applies (R7,
     `10-domain-model.md` §10.14 "Applicability", migration `0005_scoring_applies_to_roles`)."""
+    applies_to_variants = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    """Switch → the variant values this rule scores; `{}` (the default) means it always applies
+    (HLD 70 §70.2.5, D14, migration `0009_session_variants`)."""
 
     __table_args__ = (
         sa.CheckConstraint("max_points > 0", name="max_points"),

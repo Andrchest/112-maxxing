@@ -21,6 +21,14 @@ export type ParticipantAssignment = components['schemas']['ParticipantAssignment
 export type SessionCreateRequest = operations['createSession']['requestBody']['content']['application/json'];
 export type SessionDetail = operations['createSession']['responses']['201']['content']['application/json'];
 export type ProblemCode = components['schemas']['ProblemCode'];
+// -- I3 E1: variant switches (70 §70.2) ------------------------------------------------------
+export type CardSource = components['schemas']['CardSource'];
+export type DdsMode = components['schemas']['DdsMode'];
+export type DdsCardCheck = components['schemas']['DdsCardCheck'];
+export type DdsBrigadeCall = components['schemas']['DdsBrigadeCall'];
+export type SessionVariants = components['schemas']['SessionVariants'];
+export type VariantsRequest = components['schemas']['VariantsRequest'];
+export type ScenarioVariantsView = components['schemas']['ScenarioVariantsView'];
 
 // -- E8-B: operator console (SPEC §9, §10, §32, §39; D3, D12) --------------------------------
 // Additive to E8-A's client (client.ts is "the only place allowed to describe a REST call by its
@@ -501,6 +509,8 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   LLM_UNAVAILABLE: 'problemLlmUnavailable',
   AUDIO_PURGED: 'problemAudioPurged',
   RANGE_NOT_SATISFIABLE: 'problemRangeNotSatisfiable',
+  VARIANT_NOT_SUPPORTED: 'problemVariantNotSupported',
+  VARIANT_NOT_AVAILABLE: 'problemVariantNotAvailable',
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

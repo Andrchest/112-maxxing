@@ -29,8 +29,13 @@ Identifiers, keys and enum members are English. Only `*_ru` fields, `label_ru`, 
 | `available_resources` | list | yes | §30.4 |
 | `world_events` | list | yes (may be empty) | §30.6 |
 | `scoring_rules` | list | yes | §30.7 |
+| `variants` *(additive, I3 E1)* | mapping | no — `schema_version: 2` only | §30.10 |
 
-Additional top-level keys are rejected (`extra="forbid"`).
+Additional top-level keys are rejected (`extra="forbid"`). `schema_version` is `1` or `2`
+(`SUPPORTED_SCHEMA_VERSIONS`). A `schema_version: 1` document has exactly the SPEC §4 keys above;
+`schema_version: 2` adds the optional key `variants` (D14 amends D4, HLD 70 §70.2). The later
+schema-2 keys `timers`, `reference_pack` and `expected_response.responders` (HLD 70 §70.3.4,
+§70.6.1, §70.4.5) are not accepted yet — they stay refused until their epics (E4, E2, E5b).
 
 ## 30.2 The three fact sections
 
@@ -269,6 +274,7 @@ scoring_rules:
     evaluator_type: <one of the ten>
     min_evidence: 1
     applies_to_roles: []   # optional: OPERATOR_112 | DDS; empty (the default) = always applies
+    applies_to_variants: {}   # optional (additive, I3 E1): {<switch>: [<value>, ...]}; empty = always
     config: { ... }     # shape depends on evaluator_type
 ```
 
@@ -280,6 +286,12 @@ piece of evidence pointing at that chain-recording event, so it changes neither 
 category percentage, nor the critical-error list. This is what keeps a `SINGLE_ROLE` DDS run from
 being scored against the ten 112-stage rules it never had a chance to satisfy (§10.14
 "Applicability", D6).
+
+`applies_to_variants` (additive, I3 E1, HLD 70 §70.2.5) names variant values a rule scores, keyed by
+switch (`card_source`, `dds_mode`, `dds_card_check`, `dds_brigade_call`). A rule applies only when,
+for every switch it names, the session's value (`SESSION_CREATED.variants`; for a log that predates
+the key, the scenario's derived default) is listed; otherwise it yields the same zero/zero result as
+above. Typical use: `{dds_mode: [RESOURCE_PICKER]}` on picker-only rules.
 
 One example per evaluator type (config keys are the exhaustive list from
 `10-domain-model.md` §10.14):
@@ -469,6 +481,24 @@ A scenario that fails any of these cannot start a session; `validate_scenario_ve
     layer, the session event log and simulated time and **no `WorldTruth`** and no resource board
     (§10.11, §10.12). `evaluate_condition` is total, so such a clause would not fail loudly: it
     would simply never be met and the fact would silently never open.
+
+Rule 1 is extended and rules 32–36 and 40 are added by I3 E1 (HLD 70 §70.2.3; numbers 37–39 belong to
+E2 and E4). Rules 32–36 check a `schema_version: 2` document's variants — declared, or derived when
+the key is omitted; a schema-1 document's variants are always derived from the document itself and
+are not re-checked (P5).
+
+1. *(extended)* `schema_version ∈ {1, 2}`; a key introduced by schema 2 (`variants`, `timers`,
+   `reference_pack`, `expected_response.responders`) in a schema-1 document is refused.
+32. `variants.default` ∈ `variants.supported`, every `supported` list non-empty and duplicate-free.
+33. `CALLER_VOICE` supported ⇒ `OPERATOR_112 ∈ role_chain` and the three fact sections non-empty.
+34. `GENERATED_CARD` supported ⇒ `expected_response.prefab_handoff` present (rule 29's check, reached
+    through the variant).
+35. `RESOURCE_PICKER` supported ⇒ `available_resources` non-empty and `resolution_condition` present.
+36. `MEMO_STATUSES` supported ⇒ `expected_response.responders` present or the key `responders:
+    DEFAULT` written explicitly (E5) — until E5b no document can carry the key, so no scenario can
+    support `MEMO_STATUSES` yet.
+40. Every `scoring_rules[*].applies_to_variants` key is a `SessionVariants` field and every value a
+    member of that switch's enum.
 
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 
@@ -713,3 +743,31 @@ acknowledges, dispatches `ac1` + `al1` + `smp11`, the fire spreads at T+3:00, a 
 one minute after the handoff, the gas cylinder threat appears only if suppression has not started by
 T+7:00, and `ac2` may break down if it was dispatched. Resolution at T+9:00 once a suppression unit is
 `WORKING`.
+
+## 30.10 `variants` — schema 2 (additive, I3 E1)
+
+```yaml
+variants:
+  supported:                        # per switch, the values a session may select (non-empty lists)
+    card_source: [CALLER_VOICE, GENERATED_CARD]
+    dds_mode: [RESOURCE_PICKER]
+    dds_card_check: ['OFF']
+    dds_brigade_call: ['OFF']
+  default:                          # one value per switch, each in `supported`
+    card_source: GENERATED_CARD
+    dds_mode: RESOURCE_PICKER
+    dds_card_check: 'OFF'
+    dds_brigade_call: 'OFF'
+```
+
+The scenario is the first of the three homes of HLD 70 §70.2.2; session creation selects within
+`supported` (`409 VARIANT_NOT_SUPPORTED`), an unimplemented value is `409 VARIANT_NOT_AVAILABLE`, and
+`SESSION_CREATED.variants` records the result. A document without the key — every schema-1 document —
+gets a derived value: `card_source` supports `CALLER_VOICE` iff `OPERATOR_112 ∈ role_chain` and
+`GENERATED_CARD` iff `expected_response.prefab_handoff` is present (or the chain starts at DDS, which
+rule 29 ties to a prefab); `dds_mode` `[RESOURCE_PICKER]`; `dds_card_check` `[OFF, ON]`;
+`dds_brigade_call` `[OFF]`. The schema-1 default is `CALLER_VOICE` when supported (today's
+behaviour), else `GENERATED_CARD`, and `RESOURCE_PICKER`, `OFF`, `OFF`; a schema-2 document without
+the key takes the product default (`GENERATED_CARD`, `RESOURCE_PICKER`, `OFF`, `OFF`) wherever the
+derived support allows it. Under `GENERATED_CARD` a session runs the `role_chain` suffix starting at
+DDS on the scenario's `prefab_handoff`.

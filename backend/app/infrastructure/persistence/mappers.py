@@ -76,6 +76,7 @@ from app.domain.session.session import (
     SimulationSession,
     StageState,
 )
+from app.domain.session.variants import variants_payload
 from app.domain.world.engine import ScheduledTrigger
 
 __all__ = [
@@ -163,6 +164,9 @@ def scoring_rule_row_values(
             "min_evidence": rule.min_evidence,
             "order_index": index,
             "applies_to_roles": [role.value for role in rule.applies_to_roles],
+            "applies_to_variants": {
+                switch: list(values) for switch, values in rule.applies_to_variants.items()
+            },
         }
         for index, rule in enumerate(rules)
     ]
@@ -353,7 +357,8 @@ def session_row_values(session: SimulationSession) -> dict[str, Any]:
     `next_seq_no` is absent on purpose: the event store owns sequence allocation (§20.8) and the
     aggregate has no field for it, so neither an insert nor an update from here may write it.
     `created_at` is a storage default. `time_scale` becomes a `Decimal` because the column is
-    `numeric(4, 2)`.
+    `numeric(4, 2)`. `variants` is written once, at insert; the update path never touches it
+    (`_MUTABLE_SESSION_COLUMNS`), since variants are immutable after creation (HLD 70 §70.2.2).
     """
     return {
         "id": UUID(str(session.id)),
@@ -368,6 +373,7 @@ def session_row_values(session: SimulationSession) -> dict[str, Any]:
         "role_transition_started_offset_ms": session.role_transition_started_offset_ms,
         "completed_at": session.completed_at,
         "abort_reason": session.abort_reason,
+        "variants": variants_payload(session.variants),
     }
 
 
@@ -456,6 +462,9 @@ def session_from_rows(
         ),
         completed_at=session_row["completed_at"],
         abort_reason=session_row["abort_reason"],
+        # `'{}'` (a session created before E1) leaves the field out, and the aggregate fills in
+        # the schema-1 derivation of its own stage chain (HLD 70 §70.2.2).
+        variants=session_row["variants"] or None,
         incident=incident_from_row(incident_row),
         stages=tuple(role_stage_from_row(row) for row in stage_rows),
         participants=tuple(participant_from_row(row) for row in participant_rows),

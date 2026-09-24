@@ -47,6 +47,9 @@ __all__ = [
 NOT_APPLICABLE_NOTE_RU = "Правило не применяется: роль не участвует в сессии"
 """`note_ru` of the single evidence a non-applicable rule carries (ruling R7)."""
 
+NOT_APPLICABLE_VARIANT_NOTE_RU = "Правило не применяется: вариант сессии не тот"
+"""`note_ru` of the evidence a rule non-applicable by `applies_to_variants` carries (D14)."""
+
 _POINTS_QUANTUM = Decimal("0.01")
 """`score_results.points_awarded` is `numeric(8,2)` (§20.7): the domain rounds to match it."""
 
@@ -149,6 +152,8 @@ def scoring_events(
 def _one_rule(rule: ScoringRule, ctx: ScoringContext) -> ScoreResult:
     if not _applies(rule, ctx):
         return _not_applicable(rule, ctx)
+    if not _applies_to_variants(rule, ctx):
+        return _not_applicable(rule, ctx, note_ru=NOT_APPLICABLE_VARIANT_NOTE_RU)
     config = parse_rule_config(rule)
     result = EVALUATORS[rule.evaluator_type](rule, config, ctx)
     return _finish(rule, result)
@@ -170,13 +175,28 @@ def _applies(rule: ScoringRule, ctx: ScoringContext) -> bool:
     return any(role in ctx.role_chain for role in rule.applies_to_roles)
 
 
-def _not_applicable(rule: ScoringRule, ctx: ScoringContext) -> ScoreResult:
+def _applies_to_variants(rule: ScoringRule, ctx: ScoringContext) -> bool:
+    """HLD 70 §70.2.5: for every switch the rule names, the session's value must be listed.
+
+    An empty mapping always applies. The session's value is `ctx.variants` — recorded in
+    `SESSION_CREATED.variants`, or the schema-1 derivation for a log that predates E1.
+    """
+    for switch, values in rule.applies_to_variants.items():
+        value = getattr(ctx.variants, switch, None)
+        if value is None or value.value not in values:
+            return False
+    return True
+
+
+def _not_applicable(
+    rule: ScoringRule, ctx: ScoringContext, *, note_ru: str = NOT_APPLICABLE_NOTE_RU
+) -> ScoreResult:
     """A zero/zero pass that changes neither the total, nor a percentage, nor a critical error."""
     bound = ctx.role_chain_event
     item = (
-        evidence.from_event(bound, NOT_APPLICABLE_NOTE_RU)
+        evidence.from_event(bound, note_ru)
         if bound is not None
-        else evidence.from_event(evidence.bounding_event(ctx), NOT_APPLICABLE_NOTE_RU)
+        else evidence.from_event(evidence.bounding_event(ctx), note_ru)
     )
     return ScoreResult(
         rule_id=rule.rule_id,

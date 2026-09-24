@@ -10,8 +10,11 @@ Everything below happens in **one** Unit of Work transaction (D5), in this order
    so an invalid version is rejected as an `InvalidTransitionError` on the session machine — which
    is also how a `role_chain` naming an unimplemented `RoleModule` (`EDDS`, D6) is refused here
    rather than at import time;
-3. build the aggregate with `app.domain.session.session.create_session`, every id taken from the
-   `IdGenerator` (the domain owns no randomness, D2/D7);
+3. resolve the requested variants against the version (`resolve_variants`, HLD 70 §70.2.2:
+   request → scenario default; `409 VARIANT_NOT_AVAILABLE` before `409 VARIANT_NOT_SUPPORTED`),
+   then build the aggregate with `app.domain.session.session.create_session` on the **effective**
+   role chain those variants give, every id taken from the `IdGenerator` (the domain owns no
+   randomness, D2/D7);
 4. fire `validate` as `SYSTEM`;
 5. instantiate `WorldTruth` and `CallerBelief` from the version through `layers/copies.py` — the
    only conversion path between the information layers (D3) — plus an **empty** `OperatorCard`;
@@ -57,6 +60,7 @@ from app.domain.layers.operator_card import OperatorCard
 from app.domain.scenario.validation import validate_scenario_version
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession, create_session
+from app.domain.session.variants import PartialVariants, effective_role_chain, resolve_variants
 
 __all__ = ["CreateSession", "CreateSessionCommand", "ScenarioVersionNotFoundError"]
 
@@ -89,6 +93,8 @@ class CreateSessionCommand:
     participants: Sequence[tuple[UserId, RoleType | None]] = field(default_factory=tuple)
     session_seed: str | None = None
     time_scale: float = 1.0
+    variants: PartialVariants = field(default_factory=PartialVariants)
+    """`SessionCreateRequest.variants` — every switch optional (HLD 70 §70.2.2)."""
 
 
 class CreateSession:
@@ -115,12 +121,14 @@ class CreateSession:
     ) -> tuple[ScenarioVersion, SimulationSession, list[DomainEvent]]:
         version, scenario_slug = await self._load_version(uow, command.scenario_version_id)
         scenario_valid = _is_valid(version)
+        variants = resolve_variants(command.variants, version.scenario_variants)
+        chain = effective_role_chain(version.role_chain, variants.card_source)
 
         participants = tuple(command.participants)
         created, events = create_session(
             session_id=SessionId(self._ids.new()),
             incident_id=IncidentId(self._ids.new()),
-            stage_ids=[RoleStageId(self._ids.new()) for _ in version.role_chain],
+            stage_ids=[RoleStageId(self._ids.new()) for _ in chain],
             scenario_version=version,
             scenario_id=version.scenario_id,
             scenario_slug=scenario_slug,
@@ -130,6 +138,7 @@ class CreateSession:
             participant_ids=[self._ids.new() for _ in participants],
             session_seed=command.session_seed,
             time_scale=command.time_scale,
+            variants=variants,
         )
         # `now_ms=0`: nothing before `SESSION_STARTED` has a timeline to be offset against —
         # `session_offset_ms(now, started_at=None)` is `0` — and the offset is never taken from a

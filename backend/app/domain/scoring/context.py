@@ -34,6 +34,7 @@ from app.domain.common.values import FactValue
 from app.domain.enums import ActorType, RoleType, ServiceType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
+from app.domain.session.variants import SessionVariants
 
 if TYPE_CHECKING:  # `app.domain.scenario` imports the evaluator registry (§30.8 item 20), which
     # imports this module: the annotation is a string under `from __future__ import annotations`,
@@ -120,6 +121,7 @@ class ScoringContext:
     dispatched_capabilities: frozenset[str]
     role_chain: tuple[RoleType, ...]
     role_chain_event: SessionEvent | None
+    variants: SessionVariants
     session_completed: SessionEvent | None
     stage_completed_by_role: Mapping[RoleType, SessionEvent]
 
@@ -230,6 +232,7 @@ def build_context(
         dispatched_capabilities=_dispatched_capabilities(by_type),
         role_chain=role_chain,
         role_chain_event=role_chain_event,
+        variants=_variants(scenario_version, by_type),
         session_completed=_last(by_type.get(EventType.SESSION_COMPLETED, [])),
         stage_completed_by_role=_stage_completed_by_role(by_type),
     )
@@ -396,6 +399,26 @@ def _role_chain(
     if chain:
         return tuple(chain), started[0]
     return (), None
+
+
+def _variants(
+    scenario_version: ScenarioVersion,
+    by_type: Mapping[EventType, Sequence[SessionEvent]],
+) -> SessionVariants:
+    """The session's variants as `SESSION_CREATED.variants` records them (HLD 70 §70.2.5).
+
+    A log written before E1 has no such key; it then reads as the scenario's derived default —
+    the schema-1 derivation, which is exactly how that session ran — so it rescores identically
+    (INV 9). A malformed record falls back the same way rather than raising (total readers).
+    """
+    created = by_type.get(EventType.SESSION_CREATED, [])
+    raw = created[0].payload.get("variants") if created else None
+    if isinstance(raw, Mapping):
+        try:
+            return SessionVariants.model_validate(dict(raw))
+        except ValueError:
+            pass
+    return scenario_version.scenario_variants.default
 
 
 # ---------------------------------------------------------------------------------------------

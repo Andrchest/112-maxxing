@@ -33,7 +33,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import PrefabHandoffRequiredError, RoleChainLengthError
@@ -61,6 +61,15 @@ from app.domain.events.types import EventType
 from app.domain.session.guards import TERMINAL_STAGE_STATES
 from app.domain.session.machine import SESSION_STATE_MACHINE
 from app.domain.session.policy import SESSION_POLICIES, ParticipantAssignmentRule, SessionPolicy
+from app.domain.session.variants import (
+    PartialVariants,
+    SessionVariants,
+    VariantNotSupportedError,
+    effective_role_chain,
+    legacy_session_variants,
+    resolve_variants,
+    variants_payload,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.domain.roles.module import RoleModule
@@ -187,6 +196,25 @@ class SimulationSession(BaseModel):
     incident: Incident
     stages: tuple[RoleStage, ...]
     participants: tuple[SessionParticipant, ...] = ()
+    variants: SessionVariants
+    """The resolved variant switches, immutable after creation (HLD 70 §70.2.2, D14).
+
+    A session created before E1 carries none (`simulation_sessions.variants = '{}'`); it reads as
+    the schema-1 derivation of its own stage chain (`legacy_session_variants`), which is exactly
+    how it ran. `_fill_legacy_variants` supplies that when the field is absent.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_legacy_variants(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping) or data.get("variants") is not None:
+            return data
+        stages = data.get("stages") or ()
+        chain = [
+            stage.role_type if isinstance(stage, RoleStage) else RoleType(stage["role_type"])
+            for stage in stages
+        ]
+        return {**data, "variants": legacy_session_variants(chain)}
 
     # -- projections -------------------------------------------------------------------------
 
@@ -738,9 +766,19 @@ def create_session(
     participant_ids: Sequence[UUID] | None = None,
     session_seed: str | None = None,
     time_scale: float = 1.0,
+    variants: SessionVariants | None = None,
 ) -> tuple[SimulationSession, list[DomainEvent]]:
-    """Build a `CREATED` session with its one `Incident` and one `RoleStage` per `role_chain`
-    entry, and return it with the `SESSION_CREATED` event (§10.8, §10.10, D6).
+    """Build a `CREATED` session with its one `Incident` and one `RoleStage` per entry of the
+    **effective** role chain, and return it with the `SESSION_CREATED` event (§10.8, §10.10, D6,
+    HLD 70 §70.2.4).
+
+    `variants` are the resolved switches (`resolve_variants`); `None` resolves an empty request
+    against the scenario, i.e. takes the scenario default. `card_source` decides the effective
+    chain: `CALLER_VOICE` runs the scenario's `role_chain`, `GENERATED_CARD` the suffix starting
+    at DDS (`effective_role_chain`). `SESSION_CREATED.role_chain` records the effective chain and
+    the additive `scenario_role_chain` the scenario's; `SESSION_CREATED.variants` records the
+    switches. An empty effective chain (`GENERATED_CARD` on a chain without DDS) is
+    `VariantNotSupportedError`.
 
     Every id is passed in: the domain calls neither `uuid4` nor a clock. `session_seed` defaults to
     `scenario_version.deterministic_seed` (D7, SPEC §42 test 7).
@@ -752,13 +790,18 @@ def create_session(
       `expected_response.prefab_handoff` — there would be no 112 stage to produce the handoff the
       DDS stage starts from (D6, §10.10, `409 PREFAB_HANDOFF_REQUIRED`).
     - `RoleChainLengthError` when `policy.role_chain_length` is `"EXACTLY_ONE"` and the
-      `role_chain` has a different length.
+      effective chain has a different length — so `SINGLE_ROLE` accepts a two-stage scenario run
+      under `GENERATED_CARD`, whose effective chain is `[DDS]`.
 
     A participant set that does not satisfy the policy's `assignment_rule` is NOT rejected here:
     stages stay unbound and `validate` refuses the transition to `READY`.
     """
     policy = SESSION_POLICIES[session_mode]
-    role_chain = scenario_version.role_chain
+    if variants is None:
+        variants = resolve_variants(PartialVariants(), scenario_version.scenario_variants)
+    role_chain = effective_role_chain(scenario_version.role_chain, variants.card_source)
+    if not role_chain:
+        raise VariantNotSupportedError("card_source", variants.card_source.value)
 
     if policy.role_chain_length == "EXACTLY_ONE" and len(role_chain) != 1:
         raise RoleChainLengthError(
@@ -824,6 +867,7 @@ def create_session(
         incident=incident,
         stages=stages,
         participants=session_participants,
+        variants=variants,
     )
     payload: Mapping[str, Any] = {
         "session_id": str(session_id),
@@ -836,6 +880,8 @@ def create_session(
         "time_scale": session.time_scale,
         "role_chain": [role.value for role in role_chain],
         "created_by_user_id": str(created_by_user_id),
+        "variants": variants_payload(variants),
+        "scenario_role_chain": [role.value for role in scenario_version.role_chain],
     }
     validate_payload(EventType.SESSION_CREATED, payload)
     event = DomainEvent(

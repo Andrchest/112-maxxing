@@ -8,6 +8,7 @@ import httpx
 import pytest
 import yaml
 from app.domain.common.ids import ScenarioVersionId, UserId
+from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS
 
 from tests.api.conftest import auth
 
@@ -127,7 +128,7 @@ async def test_validation_report_is_instructor_only(
     assert allowed.status_code == 200
     body = allowed.json()
     assert body["valid"] is True
-    assert body["checked_rule_count"] == 30
+    assert body["checked_rule_count"] == len(VALIDATION_RULE_NUMBERS)
     assert body["scenario_slug"] == "apartment-fire"
     assert [issue for issue in body["issues"] if issue["severity"] == "ERROR"] == []
 
@@ -217,7 +218,7 @@ async def test_importing_a_broken_document_is_422_with_every_violation(
     assert body["code"] == "SCENARIO_INVALID"
     report = body["validation_report"]
     assert report["valid"] is False
-    assert report["checked_rule_count"] == 30
+    assert report["checked_rule_count"] == len(VALIDATION_RULE_NUMBERS)
     rules = {issue["rule_number"] for issue in report["issues"] if issue["severity"] == "ERROR"}
     assert len(rules) >= 2, report["issues"]
 

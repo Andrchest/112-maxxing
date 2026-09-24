@@ -222,6 +222,13 @@ export function makeSessionDetail(overrides: Partial<SessionDetail> = {}): Sessi
     last_seq_no: 40,
     transition_pause_seconds: 5,
     transition_continue_available_at_offset_ms: null,
+    variants: {
+      card_source: 'CALLER_VOICE',
+      dds_mode: 'RESOURCE_PICKER',
+      dds_card_check: 'OFF',
+      dds_brigade_call: 'OFF',
+    },
+    scenario_role_chain: ['OPERATOR_112'],
     ...overrides,
   };
 }

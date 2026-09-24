@@ -38,8 +38,9 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import AgeGroup, CallerRelationship, RoleType
-from app.domain.scenario.validation import validate_scenario_document
+from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS, validate_scenario_document
 from app.domain.scenario.version import ScenarioVersion
+from app.domain.session.variants import ScenarioVariants
 
 __all__ = [
     "GetScenarioValidationReport",
@@ -54,12 +55,13 @@ __all__ = [
     "validation_report_of",
 ]
 
-CHECKED_RULE_COUNT = 30
-"""`ScenarioValidationReport.checked_rule_count` — `openapi.yaml` pins it to the const 30.
+CHECKED_RULE_COUNT = len(VALIDATION_RULE_NUMBERS)
+"""`ScenarioValidationReport.checked_rule_count` — how many §30.8 rules a run executes.
 
+Derived from the validation rule registry (`VALIDATION_RULE_NUMBERS`), never written as a literal:
 "The complete §30.8 list is always run; a partial run is never reported as valid", and
-`scenario_version_violations` runs all thirty, so the constant is a statement of fact.
-"""
+`scenario_version_violations` runs every registered rule, so the count is a statement of fact that
+grows as later epics register R37-R39."""
 
 _VIOLATION_PREFIX = re.compile(r"^R(?P<rule>\d{1,2}):\s*(?P<rest>.*)$", re.DOTALL)
 """`scenario_version_violations` starts every message with `R<nn>:` (`validation.py` docstring)."""
@@ -155,6 +157,7 @@ class TraineeSummary:
         "scenario_slug",
         "scenario_version_id",
         "title",
+        "variants",
         "version",
     )
 
@@ -175,6 +178,7 @@ class TraineeSummary:
         caller_relationship: CallerRelationship,
         estimated_duration_seconds: int | None,
         resource_count: int,
+        variants: ScenarioVariants,
     ) -> None:
         self.scenario_version_id = scenario_version_id
         self.scenario_id = scenario_id
@@ -190,6 +194,7 @@ class TraineeSummary:
         self.caller_relationship = caller_relationship
         self.estimated_duration_seconds = estimated_duration_seconds
         self.resource_count = resource_count
+        self.variants = variants
 
 
 # ---------------------------------------------------------------------------------------------
@@ -223,6 +228,8 @@ def scenario_version_trainee_summary(
         estimated_duration_seconds=None,
         # A count, never the list: "How many resources the DDS board will show" (`openapi.yaml`).
         resource_count=len(version.available_resources),
+        # What an instructor may run it as (HLD 70 §70.2.2) — switch values, not content.
+        variants=version.scenario_variants,
     )
 
 

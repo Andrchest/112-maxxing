@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import pytest
 from app.domain.enums import ActorType, EvaluatorType, RoleType, ScoringCategory
+from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
+from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.context import UnorderedEventLogError
 from app.domain.scoring.engine import (
     NOT_APPLICABLE_NOTE_RU,
+    NOT_APPLICABLE_VARIANT_NOTE_RU,
     ScoringEvidenceError,
     report_checksum,
     score,
@@ -164,6 +167,84 @@ def test_an_empty_applies_to_roles_always_applies() -> None:
     report = score(version, dds_only_log())
 
     assert report.results[0].max_points == always.max_points
+
+
+# ---------------------------------------------------------------------------------------------
+# Applicability by variant (HLD 70 §70.2.5, D14)
+# ---------------------------------------------------------------------------------------------
+
+
+def _one_rule_version(
+    applies_to_variants: dict[str, tuple[str, ...]],
+) -> tuple[ScoringRule, ScenarioVersion]:
+    rule = SCENARIO.scoring_rules[0].model_copy(
+        update={"applies_to_roles": (), "applies_to_variants": applies_to_variants}
+    )
+    return rule, SCENARIO.model_copy(update={"scoring_rules": (rule,)})
+
+
+def _recording(variants: dict[str, str]) -> tuple[SessionEvent, ...]:
+    events = good_log()
+    created = events[0].model_copy(update={"payload": {**events[0].payload, "variants": variants}})
+    return (created, *events[1:])
+
+
+GENERATED = {
+    "card_source": "GENERATED_CARD",
+    "dds_mode": "RESOURCE_PICKER",
+    "dds_card_check": "OFF",
+    "dds_brigade_call": "OFF",
+}
+
+
+def test_a_rule_for_another_variant_yields_zero_zero() -> None:
+    """A memo-only rule on a picker session: zero/zero, passed, no critical failure (§70.2.5)."""
+    rule, version = _one_rule_version({"dds_mode": ("MEMO_STATUSES",)})
+    critical = rule.model_copy(update={"critical": True})
+    version = SCENARIO.model_copy(update={"scoring_rules": (critical,)})
+
+    report = score(version, good_log())
+    result = report.results[0]
+
+    assert (result.points_awarded, result.max_points) == (0.0, 0.0)
+    assert result.passed
+    assert not result.critical_failure
+    assert report.total_max_points == 0.0
+    assert report.critical_errors == ()
+    assert [item.note_ru for item in result.evidence] == [NOT_APPLICABLE_VARIANT_NOTE_RU]
+
+
+def test_a_rule_for_the_sessions_variant_applies() -> None:
+    rule, version = _one_rule_version({"dds_mode": ("RESOURCE_PICKER", "MEMO_STATUSES")})
+
+    report = score(version, good_log())
+
+    assert report.results[0].max_points == rule.max_points
+
+
+def test_the_recorded_variants_decide_not_the_scenario_default() -> None:
+    """`SESSION_CREATED.variants` is the source; a pre-E1 log falls back to the derivation."""
+    _rule, version = _one_rule_version({"card_source": ("CALLER_VOICE",)})
+
+    derived = score(version, good_log())
+    recorded = score(version, _recording(GENERATED))
+
+    assert derived.results[0].max_points > 0.0
+    assert recorded.results[0].max_points == 0.0
+
+
+def test_every_named_switch_must_match() -> None:
+    _rule, version = _one_rule_version(
+        {"card_source": ("GENERATED_CARD",), "dds_card_check": ("ON",)}
+    )
+
+    report = score(version, _recording(GENERATED))
+
+    assert report.results[0].max_points == 0.0
+
+
+def test_applies_to_variants_defaults_to_empty() -> None:
+    assert SCENARIO.scoring_rules[0].applies_to_variants == {}
 
 
 # ---------------------------------------------------------------------------------------------

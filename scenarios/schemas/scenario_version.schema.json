@@ -519,6 +519,14 @@
       "title": "CallerRelationship",
       "type": "string"
     },
+    "CardSource": {
+      "enum": [
+        "GENERATED_CARD",
+        "CALLER_VOICE"
+      ],
+      "title": "CardSource",
+      "type": "string"
+    },
     "ChangeCallerEmotion": {
       "additionalProperties": false,
       "description": "`{kind: CHANGE_CALLER_EMOTION, set_emotion, stress_delta}` (§30.6.4).",
@@ -823,6 +831,30 @@
       ],
       "title": "CreateRadioMessage",
       "type": "object"
+    },
+    "DdsBrigadeCall": {
+      "enum": [
+        "OFF",
+        "ON"
+      ],
+      "title": "DdsBrigadeCall",
+      "type": "string"
+    },
+    "DdsCardCheck": {
+      "enum": [
+        "OFF",
+        "ON"
+      ],
+      "title": "DdsCardCheck",
+      "type": "string"
+    },
+    "DdsMode": {
+      "enum": [
+        "MEMO_STATUSES",
+        "RESOURCE_PICKER"
+      ],
+      "title": "DdsMode",
+      "type": "string"
     },
     "DisclosureFactSpec": {
       "additionalProperties": false,
@@ -1683,6 +1715,24 @@
       "title": "RoleType",
       "type": "string"
     },
+    "ScenarioVariants": {
+      "additionalProperties": false,
+      "description": "The schema-2 scenario key `variants` (§70.2.2 home 1).",
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/SessionVariants"
+        },
+        "supported": {
+          "$ref": "#/$defs/VariantSupport"
+        }
+      },
+      "required": [
+        "supported",
+        "default"
+      ],
+      "title": "ScenarioVariants",
+      "type": "object"
+    },
     "ScoringCategory": {
       "enum": [
         "INFORMATION_GATHERING",
@@ -1707,6 +1757,16 @@
           },
           "title": "Applies To Roles",
           "type": "array"
+        },
+        "applies_to_variants": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Applies To Variants",
+          "type": "object"
         },
         "category": {
           "$ref": "#/$defs/ScoringCategory"
@@ -1891,6 +1951,32 @@
       ],
       "title": "ServiceType",
       "type": "string"
+    },
+    "SessionVariants": {
+      "additionalProperties": false,
+      "description": "The resolved, recorded variants of one session; immutable after creation (§70.2.2).",
+      "properties": {
+        "card_source": {
+          "$ref": "#/$defs/CardSource"
+        },
+        "dds_brigade_call": {
+          "$ref": "#/$defs/DdsBrigadeCall"
+        },
+        "dds_card_check": {
+          "$ref": "#/$defs/DdsCardCheck"
+        },
+        "dds_mode": {
+          "$ref": "#/$defs/DdsMode"
+        }
+      },
+      "required": [
+        "card_source",
+        "dds_mode",
+        "dds_card_check",
+        "dds_brigade_call"
+      ],
+      "title": "SessionVariants",
+      "type": "object"
     },
     "SimTimeCondition": {
       "additionalProperties": false,
@@ -2095,6 +2181,48 @@
       "title": "ValueType",
       "type": "string"
     },
+    "VariantSupport": {
+      "additionalProperties": false,
+      "description": "What a scenario supports per switch.\n\nEvery tuple is non-empty and duplicate-free — rule R32 checks that, so that a violation is\nreported with every other one instead of as a bare parse error.",
+      "properties": {
+        "card_source": {
+          "items": {
+            "$ref": "#/$defs/CardSource"
+          },
+          "title": "Card Source",
+          "type": "array"
+        },
+        "dds_brigade_call": {
+          "items": {
+            "$ref": "#/$defs/DdsBrigadeCall"
+          },
+          "title": "Dds Brigade Call",
+          "type": "array"
+        },
+        "dds_card_check": {
+          "items": {
+            "$ref": "#/$defs/DdsCardCheck"
+          },
+          "title": "Dds Card Check",
+          "type": "array"
+        },
+        "dds_mode": {
+          "items": {
+            "$ref": "#/$defs/DdsMode"
+          },
+          "title": "Dds Mode",
+          "type": "array"
+        }
+      },
+      "required": [
+        "card_source",
+        "dds_mode",
+        "dds_card_check",
+        "dds_brigade_call"
+      ],
+      "title": "VariantSupport",
+      "type": "object"
+    },
     "WorldEventTrigger": {
       "additionalProperties": false,
       "properties": {
@@ -2198,7 +2326,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One immutable scenario version: exactly the SPEC §4 top-level keys (§10.15, §30.1).",
+  "description": "One immutable scenario version: the SPEC §4 top-level keys, plus `variants` from schema 2\n(§10.15, §30.1, D14).",
   "properties": {
     "available_resources": {
       "items": {
@@ -2264,6 +2392,17 @@
     "title": {
       "title": "Title",
       "type": "string"
+    },
+    "variants": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScenarioVariants"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "version": {
       "minimum": 1,

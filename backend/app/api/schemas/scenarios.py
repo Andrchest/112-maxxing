@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
+from app.api.schemas.sessions import SessionVariantsSchema
 from app.application.ports.scenario_repository import (
     StoredScenarioListing,
     StoredScenarioVersionDetail,
@@ -27,12 +28,21 @@ from app.application.scenarios.queries import (
     ValidationReport,
 )
 from app.domain.enums import AgeGroup, CallerRelationship, RoleType
+from app.domain.session.variants import (
+    CardSource,
+    DdsBrigadeCall,
+    DdsCardCheck,
+    DdsMode,
+    ScenarioVariants,
+    available_scenario_variants,
+)
 
 __all__ = [
     "ScenarioImportRequestSchema",
     "ScenarioSummarySchema",
     "ScenarioValidationIssueSchema",
     "ScenarioValidationReportSchema",
+    "ScenarioVariantsViewSchema",
     "ScenarioVersionListItemSchema",
     "ScenarioVersionTraineeSummarySchema",
     "scenario_summary_schema",
@@ -52,6 +62,39 @@ class ScenarioSummarySchema(ApiModel):
     latest_version: int | None = Field(default=None, ge=1)
 
 
+class VariantSupportViewSchema(ApiModel):
+    """`ScenarioVariantsView.supported` — per switch, the values a session may select."""
+
+    card_source: list[CardSource] = Field(min_length=1)
+    dds_mode: list[DdsMode] = Field(min_length=1)
+    dds_card_check: list[DdsCardCheck] = Field(min_length=1)
+    dds_brigade_call: list[DdsBrigadeCall] = Field(min_length=1)
+
+
+class ScenarioVariantsViewSchema(ApiModel):
+    """`openapi.yaml`'s `ScenarioVariantsView` (HLD 70 §70.2.2).
+
+    What a version supports and defaults to, after the schema-1 derivation and the
+    implemented-values filter (`available_scenario_variants`).
+    """
+
+    supported: VariantSupportViewSchema
+    default: SessionVariantsSchema
+
+    @classmethod
+    def of(cls, variants: ScenarioVariants) -> ScenarioVariantsViewSchema:
+        view = available_scenario_variants(variants)
+        return cls(
+            supported=VariantSupportViewSchema(
+                card_source=list(view.supported.card_source),
+                dds_mode=list(view.supported.dds_mode),
+                dds_card_check=list(view.supported.dds_card_check),
+                dds_brigade_call=list(view.supported.dds_brigade_call),
+            ),
+            default=SessionVariantsSchema.of(view.default),
+        )
+
+
 class ScenarioVersionListItemSchema(ApiModel):
     """`openapi.yaml`'s `ScenarioVersionListItem`."""
 
@@ -66,6 +109,7 @@ class ScenarioVersionListItemSchema(ApiModel):
     content_sha256: str
     locked_at: datetime | None = None
     created_at: datetime
+    variants: ScenarioVariantsViewSchema
 
 
 class ScenarioVersionTraineeSummarySchema(ApiModel):
@@ -85,6 +129,7 @@ class ScenarioVersionTraineeSummarySchema(ApiModel):
     caller_relationship: CallerRelationship
     estimated_duration_seconds: int | None = Field(default=None, ge=0)
     resource_count: int = Field(ge=0)
+    variants: ScenarioVariantsViewSchema
 
 
 class ScenarioImportRequestSchema(ApiModel):
@@ -102,7 +147,9 @@ class ScenarioImportRequestSchema(ApiModel):
 class ScenarioValidationIssueSchema(ApiModel):
     """`openapi.yaml`'s `ScenarioValidationIssue` — one §30.8 violation."""
 
-    rule_number: int = Field(ge=1, le=30)
+    rule_number: int = Field(ge=1, le=40)
+    """`openapi.yaml` bounds it at 40, the highest §30.8 rule number that exists or is reserved
+    (R40, HLD 70 §70.2.3)."""
     severity: Literal["ERROR", "WARNING"]
     location: str
     message: str
@@ -113,8 +160,9 @@ class ScenarioValidationIssueSchema(ApiModel):
 class ScenarioValidationReportSchema(ApiModel):
     """`openapi.yaml`'s `ScenarioValidationReport`.
 
-    `checked_rule_count` is a `const: 30`: "The complete §30.8 list is always run; a partial run is
-    never reported as valid."
+    `checked_rule_count` is the number of §30.8 rules the run executed — the validation rule
+    registry's size (`CHECKED_RULE_COUNT`): "The complete §30.8 list is always run; a partial run
+    is never reported as valid."
     """
 
     valid: bool
@@ -123,7 +171,7 @@ class ScenarioValidationReportSchema(ApiModel):
     schema_version: int | None = Field(default=None, ge=1)
     content_sha256: str | None = None
     issues: list[ScenarioValidationIssueSchema]
-    checked_rule_count: Literal[30] = CHECKED_RULE_COUNT
+    checked_rule_count: int = Field(default=CHECKED_RULE_COUNT, ge=1)
 
 
 def scenario_summary_schema(listing: StoredScenarioListing) -> ScenarioSummarySchema:
@@ -153,6 +201,7 @@ def version_list_item_schema(
         content_sha256=detail.content_sha256,
         locked_at=detail.locked_at,
         created_at=detail.created_at,
+        variants=ScenarioVariantsViewSchema.of(detail.variants),
     )
 
 
@@ -173,6 +222,7 @@ def trainee_summary_schema(summary: TraineeSummary) -> ScenarioVersionTraineeSum
         caller_relationship=summary.caller_relationship,
         estimated_duration_seconds=summary.estimated_duration_seconds,
         resource_count=summary.resource_count,
+        variants=ScenarioVariantsViewSchema.of(summary.variants),
     )
 
 

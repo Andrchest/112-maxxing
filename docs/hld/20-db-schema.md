@@ -145,6 +145,7 @@ Reference data projected from `scenario_versions.content.scoring_rules` at impor
 | `min_evidence` | `smallint` | no | `1` |
 | `order_index` | `integer` | no | |
 | `applies_to_roles` | `jsonb` | no | `'[]'::jsonb` |
+| `applies_to_variants` *(additive, I3 E1)* | `jsonb` | no | `'{}'::jsonb` |
 
 PK `(scenario_version_id, rule_id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE CASCADE`.
 `CHECK (max_points > 0)`, `CHECK (min_evidence >= 1)`,
@@ -156,7 +157,9 @@ Pydantic model, never queried relationally. `applies_to_roles` is a `RoleType[]`
 `0005_scoring_rule_applies_to_roles`, epic E15-B): `[]` (the default) means the rule always
 applies; a non-empty list scores only sessions whose role chain — as recorded in the event log,
 not this column — includes at least one listed role (`10-domain-model.md` §10.14 "Applicability",
-R7).
+R7). `applies_to_variants` (migration `0009_session_variants`, I3 E1, HLD 70 §70.2.5) is a
+`{switch: [value, …]}` object with the same semantics per variant switch: `{}` (the default) always
+applies; the session's values come from `SESSION_CREATED.variants`, never from this column.
 
 ## 20.3 Session aggregate
 
@@ -179,6 +182,7 @@ R7).
 | `created_at` | `timestamptz` | no | `now()` |
 | `report_released_at` *(additive, E16)* | `timestamptz` | yes | |
 | `report_released_by_user_id` *(additive, E16)* | `uuid` | yes | |
+| `variants` *(additive, I3 E1)* | `jsonb` | no | `'{}'::jsonb` |
 
 PK `(id)`. FK `scenario_version_id → scenario_versions(id) ON DELETE RESTRICT`;
 FK `created_by_user_id → users(id) ON DELETE RESTRICT`;
@@ -206,6 +210,12 @@ session's log would change the very input `rescoreSession` replays (SPEC §28, D
 make it part of a session and `SimulationSession` carries it, so `simulation_sessions` is its home.
 It is `numeric`, not a float, because the API schema's `minimum: 0.1` / `maximum: 10` are decimal
 steps that must round-trip exactly (migration `0002_session_time_scale`).
+
+`variants` is additive in I3 E1 (migration `0009_session_variants`, HLD 70 §70.2.2): the resolved
+`SessionVariants` (`{card_source, dds_mode, dds_card_check, dds_brigade_call}`), a materialised copy
+of `SESSION_CREATED.variants` like `time_scale`, written once at creation and never updated. No
+backfill: `'{}'` — every row created before E1 — reads as the schema-1 derivation of the session's own
+stage chain, which is how that session ran.
 
 `started_at` + `paused_total_ms` is what sim time is recomputed from after a restart (D7, §42 test 13).
 

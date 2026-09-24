@@ -17,6 +17,7 @@ from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import RoleType
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
+from app.domain.session.variants import ScenarioVariants
 
 __all__ = [
     "ScenarioRepository",
@@ -92,6 +93,9 @@ class StoredScenarioVersionDetail(BaseModel):
     content_sha256: str
     locked_at: datetime | None = None
     created_at: datetime
+    variants: ScenarioVariants
+    """The version's *supported + default* variants — declared (schema 2) or derived (HLD 70
+    §70.2.2). Derived by the adapter from two facts of `content`, never the document itself."""
 
 
 @runtime_checkable

@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.domain.common.state_machine import StateMachine
 from app.domain.enums import DDSStageState, RoleType
 from app.domain.events.types import EventType
 from app.domain.roles.module import ActionDescriptor, Permission
 from app.domain.roles.visibility import DataVisibilityPolicy, VisibilitySource
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.domain.session.variants import SessionVariants
 
 
 class EDDSModule:
@@ -41,7 +44,9 @@ class EDDSModule:
             ),
         )
 
-    def available_actions(self, stage_state: Enum) -> tuple[ActionDescriptor, ...]:
+    def available_actions(
+        self, stage_state: Enum, *, variants: SessionVariants | None = None
+    ) -> tuple[ActionDescriptor, ...]:
         return ()
 
     def initial_state(self) -> Enum:

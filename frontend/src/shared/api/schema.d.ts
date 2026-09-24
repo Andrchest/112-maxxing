@@ -203,6 +203,13 @@ export interface paths {
          *     session machine trigger `validate` (`CREATED → READY`). A `role_chain` of `[DDS]` under
          *     `SINGLE_ROLE` or `ASSESSMENT` without `expected_response.prefab_handoff` is refused with
          *     `409 PREFAB_HANDOFF_REQUIRED` (D6, §10.10).
+         *
+         *     (additive, I3 E1) `variants` (every field optional) is resolved per switch as
+         *     request → scenario default → product default (70 §70.2.2). A value outside
+         *     `IMPLEMENTED_VARIANT_VALUES` is `409 VARIANT_NOT_AVAILABLE` (checked first); a value outside
+         *     the scenario's `supported` set is `409 VARIANT_NOT_SUPPORTED`. The resolved variants are
+         *     recorded in `SESSION_CREATED.variants` and returned in `SessionDetail.variants`. Under
+         *     `card_source: GENERATED_CARD` the effective role chain is the suffix starting at DDS.
          */
         post: operations["createSession"];
         delete?: never;
@@ -1201,7 +1208,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1235,6 +1242,26 @@ export interface components {
         SessionMode: "SINGLE_ROLE" | "FULL_CYCLE_SINGLE_TRAINEE" | "MULTI_TRAINEE" | "ASSESSMENT";
         /** @enum {string} */
         SessionState: "CREATED" | "READY" | "ACTIVE" | "ROLE_TRANSITION" | "COMPLETED" | "ABORTED";
+        /**
+         * @description (additive, I3 E1) Variant switch `card_source` (70 §70.2.1).
+         * @enum {string}
+         */
+        CardSource: "GENERATED_CARD" | "CALLER_VOICE";
+        /**
+         * @description (additive, I3 E1) Variant switch `dds_mode` (70 §70.2.1).
+         * @enum {string}
+         */
+        DdsMode: "MEMO_STATUSES" | "RESOURCE_PICKER";
+        /**
+         * @description (additive, I3 E1) Variant switch `dds_card_check` (70 §70.2.1).
+         * @enum {string}
+         */
+        DdsCardCheck: "OFF" | "ON";
+        /**
+         * @description (additive, I3 E1) Variant switch `dds_brigade_call` (70 §70.2.1).
+         * @enum {string}
+         */
+        DdsBrigadeCall: "OFF" | "ON";
         /** @enum {string} */
         Operator112StageState: "WAITING_FOR_CALL" | "RINGING" | "CONNECTED" | "INTERVIEW" | "HANDOFF_PREPARATION" | "HANDED_OFF" | "STAGE_COMPLETED";
         /** @enum {string} */
@@ -1372,6 +1399,7 @@ export interface components {
             locked_at: string | null;
             /** Format: date-time */
             created_at: string;
+            variants: components["schemas"]["ScenarioVariantsView"];
         };
         /**
          * @description Trainee-safe projection: no `world_truth`, `caller_knowledge`, `disclosure_rules`,
@@ -1398,6 +1426,34 @@ export interface components {
             estimated_duration_seconds: number | null;
             /** @description How many resources the DDS board will show — a count, never the list. */
             resource_count: number;
+            variants: components["schemas"]["ScenarioVariantsView"];
+        };
+        /**
+         * @description (additive, I3 E1) What a scenario version supports and defaults to, after the schema-1
+         *     derivation and the implemented-values filter (70 §70.2.2).
+         */
+        ScenarioVariantsView: {
+            supported: {
+                card_source: components["schemas"]["CardSource"][];
+                dds_mode: components["schemas"]["DdsMode"][];
+                dds_card_check: components["schemas"]["DdsCardCheck"][];
+                dds_brigade_call: components["schemas"]["DdsBrigadeCall"][];
+            };
+            default: components["schemas"]["SessionVariants"];
+        };
+        /** @description (additive, I3 E1) The resolved, recorded variants of one session (immutable after creation). */
+        SessionVariants: {
+            card_source: components["schemas"]["CardSource"];
+            dds_mode: components["schemas"]["DdsMode"];
+            dds_card_check: components["schemas"]["DdsCardCheck"];
+            dds_brigade_call: components["schemas"]["DdsBrigadeCall"];
+        };
+        /** @description (additive, I3 E1) Every field optional; a missing one takes the scenario default, then the product default. */
+        VariantsRequest: {
+            card_source?: components["schemas"]["CardSource"];
+            dds_mode?: components["schemas"]["DdsMode"];
+            dds_card_check?: components["schemas"]["DdsCardCheck"];
+            dds_brigade_call?: components["schemas"]["DdsBrigadeCall"];
         };
         ScenarioImportRequest: {
             /** @enum {string} */
@@ -1409,7 +1465,11 @@ export interface components {
         };
         /** @description One violation from `validate_scenario_version` (`30-scenario-format.md` §30.8). */
         ScenarioValidationIssue: {
-            /** @description The §30.8 rule number that failed. */
+            /**
+             * @description The §30.8 rule number that failed. (changed, I3 E1) The bound is the highest rule
+             *     number that exists or is reserved: R40 (`70-i3-alignment.md` §70.2.3; R32–R36 and R40
+             *     exist from E1, R37–R39 are reserved for E2/E4).
+             */
             rule_number: number;
             /** @enum {string} */
             severity: "ERROR" | "WARNING";
@@ -1429,9 +1489,11 @@ export interface components {
             issues: components["schemas"]["ScenarioValidationIssue"][];
             /**
              * @description The complete §30.8 list is always run; a partial run is never reported as valid.
-             * @constant
+             *     (changed, I3 E1) The number of rules the run executed, derived from the validation
+             *     rule registry — no longer a const: I3 epics register further rules (E1: R32–R36, R40;
+             *     later R37–R39).
              */
-            checked_rule_count: 30;
+            checked_rule_count: number;
         };
         /** @description One `session_participants` row — a user bound to a simulation role. */
         ParticipantAssignment: {
@@ -1460,6 +1522,7 @@ export interface components {
              * @default 1
              */
             time_scale: number;
+            variants?: components["schemas"]["VariantsRequest"];
         };
         SessionParticipantView: {
             /** Format: uuid */
@@ -1540,6 +1603,12 @@ export interface components {
              *     being refused. `null` otherwise.
              */
             transition_continue_available_at_offset_ms: number | null;
+            variants: components["schemas"]["SessionVariants"];
+            /**
+             * @description (additive, I3 E1) The scenario's `role_chain`; `role_chain` above is the session's
+             *     effective chain (the suffix starting at DDS under `card_source: GENERATED_CARD`).
+             */
+            scenario_role_chain: components["schemas"]["RoleType"][];
         };
         AbortSessionRequest: {
             reason: string;
@@ -2368,7 +2437,8 @@ export interface components {
          *     `ACTION_NOT_AVAILABLE` when the `RoleModule` does not offer the action in the current
          *     stage state, plus `SCENARIO_VERSION_LOCKED`, `SCENARIO_VERSION_EXISTS`,
          *     `PREFAB_HANDOFF_REQUIRED`, `RECIPIENT_SERVICES_EMPTY`, `HANDOFF_ALREADY_CREATED`,
-         *     `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`.
+         *     `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
+         *     `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`.
          */
         Conflict: {
             headers: {

@@ -82,10 +82,13 @@ class SessionDetailView:
     monotonic_offset_ms: int
     last_seq_no: int
     transition_continue_available_at_offset_ms: int | None
+    scenario_role_chain: tuple[RoleType, ...]
+    """The scenario's `role_chain` (`SESSION_CREATED.scenario_role_chain`, HLD 70 §70.2.4); for a
+    session created before E1 — whose stages were exactly that chain — the stage chain."""
 
     @property
     def role_chain(self) -> tuple[RoleType, ...]:
-        """The session's stages in order — the `role_chain` it was created from."""
+        """The session's stages in order — the **effective** chain it runs (HLD 70 §70.2.4)."""
         return tuple(stage.role_type for stage in self.session.stages)
 
     @property
@@ -137,7 +140,26 @@ async def assemble_session_detail(
         transition_continue_available_at_offset_ms=_continue_available_at(
             session, transition_started_ms
         ),
+        scenario_role_chain=_scenario_role_chain(session, events),
     )
+
+
+def _scenario_role_chain(
+    session: SimulationSession, events: Sequence[object]
+) -> tuple[RoleType, ...]:
+    """`SESSION_CREATED.scenario_role_chain`, else the stage chain (a log that predates E1)."""
+    for event in events:
+        if getattr(event, "event_type", None) is not EventType.SESSION_CREATED:
+            continue
+        payload = getattr(event, "payload", {})
+        raw = payload.get("scenario_role_chain") if isinstance(payload, Mapping) else None
+        if isinstance(raw, list | tuple) and raw:
+            try:
+                return tuple(RoleType(str(role)) for role in raw)
+            except ValueError:
+                break
+        break
+    return tuple(stage.role_type for stage in session.stages)
 
 
 async def _visible_last_seq_no(

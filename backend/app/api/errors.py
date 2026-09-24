@@ -80,6 +80,9 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "RESOURCE_UNAVAILABLE": 409,
     "REPORT_NOT_READY": 409,
     "EXPLANATION_ALREADY_EXISTS": 409,
+    # 409 — I3 additions to Conflict (`docs/hld/contracts/i3-openapi-delta.yaml` `ConflictI3`)
+    "VARIANT_NOT_SUPPORTED": 409,
+    "VARIANT_NOT_AVAILABLE": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,

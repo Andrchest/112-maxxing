@@ -25,6 +25,9 @@ class SessionPolicy(BaseModel):
     session_mode: SessionMode
     assignment_rule: ParticipantAssignmentRule
     role_chain_length: Literal["EXACTLY_ONE", "ONE_OR_MORE"]
+    """Measured on the session's **effective** role chain (HLD 70 §70.2.4): under
+    `card_source: GENERATED_CARD` that is the suffix starting at DDS, so `SINGLE_ROLE` runs the
+    DDS stage of a two-stage scenario."""
     transition_pause_seconds: int
     show_asr_partials: bool
     report_visible_to_trainee_before_release: bool

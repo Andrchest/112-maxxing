@@ -50,7 +50,9 @@ backend/app/domain/
 │   ├── policy.py            SessionPolicy, SESSION_POLICIES
 │   ├── transitions.py       SESSION_TRANSITIONS, OPERATOR_112_TRANSITIONS, DDS_TRANSITIONS
 │   ├── guards.py            SESSION_GUARDS, OPERATOR_112_GUARDS, DDS_GUARDS
-│   └── machine.py           SESSION_STATE_MACHINE
+│   ├── machine.py           SESSION_STATE_MACHINE
+│   └── variants.py          SessionVariants, VariantSupport, ScenarioVariants, resolve_variants,
+│                            IMPLEMENTED_VARIANT_VALUES (additive, I3 E1 — HLD 70 §70.2)
 ├── roles/
 │   ├── module.py            Permission, ActionDescriptor, RoleModule
 │   ├── registry.py          ROLE_MODULES
@@ -872,6 +874,54 @@ Per D6, `SINGLE_ROLE` (and `ASSESSMENT`) with a `role_chain` of `[DDS]` requires
 `expected_response.prefab_handoff`; if it is absent the session cannot be created and the API returns
 `409 PREFAB_HANDOFF_REQUIRED`.
 
+(additive, I3 E1 — HLD 70 §70.2.4) `role_chain_length` and the DDS-only prefab check read the
+session's **effective** role chain: under `card_source: GENERATED_CARD` it is the scenario chain's
+suffix starting at DDS, under `CALLER_VOICE` the whole chain. `SINGLE_ROLE`'s `EXACTLY_ONE` therefore
+accepts the two-stage demo run as `GENERATED_CARD` (effective chain `[DDS]`), and `start_session`
+materialises the prefab exactly as for a `[DDS]` chain.
+
+### Variant switches — `backend/app/domain/session/variants.py` (additive, I3 E1)
+
+```python
+class CardSource(str, Enum):      GENERATED_CARD, CALLER_VOICE
+class DdsMode(str, Enum):         MEMO_STATUSES, RESOURCE_PICKER
+class DdsCardCheck(str, Enum):    OFF, ON
+class DdsBrigadeCall(str, Enum):  OFF, ON
+
+class SessionVariants(BaseModel):       # frozen, extra="forbid"
+    card_source: CardSource
+    dds_mode: DdsMode
+    dds_card_check: DdsCardCheck
+    dds_brigade_call: DdsBrigadeCall
+
+class VariantSupport(BaseModel):        # frozen, extra="forbid"; every tuple non-empty (rule R32)
+    card_source: tuple[CardSource, ...]
+    dds_mode: tuple[DdsMode, ...]
+    dds_card_check: tuple[DdsCardCheck, ...]
+    dds_brigade_call: tuple[DdsBrigadeCall, ...]
+
+class ScenarioVariants(BaseModel):      # the schema-2 scenario key `variants`
+    supported: VariantSupport
+    default: SessionVariants
+
+PRODUCT_DEFAULT_VARIANTS: SessionVariants        # GENERATED_CARD, RESOURCE_PICKER, OFF, OFF
+IMPLEMENTED_VARIANT_VALUES: Mapping[str, frozenset[str]]
+def resolve_variants(requested: PartialVariants, scenario: ScenarioVariants,
+                     implemented: Mapping[str, frozenset[str]]) -> SessionVariants: ...
+```
+
+Three homes, fixed precedence (HLD 70 §70.2.2, D14): the scenario declares *supported + default*
+(`ScenarioVersion.scenario_variants` — the declared schema-2 key, or the schema-1 derivation), session
+creation *selects* (`resolve_variants`: request value → scenario default; a value outside
+`IMPLEMENTED_VARIANT_VALUES` is `VariantNotAvailableError` → `409 VARIANT_NOT_AVAILABLE`, checked
+first; a value outside `supported` is `VariantNotSupportedError` → `409 VARIANT_NOT_SUPPORTED`), and
+`SimulationSession.variants` plus `SESSION_CREATED.variants` *record* the result, immutable after
+creation. A session stored before E1 (`simulation_sessions.variants = '{}'`) reads as the schema-1
+derivation of its own stage chain. `IMPLEMENTED_VARIANT_VALUES` after E1: `card_source {CALLER_VOICE,
+GENERATED_CARD}`, `dds_mode {RESOURCE_PICKER}`, `dds_card_check {OFF}`, `dds_brigade_call {OFF}`.
+`RoleModule.available_actions(stage_state, *, variants=None)` takes the session's variants
+(Protocol-compatible; every module ignores them until E5's memo table).
+
 ## 10.11 World event engine (SPEC §12, D7)
 
 ### Condition expression language — `backend/app/domain/world/conditions.py`
@@ -1164,7 +1214,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 
 | Event type | Actor type(s) | Payload keys (`name: type`) | Visible to |
 |:--|:--|:--|:--|
-| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]`, `created_by_user_id: uuid` | INSTRUCTOR |
+| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]` (the effective chain, I3 E1), `created_by_user_id: uuid`, `variants: SessionVariants` (additive, I3 E1), `scenario_role_chain: list[RoleType]` (additive, I3 E1) | INSTRUCTOR |
 | `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType` | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_STAGE_STARTED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `order_index: int`, `initial_state: str`, `participant_user_id: uuid \| null` | OPERATOR_112, DDS, INSTRUCTOR |
 | `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str` (a neutral incoming-call line, **never** `CallerProfile.identity_ru` — see below), `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
@@ -1255,6 +1305,7 @@ there is no domain type for it, and `score(...)` must never read it (D5, §42 te
 | `config` | `Mapping[str, Any]` validated by the evaluator's own Pydantic config model | evaluator configuration |
 | `min_evidence` | `int` (default 1, ≥ 1) | evidence requirements |
 | `applies_to_roles` | `tuple[RoleType, ...]` (default `()` — always applies) | — (additive, E15) |
+| `applies_to_variants` | `Mapping[str, tuple[str, ...]]` (default `{}` — always applies) | — (additive, I3 E1) |
 
 #### Applicability
 
@@ -1275,6 +1326,14 @@ rather than silently dropping it: `points_awarded: 0.0`, `max_points: 0.0`, `pas
 `note_ru: "Правило не применяется: роль не участвует в сессии"`. It therefore changes neither the
 totals, nor a category percentage, nor `critical_errors`, and it satisfies the ≥ 1 evidence rule
 like every other result.
+
+(additive, I3 E1 — HLD 70 §70.2.5) `applies_to_variants` has the same semantics per switch: a rule
+applies iff, for every switch it names, the session's value is listed. The session's value is
+`ScoringContext.variants`, folded from `SESSION_CREATED.variants`; a log that predates the key reads
+as the scenario's schema-1 derivation, so it rescores identically (INV 9). A rule non-applicable by
+variant yields the same zero/zero result, with `note_ru: "Правило не применяется: вариант сессии не
+тот"`. Because the chain `applies_to_roles` reads is the **effective** one, the `[OPERATOR_112]`
+rules become non-applicable in a `GENERATED_CARD` session without any rule change.
 
 ### Results — `backend/app/domain/scoring/results.py`
 
@@ -1527,7 +1586,12 @@ class ScenarioVersion(BaseModel):
     available_resources: tuple[ResourceSpec, ...]
     world_events: tuple[WorldEventDefinition, ...]
     scoring_rules: tuple[ScoringRule, ...]
+    variants: ScenarioVariants | None = None      # schema 2 only (additive, I3 E1)
 ```
 
-The top-level key names are exactly SPEC §4. `validate_scenario_version` implements the complete D4
+The top-level key names are exactly SPEC §4 for `schema_version: 1`; `schema_version: 2` adds the
+optional key `variants` (D14 amends D4; the later schema-2 keys `timers`, `reference_pack` and
+`expected_response.responders` stay refused until E4/E2/E5b). `scenario_variants` is the declared key
+or its derivation (HLD 70 §70.2.2); a dump omits an absent `variants` and an empty
+`applies_to_variants`, so a schema-1 document's `content_sha256` is unchanged. `validate_scenario_version` implements the complete D4
 load-time list; the rules and the YAML shape are specified in `docs/hld/30-scenario-format.md` §30.4.
