@@ -468,6 +468,12 @@ export interface paths {
          *     appends no revision and emits no event.
          *
          *     `recipients.services` is **not** settable here; use the service commands.
+         *
+         *     (Additive, I3 E2b′, 70 §70.6.4) When the field is `routing_relevant` and the session's
+         *     reference pack has a classifier, the routing resolver runs over the updated card and a
+         *     SIMULATION `RECIPIENTS_RESOLVED` follows `CARD_FIELD_CHANGED` in the same transaction —
+         *     a recorded answer, not a second card revision (INV 4). Like the conditional comment
+         *     write of `createHandoff`, it is not in `x-emits`, which lists what every call emits.
          */
         put: operations["setCardField"];
         post?: never;
@@ -530,7 +536,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Remove one recipient service from the card. */
+        /**
+         * Remove one recipient service from the card.
+         * @description Unchanged for a `v1` card. (Additive, I3 E2b′) Under any other card schema (`v2`) every
+         *     removal is `409 SERVICE_REMOVAL_FORBIDDEN` — only 112 adds services and nobody removes
+         *     them (memo p.14, REQ-5275, 70 C10); nothing is written. An automatically resolved service
+         *     can never be removed on either schema, because it is not in `recipients.services`.
+         */
         post: operations["deselectRecipientService"];
         delete?: never;
         options?: never;
@@ -606,6 +618,13 @@ export interface paths {
          *     belongs to which service. Nothing is read from `WorldTruth`
          *     (SPEC §10, §42 test 3): if the operator entered house `72` where the world says `27`,
          *     DDS receives `72`.
+         *
+         *     (Additive, I3 E2b′, 70 §70.6.4) On a pack with a classifier the resolver runs once more
+         *     and a final SIMULATION `RECIPIENTS_RESOLVED {final: true}` is appended immediately before
+         *     `HANDOFF_CREATED`. The snapshot's and `HANDOFF_CREATED`'s `recipient_services` are the
+         *     notification list auto ∪ manual, one assignment is created per service of it, and
+         *     `RECIPIENT_SERVICES_EMPTY` is about that list. The conditional `RECIPIENTS_RESOLVED` is
+         *     not in `x-emits` (a `v1` card has no classifier and appends none).
          */
         post: operations["createHandoff"];
         delete?: never;
@@ -1450,7 +1469,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1566,7 +1585,7 @@ export interface components {
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -2073,17 +2092,33 @@ export interface components {
         ServiceSelectionRequest: {
             service_type: components["schemas"]["ServiceType"];
         };
+        /**
+         * @description (Additive, I3 E2b′, 70 §70.6.4) `selected_services` keeps meaning `recipients.services`
+         *     (the manual additions); the resolver's answer comes from the log's last
+         *     `RECIPIENTS_RESOLVED`, and `notification_list` is what `createHandoff` freezes.
+         */
         ServiceSelectionView: {
             /** Format: uuid */
             card_id: string;
             /** @description The new value of the card field `recipients.services`. */
             selected_services: components["schemas"]["ServiceType"][];
             /**
-             * @description Every service the UI offers, including plausibly wrong ones. Until E2b's catalog
-             *     picker (I3), the six legacy catalog ids.
+             * @description Every service the UI offers, including plausibly wrong ones: the six legacy catalog
+             *     ids for a `v1` card; the catalog's displayed, non-deprecated entries under `v2`
+             *     (hidden and deprecated entries excluded, C8).
              */
             available_services: components["schemas"]["ServiceType"][];
             card: components["schemas"]["OperatorCardView"];
+            /** @description The resolver's automatic services (last `RECIPIENTS_RESOLVED`). */
+            auto_services: components["schemas"]["ServiceType"][];
+            /** @description `display: false` organisations the resolver informs — never legs (REQ-5280). */
+            informed_services: components["schemas"]["ServiceType"][];
+            /** @description auto ∪ manual — what `createHandoff` freezes into `recipient_services`. */
+            notification_list: components["schemas"]["ServiceType"][];
+            classifier_code: string | null;
+            candidate_codes: string[];
+            /** @description `false` for every service under a `v2` card (C10). */
+            removal_allowed: boolean;
         };
         EndCallRequest: {
             /** @enum {string} */
@@ -2967,7 +3002,8 @@ export interface components {
          *     `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
          *     `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
          *     `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
-         *     does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`.
+         *     does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
+         *     `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`.
          */
         Conflict: {
             headers: {

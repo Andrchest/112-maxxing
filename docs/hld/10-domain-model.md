@@ -77,8 +77,11 @@ backend/app/domain/
 ├── routing/                 (additive, I3 E2a — HLD 70 §70.6)
 │   ├── catalog.py           ServiceCatalogEntry, ServiceCatalog, ReferencePack,
 │   │                        ReferencePackRecord, ReferenceCatalog, LEGACY_REFERENCE
-│   └── classifier.py        ClassifierRow, RoutingCell, ClassifierOrg, Classifier,
-│                            cell_counts_as_notification (A-1)
+│   ├── classifier.py        ClassifierRow, RoutingCell, ClassifierOrg, Classifier,
+│   │                        cell_counts_as_notification (A-1)
+│   └── resolve.py           resolve_notification_list (pure, §70.6.4), Resolution,
+│                            RoutingReason, PackRouting, notification_list,
+│                            recipients_resolved_event (additive, I3 E2b′)
 ├── world/
 │   ├── conditions.py        Condition (the declarative expression language), evaluate_condition
 │   ├── effects.py           MutateWorldTruth, MutateCallerBelief, CreateNotification,
@@ -240,9 +243,9 @@ Additive per D5 (21 members):
 `DIALOGUE_INTERPRETED`, `FACT_GATE_EVALUATED`, `FACTS_DELIVERED`, `TRANSPORT_DISCONNECTED`,
 `TRANSPORT_RECONNECTED`, `INFERENCE_HEALTH_CHANGED`
 
-Additive, I3 (HLD 70 §70.7): `DDS_CARD_STATUS_CHANGED` (E4a).
+Additive, I3 (HLD 70 §70.7): `DDS_CARD_STATUS_CHANGED` (E4a), `RECIPIENTS_RESOLVED` (E2b′).
 
-Total: 50 members.
+Total: 51 members.
 
 ## 10.3 The four information layers (D3, SPEC §3)
 
@@ -1336,7 +1339,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `CALLER_UTTERANCE_INTERRUPTED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `planned_text: str`, `delivered_text: str`, `delivered_audio_ms: int`, `total_audio_ms_generated: int`, `cutoff_latency_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CARD_FIELD_CHANGED` | `TRAINEE`, `INSTRUCTOR` | `card_id: uuid`, `revision_id: uuid`, `revision_no: int`, `field_path: str`, `previous_value: FactValue`, `new_value: FactValue`, `value_type: ValueType`, `actor_user_id: uuid`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `SERVICE_SELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceId`, `selected_services: list[ServiceId]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
-| `HANDOFF_CREATED` | `TRAINEE` | `snapshot_id: uuid`, `incident_id: uuid`, `card_id: uuid`, `card_revision_id: uuid`, `recipient_services: list[ServiceId]`, `card_values: object` (the complete frozen card), `content_sha256: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `HANDOFF_CREATED` | `TRAINEE` (`SIMULATION` for a schema-2 prefab handoff, I3 E2b′) | `snapshot_id: uuid`, `incident_id: uuid`, `card_id: uuid`, `card_revision_id: uuid`, `recipient_services: list[ServiceId]`, `card_values: object` (the complete frozen card), `content_sha256: str`, `at_offset_ms: int`; additive, I3 E2b′ (HLD 70 §70.6.4, §70.7) — `auto_recipient_services: list[ServiceId] \| null`, `manual_recipient_services: list[ServiceId] \| null`, `informed_services: list[ServiceId] \| null` (`recipient_services` is then the union auto ∪ manual; absent in a pre-I3 log) | OPERATOR_112, INSTRUCTOR |
 | `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceId`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_ACKNOWLEDGED` | `TRAINEE` | `assignment_id: uuid`, `at_offset_ms: int`, `latency_from_handoff_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceId`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
@@ -1385,6 +1388,7 @@ property name, does remain `CallerProfile.identity_ru`.
 | `TRANSPORT_RECONNECTED` | `SYSTEM` | `call_id: uuid`, `participant_identity: str`, `downtime_ms: int`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `INFERENCE_HEALTH_CHANGED` | `SYSTEM` | `component: str`, `previous_status: HealthStatus`, `new_status: HealthStatus`, `detail: str` | INSTRUCTOR |
 | `DDS_CARD_STATUS_CHANGED` (additive, I3 E4a) | `SIMULATION` | `incident_id: uuid`, `previous_status: CardStatus`, `new_status: CardStatus`, `reason: CardStatusReason`, `assignment_id: uuid \| null`, `service_type: ServiceId \| null`, `deadline_offset_ms: int \| null`, `at_offset_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
+| `RECIPIENTS_RESOLVED` (additive, I3 E2b′) | `SIMULATION` | `card_id: uuid`, `card_revision_id: uuid \| null`, `pack_id: str`, `classifier_code: str \| null`, `candidate_codes: list[str]`, `main_service: ServiceId \| null`, `auto_services: list[ServiceId]`, `informed_services: list[ServiceId]`, `manual_services: list[ServiceId]`, `notification_list: list[ServiceId]`, `reasons: list[{service_id: ServiceId, source: CLASSIFIER \| TERRITORIAL \| DEPARTMENT, column: str, sub_column: str \| null, row_code: str, row_match: CLASSIFIER_CODE \| COVERED \| GROUP_FALLBACK}]` (`row_code` / `row_match` additive to HLD 70 §70.7: which classifier row a reason came from and whether step 1 found it by the «Класс.:» pick, full coverage, or the group fallback), `final: bool`, `at_offset_ms: int`. Appended after a routing-relevant `CARD_FIELD_CHANGED` and, `final: true`, immediately before `HANDOFF_CREATED` (70 §70.6.4); never a card write (INV 4) | OPERATOR_112, INSTRUCTOR |
 
 ### Turn record (materialized, not a domain type)
 
@@ -1556,10 +1560,15 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 - Config keys: `required_services: list[ServiceId]`, `forbidden_services: list[ServiceId] = []`,
   `points_per_required: float`, `penalty_per_forbidden: float = 0.0`,
   `all_or_nothing: bool = false`, `evaluated_at: "HANDOFF" | "SESSION_END"`.
-- Reads: `SERVICE_SELECTED`, `SERVICE_DESELECTED`, `HANDOFF_CREATED.recipient_services`.
+- Reads: `SERVICE_SELECTED`, `SERVICE_DESELECTED`, `HANDOFF_CREATED.recipient_services`, and
+  (I3 E2b′) the last `RECIPIENTS_RESOLVED.auto_services` at or before the cutoff. At `HANDOFF` the
+  set is unchanged (`recipient_services` is already auto ∪ manual); at `SESSION_END` (and at
+  `HANDOFF` without a handoff) it is the `SERVICE_SELECTED`/`SERVICE_DESELECTED` fold ∪ that last
+  resolution — a log without one folds exactly as before (rescore equality).
 - Points: `points_per_required` per required service present at the cutoff (or `max_points` only when
   all are present, if `all_or_nothing`), plus `penalty_per_forbidden` per forbidden service present.
-- Evidence: the `SERVICE_SELECTED` event per matched service; `HANDOFF_CREATED` for absences.
+- Evidence: the `SERVICE_SELECTED` event per matched service (the last `RECIPIENTS_RESOLVED` for
+  an automatic one, I3 E2b′); `HANDOFF_CREATED` for absences.
 
 #### 6. `DEADLINE` — `deadline.py`
 - Config keys: `from_event_type: EventType | "SESSION_START"`, `to_event_type: EventType`,

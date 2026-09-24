@@ -154,6 +154,13 @@ class ServiceSelectionViewSchema(ApiModel):
     selected_services: list[ServiceId]
     available_services: list[ServiceId]
     card: OperatorCardViewSchema
+    # Additive, I3 E2b′ (HLD 70 §70.6.4): the resolver's answer and the notification list.
+    auto_services: list[ServiceId]
+    informed_services: list[ServiceId]
+    notification_list: list[ServiceId]
+    classifier_code: str | None
+    candidate_codes: list[str]
+    removal_allowed: bool
 
 
 class EndCallRequestSchema(ApiModel):
@@ -281,6 +288,12 @@ def service_selection_schema(view: ServiceSelectionView) -> ServiceSelectionView
         selected_services=list(view.selected_services),
         available_services=list(view.available_services),
         card=operator_card_schema(view.card),
+        auto_services=list(view.auto_services),
+        informed_services=list(view.informed_services),
+        notification_list=list(view.notification_list),
+        classifier_code=view.classifier_code,
+        candidate_codes=list(view.candidate_codes),
+        removal_allowed=view.removal_allowed,
     )
 
 

@@ -211,7 +211,15 @@ async def test_the_generated_card_reaches_the_dds_in_the_v2_layout(
     assert body["card_schema"] == "v2"
     assert body["card_values"]["q.fire.street_object"] == ["мусор"]
     assert body["card_values"]["address.district"] == "Щукино"
-    assert body["recipient_services"] == ["FIRE_RESCUE", "TSODD", "OATI"]
+    # I3 E2b′ (HLD 70 §70.6.4): the prefab's recipients are the manual part; the snapshot holds
+    # auto ∪ manual — image 19's bar plus the district and prefecture ДДС of the card's address.
+    assert body["recipient_services"] == [
+        "FIRE_RESCUE",
+        "TSODD",
+        "OATI",
+        "DDS_DISTRICT_SHCHUKINO",
+        "DDS_PREFECTURE_SZAO",
+    ]
     specs = {spec["field_path"]: spec for spec in body["field_specs"]}
     assert specs["q.fire.street_object"]["label_ru"] == "Улица (пламя, дым)"
     # v2's `required_for_handoff` fields the generated card leaves empty

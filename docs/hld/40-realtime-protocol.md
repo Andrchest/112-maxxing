@@ -251,6 +251,7 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | # | Event type | OPERATOR_112 | DDS | INSTRUCTOR | Redaction for trainee roles |
 |:--|:--|:--:|:--:|:--:|:--|
 | 50 | `DDS_CARD_STATUS_CHANGED` | ✔ | ✔ | ✔ | — (I3 E4a: SIMULATION, deadline-stamped; the card status both trainee lists render, 70 §70.4.6) |
+| 51 | `RECIPIENTS_RESOLVED` | ✔ | — | ✔ | — (I3 E2b′: SIMULATION; the routing resolver's answer the 112 services panel marks as «авто», 70 §70.6.4; the DDS sees only the frozen union through `HANDOFF_RECEIVED`) |
 
 Consistency rule for implementers: this table and `EVENT_PAYLOAD_CATALOG` are one fact expressed
 twice. A unit test iterates `EventType` and asserts that every member appears in both, with the same

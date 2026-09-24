@@ -30,6 +30,17 @@ the materializer and the scoring slice can rebuild the legs from the log alone, 
 event (E9 analyst R2/R5). A `CARD_FIELD_CHANGED` precedes all three when — and only when — a
 comment was given; it is the same write `setCardField` would have made a second earlier.
 
+**The notification list (I3 E2b′, HLD 70 §70.6.4).** On a pack with a classifier the routing
+resolver runs once more over the card being frozen, and a final SIMULATION `RECIPIENTS_RESOLVED
+{final: true}` is appended immediately before `HANDOFF_CREATED`, in this same Unit of Work. The
+snapshot's and `HANDOFF_CREATED`'s `recipient_services` are then the union auto ∪ manual
+(`recipients.services` stays the manual part), one leg is created per id of the union, and
+`HANDOFF_CREATED` carries the parts as `auto_recipient_services`, `manual_recipient_services` and
+`informed_services` (a `display: false` org is informed, never a leg, REQ-5280).
+`409 RECIPIENT_SERVICES_EMPTY` is about the union: a v2 card whose resolver found services needs
+no manual addition. A `v1` session has no classifier: the union is `recipients.services`, as
+before I3, and no `RECIPIENTS_RESOLVED` is written.
+
 **Nothing is read from `WorldTruth`** (SPEC §3, §10, §42 test 3): this module holds the operator
 command gate, which carries no world-truth or caller-belief repository, and `freeze_card_to_
 snapshot` / `snapshot_to_assignments` have no parameter one could arrive through. If the operator
@@ -49,8 +60,9 @@ from app.application.operator.command_context import (
     OperatorCommandContext,
     OperatorCommandGate,
 )
-from app.application.operator.select_service import selected_services
+from app.application.operator.select_service import SERVICES_FIELD_PATH, selected_services
 from app.application.ports.id_generator import IdGenerator
+from app.application.reference.card_schemas import session_pack_id
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, RoleStageId, SessionId, UserId
@@ -67,8 +79,15 @@ from app.domain.enums import (
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 from app.domain.layers.copies import freeze_card_to_snapshot, snapshot_to_assignments
-from app.domain.layers.handoff import HandoffSnapshot
+from app.domain.layers.handoff import HandoffSnapshot, handoff_created_event
 from app.domain.layers.operator_card import OperatorCard, set_field
+from app.domain.routing.resolve import (
+    EMPTY_RESOLUTION,
+    Resolution,
+    notification_list,
+    pack_routing,
+    recipients_resolved_event,
+)
 
 __all__ = [
     "ACTION_ID",
@@ -202,7 +221,10 @@ class CreateHandoff:
         card = await ctx.card()
         card, revision_id = await self._write_comment(ctx, card, comment_ru)
 
-        services = selected_services(card)
+        manual = selected_services(card)
+        routing = pack_routing(self._gate.reference, session_pack_id(ctx.full_log))
+        resolution = routing.resolve(card.values) if routing is not None else EMPTY_RESOLUTION
+        services = notification_list(resolution.auto_services, manual)
         if not services:
             raise RecipientServicesEmptyError(ctx.session_id)
         if revision_id is None:
@@ -227,12 +249,32 @@ class CreateHandoff:
             actor=ctx.actor,
             now_ms=ctx.now_ms,
             runtime=ctx.guard_runtime(),
-            card=card,
+            # The guard reads `recipients.services`; it is handed the notification list — a
+            # projection for the guard only, never written to the card.
+            card=card.model_copy(
+                update={"values": {**card.values, SERVICES_FIELD_PATH: list(services)}}
+            ),
         )
         await ctx.save_session(session)
+        final = (
+            []
+            if routing is None
+            else [
+                recipients_resolved_event(
+                    resolution,
+                    card_id=UUID(str(card.card_id)),
+                    card_revision_id=UUID(str(revision_id)),
+                    pack_id=routing.pack_id,
+                    manual_services=manual,
+                    final=True,
+                    at_offset_ms=ctx.now_ms,
+                )
+            ]
+        )
         await ctx.append(
             [
-                _handoff_created(ctx, snapshot),
+                *final,
+                _handoff_created(ctx, snapshot, resolution, manual),
                 *stage_events,
                 *(_handoff_received(ctx, snapshot, leg) for leg in legs),
             ]
@@ -278,8 +320,9 @@ class CreateHandoff:
     ) -> CardRevisionId:
         """The card's newest `incident_card_revisions` row — the revision being frozen.
 
-        There is always one: `recipients.services` is non-empty by the check above, and the only
-        way it became non-empty is `selectRecipientService`, which writes a revision.
+        There is always one: the notification list is non-empty by the check above, and it only
+        becomes non-empty through a revision — `selectRecipientService`, or (I3 E2b′) the
+        routing-relevant `setCardField` the resolver answered.
         """
         _first, total = await ctx.uow.operator_cards.list_revisions(card.card_id, limit=1)
         newest, _total = await ctx.uow.operator_cards.list_revisions(
@@ -295,22 +338,20 @@ class CreateHandoff:
 # ---------------------------------------------------------------------------------------------
 
 
-def _handoff_created(ctx: OperatorCommandContext, snapshot: HandoffSnapshot) -> DomainEvent:
+def _handoff_created(
+    ctx: OperatorCommandContext,
+    snapshot: HandoffSnapshot,
+    resolution: Resolution,
+    manual: tuple[ServiceId, ...],
+) -> DomainEvent:
     """`HANDOFF_CREATED` (TRAINEE) — one per trainee action, whatever N is (R5)."""
-    return DomainEvent(
-        event_type=EventType.HANDOFF_CREATED,
+    return handoff_created_event(
+        snapshot,
+        auto=resolution.auto_services,
+        manual=manual,
+        informed=resolution.informed_services,
         actor=ctx.actor,
-        monotonic_offset_ms=ctx.now_ms,
-        payload={
-            "snapshot_id": UUID(str(snapshot.snapshot_id)),
-            "incident_id": UUID(str(snapshot.incident_id)),
-            "card_id": UUID(str(snapshot.card_id)),
-            "card_revision_id": UUID(str(snapshot.card_revision_id)),
-            "recipient_services": list(snapshot.recipient_services),
-            "card_values": dict(snapshot.card_values),
-            "content_sha256": snapshot.content_sha256,
-            "at_offset_ms": ctx.now_ms,
-        },
+        at_offset_ms=ctx.now_ms,
     )
 
 

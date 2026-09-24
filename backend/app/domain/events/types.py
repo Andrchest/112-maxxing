@@ -2,8 +2,9 @@
 
 `str, Enum`; member `NAME == VALUE`. The 28 SPEC §8 members verbatim, then the additive members
 allowed by D5 ("at least"): the 21 of I1 plus I3's (HLD 70 §70.7 — `DDS_CARD_STATUS_CHANGED`,
-I3 E4a). `SPEC_EVENT_TYPES` and `ADDITIVE_EVENT_TYPES` partition `EventType` and exist so later
-code (and tests) can assert that partition without re-typing either list.
+I3 E4a; `RECIPIENTS_RESOLVED`, I3 E2b′). `SPEC_EVENT_TYPES` and `ADDITIVE_EVENT_TYPES` partition
+`EventType` and exist so later code (and tests) can assert that partition without re-typing either
+list.
 """
 
 from __future__ import annotations
@@ -68,6 +69,8 @@ class EventType(str, Enum):
     # Additive per D5, I3 (HLD 70 §70.7).
     DDS_CARD_STATUS_CHANGED = "DDS_CARD_STATUS_CHANGED"
     """The card's derived status changed (§70.4.6); SIMULATION, deadline-stamped (E4a)."""
+    RECIPIENTS_RESOLVED = "RECIPIENTS_RESOLVED"
+    """The routing resolver's answer for the card (§70.6.4); SIMULATION, not a card write (E2b′)."""
 
 
 SPEC_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -127,6 +130,7 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.TRANSPORT_RECONNECTED,
         EventType.INFERENCE_HEALTH_CHANGED,
         EventType.DDS_CARD_STATUS_CHANGED,
+        EventType.RECIPIENTS_RESOLVED,
     }
 )
 

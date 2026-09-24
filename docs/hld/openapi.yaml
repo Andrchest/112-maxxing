@@ -712,6 +712,12 @@ paths:
         appends no revision and emits no event.
 
         `recipients.services` is **not** settable here; use the service commands.
+
+        (Additive, I3 E2b′, 70 §70.6.4) When the field is `routing_relevant` and the session's
+        reference pack has a classifier, the routing resolver runs over the updated card and a
+        SIMULATION `RECIPIENTS_RESOLVED` follows `CARD_FIELD_CHANGED` in the same transaction —
+        a recorded answer, not a second card revision (INV 4). Like the conditional comment
+        write of `createHandoff`, it is not in `x-emits`, which lists what every call emits.
       x-action: edit_card
       x-emits: [CARD_FIELD_CHANGED]
       parameters:
@@ -804,6 +810,11 @@ paths:
       tags: [operator]
       operationId: deselectRecipientService
       summary: Remove one recipient service from the card.
+      description: |
+        Unchanged for a `v1` card. (Additive, I3 E2b′) Under any other card schema (`v2`) every
+        removal is `409 SERVICE_REMOVAL_FORBIDDEN` — only 112 adds services and nobody removes
+        them (memo p.14, REQ-5275, 70 C10); nothing is written. An automatically resolved service
+        can never be removed on either schema, because it is not in `recipients.services`.
       x-action: select_services
       x-emits: [CARD_FIELD_CHANGED, SERVICE_DESELECTED]
       parameters:
@@ -892,6 +903,13 @@ paths:
         belongs to which service. Nothing is read from `WorldTruth`
         (SPEC §10, §42 test 3): if the operator entered house `72` where the world says `27`,
         DDS receives `72`.
+
+        (Additive, I3 E2b′, 70 §70.6.4) On a pack with a classifier the resolver runs once more
+        and a final SIMULATION `RECIPIENTS_RESOLVED {final: true}` is appended immediately before
+        `HANDOFF_CREATED`. The snapshot's and `HANDOFF_CREATED`'s `recipient_services` are the
+        notification list auto ∪ manual, one assignment is created per service of it, and
+        `RECIPIENT_SERVICES_EMPTY` is about that list. The conditional `RECIPIENTS_RESOLVED` is
+        not in `x-emits` (a `v1` card has no classifier and appends none).
       x-action: create_handoff
       x-emits: [HANDOFF_CREATED, STAGE_STATE_CHANGED, HANDOFF_RECEIVED]
       parameters:
@@ -2084,7 +2102,8 @@ components:
         `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
         `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
         `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
-        does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`.
+        does not have; (additive, I3 E4a) `LESSON_NOT_ACTIVE`; (additive, I3 E2b′)
+        `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2143,6 +2162,7 @@ components:
         - SERVICE_UNKNOWN              # additive, I3 E2a
         - LESSON_NOT_ACTIVE            # additive, I3 E4a
         - CARD_OPTION_UNKNOWN          # additive, I3 E3a
+        - SERVICE_REMOVAL_FORBIDDEN    # additive, I3 E2b′
 
     Problem:
       type: object
@@ -2417,6 +2437,7 @@ components:
         - TRANSPORT_RECONNECTED
         - INFERENCE_HEALTH_CHANGED
         - DDS_CARD_STATUS_CHANGED      # additive, I3 E4a
+        - RECIPIENTS_RESOLVED          # additive, I3 E2b′
 
     # ------------------------------------------------------ value objects ----
     FactValue:
@@ -3193,8 +3214,12 @@ components:
 
     ServiceSelectionView:
       type: object
+      description: |
+        (Additive, I3 E2b′, 70 §70.6.4) `selected_services` keeps meaning `recipients.services`
+        (the manual additions); the resolver's answer comes from the log's last
+        `RECIPIENTS_RESOLVED`, and `notification_list` is what `createHandoff` freezes.
       additionalProperties: false
-      required: [card_id, selected_services, available_services, card]
+      required: [card_id, selected_services, available_services, card, auto_services, informed_services, notification_list, classifier_code, candidate_codes, removal_allowed]
       properties:
         card_id: { type: string, format: uuid }
         selected_services:
@@ -3204,10 +3229,30 @@ components:
         available_services:
           type: array
           description: |
-            Every service the UI offers, including plausibly wrong ones. Until E2b's catalog
-            picker (I3), the six legacy catalog ids.
+            Every service the UI offers, including plausibly wrong ones: the six legacy catalog
+            ids for a `v1` card; the catalog's displayed, non-deprecated entries under `v2`
+            (hidden and deprecated entries excluded, C8).
           items: { $ref: '#/components/schemas/ServiceType' }
         card: { $ref: '#/components/schemas/OperatorCardView' }
+        auto_services:
+          type: array
+          description: The resolver's automatic services (last `RECIPIENTS_RESOLVED`).
+          items: { $ref: '#/components/schemas/ServiceType' }
+        informed_services:
+          type: array
+          description: '`display: false` organisations the resolver informs — never legs (REQ-5280).'
+          items: { $ref: '#/components/schemas/ServiceType' }
+        notification_list:
+          type: array
+          description: auto ∪ manual — what `createHandoff` freezes into `recipient_services`.
+          items: { $ref: '#/components/schemas/ServiceType' }
+        classifier_code: { type: [string, 'null'] }
+        candidate_codes:
+          type: array
+          items: { type: string }
+        removal_allowed:
+          type: boolean
+          description: '`false` for every service under a `v2` card (C10).'
 
     EndCallRequest:
       type: object

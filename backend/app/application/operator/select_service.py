@@ -27,8 +27,8 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.operator.command_context import OperatorCommandGate
-from app.application.operator.views import ServiceSelectionView, card_view
+from app.application.operator.command_context import OperatorCommandContext, OperatorCommandGate
+from app.application.operator.views import ServiceSelectionView, service_selection_view
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.reference import ReferencePort
 from app.application.reference.card_schemas import session_pack_id
@@ -38,7 +38,6 @@ from app.domain.common.ids import CardRevisionId, SessionId
 from app.domain.enums import LEGACY_SERVICE_IDS, ServiceId, ValueType
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
-from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.operator_card import OperatorCard, set_field
 from app.domain.routing.catalog import DEFAULT_PACK_ID, ReferenceCatalog
 
@@ -59,9 +58,10 @@ SERVICES_FIELD_PATH = "recipients.services"
 """The `CARD_FIELDS` path the selection is stored in (§10.6)."""
 
 AVAILABLE_SERVICES: tuple[ServiceId, ...] = LEGACY_SERVICE_IDS
-"""`ServiceSelectionView.available_services`: "every service the UI offers, including plausibly
-wrong ones" — the trainee must be able to pick the wrong service (SPEC §10). Still the six legacy
-ids: the catalog-wide picker (hidden and deprecated entries excluded under v2) is E2b's."""
+"""`ServiceSelectionView.available_services` of a `v1` card: "every service the UI offers,
+including plausibly wrong ones" — the trainee must be able to pick the wrong service (SPEC §10).
+Under a v2 card the picker offers the catalog's displayed, non-deprecated entries instead
+(`views.service_selection_view`, I3 E2b′)."""
 
 
 class ServiceUnknownError(DomainError):
@@ -121,7 +121,7 @@ class SelectRecipientService:
             card = await ctx.card()
             current = selected_services(card)
             if service_type in current:
-                return _view(card, current, ctx.card_schema)
+                return _view(card, ctx, reference_catalog(self._reference))
 
             new_selection = (*current, service_type)
             updated, revision, card_event = set_field(
@@ -150,7 +150,7 @@ class SelectRecipientService:
                 },
             )
             await ctx.append([card_event, selected])
-            return _view(updated, new_selection, ctx.card_schema)
+            return _view(updated, ctx, reference_catalog(self._reference))
 
 
 def _services_value_type(card_event: DomainEvent) -> ValueType:
@@ -165,11 +165,8 @@ def _services_value_type(card_event: DomainEvent) -> ValueType:
 
 
 def _view(
-    card: OperatorCard, selection: tuple[ServiceId, ...], schema: CardSchema
+    card: OperatorCard, ctx: OperatorCommandContext, reference: ReferenceCatalog
 ) -> ServiceSelectionView:
-    return ServiceSelectionView(
-        card_id=UUID(str(card.card_id)),
-        selected_services=selection,
-        available_services=AVAILABLE_SERVICES,
-        card=card_view(card, schema),
+    return service_selection_view(
+        card, ctx.card_schema, ctx.full_log, reference.services(session_pack_id(ctx.full_log))
     )

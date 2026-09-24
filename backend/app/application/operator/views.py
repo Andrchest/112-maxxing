@@ -37,13 +37,15 @@ from app.application.reference.card_schemas import (
     field_spec_views,
 )
 from app.domain.common.ids import SessionId
-from app.domain.enums import Operator112StageState, ServiceId, SessionState
+from app.domain.enums import LEGACY_SERVICE_IDS, Operator112StageState, ServiceId, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.operator_card import CARD_SCHEMA_V1, CardRevision, OperatorCard
 from app.domain.roles.module import ActionDescriptor
 from app.domain.roles.registry import ROLE_MODULES
+from app.domain.routing.catalog import ServiceCatalog
+from app.domain.routing.resolve import last_resolution, notification_list
 from app.domain.session.session import RoleStage, SimulationSession
 
 __all__ = [
@@ -66,10 +68,14 @@ __all__ = [
     "project_call_state",
     "read_cached_call_state",
     "revision_view",
+    "service_selection_view",
     "write_call_state_cache",
 ]
 
 logger = logging.getLogger(__name__)
+
+SERVICES_FIELD_PATH = "recipients.services"
+"""The card field the manual service additions live in (§10.6)."""
 
 
 class CallPhase(str, Enum):
@@ -155,12 +161,24 @@ class OperatorStageView(ApplicationView):
 
 
 class ServiceSelectionView(ApplicationView):
-    """`openapi.yaml`'s `ServiceSelectionView` — the answer of select/deselect."""
+    """`openapi.yaml`'s `ServiceSelectionView` — the answer of select/deselect.
+
+    `selected_services` keeps meaning `recipients.services` (the manual additions). The I3 E2b′
+    keys (HLD 70 §70.6.4) come from the log's last `RECIPIENTS_RESOLVED`: the resolver's
+    automatic and informed services, `notification_list` = auto ∪ manual (what `createHandoff`
+    freezes), and `removal_allowed` — `false` for every service under a card schema other than
+    `v1` (memo p.14, REQ-5275, C10)."""
 
     card_id: UUID
     selected_services: tuple[ServiceId, ...]
     available_services: tuple[ServiceId, ...]
     card: OperatorCardView
+    auto_services: tuple[ServiceId, ...] = ()
+    informed_services: tuple[ServiceId, ...] = ()
+    notification_list: tuple[ServiceId, ...] = ()
+    classifier_code: str | None = None
+    candidate_codes: tuple[str, ...] = ()
+    removal_allowed: bool = True
 
 
 # ---------------------------------------------------------------------------------------------
@@ -180,6 +198,52 @@ def card_view(card: OperatorCard, schema: CardSchema = CARD_SCHEMA_V1) -> Operat
         field_specs=field_spec_views(schema),
         card_schema=schema.schema_id,
     )
+
+
+def service_selection_view(
+    card: OperatorCard,
+    schema: CardSchema,
+    log: Sequence[SessionEvent],
+    catalog: ServiceCatalog | None,
+) -> ServiceSelectionView:
+    """`ServiceSelectionView` for `card` after a select/deselect (HLD 70 §70.6.4, I3 E2b′).
+
+    Under `v1` the picker still offers the six legacy ids and removal is allowed, exactly as
+    before I3 (P5). Under any other schema it offers the session catalog's displayed,
+    non-deprecated entries (C8), removal is refused, and the automatic part is the log's last
+    `RECIPIENTS_RESOLVED` — a projection of recorded events, never a fresh resolution."""
+    raw = card.values.get(SERVICES_FIELD_PATH)
+    manual = tuple(ServiceId(value) for value in raw) if isinstance(raw, list) else ()
+    legacy = schema.schema_id == CARD_SCHEMA_V1.schema_id
+    available: tuple[ServiceId, ...] = (
+        LEGACY_SERVICE_IDS
+        if legacy or catalog is None
+        else tuple(entry.id for entry in catalog.search())
+    )
+    resolved = last_resolution(log)
+    payload = resolved.payload if resolved is not None else {}
+    auto = _service_ids(payload.get("auto_services"))
+    code = payload.get("classifier_code")
+    return ServiceSelectionView(
+        card_id=UUID(str(card.card_id)),
+        selected_services=manual,
+        available_services=available,
+        card=card_view(card, schema),
+        auto_services=auto,
+        informed_services=_service_ids(payload.get("informed_services")),
+        notification_list=notification_list(auto, manual),
+        classifier_code=code if isinstance(code, str) else None,
+        candidate_codes=tuple(
+            str(item) for item in payload.get("candidate_codes") or () if isinstance(item, str)
+        ),
+        removal_allowed=legacy,
+    )
+
+
+def _service_ids(raw: object) -> tuple[ServiceId, ...]:
+    if not isinstance(raw, list | tuple):
+        return ()
+    return tuple(ServiceId(item) for item in raw if isinstance(item, str) and item)
 
 
 def revision_view(revision: CardRevision) -> CardRevisionView:

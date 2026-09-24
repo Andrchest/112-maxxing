@@ -38,9 +38,12 @@ def evaluate(
     """Were the right services addressed, and no wrong one? (§10.14 #5)
 
     At `evaluated_at: HANDOFF` the set is `HANDOFF_CREATED.recipient_services` — the frozen
-    snapshot that actually went to the DDS, not what was on screen at some other moment. Without
-    a handoff (a stage that never handed off) the set is folded from `SERVICE_SELECTED` /
-    `SERVICE_DESELECTED` up to the cutoff, which is also what `SESSION_END` always uses.
+    snapshot that actually went to the DDS, not what was on screen at some other moment (under I3
+    that is already the union auto ∪ manual, HLD 70 §70.6.4). Without a handoff (a stage that
+    never handed off) the set is folded from `SERVICE_SELECTED` / `SERVICE_DESELECTED` up to the
+    cutoff, which is also what `SESSION_END` always uses — joined (I3 E2b′) with the
+    `auto_services` of the last `RECIPIENTS_RESOLVED` at or before the cutoff. A log without that
+    event (every pre-I3 log, every `v1` session) folds exactly as before.
     """
     cutoff = ctx.cutoff_seq_no(config.evaluated_at)
     selected, source = _selected_services(ctx, config.evaluated_at, cutoff)
@@ -93,8 +96,20 @@ def _selected_services(
             selected.add(service)
         else:
             selected.discard(service)
+    resolved = _last_resolution(ctx, cutoff)
+    if resolved is not None:
+        selected |= _as_services(resolved.payload.get("auto_services"))
     bound = handoff if handoff is not None else evidence.bounding_event(ctx, RoleType.OPERATOR_112)
     return frozenset(selected), bound
+
+
+def _last_resolution(ctx: ScoringContext, cutoff: int) -> SessionEvent | None:
+    """The last `RECIPIENTS_RESOLVED` at or before `cutoff` (I3 E2b′), or `None`."""
+    found: SessionEvent | None = None
+    for event in ctx.of_type(EventType.RECIPIENTS_RESOLVED):
+        if event.seq_no <= cutoff:
+            found = event
+    return found
 
 
 def _service_evidence(
@@ -109,6 +124,9 @@ def _service_evidence(
             continue
         if _one_service(event.payload.get("service_type")) == service:
             return evidence.from_event(event, f"Служба {service} выбрана оператором.")
+    resolved = _last_resolution(ctx, cutoff)
+    if resolved is not None and service in _as_services(resolved.payload.get("auto_services")):
+        return evidence.from_event(resolved, f"Служба {service} определена по классификатору.")
     return evidence.from_event(fallback, f"Служба {service} указана получателем.")
 
 

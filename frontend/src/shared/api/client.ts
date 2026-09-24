@@ -620,6 +620,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   // additive, I3 E3a (concurrent worker): kept the exhaustive table compiling against the
   // regenerated `schema.d.ts` — not a card-schema feature of this task.
   CARD_OPTION_UNKNOWN: 'problemCardOptionUnknown',
+  SERVICE_REMOVAL_FORBIDDEN: 'problemServiceRemovalForbidden', // additive, I3 E2b′
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

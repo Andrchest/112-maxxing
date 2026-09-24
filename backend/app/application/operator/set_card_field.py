@@ -24,6 +24,12 @@ Four rejections, each with the code `openapi.yaml` names:
   so `CARD_FIELD_UNKNOWN` would be a lie; `VALIDATION_ERROR` is the 422 that says "this request
   is not the right request". See the task report, "HLD gaps".
 
+**Routing (I3 E2b′, HLD 70 §70.6.4).** When the field is `routing_relevant` and the session's
+reference pack has a classifier, the routing resolver runs over the updated card and its answer is
+appended as a SIMULATION `RECIPIENTS_RESOLVED` right after `CARD_FIELD_CHANGED`, in the same
+transaction. It is a recorded event, not a card write: the command still makes exactly one
+revision (INV 4, D3). A `v1` session has no routing-relevant field, so nothing changes for it.
+
 Setting a field to its value is a no-op: `revision: null`, no `incident_card_revisions` row, no
 `CARD_FIELD_CHANGED`, `200` with the unchanged card (`openapi.yaml`, §10.6).
 
@@ -40,7 +46,7 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.operator.command_context import OperatorCommandGate
+from app.application.operator.command_context import OperatorCommandContext, OperatorCommandGate
 from app.application.operator.views import (
     ApplicationView,
     CardRevisionView,
@@ -50,11 +56,21 @@ from app.application.operator.views import (
 )
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.idempotency_store import IdempotencyStore, idempotency_key
+from app.application.reference.card_schemas import session_pack_id
 from app.domain.common.errors import CardFieldError, DomainError
 from app.domain.common.ids import CardRevisionId, SessionId
 from app.domain.common.values import FactValue
+from app.domain.enums import ServiceId
+from app.domain.events.session_event import DomainEvent
 from app.domain.layers.card_schema import CardOptionUnknownError, CardSchema
-from app.domain.layers.operator_card import CARD_FIELDS, CardFieldSpec, set_field
+from app.domain.layers.operator_card import (
+    CARD_FIELDS,
+    CardFieldSpec,
+    CardRevision,
+    OperatorCard,
+    set_field,
+)
+from app.domain.routing.resolve import pack_routing, recipients_resolved_event
 
 __all__ = [
     "ACTION_ID",
@@ -184,10 +200,38 @@ class SetCardField:
 
             await ctx.uow.operator_cards.save(updated)
             await ctx.uow.operator_cards.add_revision(revision, spec.value_type)
-            await ctx.append([event])
+            await ctx.append([event, *self._resolution(ctx, spec, updated, revision)])
             return SetCardFieldResult(
                 card=card_view(updated, ctx.card_schema), revision=revision_view(revision)
             )
+
+    def _resolution(
+        self,
+        ctx: OperatorCommandContext,
+        spec: CardFieldSpec,
+        card: OperatorCard,
+        revision: CardRevision,
+    ) -> list[DomainEvent]:
+        """`[RECIPIENTS_RESOLVED]` for a routing-relevant change on a pack with a classifier."""
+        if not spec.routing_relevant:
+            return []
+        routing = pack_routing(self._gate.reference, session_pack_id(ctx.full_log))
+        if routing is None:
+            return []
+        manual = card.values.get(SERVICES_FIELD_PATH)
+        return [
+            recipients_resolved_event(
+                routing.resolve(card.values),
+                card_id=UUID(str(card.card_id)),
+                card_revision_id=UUID(str(revision.revision_id)),
+                pack_id=routing.pack_id,
+                manual_services=(
+                    [ServiceId(item) for item in manual] if isinstance(manual, list) else []
+                ),
+                final=False,
+                at_offset_ms=ctx.now_ms,
+            )
+        ]
 
 
 def _spec_for(schema: CardSchema, field_path: str) -> CardFieldSpec:

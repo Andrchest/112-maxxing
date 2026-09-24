@@ -127,6 +127,19 @@ export const ru = {
   operatorFieldSaveFailed: 'Не удалось сохранить значение поля.',
 
   operatorServicesTitle: 'Службы-получатели',
+  // -- I3 E2b′: the services panel as a catalog picker (70 §70.6.4, C10) ----------------------
+  operatorServicesAdd: 'Добавить службу',
+  operatorServicesEmpty: 'Список оповещения пуст.',
+  operatorServicesAuto: 'авто',
+  operatorServicesManual: 'вручную',
+  operatorServicesRemove: 'Убрать',
+  operatorServicesPickerTitle: 'Выбор службы',
+  operatorServicesPickerDescription: 'Службу можно добавить в список оповещения; убрать её нельзя.',
+  operatorServicesSearchLabel: 'Поиск службы',
+  operatorServicesSearchPlaceholder: 'Название службы',
+  operatorServicesPickerNothingFound: 'Ничего не найдено.',
+  operatorServicesAlreadyListed: 'уже в списке',
+  operatorServicesInformed: 'Информируются',
   serviceTypeFireRescue: 'Пожарно-спасательная служба',
   serviceTypePolice: 'Полиция',
   serviceTypeAmbulance: 'Скорая медицинская помощь',
@@ -156,6 +169,14 @@ export const ru = {
   operatorGroupNotes: 'Примечания',
   operatorGroupRecipients: 'Получатели',
   operatorGroupOther: 'Прочее',
+  // v2 card-schema groups (§70.5.2) — reused by the DDS sentence view and the report's card
+  // sections wherever a v2 card's own `group` names one of these (I3 E3c).
+  operatorGroupHeader: 'Телефоны заявителя',
+  operatorGroupApplicant: 'Заявитель',
+  operatorGroupQFire: 'Происшествие 101',
+  operatorGroupQGas: 'Происшествие 104',
+  operatorGroupQExplosion: 'Взрыв',
+  operatorGroupServices: 'Службы',
 
   incidentTypeFire: 'Пожар',
   incidentTypeMedical: 'Медицинский случай',
@@ -205,6 +226,7 @@ export const ru = {
   problemServiceUnknown: 'Такой службы нет в справочнике служб.',
   problemLessonNotActive: 'Занятие не идёт.',
   problemCardOptionUnknown: 'Недопустимое значение поля карточки.',
+  problemServiceRemovalForbidden: 'Службу нельзя убрать из списка оповещения: службы можно только добавлять.',
   problemUnknown: 'Неизвестная ошибка. Попробуйте ещё раз.',
 
   // -- operator 112: handoff dialog + role transition (E10; SPEC §10, §10.10) ----------------
@@ -239,49 +261,6 @@ export const ru = {
   ddsWorkItemRecipientsLabel: 'Получатели',
   ddsMissingFieldNotice: 'не указано оператором',
   ddsAcknowledgeButton: 'Принять к исполнению',
-
-  // Static `CARD_FIELDS` catalog (`docs/hld/10-domain-model.md` §10.6) — the DDS work item has no
-  // `field_specs`/`label_ru` of its own (see the report's "HLD gaps"), so these labels are the
-  // frontend's own presentation concern, the same treatment `card-form.tsx` already gives
-  // `CardFieldSpec.enum_name` option labels.
-  cardFieldIncidentType: 'Тип происшествия',
-  cardFieldIncidentSubtype: 'Уточнение типа',
-  cardFieldIncidentReportedAt: 'Время приёма вызова',
-  cardFieldAddressLocality: 'Населённый пункт',
-  cardFieldAddressStreet: 'Улица',
-  cardFieldAddressHouse: 'Дом',
-  cardFieldAddressBuilding: 'Корпус / строение',
-  cardFieldAddressEntrance: 'Подъезд',
-  cardFieldAddressFloor: 'Этаж',
-  cardFieldAddressApartment: 'Квартира',
-  cardFieldAddressLandmark: 'Ориентир',
-  cardFieldAddressComment: 'Примечание к адресу',
-  cardFieldCallerFullName: 'ФИО заявителя',
-  cardFieldCallerPhone: 'Телефон заявителя',
-  cardFieldCallerRelationship: 'Отношение к происшествию',
-  cardFieldCallerCallbackPossible: 'Возможен обратный вызов',
-  cardFieldDescriptionText: 'Описание происшествия',
-  cardFieldPeopleTotalAffected: 'Всего людей в опасности',
-  cardFieldPeopleVictimsCount: 'Число пострадавших',
-  cardFieldPeopleTrappedCount: 'Число заблокированных',
-  cardFieldPeopleChildrenPresent: 'Есть дети',
-  cardFieldPeopleEvacuationNeeded: 'Требуется эвакуация',
-  cardFieldPeopleNotes: 'Примечания по людям',
-  cardFieldHazardsOpenFire: 'Открытое горение',
-  cardFieldHazardsSmoke: 'Задымление',
-  cardFieldHazardsGasLeak: 'Утечка газа',
-  cardFieldHazardsElectrical: 'Электроопасность',
-  cardFieldHazardsChemical: 'Химическая опасность',
-  cardFieldHazardsCollapseRisk: 'Угроза обрушения',
-  cardFieldHazardsOther: 'Иная опасность',
-  cardFieldFlagsThreatToLife: 'Угроза жизни',
-  cardFieldFlagsMassEvent: 'Массовое происшествие',
-  cardFieldFlagsRepeatCall: 'Повторное обращение',
-  cardFieldFlagsRequiresEscalation: 'Требует эскалации',
-  cardFieldFlagsFalseCall: 'Ложный вызов',
-  cardFieldNotesFreeText: 'Дополнительная информация',
-  cardFieldRecipientsServices: 'Службы-получатели',
-  cardFieldRecipientsComment: 'Комментарий для служб',
 
   factBooleanYes: 'Да',
   factBooleanNo: 'Нет',
@@ -668,6 +647,7 @@ export const ru = {
   eventTypeTransportReconnected: 'Голосовая связь восстановлена',
   eventTypeInferenceHealthChanged: 'Изменилась готовность моделей',
   eventTypeDdsCardStatusChanged: 'Изменился статус карточки',
+  eventTypeRecipientsResolved: 'Определён список оповещения',
 
   // -- I3 E4b: card status (memo p.27, 70 §70.4.6) — server-derived only, never computed here --
   lessonCardStatusRegistered: 'Зарегистрирована',

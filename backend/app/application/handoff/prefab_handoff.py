@@ -34,12 +34,18 @@ be a handoff that happened before the exercise did.
 3. one `DDSAssignment` leg per recipient service, through the same `snapshot_to_assignments`;
 4. one `HANDOFF_RECEIVED` (`SIMULATION`) per leg.
 
-**No `HANDOFF_CREATED`.** §10.13 types that event `TRAINEE`-only, and no trainee created this
-handoff; writing it with a `SIMULATION` actor would put a trainee action in the audit log that
-nobody performed (SPEC §8). The analyst's §7 #15 notes that E15's `ScoringContext` reads the
-handoff payload from `HANDOFF_CREATED`, which means a DDS-only session has no 112 handoff to
-score — which is correct: there was no 112 stage to score. E17/E15 own whatever a DDS-only report
-says about it.
+**No `HANDOFF_CREATED` on a `v1` card.** §10.13 typed that event `TRAINEE`-only, and no trainee
+created this handoff; writing it would put a trainee action in the audit log that nobody
+performed (SPEC §8). The analyst's §7 #15 notes that E15's `ScoringContext` reads the handoff
+payload from `HANDOFF_CREATED`, which means a DDS-only session has no 112 handoff to score — which
+is correct: there was no 112 stage to score. A `v1` (`legacy-r1`) prefab keeps exactly that.
+
+**Routing on a schema-2 prefab (I3 E2b′, HLD 70 §70.6.4, §70.7).** When the pack has a
+classifier, the prefab path does what `createHandoff` does: the resolver runs over the written
+card, a final SIMULATION `RECIPIENTS_RESOLVED {final: true}` and then a **SIMULATION**
+`HANDOFF_CREATED` (the actor §70.7 names for a prefab — not a trainee action) are appended before
+the legs' `HANDOFF_RECEIVED`s, and the snapshot and the legs hold the union auto ∪ manual (the
+prefab's `recipient_services` are the manual part).
 
 `WorldTruth` is not reachable from here: the only scenario section this module reads is
 `expected_response.prefab_handoff`, and it is handed in already extracted.
@@ -61,7 +67,14 @@ from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.copies import freeze_card_to_snapshot, snapshot_to_assignments
+from app.domain.layers.handoff import handoff_created_event
 from app.domain.layers.operator_card import OperatorCard, set_field
+from app.domain.routing.resolve import (
+    EMPTY_RESOLUTION,
+    PackRouting,
+    notification_list,
+    recipients_resolved_event,
+)
 from app.domain.scenario.sections import PrefabHandoff
 from app.domain.session.session import SimulationSession
 
@@ -99,12 +112,14 @@ async def materialise_prefab_handoff(
     ids: IdGenerator,
     now_ms: int,
     card_schema: CardSchema | None = None,
+    routing: PackRouting | None = None,
 ) -> list[DomainEvent]:
     """Write the prefab card, snapshot and legs; return the events the caller appends.
 
     `card_schema` is the version's card schema (I3 E3a, HLD 70 §70.5.4; `v1` when omitted): a
     schema-2 prefab writes v2 paths, which is how a GENERATED_CARD session reaches the ДДС in the
-    v2 layout.
+    v2 layout. `routing` is the pack's routing (I3 E2b′; `None` for a pack without a classifier):
+    see the module docstring.
 
     The events come back rather than being appended here so that the caller keeps them in the
     right order relative to its own (`SESSION_STARTED`, `ROLE_STAGE_STARTED`): the DDS stage must
@@ -122,15 +137,45 @@ async def materialise_prefab_handoff(
     if revision_id is None:  # pragma: no cover - rule R14 forbids an empty prefab card
         raise PrefabCardMissingError(incident_id)
 
+    manual = tuple(prefab.recipient_services)
+    resolution = routing.resolve(card.values) if routing is not None else EMPTY_RESOLUTION
     snapshot = freeze_card_to_snapshot(
-        card, revision_id, tuple(prefab.recipient_services), session.created_by_user_id, now_ms
+        card,
+        revision_id,
+        notification_list(resolution.auto_services, manual),
+        session.created_by_user_id,
+        now_ms,
     )
     legs = snapshot_to_assignments(snapshot, role_stage_id, now_ms)
     await uow.handoffs.add(snapshot)
     await uow.dds_assignments.add_all(legs)
 
+    handoff_events = (
+        []
+        if routing is None
+        else [
+            recipients_resolved_event(
+                resolution,
+                card_id=UUID(str(card.card_id)),
+                card_revision_id=UUID(str(revision_id)),
+                pack_id=routing.pack_id,
+                manual_services=manual,
+                final=True,
+                at_offset_ms=now_ms,
+            ),
+            handoff_created_event(
+                snapshot,
+                auto=resolution.auto_services,
+                manual=manual,
+                informed=resolution.informed_services,
+                actor=_SIMULATION,
+                at_offset_ms=now_ms,
+            ),
+        ]
+    )
     return [
         *card_events,
+        *handoff_events,
         *(
             DomainEvent(
                 event_type=EventType.HANDOFF_RECEIVED,

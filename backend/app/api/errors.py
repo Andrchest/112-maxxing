@@ -85,6 +85,7 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "VARIANT_NOT_AVAILABLE": 409,
     "REFERENCE_PACK_UNKNOWN": 409,
     "LESSON_NOT_ACTIVE": 409,
+    "SERVICE_REMOVAL_FORBIDDEN": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,

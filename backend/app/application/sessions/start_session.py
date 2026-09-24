@@ -43,6 +43,7 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
 from app.domain.enums import RoleType
 from app.domain.events.session_event import DomainEvent
+from app.domain.routing.resolve import pack_routing
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession
 
@@ -165,7 +166,8 @@ class StartSession:
         prefab = version.expected_response.prefab_handoff
         if prefab is None:  # pragma: no cover - refused at session creation (D6)
             return []
-        card_schema = reference_catalog(self._reference).card_schema(version.reference_pack_id)
+        reference = reference_catalog(self._reference)
+        card_schema = reference.card_schema(version.reference_pack_id)
         # `now_ms=0`: the start is the origin every offset is measured from, and the prefab
         # handoff is handed to DDS at the instant the stage opens.
         return await materialise_prefab_handoff(
@@ -176,6 +178,9 @@ class StartSession:
             ids=self._ids,
             now_ms=0,
             card_schema=card_schema,
+            # I3 E2b′: the pack's routing (None without a classifier) — the prefab's final
+            # resolution and the union auto ∪ manual (HLD 70 §70.6.4).
+            routing=pack_routing(reference, version.reference_pack_id),
         )
 
     async def _inference_ready(self) -> bool:

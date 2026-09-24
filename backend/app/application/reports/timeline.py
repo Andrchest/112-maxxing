@@ -90,6 +90,7 @@ PAYLOAD_LABELS_RU: Mapping[str, str] = {
     "new_state": "новое состояние",
     "new_status": "новый статус",
     "new_value": "новое значение",
+    "notification_list": "список оповещения",
     "previous_status": "прежний статус",
     "points_awarded": "баллы",
     "reason": "причина",
@@ -221,6 +222,9 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.DDS_CARD_STATUS_CHANGED: SummaryTemplate(
         "Изменился статус карточки", ("new_status",)
     ),
+    EventType.RECIPIENTS_RESOLVED: SummaryTemplate(
+        "Определён список оповещения", ("notification_list",)
+    ),
 }
 
 
@@ -334,7 +338,7 @@ def _render_detail_value(
             field_path = payload.get("field_path")
             if field_path is not None:
                 return card_field_value_label_ru(str(field_path), value)
-    if key == "recipient_services":
+    if key in ("recipient_services", "notification_list"):
         return service_type_list_label_ru(value)
     if key == "new_state" and event_type is EventType.STAGE_STATE_CHANGED:
         return stage_state_label_ru(str(payload.get("role_type", "")), str(value))

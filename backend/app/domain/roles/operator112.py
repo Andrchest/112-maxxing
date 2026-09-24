@@ -157,6 +157,7 @@ class Operator112Module:
                     EventType.TRANSPORT_DISCONNECTED,
                     EventType.TRANSPORT_RECONNECTED,
                     EventType.DDS_CARD_STATUS_CHANGED,  # I3 E4a (HLD 70 §70.7)
+                    EventType.RECIPIENTS_RESOLVED,  # I3 E2b′ (HLD 70 §70.7)
                 }
             ),
         )

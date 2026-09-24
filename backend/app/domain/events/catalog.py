@@ -284,7 +284,8 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
     ),
     EventType.HANDOFF_CREATED: EventSpec(
         event_type=EventType.HANDOFF_CREATED,
-        actor_types=frozenset({ActorType.TRAINEE}),
+        # SIMULATION for a schema-2 prefab handoff (I3 E2b′, HLD 70 §70.7).
+        actor_types=frozenset({ActorType.TRAINEE, ActorType.SIMULATION}),
         payload_keys={
             "snapshot_id": "uuid",
             "incident_id": "uuid",
@@ -294,6 +295,11 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "card_values": "object",
             "content_sha256": "str",
             "at_offset_ms": "int",
+            # Additive, I3 E2b′ (HLD 70 §70.6.4, §70.7): `recipient_services` is their union
+            # (informed services excluded); optional so a pre-I3 log still validates.
+            "auto_recipient_services": "list[ServiceId] | null",
+            "manual_recipient_services": "list[ServiceId] | null",
+            "informed_services": "list[ServiceId] | null",
         },
         visible_to=frozenset({_OP, _INSTRUCTOR}),
     ),
@@ -748,6 +754,27 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_OP, _DDS, _INSTRUCTOR}),
+    ),
+    EventType.RECIPIENTS_RESOLVED: EventSpec(
+        # I3 E2b′ (HLD 70 §70.6.4, §70.7): the resolver's answer, recorded — never a card write.
+        event_type=EventType.RECIPIENTS_RESOLVED,
+        actor_types=frozenset({ActorType.SIMULATION}),
+        payload_keys={
+            "card_id": "uuid",
+            "card_revision_id": "uuid | null",
+            "pack_id": "str",
+            "classifier_code": "str | null",
+            "candidate_codes": "list[str]",
+            "main_service": "ServiceId | null",
+            "auto_services": "list[ServiceId]",
+            "informed_services": "list[ServiceId]",
+            "manual_services": "list[ServiceId]",
+            "notification_list": "list[ServiceId]",
+            "reasons": "list[RoutingReason]",
+            "final": "bool",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_OP, _INSTRUCTOR}),
     ),
 }
 
