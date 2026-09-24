@@ -59,6 +59,7 @@ from app.domain.common.values import FactValue
 from app.domain.enums import ActorType, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.copies import freeze_card_to_snapshot, snapshot_to_assignments
 from app.domain.layers.operator_card import OperatorCard, set_field
 from app.domain.scenario.sections import PrefabHandoff
@@ -97,8 +98,13 @@ async def materialise_prefab_handoff(
     *,
     ids: IdGenerator,
     now_ms: int,
+    card_schema: CardSchema | None = None,
 ) -> list[DomainEvent]:
     """Write the prefab card, snapshot and legs; return the events the caller appends.
+
+    `card_schema` is the version's card schema (I3 E3a, HLD 70 §70.5.4; `v1` when omitted): a
+    schema-2 prefab writes v2 paths, which is how a GENERATED_CARD session reaches the ДДС in the
+    v2 layout.
 
     The events come back rather than being appended here so that the caller keeps them in the
     right order relative to its own (`SESSION_STARTED`, `ROLE_STAGE_STARTED`): the DDS stage must
@@ -111,7 +117,7 @@ async def materialise_prefab_handoff(
 
     author = ActorRef(actor_type=ActorType.INSTRUCTOR, actor_id=session.created_by_user_id)
     card, revision_id, card_events = await _write_prefab_card(
-        uow, card, _prefab_values(prefab), author, ids=ids, now_ms=now_ms
+        uow, card, _prefab_values(prefab), author, ids=ids, now_ms=now_ms, schema=card_schema
     )
     if revision_id is None:  # pragma: no cover - rule R14 forbids an empty prefab card
         raise PrefabCardMissingError(incident_id)
@@ -165,6 +171,7 @@ async def _write_prefab_card(
     *,
     ids: IdGenerator,
     now_ms: int,
+    schema: CardSchema | None = None,
 ) -> tuple[OperatorCard, CardRevisionId | None, list[DomainEvent]]:
     """One `set_field` per prefab path, in file order.
 
@@ -174,7 +181,7 @@ async def _write_prefab_card(
     last_revision_id: CardRevisionId | None = None
     for field_path, value in values.items():
         card, revision, card_event = set_field(
-            card, field_path, value, author, now_ms, CardRevisionId(ids.new())
+            card, field_path, value, author, now_ms, CardRevisionId(ids.new()), schema=schema
         )
         if revision is None or card_event is None:
             continue

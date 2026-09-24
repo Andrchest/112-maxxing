@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from app.domain.enums import LEGACY_SERVICE_IDS, ServiceId
+from app.domain.layers.card_schema import CardSchema
+from app.domain.layers.operator_card import CARD_SCHEMA_V1
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.domain.routing.classifier import Classifier
@@ -68,6 +70,9 @@ class ServiceCatalogEntry(BaseModel):
     okrug: str | None
     district: str | None
     classifier_org_id: str | None
+    classifier_org_ids: tuple[str, ...] = ()
+    """Every classifier column group that answers for this service (HLD 70 §70.6.3, B1 G4):
+    `FIRE_RESCUE` is both «Служба 101» and «ОДС ПСЦ». `classifier_org_id` is its first member."""
     status_policy: StatusPolicy
     display: bool
     deprecated: bool
@@ -145,8 +150,12 @@ class ReferencePackRecord(BaseModel):
 
 
 class ReferenceCatalog:
-    """Everything `reference/` holds, parsed: packs in manifest order, each service catalog and
-    classifier by id, and every file's sha256. Immutable once built (§70.6.1)."""
+    """Everything `reference/` holds, parsed: packs in manifest order, each service catalog,
+    classifier and card schema by id, and every file's sha256. Immutable once built (§70.6.1).
+
+    The code-backed card schema `v1` (`CARD_SCHEMA_V1`) is always present, so a catalog built
+    without card schemas (a unit test's fixture pack) still resolves the `legacy-r1` card.
+    """
 
     def __init__(
         self,
@@ -154,6 +163,7 @@ class ReferenceCatalog:
         packs: Iterable[ReferencePack],
         service_catalogs: Iterable[ServiceCatalog],
         classifiers: Iterable[Classifier] = (),
+        card_schemas: Iterable[CardSchema] = (),
         file_sha256: Mapping[str, str] | None = None,
         manifest: Mapping[str, object] | None = None,
     ) -> None:
@@ -166,6 +176,10 @@ class ReferenceCatalog:
         self._classifiers: Mapping[str, Classifier] = MappingProxyType(
             {classifier.classifier_id: classifier for classifier in classifiers}
         )
+        self._card_schemas: Mapping[str, CardSchema] = MappingProxyType(
+            {CARD_SCHEMA_V1.schema_id: CARD_SCHEMA_V1}
+            | {schema.schema_id: schema for schema in card_schemas}
+        )
         self._file_sha256: Mapping[str, str] = MappingProxyType(dict(file_sha256 or {}))
         self._manifest: Mapping[str, object] = MappingProxyType(dict(manifest or {}))
         if not self._packs:
@@ -175,6 +189,8 @@ class ReferenceCatalog:
                 raise ValueError(f"pack {pack.pack_id}: no service catalog {pack.services!r}")
             if pack.classifier is not None and pack.classifier not in self._classifiers:
                 raise ValueError(f"pack {pack.pack_id}: no classifier {pack.classifier!r}")
+            if pack.card_schema not in self._card_schemas:
+                raise ValueError(f"pack {pack.pack_id}: no card schema {pack.card_schema!r}")
 
     @property
     def pack_ids(self) -> tuple[str, ...]:
@@ -191,6 +207,10 @@ class ReferenceCatalog:
         """`manifest.json`, verbatim (`getReferenceManifest`)."""
         return self._manifest
 
+    def file_sha256(self, name: str) -> str:
+        """The manifest's sha256 of `name` (`card-schema/v2.yaml`, …); `""` when not pinned."""
+        return self._file_sha256.get(name, "")
+
     def pack(self, pack_id: str) -> ReferencePack | None:
         return self._packs.get(pack_id)
 
@@ -205,6 +225,15 @@ class ReferenceCatalog:
         if pack is None or pack.classifier is None:
             return None
         return self._classifiers[pack.classifier]
+
+    def card_schema(self, pack_id: str) -> CardSchema | None:
+        """The card schema of `pack_id` (HLD 70 §70.5.4), or `None` for an unknown pack."""
+        pack = self._packs.get(pack_id)
+        return self._card_schemas[pack.card_schema] if pack is not None else None
+
+    def card_schema_by_id(self, schema_id: str) -> CardSchema | None:
+        """A card schema by its own id (`v1`, `v2`), or `None` (`getCardSchema`)."""
+        return self._card_schemas.get(schema_id)
 
     def record(self, pack_id: str) -> ReferencePackRecord | None:
         """`SESSION_CREATED.reference_pack` for `pack_id`, or `None` for an unknown pack."""

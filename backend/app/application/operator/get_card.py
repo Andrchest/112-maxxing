@@ -20,8 +20,11 @@ the same `403`: a trainee who guesses a session id learns only that they may not
 from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.operator.command_context import session_card_schema
 from app.application.operator.views import OperatorCardView, card_view
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import can_observe
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
@@ -72,12 +75,16 @@ async def load_card_for_reader(
 class GetOperatorCard:
     """`getOperatorCard` (`openapi.yaml`): the current incident card."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> OperatorCardView:
-        """The card, if this caller may read it."""
+        """The card, if this caller may read it, with its session's card schema (I3 E3a)."""
         async with self._unit_of_work() as uow:
-            _session, card = await load_card_for_reader(uow, session_id, user)
+            session, card = await load_card_for_reader(uow, session_id, user)
+            schema = await session_card_schema(uow, session, reference_catalog(self._reference))
             await uow.commit()
-        return card_view(card)
+        return card_view(card, schema)

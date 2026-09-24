@@ -416,7 +416,10 @@ PK `(incident_id)`. FK `incident_id → incidents(id) ON DELETE CASCADE`.
 PK `(id)`. FK `incident_id → incidents(id) ON DELETE CASCADE`.
 Unique `uq_incident_cards_incident (incident_id)`.
 
-**JSONB:** `values` is keyed by the dotted `field_path`s of `CARD_FIELDS` (`10-domain-model.md` §10.6).
+**JSONB:** `values` is keyed by the dotted `field_path`s of `CARD_FIELDS` (`10-domain-model.md` §10.6)
+— since I3 E3a, of the session's card schema (`v1` = `CARD_FIELDS`, or `v2` for a scenario on pack
+`v046_24-r1`, HLD 70 §70.5.4). No column records the schema: it is the scenario version's
+`reference_pack_id`, recorded in `SESSION_CREATED.reference_pack` (no migration).
 Keeping it JSONB rather than 38 columns means a card-field addition is a code change, not a migration,
 while `incident_card_revisions` keeps `field_path` relational and queryable. This is a materialized
 view of `incident_card_revisions`; the revisions are the audit record (SPEC §9: "The final card is

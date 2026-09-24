@@ -403,3 +403,30 @@ voice_agent    -> application, inference, infrastructure
   from the organizer files. D12's structure (FSD layout, TanStack Query, Zustand, `ru.ts` strings,
   `available_actions`-driven buttons, generated types) is unchanged; only its "dense dark operations
   console" look is superseded on those screens.
+
+## D21. B1 — the E2b blocker resolved at rung 1: E3a′ before E2b′, and the card ↔ classifier binding (I3, `70-i3-alignment.md` §70.5.2, §70.6.3, §70.6.4)
+
+- **Rung 1, no decision replaced.** The E2b blocker was a TBD-row ordering slip, not an HLD break:
+  `set_field` per session schema and the loader are E3a's, and the resolver's inputs are v2-only
+  paths. The "I3 TBD epics" list (`90-tbd-epics.md`) is reordered — **E3a′ now precedes E2b′** —
+  and both rows are re-issued; E2b's "fixture pack" clause is retired (E2b′ runs on pack
+  `v046_24-r1` and E3a′'s example scenario). D17 and D18 stand.
+- **Binding rule (D18 applied).** A v2 option's `code` is a classifier identifier: a questionnaire
+  chip's признак text as `v046_24.json` carries it; a routing yes/no's flag key of
+  `v046_24.columns.json` `flags`; a «Что случилось» entry's classifier `group_no`
+  (administrative entries `routing: none`, A-3); `address.okrug` / `address.district`'s catalog
+  `okrug` / `district` string. A chip standing for several признаки lists them in
+  `classifier_features` (additive, optional; default `[code]`). Matching is casefolded and
+  whitespace-collapsed; the resolver reads only these codes and never parses labels.
+- **Entries sharing a classifier group** (manager decision on the E3a′ hand-back). A «Что случилось»
+  entry alone in its group is coded `<group_no>`; when several entries open one group, each is
+  `<group_no>:<slug>` (stable ASCII slug of the label, unique in the field) and the resolver takes
+  the group from the part before `:`. An entry whose label names a признак of the group's rows lists
+  it in `classifier_features` to narrow the candidates (v2: «Природная стихия», «Скопление воды»,
+  «Радиация», «Разбитый градусник» → «Градусник», «Помощь службам», «Прочие происшествия»).
+- **Catalog additions (B1 G4).** Classifier-only organisations become `display: false` catalog
+  entries generated from the column map (REQ-5280), and `FIRE_RESCUE` answers to both
+  `MCHS_SLUZHBA_101` and `MCHS_ODS_PSC` (`classifier_org_ids`). The resolver defaults of 70 §70.6.4
+  (union of candidates until `incident.classifier_code` is set; any holding sub-column; district and
+  prefecture from the card) are mirrored there, additive. A-1 is confirmed by the organizer's own
+  screenshots («КАРТОЧКА 112.docx» images 19/22/24/39).

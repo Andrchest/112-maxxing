@@ -20,7 +20,11 @@ from uuid import UUID
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
-from app.api.schemas.operator import FactValueSchema
+from app.api.schemas.operator import (
+    CardFieldSpecSchema,
+    FactValueSchema,
+    card_field_spec_schema,
+)
 from app.application.handoff.create_handoff import HandoffCreatedView, HandoffSnapshotView
 from app.application.handoff.work_item import DdsWorkItemView
 from app.domain.enums import (
@@ -95,6 +99,8 @@ class DdsWorkItemSchema(ApiModel):
     selected_resource_ids: list[UUID]
     dispatched_resource_ids: list[UUID]
     missing_field_paths: list[str]
+    card_schema: str = "v1"
+    field_specs: list[CardFieldSpecSchema] = Field(default_factory=list)
 
 
 def handoff_snapshot_schema(view: HandoffSnapshotView) -> HandoffSnapshotViewSchema:
@@ -142,4 +148,6 @@ def dds_work_item_schema(view: DdsWorkItemView) -> DdsWorkItemSchema:
         selected_resource_ids=list(view.selected_resource_ids),
         dispatched_resource_ids=list(view.dispatched_resource_ids),
         missing_field_paths=list(view.missing_field_paths),
+        card_schema=view.card_schema,
+        field_specs=[card_field_spec_schema(spec) for spec in view.field_specs],
     )

@@ -1,10 +1,10 @@
 """File-backed `ReferencePort` (HLD `70-i3-alignment.md` §70.6.1, D18).
 
-Reads `reference/manifest.json` and the files it pins, checks every file's sha256 against the
-manifest (a pack that drifted from its manifest is refused, not half-used), and builds one
-immutable `ReferenceCatalog`. Loading is lazy — the first `catalog()` call — and cached per
-directory for the process, so building many containers (the API tests do) parses the ~2.6 MB
-classifier once.
+Reads `reference/manifest.json` and the files it pins (card schemas included, I3 E3a), checks
+every file's sha256 against the manifest (a pack that drifted from its manifest is refused, not
+half-used), and builds one immutable `ReferenceCatalog`. Loading is lazy — the first `catalog()`
+call — and cached per directory for the process, so building many containers (the API tests do)
+parses the ~2.6 MB classifier once.
 
 The default directory is `reference/` at the repository root (beside `scenarios/`), resolved from
 this module's location.
@@ -20,6 +20,7 @@ from typing import Any
 
 import yaml
 
+from app.domain.layers.card_schema import CardSchema, CardSchemaError, parse_card_schema
 from app.domain.routing.catalog import (
     ReferenceCatalog,
     ReferencePack,
@@ -80,10 +81,12 @@ def load_reference(directory: Path) -> ReferenceCatalog:
     ]
     service_ids = sorted({pack.services for pack in packs})
     classifier_ids = sorted({pack.classifier for pack in packs if pack.classifier is not None})
+    card_schema_ids = sorted({pack.card_schema for pack in packs})
     return ReferenceCatalog(
         packs=packs,
         service_catalogs=[_services(directory, files, catalog_id) for catalog_id in service_ids],
         classifiers=[_classifier(directory, files, cid) for cid in classifier_ids],
+        card_schemas=[_card_schema(directory, files, sid) for sid in card_schema_ids],
         file_sha256=files,
         manifest=manifest,
     )
@@ -99,6 +102,21 @@ def _services(directory: Path, files: dict[str, str], catalog_id: str) -> Servic
     path = _pinned(directory, files, f"services/{catalog_id}.yaml")
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     return ServiceCatalog(catalog_id=catalog_id, services=document["services"])
+
+
+def _card_schema(directory: Path, files: dict[str, str], schema_id: str) -> CardSchema:
+    """`card-schema/<id>.yaml`, pinned by the manifest, parsed by the domain's one parser
+    (HLD 70 §70.5.1). `v1.yaml` parses to exactly `CARD_SCHEMA_V1` (a test proves it)."""
+    name = f"card-schema/{schema_id}.yaml"
+    path = _pinned(directory, files, name)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        schema = parse_card_schema(document, sha256=files[name])
+    except CardSchemaError as error:
+        raise ReferencePackError(f"{path}: {error}") from error
+    if schema.schema_id != schema_id:
+        raise ReferencePackError(f"{path}: schema_id {schema.schema_id!r} != {schema_id!r}")
+    return schema
 
 
 def _classifier(directory: Path, files: dict[str, str], classifier_id: str) -> Classifier:

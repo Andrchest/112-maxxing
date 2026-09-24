@@ -93,6 +93,7 @@ from app.application.ports.voice_token_service import VoiceTokenService
 from app.application.realtime.event_stream import SessionEventStream
 from app.application.realtime.list_events import ListSessionEvents
 from app.application.recording.purge_recordings import PurgeRecordings
+from app.application.reference.card_schemas import GetCardSchema
 from app.application.reference.queries import (
     GetClassifierRow,
     GetReferenceManifest,
@@ -406,6 +407,7 @@ class Container:
             self.inference,
             self.ids,
             require_inference_ready=self.settings.require_inference_ready,
+            reference=self.reference,
         )
 
     def abort_session(self) -> AbortSession:
@@ -467,7 +469,7 @@ class Container:
 
     def get_session_report(self) -> GetSessionReport:
         """`getSessionReport` — reads the stored score, never recomputes it (E16 R1)."""
-        return GetSessionReport(self.unit_of_work, self.clock)
+        return GetSessionReport(self.unit_of_work, self.clock, self.reference)
 
     def release_report_to_trainee(self) -> ReleaseReportToTrainee:
         """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""
@@ -477,7 +479,7 @@ class Container:
 
     def get_instructor_session_overview(self) -> GetInstructorSessionOverview:
         """`getInstructorSessionOverview` — INSTRUCTOR/ADMIN only, a pure read (E17 R4)."""
-        return GetInstructorSessionOverview(self.unit_of_work, self.clock)
+        return GetInstructorSessionOverview(self.unit_of_work, self.clock, self.reference)
 
     def serve_audio_segment(self) -> ServeAudioSegment:
         """`getAudioSegment` — Range-served WAV bytes under `DATA_DIR/recordings` (D9, E16 R7)."""
@@ -553,7 +555,9 @@ class Container:
 
     def operator_command_gate(self) -> OperatorCommandGate:
         """The single Operator 112 command pipeline (`application/operator/command_context`)."""
-        return OperatorCommandGate(self.unit_of_work, self.clock, self.call_transport_status)
+        return OperatorCommandGate(
+            self.unit_of_work, self.clock, self.call_transport_status, self.reference
+        )
 
     def answer_call(self) -> AnswerCall:
         """`answerCall`."""
@@ -575,7 +579,7 @@ class Container:
 
     def get_operator_card(self) -> GetOperatorCard:
         """`getOperatorCard`."""
-        return GetOperatorCard(self.unit_of_work)
+        return GetOperatorCard(self.unit_of_work, self.reference)
 
     def set_card_field(self) -> SetCardField:
         """`setCardField`. The idempotency store is §40.6's, never authoritative."""
@@ -611,6 +615,10 @@ class Container:
         """`getClassifierRow`."""
         return GetClassifierRow(self.reference)
 
+    def get_card_schema(self) -> GetCardSchema:
+        """`getCardSchema` (I3 E3a, HLD 70 §70.5)."""
+        return GetCardSchema(self.reference)
+
     def begin_handoff_preparation(self) -> BeginHandoffPreparation:
         """`beginHandoffPreparation`."""
         return BeginHandoffPreparation(self.operator_command_gate())
@@ -621,7 +629,7 @@ class Container:
 
     def get_snapshot(self) -> GetSnapshot:
         """`getSessionSnapshot`."""
-        return GetSnapshot(self.unit_of_work, self.clock)
+        return GetSnapshot(self.unit_of_work, self.clock, self.reference)
 
     def advance_call_flow(self) -> AdvanceCallFlow:
         """The `SIMULATION`-fired `ring` / `begin_interview` triggers (§10.8, D7).
@@ -685,11 +693,11 @@ class Container:
 
     def dds_command_gate(self) -> DdsCommandGate:
         """The single DDS command pipeline (`application/dds/command_context`)."""
-        return DdsCommandGate(self.unit_of_work, self.clock)
+        return DdsCommandGate(self.unit_of_work, self.clock, self.reference)
 
     def get_dds_work_item(self) -> GetDdsWorkItem:
         """`getDdsWorkItem`."""
-        return GetDdsWorkItem(self.unit_of_work)
+        return GetDdsWorkItem(self.unit_of_work, self.reference)
 
     def list_dds_resources(self) -> ListDdsResources:
         """`listDdsResources`."""

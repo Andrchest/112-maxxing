@@ -1,0 +1,26 @@
+{
+  "description": "CardCondition fixtures shared by the backend (backend/app/domain/layers/card_schema.py evaluate_condition) and the frontend evaluator (HLD 70 §70.5.2). Each case: a condition, the card values it is evaluated over, the expected result.",
+  "cases": [
+    {"name": "EQ holds on an equal scalar", "condition": {"field_path": "caller.status", "op": "EQ", "value": "EYEWITNESS"}, "values": {"caller.status": "EYEWITNESS"}, "expected": true},
+    {"name": "EQ fails on a different scalar", "condition": {"field_path": "caller.status", "op": "EQ", "value": "EYEWITNESS"}, "values": {"caller.status": "OTHER"}, "expected": false},
+    {"name": "EQ fails on an unset path", "condition": {"field_path": "caller.status", "op": "EQ", "value": "EYEWITNESS"}, "values": {}, "expected": false},
+    {"name": "EQ compares booleans", "condition": {"field_path": "flags.blocked", "op": "EQ", "value": true}, "values": {"flags.blocked": true}, "expected": true},
+    {"name": "NE holds on an unset path", "condition": {"field_path": "caller.status", "op": "NE", "value": "EYEWITNESS"}, "values": {}, "expected": true},
+    {"name": "NE fails on an equal scalar", "condition": {"field_path": "caller.status", "op": "NE", "value": "EYEWITNESS"}, "values": {"caller.status": "EYEWITNESS"}, "expected": false},
+    {"name": "IN holds when the scalar is listed", "condition": {"field_path": "address.okrug", "op": "IN", "value": ["ЦАО", "САО"]}, "values": {"address.okrug": "САО"}, "expected": true},
+    {"name": "IN fails when the scalar is not listed", "condition": {"field_path": "address.okrug", "op": "IN", "value": ["ЦАО", "САО"]}, "values": {"address.okrug": "ЮАО"}, "expected": false},
+    {"name": "IN holds when a list value shares an item", "condition": {"field_path": "incident.types", "op": "IN", "value": ["1", "13"]}, "values": {"incident.types": ["3", "13"]}, "expected": true},
+    {"name": "CONTAINS holds on a list holding the value", "condition": {"field_path": "incident.types", "op": "CONTAINS", "value": "1"}, "values": {"incident.types": ["13", "1"]}, "expected": true},
+    {"name": "CONTAINS fails on a list without the value", "condition": {"field_path": "incident.types", "op": "CONTAINS", "value": "1"}, "values": {"incident.types": ["13"]}, "expected": false},
+    {"name": "CONTAINS with a list value needs every item", "condition": {"field_path": "q.fire.house_objects", "op": "CONTAINS", "value": ["квартира", "подъезд"]}, "values": {"q.fire.house_objects": ["квартира"]}, "expected": false},
+    {"name": "CONTAINS never holds on a scalar", "condition": {"field_path": "caller.status", "op": "CONTAINS", "value": "EYEWITNESS"}, "values": {"caller.status": "EYEWITNESS"}, "expected": false},
+    {"name": "PRESENT fails on an empty list", "condition": {"field_path": "q.fire.street_object", "op": "PRESENT"}, "values": {"q.fire.street_object": []}, "expected": false},
+    {"name": "PRESENT fails on an empty string", "condition": {"field_path": "address.street", "op": "PRESENT"}, "values": {"address.street": ""}, "expected": false},
+    {"name": "PRESENT holds on false (the toggle was answered)", "condition": {"field_path": "flags.blocked", "op": "PRESENT"}, "values": {"flags.blocked": false}, "expected": true},
+    {"name": "all needs every branch", "condition": {"all": [{"field_path": "incident.types", "op": "CONTAINS", "value": "1"}, {"field_path": "q.fire.where", "op": "CONTAINS", "value": "на улице"}]}, "values": {"incident.types": ["1"], "q.fire.where": ["транспорт"]}, "expected": false},
+    {"name": "any needs one branch", "condition": {"any": [{"field_path": "q.fire.where", "op": "CONTAINS", "value": "на улице"}, {"field_path": "q.fire.where", "op": "CONTAINS", "value": "транспорт"}]}, "values": {"q.fire.where": ["транспорт"]}, "expected": true},
+    {"name": "not negates", "condition": {"not": {"field_path": "incident.types", "op": "CONTAINS", "value": "1"}}, "values": {"incident.types": ["13"]}, "expected": true},
+    {"name": "v2 street-fire threat row is shown for Улица + Открытое пламя / Дым", "condition": {"all": [{"field_path": "incident.types", "op": "CONTAINS", "value": "1"}, {"any": [{"all": [{"field_path": "q.fire.where", "op": "CONTAINS", "value": "на улице"}, {"field_path": "q.fire.sign_street", "op": "CONTAINS", "value": "открытое пламя / дым"}]}, {"all": [{"field_path": "q.fire.where", "op": "CONTAINS", "value": "транспорт"}, {"field_path": "q.fire.sign_transport", "op": "CONTAINS", "value": "открытое пламя / дым"}]}]}]}, "values": {"incident.types": ["1"], "q.fire.where": ["на улице"], "q.fire.sign_street": ["открытое пламя / дым"]}, "expected": true},
+    {"name": "v2 street-fire threat row is hidden for Улица + Запах гари (REQ-3004)", "condition": {"all": [{"field_path": "incident.types", "op": "CONTAINS", "value": "1"}, {"any": [{"all": [{"field_path": "q.fire.where", "op": "CONTAINS", "value": "на улице"}, {"field_path": "q.fire.sign_street", "op": "CONTAINS", "value": "открытое пламя / дым"}]}, {"all": [{"field_path": "q.fire.where", "op": "CONTAINS", "value": "транспорт"}, {"field_path": "q.fire.sign_transport", "op": "CONTAINS", "value": "открытое пламя / дым"}]}]}]}, "values": {"incident.types": ["1"], "q.fire.where": ["на улице"], "q.fire.sign_street": ["запах гари"]}, "expected": false}
+  ]
+}

@@ -458,10 +458,14 @@ export interface paths {
          *     writer: ASR never calls this (SPEC §9, §42 test 4), which is structural — the voice-agent
          *     has no credential for it.
          *
-         *     `field_path` must be a member of `CARD_FIELDS` (`10-domain-model.md` §10.6) and the value
-         *     must match that field's `value_type`; otherwise `422 CARD_FIELD_UNKNOWN` or
-         *     `422 CARD_VALUE_TYPE_MISMATCH`. Setting a field to its current value is a no-op: it
-         *     returns `revision: null`, appends no revision and emits no event.
+         *     `field_path` must be a field of the session's card schema — `CARD_FIELDS`
+         *     (`10-domain-model.md` §10.6) for a `v1` card, the pack's schema otherwise (I3 E3a, 70
+         *     §70.5.4) — and the value must match that field's `value_type`; otherwise
+         *     `422 CARD_FIELD_UNKNOWN` or `422 CARD_VALUE_TYPE_MISMATCH`. (Additive, I3 E3a) a value
+         *     that is not one of the field's `options` codes (a v2 select or toggle set) is
+         *     `422 CARD_OPTION_UNKNOWN`. A field hidden by `visible_when` is accepted — visibility is
+         *     advisory. Setting a field to its current value is a no-op: it returns `revision: null`,
+         *     appends no revision and emits no event.
          *
          *     `recipients.services` is **not** settable here; use the service commands.
          */
@@ -1271,6 +1275,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reference/card-schema/{schema_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A card schema (`v1` / `v2`) as field specs — the same `CardFieldSpec` the card views carry.
+         * @description Additive, I3 E3a (70 §70.5, D17). `v1` is `CARD_FIELDS`; `v2` is the organizer card
+         *     (`reference/card-schema/v2.yaml`). Unknown id → `404 NOT_FOUND`.
+         */
+        get: operations["getCardSchema"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lessons": {
         parameters: {
             query?: never;
@@ -1425,7 +1450,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -1935,8 +1960,14 @@ export interface components {
                 [key: string]: components["schemas"]["FactValue"];
             };
             revision_counter: number;
-            /** @description `CARD_FIELDS` — the UI renders the form from this, never from a hard-coded list. */
+            /** @description The session's card schema (`CARD_FIELDS` for `v1`) — the UI renders the form from this, never from a hard-coded list. */
             field_specs: components["schemas"]["CardFieldSpec"][];
+            /**
+             * @description Additive, I3 E3a (70 §70.5.4) — the id of the card schema `field_specs` come from.
+             * @example v1
+             * @example v2
+             */
+            card_schema?: string;
         };
         CardFieldSpec: {
             /** @example address.house */
@@ -1949,6 +1980,60 @@ export interface components {
             scoring_relevant: boolean;
             /** @description Advisory only — a missing field never blocks a handoff (SPEC §10). */
             required_for_handoff: boolean;
+            /**
+             * @example header
+             * @example applicant
+             * @example address
+             * @example incident
+             * @example q_fire
+             * @example services
+             */
+            group?: string | null;
+            order?: number;
+            control?: components["schemas"]["CardControl"];
+            options?: components["schemas"]["CardOption"][] | null;
+            /** @description When the field is shown; advisory — a hidden field is still accepted. */
+            visible_when?: components["schemas"]["CardCondition"] | null;
+            required_in_block?: boolean;
+            routing_relevant?: boolean;
+        };
+        /**
+         * @description Additive, I3 E3a (70 §70.5.2) — how the UI renders a card field.
+         * @enum {string}
+         */
+        CardControl: "TEXT" | "TEXTAREA" | "NUMBER" | "SELECT" | "TOGGLE_SET" | "CHIPS" | "CHECKBOX" | "PHONE";
+        /**
+         * @description Additive, I3 E3a (70 §70.5.2). `code` is a classifier identifier (D18 applied, B1 §4): a
+         *     questionnaire chip's признак text, a routing flag key, a «Что случилось» entry's classifier
+         *     `group_no`, or a catalog okrug / district. `classifier_features` lists the признаки a chip
+         *     stands for when it stands for several (default `[code]`); `routing: none` marks an option
+         *     bound to nothing in the classifier (A-3).
+         */
+        CardOption: {
+            code: string;
+            label_ru: string;
+            classifier_features?: string[] | null;
+            /** @enum {string|null} */
+            routing?: "none" | null;
+        };
+        /** @description Additive, I3 E3a — a condition over the card's own values (not the world `Condition`, HLD 30 §30.6.1). */
+        CardCondition: {
+            all: components["schemas"]["CardCondition"][];
+        } | {
+            any: components["schemas"]["CardCondition"][];
+        } | {
+            not: components["schemas"]["CardCondition"];
+        } | {
+            field_path: string;
+            /** @enum {string} */
+            op: "EQ" | "NE" | "IN" | "CONTAINS" | "PRESENT";
+            value?: components["schemas"]["FactValue"];
+        };
+        /** @description Additive, I3 E3a — `getCardSchema`. */
+        CardSchemaView: {
+            schema_id: string;
+            sha256: string;
+            field_specs: components["schemas"]["CardFieldSpec"][];
         };
         /** @description One `incident_card_revisions` row — SPEC §9's previous value, new value, path, time and actor. */
         CardRevisionView: {
@@ -2099,9 +2184,23 @@ export interface components {
             /**
              * @description `CARD_FIELDS` entries with `required_for_handoff: true` that the snapshot leaves
              *     empty. Computed from the snapshot and the field specs alone — it names the gap
-             *     without filling it, because the omission must propagate (SPEC §10).
+             *     without filling it, because the omission must propagate (SPEC §10). (I3 E3a) The
+             *     session's card schema's `required_for_handoff` fields for a `v2` card.
              */
             missing_field_paths: string[];
+            /**
+             * @description Additive, I3 E3a (70 §70.5.4) — the card schema of the reference pack the session
+             *     recorded (`SESSION_CREATED.reference_pack`), never read from the scenario (INV 3).
+             * @example v1
+             * @example v2
+             */
+            card_schema?: string;
+            /**
+             * @description Additive, I3 E3a — the field specs of `card_schema`, so the ДДС renders `card_values`
+             *     (and their option labels) from data. Always sent; not in `required` so clients built
+             *     before E3c keep compiling.
+             */
+            field_specs?: components["schemas"]["CardFieldSpec"][];
         };
         /** @description `EtaProfile` — the only ETA input; `ScenarioDefinedEta` reads these verbatim (D7, SPEC §11). */
         EtaProfileView: {
@@ -2677,6 +2776,13 @@ export interface components {
             okrug: string | null;
             district: string | null;
             classifier_org_id: string | null;
+            /**
+             * @description Additive, I3 E3a (70 §70.6.3, B1 G4) — every classifier column group that answers
+             *     for this service; `classifier_org_id` is its first member. `FIRE_RESCUE` is both
+             *     `MCHS_SLUZHBA_101` and `MCHS_ODS_PSC`; a `display: false` entry is one classifier-only
+             *     organisation (REQ-5280).
+             */
+            classifier_org_ids?: string[];
             /** @enum {string} */
             status_policy: "DEFAULT" | "NO_REFUSAL";
             display: boolean;
@@ -2874,7 +2980,8 @@ export interface components {
         /**
          * @description `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
          *     `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
-         *     I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog.
+         *     I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog; (additive,
+         *     I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes.
          */
         UnprocessableEntity: {
             headers: {
@@ -4540,6 +4647,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClassifierRow"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getCardSchema: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schema_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schema. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardSchemaView"];
                 };
             };
             401: components["responses"]["Unauthorized"];

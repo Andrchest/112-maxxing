@@ -29,6 +29,7 @@ from app.domain.common.ids import CardRevisionId, SessionId
 from app.domain.enums import ServiceId, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.operator_card import OperatorCard, set_field
 
 __all__ = ["ACTION_ID", "SERVICES_FIELD_PATH", "DeselectRecipientService"]
@@ -65,7 +66,7 @@ class DeselectRecipientService:
             card = await ctx.card()
             current = _selected(card)
             if service_type not in current:
-                return _view(card, current)
+                return _view(card, current, ctx.card_schema)
 
             new_selection = tuple(service for service in current if service != service_type)
             updated, revision, card_event = set_field(
@@ -75,6 +76,7 @@ class DeselectRecipientService:
                 ctx.actor,
                 ctx.now_ms,
                 CardRevisionId(self._ids.new()),
+                schema=ctx.card_schema,
             )
             assert revision is not None and card_event is not None  # the list really changed
 
@@ -93,7 +95,7 @@ class DeselectRecipientService:
                 },
             )
             await ctx.append([card_event, deselected])
-            return _view(updated, new_selection)
+            return _view(updated, new_selection, ctx.card_schema)
 
 
 def _selected(card: OperatorCard) -> tuple[ServiceId, ...]:
@@ -111,10 +113,12 @@ def _services_value_type(card_event: DomainEvent) -> ValueType:
     return value_type
 
 
-def _view(card: OperatorCard, selection: tuple[ServiceId, ...]) -> ServiceSelectionView:
+def _view(
+    card: OperatorCard, selection: tuple[ServiceId, ...], schema: CardSchema
+) -> ServiceSelectionView:
     return ServiceSelectionView(
         card_id=UUID(str(card.card_id)),
         selected_services=selection,
         available_services=AVAILABLE_SERVICES,
-        card=card_view(card),
+        card=card_view(card, schema),
     )

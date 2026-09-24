@@ -90,7 +90,10 @@ async def test_the_service_catalog_of_the_default_pack(
         "EDDS",
     ]
     assert "UTILITY_EMERGENCY" not in visible_ids  # deprecated (C8)
-    assert set(all_ids) - set(visible_ids) == {"UTILITY_EMERGENCY"}
+    # deprecated (C8) + the classifier-only orgs, hidden (`display: false`, I3 E3a, REQ-5280)
+    hidden = {entry["id"] for entry in everything if not entry["display"]}
+    assert len(hidden) == 18
+    assert set(all_ids) - set(visible_ids) == {"UTILITY_EMERGENCY"} | hidden
     fire = everything[0]
     assert fire["name_ru"] == "Пожарно-спасательная служба"
     assert fire["code"] == "101"
@@ -103,6 +106,7 @@ async def test_the_service_catalog_of_the_default_pack(
         "okrug",
         "district",
         "classifier_org_id",
+        "classifier_org_ids",
         "status_policy",
         "display",
         "deprecated",
@@ -128,9 +132,11 @@ async def test_the_legacy_pack_has_no_classifier(
 ) -> None:
     headers = auth(tokens["instructor1"])
     for path in ("/api/v1/reference/classifier", "/api/v1/reference/classifier/1010101"):
-        response = await client.get(path, headers=headers)
+        response = await client.get(f"{path}?pack=legacy-r1", headers=headers)
         assert response.status_code == 404, path
         assert response.json()["code"] == "NOT_FOUND"
+        # The default pack is the manifest's newest, `v046_24-r1` since I3 E3a — it has one.
+        assert (await client.get(path, headers=headers)).status_code == 200, path
 
 
 async def test_classifier_search_and_row_on_a_pack_that_has_one(

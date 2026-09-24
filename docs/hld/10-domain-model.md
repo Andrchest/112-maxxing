@@ -38,7 +38,8 @@ backend/app/domain/
 ├── layers/
 │   ├── world_truth.py       WorldTruth
 │   ├── caller_belief.py     CallerBelief
-│   ├── operator_card.py     OperatorCard, CardRevision, CardFieldSpec, CARD_FIELDS, set_field
+│   ├── operator_card.py     OperatorCard, CardRevision, CARD_FIELDS (= CARD_SCHEMA_V1), set_field
+│   ├── card_schema.py       CardFieldSpec, CardSchema, CardCondition, parse_card_schema (I3 E3a)
 │   ├── handoff.py           HandoffSnapshot
 │   └── copies.py            instantiate_world_truth, instantiate_caller_belief,
 │                            freeze_card_to_snapshot, snapshot_to_assignment
@@ -419,16 +420,36 @@ class CardRevision(BaseModel):
     actor: ActorRef                   # {actor_type: ActorType, actor_id: UserId | None}
     at_offset_ms: int
 
-class CardFieldSpec(BaseModel):
+class CardFieldSpec(BaseModel):        # domain/layers/card_schema.py since I3 E3a
     field_path: str
     value_type: ValueType
     enum_name: str | None             # for ValueType.ENUM
     label_ru: str
     scoring_relevant: bool
     required_for_handoff: bool        # advisory only: a missing field never blocks a handoff (§10)
+    # -- additive, I3 E3a (HLD 70 §70.5.2); a v1 field carries the neutral values
+    group: str | None = None          # layout block id (header, applicant, address, …)
+    order: int = 0                    # position inside the group (v1: position in CARD_FIELDS)
+    control: CardControl              # TEXT|TEXTAREA|NUMBER|SELECT|TOGGLE_SET|CHIPS|CHECKBOX|PHONE
+    options: tuple[CardOption, ...] | None = None   # {code, label_ru, classifier_features?, routing?}
+    visible_when: CardCondition | None = None       # advisory: a hidden field is still accepted
+    required_in_block: bool = False   # one of REQ-3014's four mandatory blocks; advisory
+    routing_relevant: bool = False    # a change is a routing input (RECIPIENTS_RESOLVED, E2b)
 
-CARD_FIELDS: tuple[CardFieldSpec, ...]
+class CardSchema(BaseModel):          # a versioned card schema (reference/card-schema/<id>.yaml)
+    schema_id: str                    # "v1", "v2"
+    fields: tuple[CardFieldSpec, ...]
+    groups: tuple[CardFieldGroup, ...]
+    sha256: str | None                # the manifest's; None for the code-backed v1
+
+CARD_SCHEMA_V1: CardSchema            # today's card, code-backed; reference/card-schema/v1.yaml ≡ it
+CARD_FIELDS: tuple[CardFieldSpec, ...]   # the v1 alias: CARD_SCHEMA_V1.fields
 ```
+
+`CardCondition` (I3 E3a, HLD 70 §70.5.2) is card-local — `{all: [...]} | {any: [...]} | {not: …} |
+{field_path, op: EQ | NE | IN | CONTAINS | PRESENT, value}` over the card's own values — and is not
+a leaf of the world `Condition` language of §10.12. `evaluate_condition` and the frontend's evaluator
+share the fixtures `reference/card-schema/conditions.fixtures.json`.
 
 ### Card mutation API (domain terms)
 
@@ -440,13 +461,19 @@ def set_field(
     actor: ActorRef,
     at_offset_ms: int,
     revision_id: CardRevisionId,
+    *,
+    schema: CardSchema | None = None,   # I3 E3a: the session's card schema; CARD_SCHEMA_V1 if None
 ) -> tuple[OperatorCard, CardRevision, DomainEvent]: ...
 ```
 
 Pure: returns a new `OperatorCard`, the `CardRevision` recording
 `{revision_id, field_path, previous_value, new_value, actor, at}`, and one `CARD_FIELD_CHANGED`
 `DomainEvent` carrying the same five values plus `card_id` and `value_type`. Raises `CardFieldError`
-when `field_path` is not in `CARD_FIELDS` or the value does not match the spec's `value_type`.
+when `field_path` is not in the session's card schema (`CARD_FIELDS` for `v1`) or the value does
+not match the spec's `value_type`, and its subclass `CardOptionUnknownError`
+(`422 CARD_OPTION_UNKNOWN`, I3 E3a) when a field with `options` gets a code outside them. A field
+hidden by `visible_when` is still accepted. The session's schema is the one its scenario version's
+`reference_pack_id` names (HLD 70 §70.5.4; `legacy-r1` ⇒ `v1`).
 Setting a field to its current value is a no-op: no revision, no event. Only `ActorType.TRAINEE` and
 `ActorType.INSTRUCTOR` may call it — ASR never does (SPEC §9, §42 test 4).
 
@@ -498,6 +525,13 @@ Setting a field to its current value is a no-op: no revision, no event. Only `Ac
 `required_for_handoff` is `True` for exactly `incident.type`, `address.locality`,
 `address.street`, `address.house`, `caller.phone`, `description.text`, `flags.threat_to_life` and
 `recipients.services` — advisory only, a missing field never blocks a handoff (SPEC §10).
+
+This table is card schema `v1`. Card schema `v2` — the organizer's card (I3 E3a, HLD 70 §70.5, D17)
+— is data in `reference/card-schema/v2.yaml`: it reuses the v1 path of every field that means the
+same (`caller.phone`, `address.locality/street/house/building/entrance/floor/apartment`,
+`caller.full_name`, `description.text`, `recipients.services`, `recipients.comment`) and adds the
+header phones, the address selects, the header flags, `incident.types` / `incident.classifier_code`
+and the per-type questionnaire under `q.<type>.<question>`; `incident.type` stays v1-only.
 
 `recipients.services` is mutated only through the dedicated service commands, which emit
 `SERVICE_SELECTED` / `SERVICE_DESELECTED` **in addition to** `CARD_FIELD_CHANGED`, so both the
@@ -1488,7 +1522,9 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 #### 2. `CARD_FIELD_CORRECT` — `card_field_correct.py`
 - Config keys: `field_path: str`, `expected_from_fact_id: str | null`,
   `expected_literal: FactValue | null` (exactly one of the two), `comparison:
-  "EXACT" | "CASE_INSENSITIVE" | "NUMERIC_TOLERANCE" | "SET_EQUAL" | "NORMALIZED_DIGITS"`,
+  "EXACT" | "CASE_INSENSITIVE" | "NUMERIC_TOLERANCE" | "SET_EQUAL" | "NORMALIZED_DIGITS" |
+  "CONTAINS"` (`CONTAINS`, I3 E3a: a `STRING_LIST` card value holds the expected code — every
+  expected code when a list is given — casefolded; a scalar card value never matches),
   `tolerance: float = 0.0`, `evaluated_at: "HANDOFF" | "SESSION_END"`, `points: float`,
   `penalty_if_wrong: float = 0.0`.
 - Reads: `CARD_FIELD_CHANGED`, `HANDOFF_CREATED`.

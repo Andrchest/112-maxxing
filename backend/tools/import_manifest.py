@@ -12,9 +12,8 @@ files, and can be rebuilt on its own:
 Stdlib only: the gate's sha check (`backend/tests/unit/reference/test_reference_pack.py`) reads
 the same file with `json` + `hashlib` and needs nothing from here.
 
-Scope (I3 E2a, manager decision): the one pack whose every file exists today, `legacy-r1`, plus the
-classifier and services files. `v046_24-r1` joins when E3a adds `card-schema/v2.yaml`; until then
-the classifier file is pinned in `files`/`sources` but no pack names it.
+Scope: `legacy-r1` (card `v1`, no classifier) since I3 E2a; `v046_24-r1` (card `v2`, classifier
+`v046_24`) since E3a added `card-schema/v2.yaml` (HLD 70 §70.6.1, B1 §3 "Row E3a′").
 """
 
 from __future__ import annotations
@@ -35,11 +34,14 @@ MANIFEST_VERSION = 1
 #: manifest", the reference API's default (`PackQueryParam`).
 PACKS: dict[str, dict[str, str | None]] = {
     "legacy-r1": {"card_schema": "v1", "services": "v1", "classifier": None},
+    "v046_24-r1": {"card_schema": "v2", "services": "v1", "classifier": "v046_24"},
 }
 
 #: Every reference file the manifest pins, in the order HLD 70 §70.6.1 lists them.
 FILES: tuple[str, ...] = (
     "card-schema/v1.yaml",
+    "card-schema/v2.yaml",
+    "card-schema/conditions.fixtures.json",
     "classifier/v046_24.json",
     "classifier/v046_24.columns.json",
     "services/v1.yaml",
@@ -51,6 +53,7 @@ CLASSIFIER_SOURCE = (
     "Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx"
 )
 SERVICES_SOURCE = "requirements/sources/01-qna-session-telegram/files/СЛУЖБЫ 112.docx"
+CARD_SOURCE = "requirements/sources/01-qna-session-telegram/files/КАРТОЧКА 112.docx"
 TRANSCRIPTION_FILE = "services/sluzhby-112.transcription.tsv"
 
 #: Reference file → the source it is built from (repo-relative) and what builds it. The services
@@ -59,9 +62,16 @@ TRANSCRIPTION_FILE = "services/sluzhby-112.transcription.tsv"
 #: reads; the transcription's own source is the docx. Both shas are recorded, so a change to either
 #: the screenshots or the transcription is caught by the gate.
 SOURCES: dict[str, tuple[str, str]] = {
+    "card-schema/v2.yaml": (
+        CARD_SOURCE,
+        "hand authoring (I3 E3a; also «СКРИНШОТ КАРТОЧКИ 112ГСИ.docx»)",
+    ),
     "classifier/v046_24.json": (CLASSIFIER_SOURCE, "backend/tools/import_classifier.py"),
     "classifier/v046_24.columns.json": (CLASSIFIER_SOURCE, "backend/tools/import_classifier.py"),
-    "services/v1.yaml": (f"reference/{TRANSCRIPTION_FILE}", "backend/tools/import_services.py"),
+    "services/v1.yaml": (
+        f"reference/{TRANSCRIPTION_FILE}",
+        "backend/tools/import_services.py (+ reference/classifier/v046_24.columns.json)",
+    ),
     TRANSCRIPTION_FILE: (SERVICES_SOURCE, "hand transcription (I3 E2a)"),
 }
 

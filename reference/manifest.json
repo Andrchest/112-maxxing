@@ -5,16 +5,28 @@
       "card_schema": "v1",
       "services": "v1",
       "classifier": null
+    },
+    "v046_24-r1": {
+      "card_schema": "v2",
+      "services": "v1",
+      "classifier": "v046_24"
     }
   },
   "files": {
     "card-schema/v1.yaml": "d8e93bb32a9087f6db257237e8ff39d5a5ca1d7307c40050c1a8da94ebdfedfd",
+    "card-schema/v2.yaml": "0a8f13d560070e28e7944018914543582b829c201f71b83d99df8a911a5363e5",
+    "card-schema/conditions.fixtures.json": "23a484d5e4454f6d7606fb5a8c6b15661b91809d5d2f1cd58f33db0d0dec77dc",
     "classifier/v046_24.json": "3662af593eec0b59b3d47b097b88a2c7c2b984655312496e5f297697cbd35273",
     "classifier/v046_24.columns.json": "a05cde7051ddd237aec6bd2db90ffbaa05d5d0b5068c7701448d1df0312a9641",
-    "services/v1.yaml": "af5431de289d15d18c931fea794fe5123419ea2f8011a2e4dfb969af403e2eea",
+    "services/v1.yaml": "77eb36eee144a4291e9e01067cf63c877012022698a6b713cc3936debbc59c8b",
     "services/sluzhby-112.transcription.tsv": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32"
   },
   "sources": {
+    "card-schema/v2.yaml": {
+      "path": "requirements/sources/01-qna-session-telegram/files/КАРТОЧКА 112.docx",
+      "sha256": "49037e9a2a90760b1fc0c50243aae75ec396e12302f43eae514691d5bb94bc4c",
+      "tool": "hand authoring (I3 E3a; also «СКРИНШОТ КАРТОЧКИ 112ГСИ.docx»)"
+    },
     "classifier/v046_24.json": {
       "path": "requirements/sources/05-organizer-materials/Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx",
       "sha256": "1d907424ab96ae397cf4b67dfd0193aa94deda56fba2d2ca4f8df8f2c2585937",
@@ -28,7 +40,7 @@
     "services/v1.yaml": {
       "path": "reference/services/sluzhby-112.transcription.tsv",
       "sha256": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32",
-      "tool": "backend/tools/import_services.py"
+      "tool": "backend/tools/import_services.py (+ reference/classifier/v046_24.columns.json)"
     },
     "services/sluzhby-112.transcription.tsv": {
       "path": "requirements/sources/01-qna-session-telegram/files/СЛУЖБЫ 112.docx",

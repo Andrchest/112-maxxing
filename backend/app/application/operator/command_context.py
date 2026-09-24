@@ -23,7 +23,9 @@ runs D5's single Unit of Work transaction and D8's two-gate authorisation in a f
    `DomainEvent`s through this context;
 7. `commit()`. Publishing happens inside the Unit of Work, after the commit (§20.8, §40.6).
 
-Everything a command needs that the aggregate cannot answer is projected once, here: the session
+Everything a command needs that the aggregate cannot answer is projected once, here: the session's
+card schema (I3 E3a, HLD 70 §70.5.4 — the scenario version's `reference_pack_id` names the pack, the
+pack names the schema, read through the version repository; no migration), the session
 offset (`session_offset_ms`, from persisted state only — SPEC §39), the event log, the
 `GuardRuntime` built from it and the `CallTransportStatus` reading that `ring`'s guard needs.
 
@@ -42,8 +44,10 @@ from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.operator.views import OperatorStageView, operator_stage_view
 from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import UserRole
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.sessions.queries import ForbiddenForRoleError
@@ -55,8 +59,11 @@ from app.domain.common.ids import IncidentId, SessionId
 from app.domain.common.state_machine import GuardRuntime
 from app.domain.enums import ActorType, Operator112StageState, RoleType, SessionState
 from app.domain.events.session_event import DomainEvent, SessionEvent
-from app.domain.layers.operator_card import OperatorCard
+from app.domain.layers.card_schema import CardSchema
+from app.domain.layers.operator_card import CARD_SCHEMA_V1, OperatorCard
 from app.domain.roles.operator112 import Operator112Module
+from app.domain.routing.catalog import DEFAULT_PACK_ID, ReferenceCatalog
+from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import RoleStage, SimulationSession
 
 __all__ = [
@@ -65,6 +72,7 @@ __all__ = [
     "OperatorCommandContext",
     "OperatorCommandGate",
     "SessionNotActiveError",
+    "session_card_schema",
 ]
 
 _OPERATOR_MODULE = Operator112Module()
@@ -116,6 +124,9 @@ class OperatorCommandContext:
     now_ms: int
     transport_ready: bool
     log: tuple[SessionEvent, ...]
+    card_schema: CardSchema = CARD_SCHEMA_V1
+    """The session's card schema (HLD 70 §70.5.4): `set_field` validates against it and the
+    card view renders it."""
     _appended: list[SessionEvent] = field(default_factory=list)
 
     # -- projections ---------------------------------------------------------------------------
@@ -182,7 +193,9 @@ class OperatorCommandContext:
 
     def stage_view(self, card: OperatorCard) -> OperatorStageView:
         """The `OperatorStageView` this command answers with (D8)."""
-        return operator_stage_view(self.session, self.stage, card, self.full_log, self.last_seq_no)
+        return operator_stage_view(
+            self.session, self.stage, card, self.full_log, self.last_seq_no, self.card_schema
+        )
 
 
 class OperatorCommandGate:
@@ -193,10 +206,17 @@ class OperatorCommandGate:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         call_transport: CallTransportStatus,
+        reference: ReferencePort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._call_transport = call_transport
+        self._reference = reference
+
+    @property
+    def reference(self) -> ReferenceCatalog:
+        """The reference pack the gate resolves card schemas from (`LEGACY_REFERENCE` unwired)."""
+        return reference_catalog(self._reference)
 
     @asynccontextmanager
     async def open(
@@ -244,9 +264,28 @@ class OperatorCommandGate:
                 now_ms=running_ms(session, self._clock.now()),
                 transport_ready=await self._call_transport.transport_ready(session_id),
                 log=tuple(await uow.events.read(session_id)),
+                card_schema=await session_card_schema(uow, session, self.reference),
             )
             yield context
             await uow.commit()
+
+
+async def session_card_schema(
+    uow: UnitOfWork, session: SimulationSession, reference: ReferenceCatalog
+) -> CardSchema:
+    """The card schema a session runs with (HLD 70 §70.5.4, I3 B1 "Row E3a′").
+
+    The scenario version's `reference_pack_id` (`legacy-r1` for a schema-1 document) names the
+    pack and the pack names the schema, read through the version repository — no column, no
+    migration. It is the same pack `SESSION_CREATED.reference_pack` recorded, because the version
+    is immutable once a session runs on it. A version or pack that cannot be found falls back to
+    `v1`, today's card, rather than refusing every command of the session.
+    """
+    document = await uow.scenarios.get_version_document(session.scenario_version_id)
+    pack_id = DEFAULT_PACK_ID
+    if document is not None:
+        pack_id = ScenarioVersion.model_validate(dict(document)).reference_pack_id
+    return reference.card_schema(pack_id) or CARD_SCHEMA_V1
 
 
 def _operator_stage_for(session: SimulationSession) -> RoleStage | None:

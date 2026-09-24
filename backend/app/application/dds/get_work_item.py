@@ -29,7 +29,10 @@ from app.application.dds.command_context import (
 )
 from app.application.dds.leg_for import project_legs
 from app.application.handoff.work_item import DdsWorkItemView
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.reference.card_schemas import pack_card_schema
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import can_observe
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
@@ -64,8 +67,11 @@ def may_read_work_item(session: SimulationSession, user: AuthenticatedUser) -> b
 class GetDdsWorkItem:
     """`getDdsWorkItem` (`openapi.yaml`): the work item, from the snapshot and the legs alone."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> DdsWorkItemView:
         """The stage-wide work-item projection (R3), if this caller may read it."""
@@ -83,8 +89,10 @@ class GetDdsWorkItem:
             legs, snapshot = await load_legs(uow, session_id, stage)
             board = await uow.resources.list_for_session(session_id)
             dispatched = await uow.resources.dispatch_history(session_id)
+            log = await uow.events.read(session_id)
             await uow.commit()
-        return work_item_of(snapshot, project_legs(legs, board, dispatched))
+        schema = pack_card_schema(reference_catalog(self._reference), log)
+        return work_item_of(snapshot, project_legs(legs, board, dispatched), schema)
 
 
 def _any_dds_stage(session: SimulationSession) -> RoleStage | None:

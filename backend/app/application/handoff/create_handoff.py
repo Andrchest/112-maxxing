@@ -262,6 +262,7 @@ class CreateHandoff:
             ctx.actor,
             ctx.now_ms,
             CardRevisionId(self._ids.new()),
+            schema=ctx.card_schema,
         )
         if revision is None or card_event is None:
             return card, None

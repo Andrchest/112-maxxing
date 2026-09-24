@@ -1,0 +1,869 @@
+# Card schema v2 — the organizer's 112 card (HLD 70 §70.5, D17; I3 E3a). Authored by hand.
+#
+# Sources (read-only, never copied into the repo):
+#   «КАРТОЧКА 112.docx»            requirements/sources/01-qna-session-telegram/files/ — the «Что
+#                                   случилось» list (text + images 1–13) and the 101 walkthrough
+#                                   (images 14–39); cited below as "card image N".
+#   «СКРИНШОТ КАРТОЧКИ 112ГСИ.docx» same directory — the whole card (image1), 101/Дом (image2–4),
+#                                   the 104 block (image6), the Взрыв block (image8); cited as "gsi
+#                                   image N".
+#   requirements/normalized/SRC-001-domain-docs.md REQ-3001…3008, REQ-3014 (and REQ-3015/3016 for
+#   the phone/foreign-number/foreign-language controls the screenshots show as icons).
+#
+# Shape: `parse_card_schema` (backend/app/domain/layers/card_schema.py). Omitted keys take their
+# defaults: enum_name null, scoring_relevant / required_for_handoff / required_in_block /
+# routing_relevant false, options / visible_when null; `order` is the field's position inside its
+# group, in file order.
+#
+# Card ↔ classifier binding (D18 applied, B1 §4): a questionnaire chip's `code` is the признак
+# text exactly as reference/classifier/v046_24.json carries it; a yes/no that is a routing
+# sub-column condition carries the flag key of v046_24.columns.json `flags` (its «Нет» carries
+# `<flag>:no` and `routing: none`); a «Что случилось» entry carries the classifier `group_no` it
+# opens; address.okrug / address.district carry the catalog's `okrug` / `district` strings. A chip
+# that stands for several признаки lists them in `classifier_features`; an option bound to nothing
+# in the classifier says `routing: none`. A BOOLEAN toggle's one option is the code it stands for
+# when on. Codes of options outside the binding (non-routing fields) are UPPER_SNAKE or `yes`/`no`.
+#
+# Paths (HLD 70 §70.5.3): a field that means the same as a v1 field reuses the v1 path.
+schema_id: v2
+source: КАРТОЧКА 112.docx + СКРИНШОТ КАРТОЧКИ 112ГСИ.docx (hand-authored, I3 E3a)
+groups:
+- {id: header, label_ru: Телефоны заявителя}
+- {id: applicant, label_ru: Заявитель}
+- {id: address, label_ru: Адрес}
+- {id: description, label_ru: Описание со слов заявителя}
+- {id: flags, label_ru: Признаки вызова}
+- {id: incident, label_ru: Что случилось}
+- {id: q_fire, label_ru: Происшествие 101}
+- {id: q_gas, label_ru: Происшествие 104}
+- {id: q_explosion, label_ru: 'П: Взрыв'}
+- {id: services, label_ru: Службы}
+fields:
+  # source: gsi image1 (header strip «АОН», mask «+7 (  )  -  -»); REQ-3015: filled automatically on a real call
+- field_path: caller.phone_aon
+  value_type: STRING
+  label_ru: АОН
+  group: header
+  control: PHONE
+  required_in_block: true
+  # source: gsi image1 «предоставленный»; REQ-3015 «Предоставленный номер – номер, указанный заявителем как его контактный» = v1 «Телефон заявителя», so the v1 path is reused (§70.5.3 rule) instead of a new caller.phone_provided
+- field_path: caller.phone
+  value_type: STRING
+  label_ru: предоставленный
+  scoring_relevant: true
+  required_for_handoff: true
+  group: header
+  control: PHONE
+  required_in_block: true
+  # source: gsi image1 «телефон на место»
+- field_path: caller.phone_on_site
+  value_type: STRING
+  label_ru: телефон на место
+  group: header
+  control: PHONE
+  required_in_block: true
+  # source: gsi image1 (globe icon beside each phone); label from REQ-3015 «зарубежный номер»
+- field_path: caller.foreign
+  value_type: BOOLEAN
+  label_ru: Зарубежный номер
+  group: header
+  control: CHECKBOX
+  # source: gsi image1
+- field_path: caller.full_name
+  value_type: STRING
+  label_ru: Фамилия и имя заявителя
+  scoring_relevant: true
+  group: applicant
+  control: TEXT
+  # source: gsi image1 (dropdown «выберите статус»)
+  # TODO: only «очевидец» is visible (UI-check D-4, memo p23); the full status list is in no screenshot
+  # TODO: the two unlabelled dropdowns beside «выберите статус» (gsi image1) are not authored: nothing shows what they hold
+- field_path: caller.status
+  value_type: ENUM
+  label_ru: Статус заявителя
+  group: applicant
+  control: SELECT
+  options:
+  - {code: EYEWITNESS, label_ru: очевидец}
+  # source: gsi image1 (translate icon beside the applicant row); REQ-3016
+- field_path: caller.foreign_language
+  value_type: BOOLEAN
+  label_ru: Вызов на иностранном языке
+  group: applicant
+  control: CHECKBOX
+  # source: gsi image1 «Адрес:» (single address line, «Москва»); REQ-3019
+  # TODO: the address search/autofill (Яндекс/ФИАС) and the map window «С112 - карта» (gsi image5) are not card fields
+- field_path: address.line
+  value_type: STRING
+  label_ru: Адрес
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Страна:»
+- field_path: address.country
+  value_type: STRING
+  label_ru: Страна
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Субъект:» (Москва)
+- field_path: address.region
+  value_type: STRING
+  label_ru: Субъект
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Населенный пункт:»
+- field_path: address.locality
+  value_type: STRING
+  label_ru: Населенный пункт
+  scoring_relevant: true
+  required_for_handoff: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Объект:»
+- field_path: address.object
+  value_type: STRING
+  label_ru: Объект
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Округ:» (dropdown); options = the catalog's 11 PREFECTURE okrug strings (B1 G3)
+- field_path: address.okrug
+  value_type: ENUM
+  label_ru: Округ
+  scoring_relevant: true
+  group: address
+  control: SELECT
+  options:
+  - {code: ВАО, label_ru: ВАО}
+  - {code: ЗАО, label_ru: ЗАО}
+  - {code: ЗелАО, label_ru: ЗелАО}
+  - {code: САО, label_ru: САО}
+  - {code: СВАО, label_ru: СВАО}
+  - {code: СЗАО, label_ru: СЗАО}
+  - {code: ТиНАО, label_ru: ТиНАО}
+  - {code: ЦАО, label_ru: ЦАО}
+  - {code: ЮАО, label_ru: ЮАО}
+  - {code: ЮВАО, label_ru: ЮВАО}
+  - {code: ЮЗАО, label_ru: ЮЗАО}
+  required_in_block: true
+  routing_relevant: true
+  # source: gsi image1 «Район:» (dropdown); options = the catalog's 146 DISTRICT strings (B1 G3)
+- field_path: address.district
+  value_type: ENUM
+  label_ru: Район
+  scoring_relevant: true
+  group: address
+  control: SELECT
+  options:
+  - {code: Академический, label_ru: Академический}
+  - {code: Алексеевский, label_ru: Алексеевский}
+  - {code: Алтуфьевский, label_ru: Алтуфьевский}
+  - {code: Арбат, label_ru: Арбат}
+  - {code: Аэропорт, label_ru: Аэропорт}
+  - {code: Бабушкинский, label_ru: Бабушкинский}
+  - {code: Басманный, label_ru: Басманный}
+  - {code: Беговой, label_ru: Беговой}
+  - {code: Бескудниково, label_ru: Бескудниково}
+  - {code: Бибирево, label_ru: Бибирево}
+  - {code: Бирюлево Восточное, label_ru: Бирюлево Восточное}
+  - {code: Бирюлево Западное, label_ru: Бирюлево Западное}
+  - {code: Богородское, label_ru: Богородское}
+  - {code: Братеево, label_ru: Братеево}
+  - {code: Бутырский, label_ru: Бутырский}
+  - {code: Вешняки, label_ru: Вешняки}
+  - {code: Внуково, label_ru: Внуково}
+  - {code: Внуковское, label_ru: Внуковское}
+  - {code: Войковский, label_ru: Войковский}
+  - {code: Вороновское, label_ru: Вороновское}
+  - {code: Воскресенское, label_ru: Воскресенское}
+  - {code: Восточное Дегунино, label_ru: Восточное Дегунино}
+  - {code: Восточное Измайлово, label_ru: Восточное Измайлово}
+  - {code: Восточный, label_ru: Восточный}
+  - {code: Выхино-Жулебино, label_ru: Выхино-Жулебино}
+  - {code: Гагаринский, label_ru: Гагаринский}
+  - {code: Головинский, label_ru: Головинский}
+  - {code: Гольяново, label_ru: Гольяново}
+  - {code: Даниловский, label_ru: Даниловский}
+  - {code: Десеновское, label_ru: Десеновское}
+  - {code: Дмитровский, label_ru: Дмитровский}
+  - {code: Донской, label_ru: Донской}
+  - {code: Дорогомилово, label_ru: Дорогомилово}
+  - {code: Замоскворечье, label_ru: Замоскворечье}
+  - {code: Западное Дегунино, label_ru: Западное Дегунино}
+  - {code: Зюзино, label_ru: Зюзино}
+  - {code: Зябликово, label_ru: Зябликово}
+  - {code: Ивановский, label_ru: Ивановский}
+  - {code: Измайлово, label_ru: Измайлово}
+  - {code: Капотня, label_ru: Капотня}
+  - {code: Киевский, label_ru: Киевский}
+  - {code: Клёновское, label_ru: Клёновское}
+  - {code: Кокошкино, label_ru: Кокошкино}
+  - {code: Коньково, label_ru: Коньково}
+  - {code: Коптево, label_ru: Коптево}
+  - {code: Косино-Ухтомский, label_ru: Косино-Ухтомский}
+  - {code: Котловка, label_ru: Котловка}
+  - {code: Краснопахорское, label_ru: Краснопахорское}
+  - {code: Красносельский, label_ru: Красносельский}
+  - {code: Крылатское, label_ru: Крылатское}
+  - {code: Крюково, label_ru: Крюково}
+  - {code: Кузьминки, label_ru: Кузьминки}
+  - {code: Кунцево, label_ru: Кунцево}
+  - {code: Куркино, label_ru: Куркино}
+  - {code: Левобережный, label_ru: Левобережный}
+  - {code: Лефортово, label_ru: Лефортово}
+  - {code: Лианозово, label_ru: Лианозово}
+  - {code: Ломоносовский, label_ru: Ломоносовский}
+  - {code: Лосиноостровский, label_ru: Лосиноостровский}
+  - {code: Люблино, label_ru: Люблино}
+  - {code: Марушкинское, label_ru: Марушкинское}
+  - {code: Марфино, label_ru: Марфино}
+  - {code: Марьина роща, label_ru: Марьина роща}
+  - {code: Марьино, label_ru: Марьино}
+  - {code: Матушкино, label_ru: Матушкино}
+  - {code: Метрогородок, label_ru: Метрогородок}
+  - {code: Мещанский, label_ru: Мещанский}
+  - {code: Митино, label_ru: Митино}
+  - {code: Михайлово-Ярцевское, label_ru: Михайлово-Ярцевское}
+  - {code: Можайский, label_ru: Можайский}
+  - {code: Молжаниновский, label_ru: Молжаниновский}
+  - {code: Москворечье-Сабурово, label_ru: Москворечье-Сабурово}
+  - {code: Московское, label_ru: Московское}
+  - {code: Мосрентген, label_ru: Мосрентген}
+  - {code: Нагатино-Садовники, label_ru: Нагатино-Садовники}
+  - {code: Нагатинский Затон, label_ru: Нагатинский Затон}
+  - {code: Нагорный, label_ru: Нагорный}
+  - {code: Некрасовка, label_ru: Некрасовка}
+  - {code: Нижегородский, label_ru: Нижегородский}
+  - {code: Ново-Переделкино, label_ru: Ново-Переделкино}
+  - {code: Новогиреево, label_ru: Новогиреево}
+  - {code: Новокосино, label_ru: Новокосино}
+  - {code: Новофедоровское, label_ru: Новофедоровское}
+  - {code: Обручевский, label_ru: Обручевский}
+  - {code: Орехово-Борисово Северное, label_ru: Орехово-Борисово Северное}
+  - {code: Орехово-Борисово Южное, label_ru: Орехово-Борисово Южное}
+  - {code: Останкинский, label_ru: Останкинский}
+  - {code: Отрадное, label_ru: Отрадное}
+  - {code: Очаково-Матвеевское, label_ru: Очаково-Матвеевское}
+  - {code: Первомайское, label_ru: Первомайское}
+  - {code: Перово, label_ru: Перово}
+  - {code: Печатники, label_ru: Печатники}
+  - {code: Покровское-Стрешнево, label_ru: Покровское-Стрешнево}
+  - {code: Преображенский, label_ru: Преображенский}
+  - {code: Пресненский, label_ru: Пресненский}
+  - {code: Проспект Вернадского, label_ru: Проспект Вернадского}
+  - {code: Раменки, label_ru: Раменки}
+  - {code: Роговское, label_ru: Роговское}
+  - {code: Ростокино, label_ru: Ростокино}
+  - {code: Рязановское, label_ru: Рязановское}
+  - {code: Рязанский, label_ru: Рязанский}
+  - {code: Савелки, label_ru: Савелки}
+  - {code: Савеловский, label_ru: Савеловский}
+  - {code: Свиблово, label_ru: Свиблово}
+  - {code: Северное Бутово, label_ru: Северное Бутово}
+  - {code: Северное Измайлово, label_ru: Северное Измайлово}
+  - {code: Северное Медведково, label_ru: Северное Медведково}
+  - {code: Северное Тушино, label_ru: Северное Тушино}
+  - {code: Северный, label_ru: Северный}
+  - {code: Силино, label_ru: Силино}
+  - {code: Сокол, label_ru: Сокол}
+  - {code: Соколиная гора, label_ru: Соколиная гора}
+  - {code: Сокольники, label_ru: Сокольники}
+  - {code: Солнцево, label_ru: Солнцево}
+  - {code: Сосенское, label_ru: Сосенское}
+  - {code: Старое Крюково, label_ru: Старое Крюково}
+  - {code: Строгино, label_ru: Строгино}
+  - {code: Таганский, label_ru: Таганский}
+  - {code: Тверской, label_ru: Тверской}
+  - {code: Текстильщики, label_ru: Текстильщики}
+  - {code: Теплый Стан, label_ru: Теплый Стан}
+  - {code: Тимирязевский, label_ru: Тимирязевский}
+  - {code: Троицк, label_ru: Троицк}
+  - {code: Тропарево-Никулино, label_ru: Тропарево-Никулино}
+  - {code: Филевский парк, label_ru: Филевский парк}
+  - {code: Фили-Давыдково, label_ru: Фили-Давыдково}
+  - {code: Филимонковское, label_ru: Филимонковское}
+  - {code: Хамовники, label_ru: Хамовники}
+  - {code: Ховрино, label_ru: Ховрино}
+  - {code: Хорошево-Мневники, label_ru: Хорошево-Мневники}
+  - {code: Хорошевский, label_ru: Хорошевский}
+  - {code: Царицыно, label_ru: Царицыно}
+  - {code: Черемушки, label_ru: Черемушки}
+  - {code: Чертаново Северное, label_ru: Чертаново Северное}
+  - {code: Чертаново Центральное, label_ru: Чертаново Центральное}
+  - {code: Чертаново Южное, label_ru: Чертаново Южное}
+  - {code: Щаповское, label_ru: Щаповское}
+  - {code: Щербинка, label_ru: Щербинка}
+  - {code: Щукино, label_ru: Щукино}
+  - {code: Южное Бутово, label_ru: Южное Бутово}
+  - {code: Южное Медведково, label_ru: Южное Медведково}
+  - {code: Южное Тушино, label_ru: Южное Тушино}
+  - {code: Южнопортовый, label_ru: Южнопортовый}
+  - {code: Якиманка, label_ru: Якиманка}
+  - {code: Ярославский, label_ru: Ярославский}
+  - {code: Ясенево, label_ru: Ясенево}
+  required_in_block: true
+  routing_relevant: true
+  # source: gsi image1 «Улица:»
+- field_path: address.street
+  value_type: STRING
+  label_ru: Улица
+  scoring_relevant: true
+  required_for_handoff: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Дом/Вл:»
+- field_path: address.house
+  value_type: STRING
+  label_ru: Дом/Вл
+  scoring_relevant: true
+  required_for_handoff: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Корпус:»
+- field_path: address.building
+  value_type: STRING
+  label_ru: Корпус
+  scoring_relevant: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Стр/соор:» — v1 had one «Корпус / строение»; v2 splits it (new path, not in §70.5.3's list)
+- field_path: address.structure
+  value_type: STRING
+  label_ru: Стр/соор
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Квартира/офис:»
+- field_path: address.apartment
+  value_type: STRING
+  label_ru: Квартира/офис
+  scoring_relevant: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Подъезд:»
+- field_path: address.entrance
+  value_type: STRING
+  label_ru: Подъезд
+  scoring_relevant: true
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Этаж:»
+- field_path: address.floor
+  value_type: INTEGER
+  label_ru: Этаж
+  scoring_relevant: true
+  group: address
+  control: NUMBER
+  required_in_block: true
+  # source: gsi image1 «Код:»
+- field_path: address.code
+  value_type: STRING
+  label_ru: Код
+  group: address
+  control: TEXT
+  required_in_block: true
+  # source: gsi image1 «Описательный адрес:»
+- field_path: address.descriptive
+  value_type: STRING
+  label_ru: Описательный адрес
+  group: address
+  control: TEXTAREA
+  required_in_block: true
+  # source: gsi image1 «Описание со слов заявителя» (placeholder «введите», counter «0 / 1999»)
+- field_path: description.text
+  value_type: STRING
+  label_ru: Описание со слов заявителя
+  scoring_relevant: true
+  required_for_handoff: true
+  group: description
+  control: TEXTAREA
+  required_in_block: true
+  # source: gsi image1 / card image 1 (header button); classifier flag «ПП - ПОСТРАДАВШИЕ ПОГИБШИЕ» (new path, not in §70.5.3's list)
+- field_path: flags.casualties
+  value_type: BOOLEAN
+  label_ru: Пострадавшие
+  scoring_relevant: true
+  group: flags
+  control: CHECKBOX
+  options:
+  - {code: casualties, label_ru: Пострадавшие}
+  routing_relevant: true
+  # source: gsi image1 (header button); classifier flag «Пострадавшие не на месте» (B1 G2)
+- field_path: flags.ambulance_refused
+  value_type: BOOLEAN
+  label_ru: Нет на месте/ Отказ от скорой
+  scoring_relevant: true
+  group: flags
+  control: CHECKBOX
+  options:
+  - {code: casualties_not_on_site, label_ru: Нет на месте/ Отказ от скорой}
+  routing_relevant: true
+  # source: gsi image1 (header button); classifier flag «НД - НЕТ ДОСТУПА» (B1 G2)
+- field_path: flags.blocked
+  value_type: BOOLEAN
+  label_ru: Нет доступа/ Заблокированные
+  scoring_relevant: true
+  group: flags
+  control: CHECKBOX
+  options:
+  - {code: no_access, label_ru: Нет доступа/ Заблокированные}
+  routing_relevant: true
+  # source: gsi image1 (orange-outlined button); REQ-3016
+- field_path: flags.no_contact
+  value_type: BOOLEAN
+  label_ru: нет контакта
+  group: flags
+  control: CHECKBOX
+  # source: gsi image1 (orange-outlined button); REQ-3016
+- field_path: flags.call_dropped
+  value_type: BOOLEAN
+  label_ru: срыв звонка
+  group: flags
+  control: CHECKBOX
+  # source: card docx text table «Что случилось» + card images 1–13 (the picker, labels as the
+  # screen shows them), gsi image1/5/7 (the picker and the quick buttons); REQ-3001. «добавить тип
+  # происшествия» adds more types (gsi image2: chips «Происшествие 101», «П: Взрыв»).
+  # Codes: the classifier `group_no` the entry opens; an entry sharing its group with another is
+  # `<group_no>:<slug>` (manager decision on B1, D21) and, when its label names a признак of the
+  # group's rows, lists it in `classifier_features`. The resolver takes the group before ':'.
+  # TODO: 15 «102» — 102 → group 15 «Нарушение правопорядка» by the hotline's meaning; no screenshot shows the 102 questionnaire
+  # TODO: 22 «103» — 103 → group 22 «Оказание медицинской скорой и неотложной помощи» by the hotline's meaning; no screenshot shows the 103 questionnaire (nor REQ-3018's «Отказ от реагирования»)
+  # TODO: THANKS «Благодарность службам» — A-3 administrative; the classifier has a group-23 row «Благодарность» — left unrouted (group 23 is «Прочие происшествия»'s code)
+  # TODO: 16 «Дорожные помехи» — «Дорожные помехи» → group 16 «Проблемы на дороге» by name
+  # TODO: COMPLAINT «Жалоба на действие или бездействие служб» — A-3 administrative; the classifier has a group-23 row «Жалоба» — left unrouted
+  # TODO: CONSULTATION «Консультация» — A-3 administrative; the classifier has a group-23 row «Справка консультация» — left unrouted
+  # TODO: GATHERING «Сбор» — no classifier group or row found for «Сбор»; meaning not documented
+  # TODO: TRAINING «Тренировка» — A-3 administrative; the classifier has a group-23 row «Тренировка» — left unrouted
+  # TODO: EMERGENCY_NOTICE «Уведомление о ЧС» — no classifier group or row found for «Уведомление о ЧС»
+- field_path: incident.types
+  value_type: STRING_LIST
+  label_ru: Что случилось?
+  scoring_relevant: true
+  required_for_handoff: true
+  group: incident
+  control: CHIPS
+  options:
+  - {code: '1', label_ru: '101'}
+  - {code: '15', label_ru: '102'}
+  - {code: '22', label_ru: '103'}
+  - {code: '13', label_ru: '104'}
+  - {code: '14', label_ru: Аварии и происшествия в городском хозяйстве}
+  - {code: '12', label_ru: Аварии и происшествия на транспортных объектах}
+  - {code: '9', label_ru: Аварии на гидротехнических сооружениях}
+  - {code: '10:avarii_na_opasnykh_i_proizvodstvennykh_obektakh', label_ru: Аварии на опасных и производственных объектах}
+  - {code: THANKS, label_ru: Благодарность службам, routing: none}
+  - {code: '24', label_ru: БПЛА}
+  - {code: '3', label_ru: Взрыв}
+  - {code: INTERNAL_CALL, label_ru: Внутренний звонок (звонки от работников), routing: none}
+  - {code: FOREIGN_LANGUAGE_CALL, label_ru: Вызов на иностранном языке, routing: none}
+  - {code: ADDITIONAL_CALL, label_ru: Дополнительный звонок от заявителя, routing: none}
+  - {code: '16', label_ru: Дорожные помехи}
+  - {code: '2', label_ru: ДТП}
+  - {code: COMPLAINT, label_ru: Жалоба на действие или бездействие служб, routing: none}
+  - {code: '21', label_ru: Животные}
+  - {code: CONSULTATION, label_ru: Консультация, routing: none}
+  - {code: NON_TARGET_CALL, label_ru: Нецелевой вызов, routing: none}
+  - {code: '5', label_ru: Обрушение}
+  - {code: FEEDBACK_112, label_ru: Отзыв о работе 112 Москва, routing: none}
+  - {code: CALL_CANCELLED, label_ru: Отмена вызова, routing: none}
+  - {code: WRONG_NUMBER, label_ru: Ошибочно набран номер, routing: none}
+  - {code: SHIFT_HANDOVER, label_ru: Передача дежурства, routing: none}
+  - {code: '23:pomoshch_sluzhbam', label_ru: Помощь службам, classifier_features: [Помощь службам]}
+  - {code: '7:prirodnaya_stikhiya', label_ru: Природная стихия, classifier_features: [Природная стихия]}
+  - {code: '23:prochie_proisshestviya', label_ru: Прочие происшествия, classifier_features: [Прочие происшествия]}
+  - {code: '10:radiatsiya', label_ru: Радиация, classifier_features: [Радиация]}
+  - {code: '11:razbityy_gradusnik', label_ru: Разбитый градусник, classifier_features: [Градусник]}
+  - {code: '18', label_ru: Ребенок в опасности}
+  - {code: GATHERING, label_ru: Сбор, routing: none}
+  - {code: '7:skoplenie_vody', label_ru: Скопление воды, classifier_features: [Скопление воды]}
+  - {code: '19', label_ru: Смертельный исход}
+  - {code: '20', label_ru: Социальная помощь}
+  - {code: REFERENCE_101, label_ru: Справка-101, routing: none}
+  - {code: REFERENCE_102, label_ru: Справка-102, routing: none}
+  - {code: REFERENCE_103, label_ru: Справка-103, routing: none}
+  - {code: REFERENCE_104, label_ru: Справка-104, routing: none}
+  - {code: REFERENCE_GIBDD, label_ru: Справка-ГИБДД, routing: none}
+  - {code: REFERENCE_CITY_ECONOMY, label_ru: Справка Городское Хозяйство, routing: none}
+  - {code: REFERENCE_MCHS, label_ru: Справка-МЧС, routing: none}
+  - {code: TEST_CALL, label_ru: Тестовый вызов, routing: none}
+  - {code: TECHNICAL_FAILURE, label_ru: Технический сбой (сбой в работе оборудования 112 Москва), routing: none}
+  - {code: TRAINING, label_ru: Тренировка, routing: none}
+  - {code: EMERGENCY_NOTICE, label_ru: Уведомление о ЧС, routing: none}
+  - {code: '4', label_ru: Угроза взрыва/террористического акта}
+  - {code: '11:ugroza_vybrosa_opasnykh_veshchestv_i_radiatsii', label_ru: Угроза выброса опасных веществ и радиации}
+  - {code: '6', label_ru: Угроза обрушения}
+  - {code: '17', label_ru: Человек в опасности}
+  - {code: '8', label_ru: Экологические происшествия}
+  required_in_block: true
+  routing_relevant: true
+  # source: HLD 70 §70.5.3 / §70.6.4 (the resolved «Класс.:» row; REQ-3040 shows it on the ДДС side)
+  # TODO: no 112 screenshot shows a «Класс.:» control; it matters only when the resolver finds several candidate rows (E2b)
+- field_path: incident.classifier_code
+  value_type: STRING
+  label_ru: Класс.
+  scoring_relevant: true
+  group: incident
+  control: TEXT
+  routing_relevant: true
+  # 101 questionnaire — card images 14–39 (Улица, Транспорт), gsi image2–4 (Дом); REQ-3002…3005.
+  # TODO: the «Здание / объект» and «Опасный объект» branches are not in any screenshot: only their
+  # «Где» chips are authored (the classifier's объект sub-признаки учебное, лечебное, … have no chip).
+  # source: card image 14; gsi image2
+- field_path: q.fire.where
+  value_type: STRING_LIST
+  label_ru: Где
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: на улице, label_ru: Улица}
+  - {code: транспорт, label_ru: Транспорт}
+  - {code: жилой дом, label_ru: Дом}
+  - {code: объект, label_ru: Здание / объект}
+  - {code: опасный, label_ru: Опасный объект, classifier_features: [объект, опасный]}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '1'}
+  routing_relevant: true
+  # source: card image 15; REQ-3003/3004
+- field_path: q.fire.sign_street
+  value_type: STRING_LIST
+  label_ru: Признак пожара (улица)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: открытое пламя / дым, label_ru: Открытое пламя / Дым, classifier_features: [открытое пламя, дым]}
+  - {code: запах гари, label_ru: Запах гари}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: на улице}]}
+  routing_relevant: true
+  # source: card image 33; REQ-3005
+  # TODO: what «Сработала пожарная сигнализация» opens under Транспорт is in no screenshot
+- field_path: q.fire.sign_transport
+  value_type: STRING_LIST
+  label_ru: Признак пожара (транспорт)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: открытое пламя / дым, label_ru: Открытое пламя / Дым, classifier_features: [открытое пламя, дым]}
+  - {code: сработала сигнализация, label_ru: Сработала пожарная сигнализация}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: транспорт}]}
+  routing_relevant: true
+  # source: gsi image2
+  # TODO: what «Запах гари» / «Сработала пожарная сигнализация» open under Дом is in no screenshot
+- field_path: q.fire.sign_house
+  value_type: STRING_LIST
+  label_ru: Признак пожара (дом)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: открытое пламя / дым, label_ru: Открытое пламя / Дым, classifier_features: [открытое пламя, дым]}
+  - {code: запах гари, label_ru: Запах гари}
+  - {code: сигнализация, label_ru: Сработала пожарная сигнализация}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}]}
+  routing_relevant: true
+  # source: card images 15, 17, 33; gsi image2
+- field_path: q.fire.access
+  value_type: STRING_LIST
+  label_ru: Доступ
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: no_access, label_ru: Нет доступа}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {any: [{field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.where, op: CONTAINS, value: транспорт}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}]}]}
+  routing_relevant: true
+  # source: card image 16; REQ-3003
+  # TODO: «Горит человек» and «Что горит неизвестно» have no group-1 признак in v046_24 (routing: none)
+- field_path: q.fire.street_object
+  value_type: STRING_LIST
+  label_ru: Улица (пламя, дым)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: мусор, label_ru: Мусор}
+  - {code: 'трава, пух', label_ru: 'Трава, пух', classifier_features: [Трава, Пух]}
+  - {code: Парк, label_ru: Парк}
+  - {code: Лес, label_ru: Лес}
+  - {code: торф, label_ru: Торф}
+  - {code: Мачта освещения, label_ru: Мачта освещения}
+  - {code: опора контактной сети, label_ru: Опора контактной сети}
+  - {code: ЛЭП, label_ru: ЛЭП}
+  - {code: Провода, label_ru: Провода}
+  - {code: 'дерево, деревья', label_ru: 'Дерево, деревья'}
+  - {code: BURNING_PERSON, label_ru: Горит человек, routing: none}
+  - {code: UNKNOWN_BURNING, label_ru: Что горит неизвестно, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}]}
+  routing_relevant: true
+  # source: card image 34; REQ-3005
+  # TODO: «Метро» / «МЦК, МЦД» stand for the classifier's first признак «метро» / «МЦК»; their sub-признаки «вагон/поезд,» and «станция/вестибюль, …» are in no screenshot
+  # TODO: «Ж/Д пути» and «Релейный шкаф Ж/Д» have no group-1 признак in v046_24 (routing: none)
+- field_path: q.fire.transport_object
+  value_type: STRING_LIST
+  label_ru: Транспорт (пламя, дым)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: общественный транспорт, label_ru: Общественный транспорт}
+  - {code: автомашина, label_ru: Автомашина}
+  - {code: ДТП с пожаром, label_ru: ДТП с пожаром}
+  - {code: опасный груз, label_ru: Опасный груз}
+  - {code: воздушный транспорт, label_ru: Воздушный транспорт}
+  - {code: Аэропорт, label_ru: Аэропорт}
+  - {code: ж/д транспорт, label_ru: Ж/Д транспорт}
+  - {code: 'Вокзал ж/д, платформа жд', label_ru: 'Вокзал Ж/Д, платформа Ж/Д'}
+  - {code: транспорт прочее, label_ru: Транспорт прочее}
+  - {code: водный, label_ru: Водный}
+  - {code: мост, label_ru: Мост}
+  - {code: эстакада, label_ru: Эстакада}
+  - {code: тоннель, label_ru: Тоннель}
+  - {code: переход подземный / наземный, label_ru: Переход подземный/наземный}
+  - {code: метро, label_ru: Метро}
+  - {code: МЦК, label_ru: 'МЦК, МЦД'}
+  - {code: RAILWAY_TRACKS, label_ru: Ж/Д пути, routing: none}
+  - {code: RAILWAY_RELAY_CABINET, label_ru: Релейный шкаф Ж/Д, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: транспорт}, {field_path: q.fire.sign_transport, op: CONTAINS, value: открытое пламя / дым}]}
+  routing_relevant: true
+  # source: gsi image2
+  # TODO: «Дом многоквартирный» adds no признак beyond «жилой дом» (the classifier's generic 105000x rows); «Сарай / бытовка / хоз. постройка» and «Выселенное здание» have no group-1 признак (routing: none)
+- field_path: q.fire.house_type
+  value_type: STRING_LIST
+  label_ru: Дом (пламя, дым)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: APARTMENT_BUILDING, label_ru: Дом многоквартирный, routing: none}
+  - {code: частный дом, label_ru: Дом частный}
+  - {code: дача, label_ru: Дача}
+  - {code: SHED, label_ru: Сарай / бытовка / хоз. постройка, routing: none}
+  - {code: VACATED_BUILDING, label_ru: Выселенное здание, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}
+  routing_relevant: true
+  # source: gsi image2
+- field_path: q.fire.floors
+  value_type: INTEGER
+  label_ru: Этажность здания
+  group: q_fire
+  control: NUMBER
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}
+  # source: card images 15, 20, 21; classifier flags «тоннель» / «пеш»
+- field_path: q.fire.place
+  value_type: STRING_LIST
+  label_ru: Место происшествия
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: tunnel, label_ru: Тоннель}
+  - {code: pedestrian, label_ru: Пешеходный переход}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: на улице}]}
+  routing_relevant: true
+  # source: card images 16, 22, 23, 34; gsi image2
+- field_path: q.fire.threat_to_people
+  value_type: STRING_LIST
+  label_ru: Угроза людям
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: threat_to_people, label_ru: Да}
+  - {code: 'threat_to_people:no', label_ru: Нет, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {any: [{all: [{field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}]}, {all: [{field_path: q.fire.where, op: CONTAINS, value: транспорт}, {field_path: q.fire.sign_transport, op: CONTAINS, value: открытое пламя / дым}]}, {all: [{field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}]}]}
+  routing_relevant: true
+  # source: card images 19, 24
+  # TODO: seen only after «Мусор» was chosen (card image 19; absent in image 16/21): shown here for any «Улица (пламя, дым)» choice
+- field_path: q.fire.offence
+  value_type: STRING_LIST
+  label_ru: Правонарушение
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: offence, label_ru: Есть правонарушение}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}, {field_path: q.fire.street_object, op: PRESENT}]}
+  routing_relevant: true
+  # source: card images 16, 26, 34
+- field_path: q.fire.medical_help
+  value_type: STRING_LIST
+  label_ru: Медицинская помощь
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: medical_help, label_ru: Да}
+  - {code: 'medical_help:no', label_ru: Нет, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {any: [{all: [{field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}]}, {all: [{field_path: q.fire.where, op: CONTAINS, value: транспорт}, {field_path: q.fire.sign_transport, op: CONTAINS, value: открытое пламя / дым}]}]}]}
+  routing_relevant: true
+  # source: card image 24
+- field_path: q.fire.offence_description
+  value_type: STRING
+  label_ru: Описание правонарушения
+  group: q_fire
+  control: TEXT
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.offence, op: CONTAINS, value: offence}]}
+  # source: card images 16, 27, 39
+- field_path: q.fire.evacuation
+  value_type: STRING_LIST
+  label_ru: Требуется эвакуация
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: evacuation_required, label_ru: Да}
+  - {code: 'evacuation_required:no', label_ru: Нет, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {any: [{all: [{field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}]}, {all: [{field_path: q.fire.where, op: CONTAINS, value: транспорт}, {field_path: q.fire.sign_transport, op: CONTAINS, value: открытое пламя / дым}]}]}]}
+  routing_relevant: true
+  # source: gsi image2, image3
+  # TODO: «Крыша» has no group-1 признак in v046_24 (routing: none)
+- field_path: q.fire.house_objects
+  value_type: STRING_LIST
+  label_ru: Внутридомовые объекты (пламя, дым)
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: квартира, label_ru: Квартира}
+  - {code: балкон, label_ru: Балкон}
+  - {code: газовая колонка, label_ru: Газовая колонка}
+  - {code: газовая плита, label_ru: Газовая плита}
+  - {code: лифт, label_ru: Лифт}
+  - {code: мусоропровод, label_ru: Мусоропровод}
+  - {code: подъезд, label_ru: Подъезд}
+  - {code: счетчик электричества, label_ru: Счетчик электричества}
+  - {code: электрическая проводка, label_ru: Электрическая проводка}
+  - {code: электрощит, label_ru: Электрощит}
+  - {code: лестничная клетка, label_ru: Лестничная клетка}
+  - {code: подвал, label_ru: Подвал}
+  - {code: прочие внутридомовые объекты, label_ru: Прочие внутридомовые объекты}
+  - {code: ROOF, label_ru: Крыша, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}
+  routing_relevant: true
+  # source: gsi image2
+- field_path: q.fire.traffic_blocked
+  value_type: STRING_LIST
+  label_ru: Есть ли перекрытие движения
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: traffic_blocked, label_ru: Да}
+  - {code: 'traffic_blocked:no', label_ru: Нет, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}
+  routing_relevant: true
+  # source: card images 16, 28; gsi image2
+- field_path: q.fire.gasification
+  value_type: STRING_LIST
+  label_ru: Проведена ли газификация
+  scoring_relevant: true
+  group: q_fire
+  control: TOGGLE_SET
+  options:
+  - {code: gasification, label_ru: Да}
+  - {code: 'gasification:no', label_ru: Нет, routing: none}
+  - {code: 'gasification:unknown', label_ru: Нет данных, routing: none}
+  visible_when: {all: [{field_path: incident.types, op: CONTAINS, value: '1'}, {any: [{all: [{field_path: q.fire.where, op: CONTAINS, value: на улице}, {field_path: q.fire.sign_street, op: CONTAINS, value: открытое пламя / дым}]}, {all: [{field_path: q.fire.where, op: CONTAINS, value: жилой дом}, {field_path: q.fire.sign_house, op: CONTAINS, value: открытое пламя / дым}]}]}]}
+  routing_relevant: true
+  # source: card images 14–39 (last row of the block); REQ-3003
+- field_path: q.fire.description
+  value_type: STRING
+  label_ru: Описание
+  group: q_fire
+  control: TEXT
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '1'}
+  # source: gsi image6; REQ-3006
+  # TODO: the follow-up questions each 104 признак opens (the classifier's second признак: Коллектор, Кухня, Нет газа, …) are in no screenshot
+- field_path: q.gas.signs
+  value_type: STRING_LIST
+  label_ru: Признаки происшествия
+  scoring_relevant: true
+  group: q_gas
+  control: TOGGLE_SET
+  options:
+  - {code: Запах газа на улице, label_ru: Запах газа вне помещения (на улице)}
+  - {code: Запах газа в помещении, label_ru: 'Запах газа в помещении (в квартире, в доме)'}
+  - {code: Нарушение работы газового оборудования, label_ru: Нарушение в работе газового оборудования}
+  - {code: Повреждение газопровода, label_ru: Повреждение газопровода}
+  - {code: Повышенное давление газа, label_ru: Повышенное давление газа}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '13'}
+  routing_relevant: true
+  # source: gsi image6; REQ-3006
+- field_path: q.gas.threat_to_people
+  value_type: STRING_LIST
+  label_ru: Угроза людям
+  scoring_relevant: true
+  group: q_gas
+  control: TOGGLE_SET
+  options:
+  - {code: threat_to_people, label_ru: Да}
+  - {code: 'threat_to_people:no', label_ru: Нет, routing: none}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '13'}
+  routing_relevant: true
+  # source: gsi image8; REQ-3007
+  # TODO: the follow-up questions of «Здание / Объект» / «Транспорт» (the classifier's second признак: Дом многоквартирный, Метро, …) are in no screenshot
+- field_path: q.explosion.where
+  value_type: STRING_LIST
+  label_ru: Где взрыв
+  scoring_relevant: true
+  group: q_explosion
+  control: TOGGLE_SET
+  options:
+  - {code: Взрыв объект, label_ru: Здание / Объект}
+  - {code: Взрыв транспорт, label_ru: Транспорт}
+  - {code: 'Звуки похожие на взрыв, что взорвалось сообщить не может', label_ru: 'Звуки похожие на взрыв, что взорвалось сообщить не может'}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '3'}
+  routing_relevant: true
+  # source: gsi image8; REQ-3007
+- field_path: q.explosion.fire
+  value_type: STRING_LIST
+  label_ru: Есть возгорание
+  scoring_relevant: true
+  group: q_explosion
+  control: TOGGLE_SET
+  options:
+  - {code: 'yes', label_ru: Да}
+  - {code: 'no', label_ru: Нет}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '3'}
+  # source: gsi image8; REQ-3007
+- field_path: q.explosion.collapse_threat
+  value_type: STRING_LIST
+  label_ru: Есть угроза обрушения
+  scoring_relevant: true
+  group: q_explosion
+  control: TOGGLE_SET
+  options:
+  - {code: 'yes', label_ru: Да}
+  - {code: 'no', label_ru: Нет}
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '3'}
+  # source: gsi image8; REQ-3007
+- field_path: q.explosion.damage
+  value_type: STRING
+  label_ru: Какие видят разрушения
+  group: q_explosion
+  control: TEXT
+  visible_when: {field_path: incident.types, op: CONTAINS, value: '3'}
+  # source: gsi image1, image3, image4 (orange «Службы:» bar, «+» opens «Добавьте службы»); values are catalog ids
+- field_path: recipients.services
+  value_type: STRING_LIST
+  label_ru: Службы
+  scoring_relevant: true
+  required_for_handoff: true
+  group: services
+  control: CHIPS
+  # source: v1 continuation (HLD 70 §70.5.3); createHandoff writes CreateHandoffRequest.comment_ru here
+  # TODO: no reference screenshot shows a comment-for-services field on the 112 card
+- field_path: recipients.comment
+  value_type: STRING
+  label_ru: Комментарий для служб
+  group: services
+  control: TEXTAREA

@@ -20,7 +20,18 @@ the naming patterns of REQ-3042/REQ-3043 (`requirements/normalized/SRC-001-domai
 
 `okrug` of a district is not in its picker entry, so it stays `null` (no geography is invented).
 `classifier_org_id` links an entry to its routing column group in
-`reference/classifier/v046_24.columns.json` where the column names the same organisation.
+`reference/classifier/v046_24.columns.json` where the column names the same organisation, and
+`classifier_org_ids` lists every column group that answers for it — `FIRE_RESCUE` is both «Служба
+101» (`MCHS_SLUZHBA_101`) and «ОДС ПСЦ» (`MCHS_ODS_PSC`): the picker's «Служба 101 (…, ГКУ
+"Пожарно спасательный центр" ОДС)» *is* ОДС ПСЦ (I3 B1 finding 4).
+
+**Second input: the classifier's column map (I3 E3a, B1 G4).** An organisation whose routing cell
+can notify but that has no picker entry is not dropped: every column group of
+`v046_24.columns.json` that no catalog entry answers for is appended as a `display: false` entry
+(REQ-5280 — services that only collect information are not displayed), id = the org id, `name_ru`
+= the column's name, `kind: DEPARTMENT` for «Деп./Департамент/Депортамент/Аппарат/Комитет/
+Министерство» names, else `CITY`. The two «Территориальные ОИВ» groups are the district/prefecture
+ДДС step of the resolver (HLD 70 §70.6.4), never entries.
 
     uv run python backend/tools/import_services.py           # write services/v1.yaml + manifest
     uv run python backend/tools/import_services.py --check   # exit 1 when services/v1.yaml is stale
@@ -29,6 +40,7 @@ the naming patterns of REQ-3042/REQ-3043 (`requirements/normalized/SRC-001-domai
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -46,6 +58,7 @@ CATALOG_ID = "v1"
 SERVICES_PATH = REFERENCE_DIR / "services" / f"{CATALOG_ID}.yaml"
 TRANSCRIPTION_PATH = REFERENCE_DIR / TRANSCRIPTION_FILE
 TRANSCRIPTION_HEADER = ("frame", "short_name_ru", "full_name_ru")
+COLUMNS_PATH = REFERENCE_DIR / "classifier" / "v046_24.columns.json"
 
 
 @dataclass(frozen=True)
@@ -164,6 +177,21 @@ CLASSIFIER_ORG_IDS: dict[str, str] = {
     "MOSZHILINSPEKTSIYA": "MOSZHILINSPEKTSIYA",
 }
 
+#: Catalog id → further classifier column groups that answer for it (B1 finding 4).
+EXTRA_CLASSIFIER_ORG_IDS: dict[str, tuple[str, ...]] = {"FIRE_RESCUE": ("MCHS_ODS_PSC",)}
+
+#: Column groups that are never catalog entries: the resolver's territorial step (§70.6.4).
+TERRITORIAL_ORG_IDS: frozenset[str] = frozenset({"TERRITORIAL_OIV", "TERRITORIAL_OIV_TINAO"})
+
+_HIDDEN_DEPARTMENT_PREFIXES = (
+    "Деп.",
+    "Департамент",
+    "Депортамент",
+    "Аппарат",
+    "Комитет",
+    "Министерство",
+)
+
 _HOTLINE = re.compile(r"^Служба (1\d\d)$")
 _PREFECTURE = re.compile(r"^ДДС префектур")
 _DDS = re.compile(r"^ДДС ")
@@ -225,6 +253,10 @@ def _entry(
         "okrug": okrug,
         "district": district,
         "classifier_org_id": CLASSIFIER_ORG_IDS.get(service_id),
+        "classifier_org_ids": [
+            *([CLASSIFIER_ORG_IDS[service_id]] if service_id in CLASSIFIER_ORG_IDS else []),
+            *EXTRA_CLASSIFIER_ORG_IDS.get(service_id, ()),
+        ],
         "status_policy": status_policy,
         "display": True,
         "deprecated": deprecated,
@@ -269,8 +301,33 @@ def classify(entry: TranscribedEntry) -> dict[str, Any]:
     return _entry(service_id, short, full, kind)
 
 
-def build_catalog(entries: list[TranscribedEntry]) -> list[dict[str, Any]]:
-    """The six legacy ids first, then every transcribed entry in on-screen order."""
+def read_column_orgs(path: Path = COLUMNS_PATH) -> dict[str, str]:
+    """`v046_24.columns.json`'s column groups: org id → `name_ru`, in column order."""
+    columns = json.loads(path.read_text(encoding="utf-8"))
+    return {org_id: org["name_ru"] for org_id, org in columns["orgs"].items()}
+
+
+def hidden_entries(catalog: list[dict[str, Any]], orgs: dict[str, str]) -> list[dict[str, Any]]:
+    """One `display: false` entry per column group no catalog entry answers for (B1 G4)."""
+    answered = {org_id for item in catalog for org_id in item["classifier_org_ids"]}
+    hidden: list[dict[str, Any]] = []
+    for org_id, name_ru in orgs.items():
+        if org_id in answered or org_id in TERRITORIAL_ORG_IDS:
+            continue
+        kind = "DEPARTMENT" if name_ru.startswith(_HIDDEN_DEPARTMENT_PREFIXES) else "CITY"
+        entry = _entry(org_id, name_ru, name_ru, kind)
+        entry["classifier_org_id"] = org_id
+        entry["classifier_org_ids"] = [org_id]
+        entry["display"] = False
+        hidden.append(entry)
+    return hidden
+
+
+def build_catalog(
+    entries: list[TranscribedEntry], orgs: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """The six legacy ids first, then every transcribed entry in on-screen order, then one
+    `display: false` entry per classifier-only column group (`orgs`, column order)."""
     by_code = {
         match.group(1): entry
         for entry in entries
@@ -298,6 +355,8 @@ def build_catalog(entries: list[TranscribedEntry]) -> list[dict[str, Any]]:
         if hotline is not None and hotline.group(1) in legacy_codes:
             continue
         catalog.append(classify(entry))
+    if orgs is not None:
+        catalog.extend(hidden_entries(catalog, orgs))
     ids = [item["id"] for item in catalog]
     duplicates = sorted({service_id for service_id in ids if ids.count(service_id) > 1})
     if duplicates:
@@ -305,19 +364,21 @@ def build_catalog(entries: list[TranscribedEntry]) -> list[dict[str, Any]]:
     return catalog
 
 
-def render_services(transcription: Path = TRANSCRIPTION_PATH) -> str:
-    """The byte-stable `services/v1.yaml` for the transcription on disk."""
+def render_services(transcription: Path = TRANSCRIPTION_PATH, columns: Path = COLUMNS_PATH) -> str:
+    """The byte-stable `services/v1.yaml` for the transcription and column map on disk."""
     document = {
         "catalog_id": CATALOG_ID,
         "source": {
             "transcription": f"reference/{TRANSCRIPTION_FILE}",
-            "requirements": ["REQ-3042", "REQ-3043"],
+            "classifier_columns": "reference/classifier/v046_24.columns.json",
+            "requirements": ["REQ-3042", "REQ-3043", "REQ-5280"],
         },
-        "services": build_catalog(read_transcription(transcription)),
+        "services": build_catalog(read_transcription(transcription), read_column_orgs(columns)),
     }
     header = (
         "# Generated by backend/tools/import_services.py from "
-        f"reference/{TRANSCRIPTION_FILE} — do not edit by hand.\n"
+        f"reference/{TRANSCRIPTION_FILE} and reference/classifier/v046_24.columns.json — do not "
+        "edit by hand.\n"
     )
     return header + yaml.safe_dump(
         document, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000

@@ -171,7 +171,11 @@ def instructor_session_overview_schema(
             label_ru=_labels_for(view.fact_labels_ru, view.caller_belief.facts),
         ),
         gate_turns=[_gate_turn_schema(entry) for entry in view.gate_turns],
-        card=None if view.card is None else operator_card_schema(card_view(view.card)),
+        card=(
+            None
+            if view.card is None
+            else operator_card_schema(card_view(view.card, view.card_schema))
+        ),
         handoff=(
             None
             if view.handoff is None

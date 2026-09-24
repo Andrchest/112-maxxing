@@ -23,7 +23,7 @@ for a session created before E2a).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
@@ -31,12 +31,14 @@ from app.application.operator.command_context import OperatorCommandGate
 from app.application.operator.views import ServiceSelectionView, card_view
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.reference import ReferencePort
+from app.application.reference.card_schemas import session_pack_id
 from app.application.reference.queries import reference_catalog
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import CardRevisionId, SessionId
 from app.domain.enums import LEGACY_SERVICE_IDS, ServiceId, ValueType
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.operator_card import OperatorCard, set_field
 from app.domain.routing.catalog import DEFAULT_PACK_ID, ReferenceCatalog
 
@@ -73,18 +75,6 @@ class ServiceUnknownError(DomainError):
         super().__init__(
             f"service {service_id!r} is not in the catalog of reference pack {pack_id}"
         )
-
-
-def session_pack_id(log: Sequence[SessionEvent]) -> str:
-    """`SESSION_CREATED.reference_pack.pack_id`, or `legacy-r1` for a log that predates it."""
-    for event in log:
-        if event.event_type is not EventType.SESSION_CREATED:
-            continue
-        record = event.payload.get("reference_pack")
-        if isinstance(record, Mapping) and isinstance(record.get("pack_id"), str):
-            return str(record["pack_id"])
-        break
-    return DEFAULT_PACK_ID
 
 
 def ensure_catalog_service(
@@ -131,7 +121,7 @@ class SelectRecipientService:
             card = await ctx.card()
             current = selected_services(card)
             if service_type in current:
-                return _view(card, current)
+                return _view(card, current, ctx.card_schema)
 
             new_selection = (*current, service_type)
             updated, revision, card_event = set_field(
@@ -141,6 +131,7 @@ class SelectRecipientService:
                 ctx.actor,
                 ctx.now_ms,
                 CardRevisionId(self._ids.new()),
+                schema=ctx.card_schema,
             )
             assert revision is not None and card_event is not None  # the list really changed
 
@@ -159,7 +150,7 @@ class SelectRecipientService:
                 },
             )
             await ctx.append([card_event, selected])
-            return _view(updated, new_selection)
+            return _view(updated, new_selection, ctx.card_schema)
 
 
 def _services_value_type(card_event: DomainEvent) -> ValueType:
@@ -173,10 +164,12 @@ def _services_value_type(card_event: DomainEvent) -> ValueType:
     return value_type
 
 
-def _view(card: OperatorCard, selection: tuple[ServiceId, ...]) -> ServiceSelectionView:
+def _view(
+    card: OperatorCard, selection: tuple[ServiceId, ...], schema: CardSchema
+) -> ServiceSelectionView:
     return ServiceSelectionView(
         card_id=UUID(str(card.card_id)),
         selected_services=selection,
         available_services=AVAILABLE_SERVICES,
-        card=card_view(card),
+        card=card_view(card, schema),
     )

@@ -11,10 +11,14 @@ a transcript can reach the card writer.
 One field per command, never a bulk write (`openapi.yaml`): SPEC §9 requires every mutation to be
 stored with its previous value and actor, and a bulk write would blur which change happened when.
 
-Three rejections, each with the code `openapi.yaml` names:
+Four rejections, each with the code `openapi.yaml` names:
 
-* a `field_path` outside `CARD_FIELDS` — `422 CARD_FIELD_UNKNOWN`;
+* a `field_path` outside the session's card schema — `422 CARD_FIELD_UNKNOWN` (`CARD_FIELDS` for a
+  `v1` session; the pack's schema otherwise, I3 E3a, HLD 70 §70.5.4);
 * a value that does not match the field's `value_type` — `422 CARD_VALUE_TYPE_MISMATCH`;
+* a value that is not one of the field's option codes (a v2 `SELECT`/toggle set) — `422
+  CARD_OPTION_UNKNOWN` (I3 E3a). A field hidden by `visible_when` is accepted: visibility is
+  advisory (§70.5.2);
 * `recipients.services`, which is "**not** settable here; use the service commands" — `422
   VALIDATION_ERROR`. The contract names no dedicated code for that case and the field *is* known,
   so `CARD_FIELD_UNKNOWN` would be a lie; `VALIDATION_ERROR` is the 422 that says "this request
@@ -49,6 +53,7 @@ from app.application.ports.idempotency_store import IdempotencyStore, idempotenc
 from app.domain.common.errors import CardFieldError, DomainError
 from app.domain.common.ids import CardRevisionId, SessionId
 from app.domain.common.values import FactValue
+from app.domain.layers.card_schema import CardOptionUnknownError, CardSchema
 from app.domain.layers.operator_card import CARD_FIELDS, CardFieldSpec, set_field
 
 __all__ = [
@@ -56,6 +61,7 @@ __all__ = [
     "SERVICES_FIELD_PATH",
     "CardFieldNotSettableError",
     "CardFieldUnknownError",
+    "CardOptionNotAllowedError",
     "CardValueTypeMismatchError",
     "SetCardField",
     "SetCardFieldResult",
@@ -68,7 +74,7 @@ SERVICES_FIELD_PATH = "recipients.services"
 """The one `CARD_FIELDS` member this endpoint refuses: the service commands own it."""
 
 FIELD_SPECS: Mapping[str, CardFieldSpec] = {spec.field_path: spec for spec in CARD_FIELDS}
-"""`CARD_FIELDS` by path — the contract's "must be a `CARD_FIELDS` member", looked up once."""
+"""`CARD_FIELDS` (the v1 schema) by path. A session's own schema is `ctx.card_schema`."""
 
 
 class CardFieldUnknownError(DomainError):
@@ -81,6 +87,13 @@ class CardValueTypeMismatchError(DomainError):
     """The value does not match the field's `value_type` (`422 CARD_VALUE_TYPE_MISMATCH`)."""
 
     code = "CARD_VALUE_TYPE_MISMATCH"
+
+
+class CardOptionNotAllowedError(DomainError):
+    """The value is not one of the field's option codes (`422 CARD_OPTION_UNKNOWN`, HLD 70
+    §70.5.2)."""
+
+    code = "CARD_OPTION_UNKNOWN"
 
 
 class CardFieldNotSettableError(DomainError):
@@ -140,8 +153,13 @@ class SetCardField:
         field_path: str,
         new_value: FactValue,
     ) -> SetCardFieldResult:
-        spec = _spec_for(field_path)
+        if field_path == SERVICES_FIELD_PATH:
+            raise CardFieldNotSettableError(
+                f"{SERVICES_FIELD_PATH!r} is written by selectRecipientService / "
+                f"deselectRecipientService, not by setCardField"
+            )
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
+            spec = _spec_for(ctx.card_schema, field_path)
             card = await ctx.card()
             try:
                 updated, revision, event = set_field(
@@ -151,7 +169,10 @@ class SetCardField:
                     ctx.actor,
                     ctx.now_ms,
                     CardRevisionId(self._ids.new()),
+                    schema=ctx.card_schema,
                 )
+            except CardOptionUnknownError as error:
+                raise CardOptionNotAllowedError(str(error)) from error
             except CardFieldError as error:
                 # The path was checked above, and the actor is a `TRAINEE` by construction of the
                 # command gate, so the only remaining rejection `set_field` makes is the type one.
@@ -159,22 +180,21 @@ class SetCardField:
 
             if revision is None or event is None:
                 # §10.6: "no revision, no event". The card is unchanged, so nothing is written.
-                return SetCardFieldResult(card=card_view(card), revision=None)
+                return SetCardFieldResult(card=card_view(card, ctx.card_schema), revision=None)
 
             await ctx.uow.operator_cards.save(updated)
             await ctx.uow.operator_cards.add_revision(revision, spec.value_type)
             await ctx.append([event])
-            return SetCardFieldResult(card=card_view(updated), revision=revision_view(revision))
+            return SetCardFieldResult(
+                card=card_view(updated, ctx.card_schema), revision=revision_view(revision)
+            )
 
 
-def _spec_for(field_path: str) -> CardFieldSpec:
-    """The `CARD_FIELDS` entry for `field_path`, or the rejection `openapi.yaml` documents."""
-    if field_path == SERVICES_FIELD_PATH:
-        raise CardFieldNotSettableError(
-            f"{SERVICES_FIELD_PATH!r} is written by selectRecipientService / "
-            f"deselectRecipientService, not by setCardField"
-        )
-    spec = FIELD_SPECS.get(field_path)
+def _spec_for(schema: CardSchema, field_path: str) -> CardFieldSpec:
+    """The session schema's entry for `field_path`, or the rejection `openapi.yaml` documents."""
+    spec = schema.spec(field_path)
     if spec is None:
-        raise CardFieldUnknownError(f"unknown card field path: {field_path!r}")
+        raise CardFieldUnknownError(
+            f"unknown card field path: {field_path!r} (card schema {schema.schema_id})"
+        )
     return spec

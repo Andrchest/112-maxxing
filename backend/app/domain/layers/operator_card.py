@@ -19,6 +19,10 @@ reads it yet; a later task wires it into the handoff-preparation UI/report.
 `CardRevision`; a no-op write (same value) returns `(card, None, None)`, per §10.6's "no revision,
 no event".
 
+**The card schema (I3 E3a, HLD 70 §70.5, D17).** `CardFieldSpec` and the schema parser live in
+`card_schema.py`; this module keeps `CARD_FIELDS` as the v1 alias (`CARD_SCHEMA_V1.fields`) and
+`set_field`, which validates against the session's schema (`schema=`, v1 when omitted).
+
 Every `label_ru` below is trainee-facing Russian text (SPEC language rule); `# ruff: noqa: RUF001`
 below suppresses ruff's ambiguous-unicode-character check for this file, which otherwise flags
 ordinary Cyrillic letters that merely resemble Latin ones.
@@ -26,18 +30,31 @@ ordinary Cyrillic letters that merely resemble Latin ones.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from enum import Enum
-
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import CardFieldError
 from app.domain.common.ids import CardId, CardRevisionId, IncidentId
 from app.domain.common.values import FactValue
-from app.domain.enums import ActorType, CallerRelationship, IncidentType, ValueType
+from app.domain.enums import ActorType, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import (
+    CardFieldSpec,
+    CardSchema,
+    build_card_schema,
+    check_value,
+)
+
+__all__ = [
+    "CARD_FIELDS",
+    "CARD_SCHEMA_V1",
+    "CardFieldSpec",
+    "CardRevision",
+    "CardSchema",
+    "OperatorCard",
+    "set_field",
+]
 
 
 class OperatorCard(BaseModel):
@@ -70,20 +87,7 @@ class CardRevision(BaseModel):
     at_offset_ms: int
 
 
-class CardFieldSpec(BaseModel):
-    """One `CARD_FIELDS` entry (§10.6)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    field_path: str
-    value_type: ValueType
-    enum_name: str | None
-    label_ru: str
-    scoring_relevant: bool
-    required_for_handoff: bool
-
-
-CARD_FIELDS: tuple[CardFieldSpec, ...] = (
+_V1_FIELDS: tuple[CardFieldSpec, ...] = (
     CardFieldSpec(
         field_path="incident.type",
         value_type=ValueType.ENUM,
@@ -390,33 +394,15 @@ CARD_FIELDS: tuple[CardFieldSpec, ...] = (
     ),
 )
 
-_FIELD_SPECS_BY_PATH: Mapping[str, CardFieldSpec] = {spec.field_path: spec for spec in CARD_FIELDS}
+CARD_SCHEMA_V1: CardSchema = build_card_schema("v1", _V1_FIELDS)
+"""Card schema `v1` — the card every existing session uses (HLD 70 §70.5.1). It is code-backed:
+`reference/card-schema/v1.yaml` is generated from it (`backend/tools/import_card_schema.py`) and a
+test proves the file equals it field by field."""
 
-_ENUM_REGISTRY: Mapping[str, type[Enum]] = {
-    "IncidentType": IncidentType,
-    "CallerRelationship": CallerRelationship,
-}
+CARD_FIELDS: tuple[CardFieldSpec, ...] = CARD_SCHEMA_V1.fields
+"""The v1 alias (HLD 70 §70.5.1): `CARD_SCHEMA_V1.fields`, each with its neutral `order`."""
 
 _ALLOWED_MUTATION_ACTORS = frozenset({ActorType.TRAINEE, ActorType.INSTRUCTOR})
-
-
-def _value_matches_type(value: FactValue, spec: CardFieldSpec) -> bool:
-    if spec.value_type is ValueType.STRING:
-        return isinstance(value, str)
-    if spec.value_type is ValueType.INTEGER:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if spec.value_type is ValueType.FLOAT:
-        return isinstance(value, float)
-    if spec.value_type is ValueType.BOOLEAN:
-        return isinstance(value, bool)
-    if spec.value_type is ValueType.ENUM:
-        if not isinstance(value, str) or spec.enum_name is None:
-            return False
-        enum_cls = _ENUM_REGISTRY.get(spec.enum_name)
-        return enum_cls is not None and any(value == member.value for member in enum_cls)
-    if spec.value_type is ValueType.STRING_LIST:
-        return isinstance(value, list) and all(isinstance(item, str) for item in value)
-    return False
 
 
 def set_field(
@@ -426,18 +412,24 @@ def set_field(
     actor: ActorRef,
     at_offset_ms: int,
     revision_id: CardRevisionId,
+    *,
+    schema: CardSchema | None = None,
 ) -> tuple[OperatorCard, CardRevision | None, DomainEvent | None]:
     """Set one card field (§10.6, SPEC §9).
 
     Pure: returns a new `OperatorCard`, the `CardRevision` recording `{revision_id, field_path,
     previous_value, new_value, actor, at_offset_ms}`, and one `CARD_FIELD_CHANGED` `DomainEvent`
     carrying the same values plus `card_id` and `value_type` (ruling R3; self-sufficient for
-    scoring per D5). Raises `CardFieldError` when `field_path` is not in `CARD_FIELDS`, the value
-    does not match the spec's `value_type`, or `actor.actor_type` is not `TRAINEE`/`INSTRUCTOR`
-    (SPEC §9, §42 test 4 — ASR never calls this). Setting a field to its current value is a no-op:
+    scoring per D5). `schema` is the session's card schema (HLD 70 §70.5.1; `CARD_SCHEMA_V1` when
+    omitted). Raises `CardFieldError` when `field_path` is not in the schema, the value does not
+    match the spec's `value_type`, or `actor.actor_type` is not `TRAINEE`/`INSTRUCTOR` (SPEC §9,
+    §42 test 4 — ASR never calls this), and its subclass `CardOptionUnknownError` when the value
+    is not one of the field's option codes. A field hidden by `visible_when` is still accepted —
+    visibility is advisory (§70.5.2). Setting a field to its current value is a no-op:
     the card is returned unchanged and the revision/event slots are both `None` (§10.6).
     """
-    spec = _FIELD_SPECS_BY_PATH.get(field_path)
+    card_schema = schema if schema is not None else CARD_SCHEMA_V1
+    spec = card_schema.spec(field_path)
     if spec is None:
         raise CardFieldError(f"unknown card field path: {field_path!r}")
     if actor.actor_type not in _ALLOWED_MUTATION_ACTORS:
@@ -445,11 +437,7 @@ def set_field(
             f"actor_type {actor.actor_type!r} may not mutate the operator card "
             f"(only TRAINEE/INSTRUCTOR may)"
         )
-    if not _value_matches_type(new_value, spec):
-        raise CardFieldError(
-            f"value {new_value!r} does not match value_type {spec.value_type!r} "
-            f"for field {field_path!r}"
-        )
+    check_value(spec, new_value)
 
     previous_value = card.values.get(field_path)
     if previous_value == new_value:

@@ -702,10 +702,14 @@ paths:
         writer: ASR never calls this (SPEC §9, §42 test 4), which is structural — the voice-agent
         has no credential for it.
 
-        `field_path` must be a member of `CARD_FIELDS` (`10-domain-model.md` §10.6) and the value
-        must match that field's `value_type`; otherwise `422 CARD_FIELD_UNKNOWN` or
-        `422 CARD_VALUE_TYPE_MISMATCH`. Setting a field to its current value is a no-op: it
-        returns `revision: null`, appends no revision and emits no event.
+        `field_path` must be a field of the session's card schema — `CARD_FIELDS`
+        (`10-domain-model.md` §10.6) for a `v1` card, the pack's schema otherwise (I3 E3a, 70
+        §70.5.4) — and the value must match that field's `value_type`; otherwise
+        `422 CARD_FIELD_UNKNOWN` or `422 CARD_VALUE_TYPE_MISMATCH`. (Additive, I3 E3a) a value
+        that is not one of the field's `options` codes (a v2 select or toggle set) is
+        `422 CARD_OPTION_UNKNOWN`. A field hidden by `visible_when` is accepted — visibility is
+        advisory. Setting a field to its current value is a no-op: it returns `revision: null`,
+        appends no revision and emits no event.
 
         `recipients.services` is **not** settable here; use the service commands.
       x-action: edit_card
@@ -1758,6 +1762,30 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/reference/card-schema/{schema_id}:
+    get:
+      tags: [reference]
+      operationId: getCardSchema
+      summary: A card schema (`v1` / `v2`) as field specs — the same `CardFieldSpec` the card views carry.
+      description: |
+        Additive, I3 E3a (70 §70.5, D17). `v1` is `CARD_FIELDS`; `v2` is the organizer card
+        (`reference/card-schema/v2.yaml`). Unknown id → `404 NOT_FOUND`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: schema_id
+          in: path
+          required: true
+          schema: { type: string, examples: [v1, v2] }
+      responses:
+        '200':
+          description: The schema.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardSchemaView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ------------------------------------------------------------- lessons ----
   # Additive, I3 E4a (70 §70.3, D15): a lesson owns N ordinary sessions; it has no event log of
   # its own. Merged literally from `contracts/i3-openapi-delta.yaml`.
@@ -2064,7 +2092,8 @@ components:
       description: |
         `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
         `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
-        I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog.
+        I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog; (additive,
+        I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2113,6 +2142,7 @@ components:
         - REFERENCE_PACK_UNKNOWN       # additive, I3 E2a
         - SERVICE_UNKNOWN              # additive, I3 E2a
         - LESSON_NOT_ACTIVE            # additive, I3 E4a
+        - CARD_OPTION_UNKNOWN          # additive, I3 E3a
 
     Problem:
       type: object
@@ -3001,8 +3031,12 @@ components:
         revision_counter: { type: integer, minimum: 0 }
         field_specs:
           type: array
-          description: '`CARD_FIELDS` — the UI renders the form from this, never from a hard-coded list.'
+          description: 'The session''s card schema (`CARD_FIELDS` for `v1`) — the UI renders the form from this, never from a hard-coded list.'
           items: { $ref: '#/components/schemas/CardFieldSpec' }
+        card_schema:
+          type: string
+          examples: [v1, v2]
+          description: Additive, I3 E3a (70 §70.5.4) — the id of the card schema `field_specs` come from.
 
     CardFieldSpec:
       type: object
@@ -3019,6 +3053,84 @@ components:
         required_for_handoff:
           type: boolean
           description: Advisory only — a missing field never blocks a handoff (SPEC §10).
+        # -- additive, I3 E3a (70 §70.5.2, delta `CardFieldSpec`). Always sent; for a v1 schema
+        # they carry their neutral values (group null, order = position, control by value type,
+        # options/visible_when null, required_in_block/routing_relevant false). Not listed in
+        # `required` so that clients built before E3b keep compiling.
+        group: { type: [string, 'null'], examples: [header, applicant, address, incident, q_fire, services] }
+        order: { type: integer, minimum: 0 }
+        control: { $ref: '#/components/schemas/CardControl' }
+        options:
+          type: [array, 'null']
+          items: { $ref: '#/components/schemas/CardOption' }
+        visible_when:
+          description: When the field is shown; advisory — a hidden field is still accepted.
+          oneOf:
+            - $ref: '#/components/schemas/CardCondition'
+            - type: 'null'
+        required_in_block: { type: boolean }
+        routing_relevant: { type: boolean }
+
+    CardControl:
+      type: string
+      description: Additive, I3 E3a (70 §70.5.2) — how the UI renders a card field.
+      enum: [TEXT, TEXTAREA, NUMBER, SELECT, TOGGLE_SET, CHIPS, CHECKBOX, PHONE]
+
+    CardOption:
+      type: object
+      description: |
+        Additive, I3 E3a (70 §70.5.2). `code` is a classifier identifier (D18 applied, B1 §4): a
+        questionnaire chip's признак text, a routing flag key, a «Что случилось» entry's classifier
+        `group_no`, or a catalog okrug / district. `classifier_features` lists the признаки a chip
+        stands for when it stands for several (default `[code]`); `routing: none` marks an option
+        bound to nothing in the classifier (A-3).
+      additionalProperties: false
+      required: [code, label_ru]
+      properties:
+        code: { type: string }
+        label_ru: { type: string }
+        classifier_features:
+          type: [array, 'null']
+          items: { type: string }
+        routing: { type: [string, 'null'], enum: [none, null] }
+
+    CardCondition:
+      description: Additive, I3 E3a — a condition over the card's own values (not the world `Condition`, HLD 30 §30.6.1).
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [all]
+          properties:
+            all: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardCondition' } }
+        - type: object
+          additionalProperties: false
+          required: [any]
+          properties:
+            any: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CardCondition' } }
+        - type: object
+          additionalProperties: false
+          required: [not]
+          properties:
+            not: { $ref: '#/components/schemas/CardCondition' }
+        - type: object
+          additionalProperties: false
+          required: [field_path, op]
+          properties:
+            field_path: { type: string }
+            op: { type: string, enum: [EQ, NE, IN, CONTAINS, PRESENT] }
+            value: { $ref: '#/components/schemas/FactValue' }
+
+    CardSchemaView:
+      type: object
+      description: Additive, I3 E3a — `getCardSchema`.
+      additionalProperties: false
+      required: [schema_id, sha256, field_specs]
+      properties:
+        schema_id: { type: string }
+        sha256: { type: string }
+        field_specs:
+          type: array
+          items: { $ref: '#/components/schemas/CardFieldSpec' }
 
     CardRevisionView:
       type: object
@@ -3256,8 +3368,22 @@ components:
           description: |
             `CARD_FIELDS` entries with `required_for_handoff: true` that the snapshot leaves
             empty. Computed from the snapshot and the field specs alone — it names the gap
-            without filling it, because the omission must propagate (SPEC §10).
+            without filling it, because the omission must propagate (SPEC §10). (I3 E3a) The
+            session's card schema's `required_for_handoff` fields for a `v2` card.
           items: { type: string }
+        card_schema:
+          type: string
+          examples: [v1, v2]
+          description: |
+            Additive, I3 E3a (70 §70.5.4) — the card schema of the reference pack the session
+            recorded (`SESSION_CREATED.reference_pack`), never read from the scenario (INV 3).
+        field_specs:
+          type: array
+          description: |
+            Additive, I3 E3a — the field specs of `card_schema`, so the ДДС renders `card_values`
+            (and their option labels) from data. Always sent; not in `required` so clients built
+            before E3c keep compiling.
+          items: { $ref: '#/components/schemas/CardFieldSpec' }
 
     EtaProfileView:
       type: object
@@ -4142,6 +4268,14 @@ components:
         okrug: { type: [string, 'null'] }
         district: { type: [string, 'null'] }
         classifier_org_id: { type: [string, 'null'] }
+        classifier_org_ids:
+          type: array
+          description: |
+            Additive, I3 E3a (70 §70.6.3, B1 G4) — every classifier column group that answers
+            for this service; `classifier_org_id` is its first member. `FIRE_RESCUE` is both
+            `MCHS_SLUZHBA_101` and `MCHS_ODS_PSC`; a `display: false` entry is one classifier-only
+            organisation (REQ-5280).
+          items: { type: string }
         status_policy: { type: string, enum: [DEFAULT, NO_REFUSAL] }
         display: { type: boolean }
         deprecated: { type: boolean }

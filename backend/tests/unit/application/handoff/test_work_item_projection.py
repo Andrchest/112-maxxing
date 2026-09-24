@@ -40,6 +40,7 @@ from app.domain.common.ids import (
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.enums import ClosureReason, DDSStageState, ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
+from app.domain.layers.operator_card import CARD_FIELDS
 from pydantic import BaseModel
 
 FIRE = ServiceId("FIRE_RESCUE")
@@ -78,6 +79,9 @@ def _free_text_dump(model: BaseModel) -> str:
         for name, info in fields.items()
         if _is_identifier_or_timestamp_annotation(info.annotation) or name.endswith("_sha256")
     }
+    # `field_specs` (I3 E3a) is the pack's card *specification* — the same for every session, its
+    # `order` integers included — not data copied from anywhere; it is pinned separately below.
+    excluded.add("field_specs")
     included = set(fields) - excluded
     return str(model.model_dump(include=included))
 
@@ -167,6 +171,9 @@ def test_the_snapshot_supplies_every_frozen_field(
     # is left is the free-text/enum data the projection actually copies from the snapshot, and
     # that must never contain the world-truth house number.
     assert "27" not in _free_text_dump(view)
+    # The specification part is the card schema's, verbatim (v1 when none is given).
+    assert view.card_schema == "v1"
+    assert [spec.field_path for spec in view.field_specs] == [s.field_path for s in CARD_FIELDS]
 
 
 def test_a_work_item_needs_at_least_one_leg(snapshot: HandoffSnapshot) -> None:

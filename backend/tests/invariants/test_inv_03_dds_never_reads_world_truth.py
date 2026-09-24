@@ -244,6 +244,42 @@ def test_no_dds_service_is_constructed_with_a_forbidden_repository(use_case: typ
     assert not offenders, f"{use_case.__name__}.__init__ takes {offenders}"
 
 
+#: What a DDS service may not be handed either since I3 E3a (HLD 70 §70.1 INV 3): the DDS
+#: `field_specs` come from the reference pack the session recorded, never from the scenario.
+SCENARIO_NAMES: frozenset[str] = frozenset(
+    {"ScenarioVersion", "ScenarioRepository", "SqlAlchemyScenarioRepository", "scenarios"}
+)
+
+
+@pytest.mark.parametrize("use_case", _dds_use_case_classes(), ids=lambda cls: cls.__name__)
+def test_no_dds_service_is_constructed_with_the_scenario(use_case: type) -> None:
+    """I3 E3a: the ДДС card schema is the pack's (`reference` port + the log), so no DDS service
+    receives the `ScenarioVersion` or a scenario repository to find it."""
+    import inspect
+
+    signature = inspect.signature(use_case.__init__)
+    mentioned = {
+        name
+        for parameter in signature.parameters.values()
+        for name in _annotation_names(parameter.annotation)
+    }
+    offenders = sorted(mentioned & SCENARIO_NAMES)
+    assert not offenders, f"{use_case.__name__}.__init__ takes {offenders}"
+
+
+def test_the_card_schema_step_takes_only_a_view_a_snapshot_and_a_schema() -> None:
+    """`with_card_schema` (I3 E3a) adds the pack's field specs to the projection and holds
+    nothing: a specification in, the same values out."""
+    import inspect
+
+    from app.application.handoff.work_item import with_card_schema
+
+    parameters = list(inspect.signature(with_card_schema).parameters)
+    assert parameters == ["view", "snapshot", "schema"]
+    names = _mentioned_names(WORK_ITEM)
+    assert not names & SCENARIO_NAMES
+
+
 def _annotation_names(annotation: Any) -> set[str]:
     """Every identifier in a parameter annotation, however it is spelled."""
     if annotation is inspect_empty():

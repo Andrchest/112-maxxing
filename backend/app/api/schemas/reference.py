@@ -13,16 +13,20 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
+from app.api.schemas.operator import CardFieldSpecSchema, card_field_spec_schema
+from app.application.reference.card_schemas import CardSchemaView
 from app.domain.enums import ServiceId
 from app.domain.routing.catalog import ServiceCatalogEntry
 from app.domain.routing.classifier import ClassifierRow
 
 __all__ = [
+    "CardSchemaViewSchema",
     "ClassifierRowSchema",
     "ClassifierRowSummarySchema",
     "ClassifierSearchPageSchema",
     "ReferenceManifestSchema",
     "ServiceCatalogEntrySchema",
+    "card_schema_view_schema",
     "classifier_row_schema",
     "classifier_row_summary_schema",
     "manifest_schema",
@@ -66,10 +70,27 @@ class ServiceCatalogEntrySchema(ApiModel):
     okrug: str | None
     district: str | None
     classifier_org_id: str | None
+    classifier_org_ids: list[str] = Field(default_factory=list)
     status_policy: Literal["DEFAULT", "NO_REFUSAL"]
     display: bool
     deprecated: bool
     phone: str | None
+
+
+class CardSchemaViewSchema(ApiModel):
+    """`openapi.yaml`'s `CardSchemaView` — a card schema as field specs (HLD 70 §70.5)."""
+
+    schema_id: str
+    sha256: str
+    field_specs: list[CardFieldSpecSchema]
+
+
+def card_schema_view_schema(view: CardSchemaView) -> CardSchemaViewSchema:
+    return CardSchemaViewSchema(
+        schema_id=view.schema_id,
+        sha256=view.sha256,
+        field_specs=[card_field_spec_schema(spec) for spec in view.field_specs],
+    )
 
 
 class ClassifierRowSummarySchema(ApiModel):

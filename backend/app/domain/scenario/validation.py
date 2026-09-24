@@ -30,7 +30,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.domain.common.errors import ScenarioValidationError
+from app.domain.common.errors import CardFieldError, ScenarioValidationError
 from app.domain.common.values import FactValue
 from app.domain.enums import (
     EffectKind,
@@ -41,7 +41,7 @@ from app.domain.enums import (
 )
 from app.domain.facts.definitions import AvailableAfter, FactDefinition
 from app.domain.facts.gate import unsupported_available_after_leaves
-from app.domain.layers.operator_card import CARD_FIELDS, CardFieldSpec
+from app.domain.layers.card_schema import CardOptionUnknownError, CardSchema, check_value
 from app.domain.roles import ROLE_MODULES
 from app.domain.roles.module import RoleModule
 from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
@@ -69,7 +69,6 @@ __all__ = [
     "validate_scenario_version",
 ]
 
-_CARD_FIELD_SPECS: Mapping[str, CardFieldSpec] = {spec.field_path: spec for spec in CARD_FIELDS}
 
 # `ScoringRule.config` keys that name a scenario `fact_id` (§30.8 rule 11).
 _CONFIG_FACT_ID_KEYS: tuple[str, ...] = ("fact_id", "expected_from_fact_id", "contradicts_fact_id")
@@ -315,7 +314,18 @@ def _check_fact_references(version: ScenarioVersion, out: list[str]) -> None:
                 )
 
 
-def _check_card_field_paths(version: ScenarioVersion, out: list[str]) -> None:
+def _check_card_field_paths(
+    version: ScenarioVersion, reference: ReferenceCatalog, out: list[str]
+) -> None:
+    """Rule 14, against the card schema of the version's own pack (R38's card half, I3 E3a, HLD 70
+    §70.2.3): every `field_path` / `required_field_paths` entry a scoring rule names (so
+    `HANDOFF_COMPLETENESS` too) and every `prefab_handoff.card_values` key exists in that schema,
+    and every prefab value fits its field — type, and option code for a v2 select/toggle set. A
+    schema-1 document's pack is `legacy-r1`, whose schema `v1` is `CARD_FIELDS`, so nothing changes
+    for it. An unknown pack is R38's to report; rule 14 then has no schema to check against."""
+    schema = reference.card_schema(version.reference_pack_id)
+    if schema is None:
+        return
     for rule in version.scoring_rules:
         paths: list[str] = []
         single = rule.config.get(_CONFIG_FIELD_PATH_KEY)
@@ -325,28 +335,44 @@ def _check_card_field_paths(version: ScenarioVersion, out: list[str]) -> None:
         if isinstance(listed, Sequence) and not isinstance(listed, str):
             paths.extend(item for item in listed if isinstance(item, str))
         for path in paths:
-            if path not in _CARD_FIELD_SPECS:
+            if path not in schema:
                 out.append(
                     f"R14: scoring_rules['{rule.rule_id}'] references unknown card "
-                    f"field_path '{path}'"
+                    f"field_path '{path}'{_schema_note(schema)}"
                 )
 
     prefab = version.expected_response.prefab_handoff
     if prefab is None:
         return
     for path, value in prefab.card_values.items():
-        spec = _CARD_FIELD_SPECS.get(path)
+        spec = schema.spec(path)
         if spec is None:
             out.append(
                 f"R14: expected_response.prefab_handoff.card_values['{path}'] is not a "
-                f"CARD_FIELDS field_path"
+                + (
+                    "CARD_FIELDS field_path"
+                    if schema.schema_id == "v1"
+                    else f"field_path of card schema {schema.schema_id}"
+                )
             )
             continue
-        if not _value_matches_type(value, spec.value_type, spec.enum_name):
+        try:
+            check_value(spec, value)
+        except CardOptionUnknownError:
+            out.append(
+                f"R14: expected_response.prefab_handoff.card_values['{path}'] value {value!r} "
+                f"is not an option of the field (card schema {schema.schema_id})"
+            )
+        except CardFieldError:
             out.append(
                 f"R14: expected_response.prefab_handoff.card_values['{path}'] value {value!r} "
                 f"does not match value_type {spec.value_type.value}"
             )
+
+
+def _schema_note(schema: CardSchema) -> str:
+    """Name the schema in an R14 message unless it is `v1` (keeps the v1 messages verbatim)."""
+    return "" if schema.schema_id == "v1" else f" of card schema {schema.schema_id}"
 
 
 def _check_resources(version: ScenarioVersion, out: list[str]) -> None:
@@ -697,9 +723,8 @@ def _check_reference_pack(
 ) -> None:
     """Rule R38 (HLD 70 §70.2.3, I3 E2a): `reference_pack` names a pack of the manifest.
 
-    The card-path half of R38 — every rule-14 path exists in *that pack's* card schema — stays
-    rule 14 until E3a adds a second card schema: the only pack today, `legacy-r1`, has card schema
-    `v1`, which is `CARD_FIELDS`, exactly what R14 checks against.
+    The card-path half of R38 — every rule-14 path exists in *that pack's* card schema — is rule 14
+    itself since I3 E3a, which checks against `reference.card_schema(version.reference_pack_id)`.
     """
     if version.reference_pack is not None and reference.pack(version.reference_pack) is None:
         known = ", ".join(reference.pack_ids)
@@ -795,7 +820,10 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
         lambda version, _modules, _reference, out: _check_knowledge_states(version, out),
     ),
     ((11, 12, 13), lambda version, _modules, _reference, out: _check_fact_references(version, out)),
-    ((14,), lambda version, _modules, _reference, out: _check_card_field_paths(version, out)),
+    (
+        (14,),
+        lambda version, _modules, reference, out: _check_card_field_paths(version, reference, out),
+    ),
     ((15, 16, 17), lambda version, _modules, _reference, out: _check_resources(version, out)),
     ((18,), lambda version, modules, _reference, out: _check_role_chain(version, modules, out)),
     ((19, 20), lambda version, _modules, _reference, out: _check_scoring_rules(version, out)),

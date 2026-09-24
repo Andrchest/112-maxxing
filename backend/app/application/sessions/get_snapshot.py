@@ -42,6 +42,7 @@ from app.application.dds.leg_for import project_legs
 from app.application.handoff.work_item import (
     DdsWorkItemView,
     legs_in_recipient_order,
+    with_card_schema,
     work_item_view,
 )
 from app.application.operator.views import (
@@ -53,7 +54,10 @@ from app.application.operator.views import (
     project_call_state,
 )
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.card_schemas import pack_card_schema
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import can_observe
 from app.application.sessions.queries import (
     ForbiddenForRoleError,
@@ -63,6 +67,7 @@ from app.application.sessions.queries import (
 from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import SessionId
 from app.domain.enums import DDSStageState, Operator112StageState, RoleType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.roles.visibility import VisibilitySource
 from app.domain.session.session import RoleStage, SimulationSession
@@ -106,9 +111,15 @@ class SessionSnapshotView:
 class GetSnapshot:
     """`getSessionSnapshot` (`openapi.yaml`): the role-filtered restore snapshot."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> SessionSnapshotView:
         """One transaction: the session, the log, the card the caller's role may see, and more."""
@@ -122,6 +133,8 @@ class GetSnapshot:
             detail = await assemble_session_detail(uow, session, viewer=user, clock=self._clock)
             events = await uow.events.read(session_id)
             last_seq_no = events[-1].seq_no if events else 0
+            # The session's card schema (HLD 70 §70.5.4): the pack `SESSION_CREATED` recorded.
+            card_schema = pack_card_schema(reference_catalog(self._reference), events)
 
             stage = session.current_stage or session.active_stage
             sources = _visible_sources(session, user)
@@ -139,7 +152,7 @@ class GetSnapshot:
                 and stage.role_type is RoleType.DDS
                 and VisibilitySource.HANDOFF_SNAPSHOT in sources
             ):
-                work_item = await _work_item(uow, session, stage)
+                work_item = await _work_item(uow, session, stage, card_schema)
 
             await uow.commit()
 
@@ -150,7 +163,7 @@ class GetSnapshot:
             active_role_type=None if stage is None else stage.role_type,
             stage_state=None if stage is None else stage.state,
             available_actions=_available_actions(session, stage, user),
-            card=None if card is None else card_view(card),
+            card=None if card is None else card_view(card, card_schema),
             work_item=work_item,
             call_state=project_call_state(events),
             last_seq_no=last_seq_no,
@@ -160,7 +173,7 @@ class GetSnapshot:
 
 
 async def _work_item(
-    uow: UnitOfWork, session: SimulationSession, stage: RoleStage
+    uow: UnitOfWork, session: SimulationSession, stage: RoleStage, card_schema: CardSchema
 ) -> DdsWorkItemView | None:
     """The DDS stage's work item, from its legs and their snapshot and from nothing else (D3).
 
@@ -186,7 +199,7 @@ async def _work_item(
         await uow.resources.list_for_session(session.id),
         await uow.resources.dispatch_history(session.id),
     )
-    return work_item_view(snapshot, projected)
+    return with_card_schema(work_item_view(snapshot, projected), snapshot, card_schema)
 
 
 def _my_role_type(session: SimulationSession, user: AuthenticatedUser) -> RoleType | None:

@@ -1,12 +1,13 @@
-"""The five `comparison` modes and the "is this value filled in" test (§10.14 #2, #3, #4, #10).
+"""The six `comparison` modes and the "is this value filled in" test (§10.14 #2, #3, #4, #10).
 
 One module, pure and total over every `FactValue` shape (`str | int | float | bool | list[str] |
-None`): `CARD_FIELD_CORRECT` and `CARD_CONTRADICTION` name the same five modes, and two copies of
+None`): `CARD_FIELD_CORRECT` and `CARD_CONTRADICTION` name the same six modes, and two copies of
 "are these equal" would be two chances for the stored and the recomputed number to disagree
 (SPEC §28).
 
 Nothing here raises. A mode that cannot be applied to the pair it is given (a
-`NUMERIC_TOLERANCE` over two words, a `SET_EQUAL` over a boolean) answers "not equal" rather than
+`NUMERIC_TOLERANCE` over two words, a `SET_EQUAL` over a boolean, a `CONTAINS` over a scalar card
+value) answers "not equal" rather than
 exploding: a scenario author's mistake must show up as a lost point with evidence, not as a
 `score()` that cannot produce a report at all.
 """
@@ -18,8 +19,11 @@ from typing import Literal
 from app.domain.common.values import FactValue
 
 Comparison = Literal[
-    "EXACT", "CASE_INSENSITIVE", "NUMERIC_TOLERANCE", "SET_EQUAL", "NORMALIZED_DIGITS"
+    "EXACT", "CASE_INSENSITIVE", "NUMERIC_TOLERANCE", "SET_EQUAL", "NORMALIZED_DIGITS", "CONTAINS"
 ]
+"""`CONTAINS` is I3's one additive member (HLD 70 §70.5.2, D17): a `STRING_LIST` card value — a
+v2 toggle set or `incident.types` — holds the expected code (every expected code, when the
+expectation is a list), whatever else it holds."""
 
 __all__ = ["Comparison", "compare", "is_present", "render_value"]
 
@@ -43,6 +47,8 @@ def compare(
             return _set_equal(actual, expected)
         case "NORMALIZED_DIGITS":
             return _normalized_digits(actual, expected)
+        case "CONTAINS":
+            return _contains(actual, expected)
 
 
 def is_present(value: FactValue, *, treat_false_as_present: bool = True) -> bool:
@@ -154,3 +160,16 @@ def _normalized_digits(actual: FactValue, expected: FactValue) -> bool:
         # Nothing to normalise on one side: "дом 27" vs "двадцать семь" is not a digit match.
         return False
     return left_digits == right_digits
+
+
+def _contains(actual: FactValue, expected: FactValue) -> bool:
+    """The card's list holds `expected` (each item of it, when it is a list), casefolded and
+    trimmed like `SET_EQUAL` — but a scalar expectation is one code, never split on commas
+    («Трава, пух» is one chip). A scalar card value, or an empty expectation, never matches."""
+    if not isinstance(actual, list):
+        return False
+    items = expected if isinstance(expected, list) else [_as_text(expected)]
+    want = frozenset(item.strip().casefold() for item in items if item is not None and item.strip())
+    if not want:
+        return False
+    return want <= frozenset(item.strip().casefold() for item in actual)

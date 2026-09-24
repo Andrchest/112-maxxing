@@ -37,8 +37,10 @@ and resource timestamps therefore use `sim_now_ms`; stage transitions and event 
 epic had to distinguish them.
 
 **Nothing here can reach `WorldTruth`, `CallerBelief` or the live `OperatorCard`** (D3, SPEC §42
-test 3): the gate is constructed from a Unit of Work factory and a clock, and no module in this
-package names any of those layers, their ports or their adapters.
+test 3): the gate is constructed from a Unit of Work factory, a clock and the reference pack, and no
+module in this package names any of those layers, their ports or their adapters. The reference pack
+gives the work item its `field_specs` (I3 E3a, HLD 70 §70.5.4): the card schema of the pack
+`SESSION_CREATED.reference_pack` recorded — the log, never the `ScenarioVersion`.
 """
 
 from __future__ import annotations
@@ -55,10 +57,12 @@ from app.application.handoff.work_item import (
     DdsWorkItemView,
     legs_in_recipient_order,
     primary_leg,
+    with_card_schema,
     work_item_view,
 )
 from app.application.operator.command_context import SessionNotActiveError
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.resource_repository import (
     DispatchRecord,
     ResourceStateChange,
@@ -66,6 +70,8 @@ from app.application.ports.resource_repository import (
 )
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.user_repository import UserRole
+from app.application.reference.card_schemas import pack_card_schema
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.authorisation import resolve_participant
 from app.application.sessions.guard_context import build_guard_runtime
 from app.application.sessions.queries import ForbiddenForRoleError
@@ -80,7 +86,9 @@ from app.domain.dds.resources import RESOURCE_STATE_MACHINE, EmergencyResource
 from app.domain.enums import ActorType, DDSStageState, ResourceStatus, RoleType, SessionState
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
+from app.domain.layers.operator_card import CARD_SCHEMA_V1
 from app.domain.roles.dds import DDSModule
 from app.domain.session.session import RoleStage, SimulationSession
 
@@ -154,9 +162,16 @@ class ResourceUnavailableError(DomainError):
         super().__init__(f"resource {resource_id} cannot be selected: {reason}")
 
 
-def work_item_of(snapshot: HandoffSnapshot, legs: Sequence[DDSAssignment]) -> DdsWorkItemView:
-    """The stage-wide work-item projection, legs in the operator's recipient order (R3)."""
-    return work_item_view(snapshot, legs_in_recipient_order(snapshot, legs))
+def work_item_of(
+    snapshot: HandoffSnapshot,
+    legs: Sequence[DDSAssignment],
+    schema: CardSchema = CARD_SCHEMA_V1,
+) -> DdsWorkItemView:
+    """The stage-wide work-item projection, legs in the operator's recipient order (R3), with the
+    field specs of the session's card `schema`."""
+    return with_card_schema(
+        work_item_view(snapshot, legs_in_recipient_order(snapshot, legs)), snapshot, schema
+    )
 
 
 def dds_stage_of(session: SimulationSession) -> RoleStage | None:
@@ -191,6 +206,7 @@ class DdsCommandContext:
     legs: tuple[DDSAssignment, ...]
     board: tuple[StoredResource, ...]
     dispatched: tuple[DispatchRecord, ...]
+    card_schema: CardSchema = CARD_SCHEMA_V1
     _appended: list[SessionEvent] = field(default_factory=list)
 
     # -- projections ---------------------------------------------------------------------------
@@ -326,7 +342,7 @@ class DdsCommandContext:
 
     def work_item(self) -> DdsWorkItemView:
         """The stage-wide `DdsWorkItem` as it stands now."""
-        return work_item_of(self.snapshot, self.projected_legs)
+        return work_item_of(self.snapshot, self.projected_legs, self.card_schema)
 
     async def stage_view(self) -> DdsStageView:
         """The `DdsStageView` this command answers with (D8)."""
@@ -347,9 +363,15 @@ class DdsCommandContext:
 class DdsCommandGate:
     """Opens the one transaction every DDS command runs in (see the module docstring)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._reference = reference
 
     @asynccontextmanager
     async def open(
@@ -397,6 +419,7 @@ class DdsCommandGate:
             legs, snapshot = await load_legs(uow, session_id, stage)
             wall_now = self._clock.now()
             now_ms = running_ms(session, wall_now)
+            log = tuple(await uow.events.read(session_id))
             context = DdsCommandContext(
                 uow=uow,
                 session=session,
@@ -404,11 +427,12 @@ class DdsCommandGate:
                 actor=ActorRef(actor_type=ActorType.TRAINEE, actor_id=user.user_id),
                 now_ms=now_ms,
                 sim_now_ms=sim_now_ms(session, wall_now),
-                log=tuple(await uow.events.read(session_id)),
+                log=log,
                 snapshot=snapshot,
                 legs=legs,
                 board=tuple(await uow.resources.list_for_session(session_id)),
                 dispatched=tuple(await uow.resources.dispatch_history(session_id)),
+                card_schema=pack_card_schema(reference_catalog(self._reference), log),
             )
             yield context
             await uow.commit()

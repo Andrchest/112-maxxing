@@ -187,12 +187,49 @@ def test_every_catalog_entry_is_well_formed() -> None:
     for entry in services:
         assert entry["kind"] in {"CITY", "DISTRICT", "PREFECTURE", "DEPARTMENT"}
         assert entry["classifier_org_id"] is None or entry["classifier_org_id"] in orgs
+        assert set(entry["classifier_org_ids"]) <= orgs
+        assert entry["classifier_org_ids"][:1] == (
+            [entry["classifier_org_id"]] if entry["classifier_org_id"] else []
+        )
         if entry["kind"] == "DISTRICT":
             assert entry["district"] and entry["id"].startswith("DDS_DISTRICT_")
         if entry["kind"] == "PREFECTURE":
             assert entry["okrug"] and entry["id"].startswith("DDS_PREFECTURE_")
-    # 6 legacy + every transcribed entry except the four «Служба 10N» the legacy ids absorb.
-    assert len(services) == 6 + len(TRANSCRIPTION) - 4
+    # 6 legacy + every transcribed entry except the four «Служба 10N» the legacy ids absorb
+    # (the displayed catalog, counted against the transcription) + one hidden entry per
+    # classifier-only column group (I3 E3a, B1 G4, counted against the column map below).
+    displayed = [entry for entry in services if entry["display"]]
+    assert len(displayed) == 6 + len(TRANSCRIPTION) - 4
+
+
+def test_every_classifier_only_org_is_a_hidden_catalog_entry() -> None:
+    """B1 G4 / REQ-5280: an org whose routing cell can notify but that the picker never shows is
+    a `display: false` entry, generated from `v046_24.columns.json` — none is silently dropped.
+    «Территориальные ОИВ» are the resolver's district/prefecture step, never entries, and
+    «ОДС ПСЦ» is `FIRE_RESCUE` (B1 finding 4)."""
+    services = SERVICES["services"]
+    answered = {org_id for entry in services for org_id in entry["classifier_org_ids"]}
+    territorial = {"TERRITORIAL_OIV", "TERRITORIAL_OIV_TINAO"}
+    assert set(COLUMNS["orgs"]) - territorial == answered
+    hidden = [entry for entry in services if not entry["display"]]
+    # 60 column groups − 2 territorial − the 40 the displayed catalog answers for
+    # (39 `classifier_org_id`s + `MCHS_ODS_PSC` through FIRE_RESCUE).
+    assert len(hidden) == 18
+    for entry in hidden:
+        assert entry["id"] == entry["classifier_org_id"]
+        assert entry["classifier_org_ids"] == [entry["id"]]
+        assert entry["name_ru"] == COLUMNS["orgs"][entry["id"]]["name_ru"]
+        assert entry["kind"] in {"CITY", "DEPARTMENT"}
+
+
+def test_fire_rescue_answers_for_both_mchs_columns() -> None:
+    """B1 finding 4: the picker's «Служба 101 (…, ГКУ "Пожарно спасательный центр" ОДС)» is both
+    the «Служба 101» and the «ОДС ПСЦ» column group of the classifier."""
+    by_id = {entry["id"]: entry for entry in SERVICES["services"]}
+    fire = by_id["FIRE_RESCUE"]
+    assert fire["classifier_org_id"] == "MCHS_SLUZHBA_101"
+    assert fire["classifier_org_ids"] == ["MCHS_SLUZHBA_101", "MCHS_ODS_PSC"]
+    assert "MCHS_ODS_PSC" not in by_id
 
 
 # -- the classifier against REQ-5701-REQ-5717 ------------------------------------------------------
@@ -307,7 +344,7 @@ def test_backend_app_never_imports_the_readers() -> None:
 
 def test_the_six_legacy_ids_resolve_through_the_file_backed_port() -> None:
     catalog = FileReferenceCatalog().catalog()
-    assert catalog.pack_ids == ("legacy-r1",)
+    assert catalog.pack_ids == ("legacy-r1", "v046_24-r1")
     services = catalog.services("legacy-r1")
     assert services is not None
     for service_id in LEGACY_SERVICE_IDS:
@@ -319,6 +356,11 @@ def test_the_six_legacy_ids_resolve_through_the_file_backed_port() -> None:
     assert record.services_sha256 == manifest_files["services/v1.yaml"]
     assert record.card_schema_sha256 == manifest_files["card-schema/v1.yaml"]
     assert record.classifier is None and record.classifier_sha256 is None
+    v2 = catalog.record("v046_24-r1")
+    assert v2 is not None
+    assert (v2.card_schema, v2.classifier, v2.services) == ("v2", "v046_24", "v1")
+    assert v2.card_schema_sha256 == manifest_files["card-schema/v2.yaml"]
+    assert v2.classifier_sha256 == manifest_files["classifier/v046_24.json"]
 
 
 def test_a_pack_that_drifted_from_its_manifest_is_refused(tmp_path: Path) -> None:

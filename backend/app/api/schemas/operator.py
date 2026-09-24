@@ -13,7 +13,7 @@ change independently, and because `openapi.yaml` is the thing this layer must ma
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -23,18 +23,21 @@ from app.application.operator.set_card_field import SetCardFieldResult
 from app.application.operator.views import (
     ActionView,
     CallStateView,
+    CardFieldSpecView,
     CardRevisionView,
     OperatorCardView,
     OperatorStageView,
     ServiceSelectionView,
 )
 from app.domain.enums import Operator112StageState, ServiceId, SessionState, ValueType
+from app.domain.layers.card_schema import CardControl
 
 __all__ = [
     "ActionDescriptorSchema",
     "ActorRefSchema",
     "CallStateViewSchema",
     "CardFieldSpecSchema",
+    "CardOptionSchema",
     "CardRevisionPageSchema",
     "CardRevisionViewSchema",
     "EndCallRequestSchema",
@@ -45,6 +48,7 @@ __all__ = [
     "SetCardFieldRequestSchema",
     "SetCardFieldResponseSchema",
     "call_state_schema",
+    "card_field_spec_schema",
     "card_revision_schema",
     "operator_card_schema",
     "operator_stage_schema",
@@ -63,8 +67,18 @@ class ActorRefSchema(ApiModel):
     actor_id: UUID | None = None
 
 
+class CardOptionSchema(ApiModel):
+    """`openapi.yaml`'s `CardOption` — one option of a data-driven field (HLD 70 §70.5.2)."""
+
+    code: str
+    label_ru: str
+    classifier_features: list[str] | None = None
+    routing: Literal["none"] | None = None
+
+
 class CardFieldSpecSchema(ApiModel):
-    """`openapi.yaml`'s `CardFieldSpec` — one `CARD_FIELDS` entry (§10.6)."""
+    """`openapi.yaml`'s `CardFieldSpec` — one field of the session's card schema (§10.6; the I3
+    additive properties of HLD 70 §70.5.2)."""
 
     field_path: str
     value_type: ValueType
@@ -72,6 +86,13 @@ class CardFieldSpecSchema(ApiModel):
     label_ru: str
     scoring_relevant: bool
     required_for_handoff: bool
+    group: str | None = None
+    order: int = Field(default=0, ge=0)
+    control: CardControl = CardControl.TEXT
+    options: list[CardOptionSchema] | None = None
+    visible_when: dict[str, Any] | None = None
+    required_in_block: bool = False
+    routing_relevant: bool = False
 
 
 class OperatorCardViewSchema(ApiModel):
@@ -82,6 +103,7 @@ class OperatorCardViewSchema(ApiModel):
     values: dict[str, FactValueSchema]
     revision_counter: int = Field(ge=0)
     field_specs: list[CardFieldSpecSchema]
+    card_schema: str = "v1"
 
 
 class CardRevisionViewSchema(ApiModel):
@@ -187,18 +209,14 @@ def operator_card_schema(view: OperatorCardView) -> OperatorCardViewSchema:
         incident_id=view.incident_id,
         values=dict(view.values),
         revision_counter=view.revision_counter,
-        field_specs=[
-            CardFieldSpecSchema(
-                field_path=spec.field_path,
-                value_type=spec.value_type,
-                enum_name=spec.enum_name,
-                label_ru=spec.label_ru,
-                scoring_relevant=spec.scoring_relevant,
-                required_for_handoff=spec.required_for_handoff,
-            )
-            for spec in view.field_specs
-        ],
+        field_specs=[card_field_spec_schema(spec) for spec in view.field_specs],
+        card_schema=view.card_schema,
     )
+
+
+def card_field_spec_schema(spec: CardFieldSpecView) -> CardFieldSpecSchema:
+    """`CardFieldSpecView` -> `CardFieldSpec` (the wire one)."""
+    return CardFieldSpecSchema.model_validate(spec.model_dump(mode="json"))
 
 
 def card_revision_schema(view: CardRevisionView) -> CardRevisionViewSchema:

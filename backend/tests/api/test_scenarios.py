@@ -30,9 +30,10 @@ async def test_list_scenarios_returns_identity_only(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 1
-    item = body["items"][0]
-    assert item["slug"] == "apartment-fire"
+    # the demo and the schema-2 example `street-rubbish-fire` (I3 E3a), both from
+    # `scenarios/examples`
+    assert body["total"] == 2
+    item = next(entry for entry in body["items"] if entry["slug"] == "apartment-fire")
     assert item["version_count"] == 1
     assert item["latest_version"] == 1
     assert set(item) == {"scenario_id", "slug", "title_ru", "version_count", "latest_version"}

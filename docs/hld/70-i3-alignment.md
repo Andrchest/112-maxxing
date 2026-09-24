@@ -466,9 +466,27 @@ session's schema.
 | `order` | `int` | order inside the group |
 | `control` | `TEXT \| TEXTAREA \| NUMBER \| SELECT \| TOGGLE_SET \| CHIPS \| CHECKBOX \| PHONE` | how the UI renders it |
 | `options` | `list[{code, label_ru}] \| None` | data-driven enum; replaces `_ENUM_REGISTRY` for v2; codes = classifier признак codes where they exist (F5) |
+| `options[].classifier_features` | `list[str] \| None` | *(additive, B1 / I3 E3a′)* the classifier признаки a chip stands for when it stands for several; default `[code]` |
+| `options[].routing` | `"none" \| None` | *(additive, I3 E3a′, A-3)* the option is bound to nothing in the classifier (administrative «Что случилось» entries, chips without a признак) |
 | `visible_when` | `CardCondition \| None` | when the field is shown; hidden fields are still **accepted** by `set_field` (advisory, like `required_for_handoff`) |
 | `required_in_block` | `bool` | one of REQ-3014's four mandatory blocks; advisory |
 | `routing_relevant` | `bool` | a change appends `RECIPIENTS_RESOLVED` (§70.6.4) |
+
+**Card ↔ classifier binding (D18 applied; manager decision B1, rung 1 — additive mirror, D21).** A v2
+option's `code` is a classifier identifier. For a questionnaire chip, it is the признак text exactly
+as `reference/classifier/v046_24.json` carries it in `features`/`extra_features`. For a yes/no or
+toggle that is a routing sub-column condition, it is the flag key of `v046_24.columns.json`
+`flags`. For a «Что случилось» entry, it is the classifier `group_no` that the entry opens
+(administrative entries: `routing: none`, A-3). For `address.okrug` / `address.district`, it is the
+catalog's `okrug` / `district` string. A chip that stands for several признаки lists them in
+`classifier_features` (additive, optional; default `[code]`). Matching is casefolded and
+whitespace-collapsed. The resolver reads only these codes and never parses labels.
+*(Additive, manager decision on the E3a′ hand-back, D21.)* A «Что случилось» entry that is the only
+one opening its group is coded `<group_no>`; when several entries open the same group (v046_24: groups
+7, 10, 11, 23), each is coded `<group_no>:<slug>` — a stable ASCII slug of its label, unique within
+the field — and the resolver always takes the group from the part before `:`. An entry whose label
+names a признак of that group's rows lists it in `classifier_features`, so it narrows the candidates;
+otherwise `classifier_features` stays default.
 
 `CardCondition` (in `card_schema.py`, **not** a new leaf of the world `Condition` language, so HLD 30
 rules 26/31 are untouched) = `{all: [...]} | {any: [...]} | {not: …} | {field_path, op: EQ | NE | IN |
@@ -559,8 +577,13 @@ null}]}}`. A cell is a notification iff non-empty and not «нет реагир�
 ### 70.6.3 Service catalog entry (`services/v1.yaml`)
 
 `{id: ServiceId, name_ru, full_name_ru, kind: CITY | DISTRICT | PREFECTURE | DEPARTMENT, code ("101"…) |
-null, okrug | null, district | null, classifier_org_id | null, status_policy: DEFAULT | NO_REFUSAL,
-display: bool, deprecated: bool, phone | null}`. The first six ids are verbatim `FIRE_RESCUE` (101),
+null, okrug | null, district | null, classifier_org_id | null, classifier_org_ids: list[str],
+status_policy: DEFAULT | NO_REFUSAL, display: bool, deprecated: bool, phone | null}`.
+*(Additive, B1 G4 / I3 E3a′)* `classifier_org_ids` lists every classifier column group that answers
+for the entry (`classifier_org_id` is its first member): `FIRE_RESCUE` answers to both
+`MCHS_SLUZHBA_101` and `MCHS_ODS_PSC`, and every column group no picker entry answers for (except
+the two «Территориальные ОИВ») is a `display: false` entry generated from `v046_24.columns.json`
+(REQ-5280). The first six ids are verbatim `FIRE_RESCUE` (101),
 `POLICE` (102), `AMBULANCE` (103, `NO_REFUSAL`), `GAS_SERVICE` (104), `UTILITY_EMERGENCY` (`deprecated`,
 hidden from the v2 picker, C8), `EDDS`. New ids are UPPER_SNAKE (`MOSVODOKANAL`, `DDS_DISTRICT_<NAME>`,
 `DDS_PREFECTURE_<OKRUG>`, `DEP_EDUCATION`, …).
@@ -591,6 +614,16 @@ The application calls it inside `setCardField` when a `routing_relevant` path ch
 `SERVICE_SELECTION` at `HANDOFF` needs no change; at `SESSION_END` it folds the last
 `RECIPIENTS_RESOLVED` ∪ `SERVICE_SELECTED`. Legs are created per `ServiceId` of the union. The routing is a
 table lookup — the LLM never sees the card (SPEC §2 holds, C11).
+
+**Resolver defaults (manager decision B1 §4, rung 1 — additive mirror, D21).** Step 1: candidate rows
+= rows of the selected group(s) whose every признак is covered by the card's codes; one ⇒
+`classifier_code`; several ⇒ `candidate_codes` and `auto_services` = the union of their routing until
+`incident.classifier_code` is set, then that row alone. Step 2: a flag is true iff its key is among
+the card's codes; an org is notified iff any holding sub-column's cell counts (A-1);
+`reasons.sub_column` = the first such. Step 3: `TERRITORIAL_OIV` (BW; BX when `address.okrug` =
+ТиНАО) counts ⇒ the `DISTRICT` entry with `district = address.district` and the `PREFECTURE` entry
+with `okrug = address.okrug`; absent values ⇒ that leg is absent. Orgs with no catalog entry are
+impossible after E3a′; `display: false` entries go to `informed_services`.
 
 ## 70.7 Events — new and changed (for HLD 10 §10.13 and HLD 40 §40.4, by the epic named)
 
@@ -639,7 +672,7 @@ so `test_visibility_matches_protocol_table.py` keeps parsing one source of truth
 
 | # | Assumption (what the design takes as true) | Where it is checked |
 |:--|:--|:--|
-| A-1 | A non-empty *labelled* routing cell (`пожар: мусор`, `Травма`, …) counts as a notification, like `карточка-112`; only an empty cell or `нет реагирования` does not (manager ruling on analysis gap 4). | E2: resolver fixtures from the memo's worked examples (road damage, lift, wasp nest); one question to the organizer logged in E2's report. |
+| A-1 | A non-empty *labelled* routing cell (`пожар: мусор`, `Травма`, …) counts as a notification, like `карточка-112`; only an empty cell or `нет реагирования` does not (manager ruling on analysis gap 4). Confirmed by «КАРТОЧКА 112.docx» images 19/22/24/39 (B1 §2). | E2: resolver fixtures from the memo's worked examples (road damage, lift, wasp nest); one question to the organizer logged in E2's report. |
 | A-2 | «Номер наряда» is free text, optional, one per status entry (REQ-3041 shows it only on the ДДС form; the memo is silent). | E5 API test: two entries with different order numbers both kept in history. |
 | A-3 | Administrative «Что случилось» entries (справки, тестовый вызов, передача дежурства) produce no classifier row and no auto notification. | E3: card-schema v2 option list marks them `routing: none`; resolver test. |
 | A-4 | The 3-minute fill norm's consequence is both a red timer and a scenario `DEADLINE` rule. | E4 (timer data) and E3 (red timer in the header); the rule lives in each schema-2 scenario. |

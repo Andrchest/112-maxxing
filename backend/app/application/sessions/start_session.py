@@ -34,7 +34,9 @@ from app.application.handoff.prefab_handoff import materialise_prefab_handoff
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.inference_readiness import InferenceReadiness
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.guard_context import build_guard_runtime
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
@@ -90,8 +92,12 @@ class StartSession:
         ids: IdGenerator,
         *,
         require_inference_ready: bool,
+        reference: ReferencePort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
+        #: The reference pack: the prefab card is written against the version's card schema
+        #: (I3 E3a, HLD 70 §70.5.4 — a schema-2 prefab names v2 paths).
+        self._reference = reference
         self._clock = clock
         self._inference = inference
         #: The prefab handoff's card-revision ids; the domain owns no randomness (D2/D7).
@@ -155,13 +161,21 @@ class StartSession:
         document = await uow.scenarios.get_version_document(started.scenario_version_id)
         if document is None:  # pragma: no cover - the session exists, so its version does
             return []
-        prefab = ScenarioVersion.model_validate(dict(document)).expected_response.prefab_handoff
+        version = ScenarioVersion.model_validate(dict(document))
+        prefab = version.expected_response.prefab_handoff
         if prefab is None:  # pragma: no cover - refused at session creation (D6)
             return []
+        card_schema = reference_catalog(self._reference).card_schema(version.reference_pack_id)
         # `now_ms=0`: the start is the origin every offset is measured from, and the prefab
         # handoff is handed to DDS at the instant the stage opens.
         return await materialise_prefab_handoff(
-            uow, started, prefab, stage.role_stage_id, ids=self._ids, now_ms=0
+            uow,
+            started,
+            prefab,
+            stage.role_stage_id,
+            ids=self._ids,
+            now_ms=0,
+            card_schema=card_schema,
         )
 
     async def _inference_ready(self) -> bool:

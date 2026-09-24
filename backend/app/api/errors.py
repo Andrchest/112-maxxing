@@ -96,6 +96,7 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "SCENARIO_INVALID": 422,
     # 422 — I3 additions to UnprocessableEntity (`i3-openapi-delta.yaml` `UnprocessableEntityI3`)
     "SERVICE_UNKNOWN": 422,
+    "CARD_OPTION_UNKNOWN": 422,
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,

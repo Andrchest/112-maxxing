@@ -14,10 +14,12 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import ContainerDep
 from app.api.schemas.reference import (
+    CardSchemaViewSchema,
     ClassifierRowSchema,
     ClassifierSearchPageSchema,
     ReferenceManifestSchema,
     ServiceCatalogEntrySchema,
+    card_schema_view_schema,
     classifier_row_schema,
     classifier_row_summary_schema,
     manifest_schema,
@@ -97,3 +99,20 @@ async def get_classifier_row(
 ) -> ClassifierRowSchema:
     """The row with its routing cells, aligned with the pack's classifier column map."""
     return classifier_row_schema(container.get_classifier_row()(code, pack=pack))
+
+
+@router.get(
+    "/card-schema/{schema_id}",
+    operation_id="getCardSchema",
+    summary=(
+        "A card schema (`v1` / `v2`) as field specs — the same `CardFieldSpec` the card views "
+        "carry."
+    ),
+    response_model=CardSchemaViewSchema,
+    status_code=200,
+)
+async def get_card_schema(
+    schema_id: str, container: ContainerDep, _user: CurrentUserDep
+) -> CardSchemaViewSchema:
+    """The schema's field specs in schema order (HLD 70 §70.5); `404` for an unknown id."""
+    return card_schema_view_schema(container.get_card_schema()(schema_id))

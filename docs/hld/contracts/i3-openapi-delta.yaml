@@ -1087,6 +1087,10 @@ components:
         okrug: { type: [string, 'null'] }
         district: { type: [string, 'null'] }
         classifier_org_id: { type: [string, 'null'] }
+        classifier_org_ids:
+          description: 'Additive (B1 G4 / E3a′, 70 §70.6.3): every classifier column group that answers for the entry; `classifier_org_id` is its first member.'
+          type: array
+          items: { type: string }
         status_policy: { type: string, enum: [DEFAULT, NO_REFUSAL] }
         display: { type: boolean }
         deprecated: { type: boolean }
@@ -1138,12 +1142,21 @@ components:
     CardOption:
       x-epic: E3
       x-change: NEW
+      description: |
+        `code` is a classifier identifier (D18 applied; manager decision B1 §4, 70 §70.5.2).
+        Additive (B1 / E3a′): `classifier_features` — the classifier признаки a chip stands for
+        when it stands for several (default `[code]`); `routing: none` — the option is bound to
+        nothing in the classifier (A-3).
       type: object
       additionalProperties: false
       required: [code, label_ru]
       properties:
         code: { type: string }
         label_ru: { type: string }
+        classifier_features:
+          type: [array, 'null']
+          items: { type: string }
+        routing: { type: [string, 'null'], enum: [none, null] }
     CardCondition:
       x-epic: E3
       x-change: NEW

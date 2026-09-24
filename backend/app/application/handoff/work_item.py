@@ -33,6 +33,13 @@ which is what `backend/tests/invariants/test_inv_03_dds_never_reads_world_truth.
 this module's source, not on its behaviour. `CARD_FIELDS` is imported for `missing_field_paths`
 and is a *specification* of the card's shape, not card data: it is the same public field list
 `getOperatorCard` already ships to every client.
+
+**Field specs from the pack (I3 E3a, HLD 70 §70.5.4).** The work item carries `card_schema` and
+`field_specs` — the specs of the card schema of the session's reference pack, so the ДДС side
+renders the snapshot's values (and their option labels) from data, not from a hard-coded label
+list (`with_card_schema`). The pack is the one `SESSION_CREATED.reference_pack` recorded
+(`app.application.reference.card_schemas.pack_card_schema`): the log and the reference catalog,
+never the `ScenarioVersion` (INV 3).
 """
 
 from __future__ import annotations
@@ -42,18 +49,21 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.application.reference.card_schemas import CardFieldSpecView, field_spec_views
 from app.domain.common.ids import ResourceId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.enums import ClosureReason, DDSStageState, ServiceId
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
-from app.domain.layers.operator_card import CARD_FIELDS
+from app.domain.layers.operator_card import CARD_FIELDS, CARD_SCHEMA_V1
 
 __all__ = [
     "DdsWorkItemView",
     "legs_in_recipient_order",
     "missing_field_paths",
     "primary_leg",
+    "with_card_schema",
     "work_item_view",
 ]
 
@@ -85,9 +95,13 @@ class DdsWorkItemView(BaseModel):
     selected_resource_ids: tuple[UUID, ...]
     dispatched_resource_ids: tuple[UUID, ...]
     missing_field_paths: tuple[str, ...]
+    card_schema: str = "v1"
+    field_specs: tuple[CardFieldSpecView, ...] = ()
 
 
-def missing_field_paths(snapshot: HandoffSnapshot) -> tuple[str, ...]:
+def missing_field_paths(
+    snapshot: HandoffSnapshot, schema: CardSchema = CARD_SCHEMA_V1
+) -> tuple[str, ...]:
     """The `required_for_handoff` `CARD_FIELDS` paths the snapshot leaves empty (SPEC §10).
 
     "If the 112 operator omitted a critical fact, the omission propagates." This names the gap; it
@@ -95,7 +109,12 @@ def missing_field_paths(snapshot: HandoffSnapshot) -> tuple[str, ...]:
     empty when the snapshot has no entry for it, or its value is `None`, the empty string or an
     empty list — a field the trainee cleared is as absent as one they never touched.
     """
-    return tuple(path for path in REQUIRED_FOR_HANDOFF if _is_empty(snapshot.card_values.get(path)))
+    required = (
+        REQUIRED_FOR_HANDOFF
+        if schema is CARD_SCHEMA_V1
+        else tuple(spec.field_path for spec in schema.fields if spec.required_for_handoff)
+    )
+    return tuple(path for path in required if _is_empty(snapshot.card_values.get(path)))
 
 
 def legs_in_recipient_order(
@@ -133,7 +152,10 @@ def primary_leg(legs: Sequence[DDSAssignment], snapshot: HandoffSnapshot) -> DDS
 
 
 def work_item_view(snapshot: HandoffSnapshot, legs: Sequence[DDSAssignment]) -> DdsWorkItemView:
-    """Project one `DdsWorkItem` from the snapshot and its legs — and from nothing else."""
+    """Project one `DdsWorkItem` from the snapshot and its legs — and from nothing else.
+
+    The card specification is `v1`'s here; `with_card_schema` swaps in the session's pack schema
+    (I3 E3a), so this projection's inputs stay exactly the snapshot and the legs (INV 3)."""
     primary = primary_leg(legs, snapshot)
     dispatched_at = [
         leg.dispatched_at_offset_ms for leg in legs if leg.dispatched_at_offset_ms is not None
@@ -156,6 +178,23 @@ def work_item_view(snapshot: HandoffSnapshot, legs: Sequence[DDSAssignment]) -> 
         selected_resource_ids=_union(leg.selected_resource_ids for leg in legs),
         dispatched_resource_ids=_union(leg.dispatched_resource_ids for leg in legs),
         missing_field_paths=missing_field_paths(snapshot),
+        card_schema=CARD_SCHEMA_V1.schema_id,
+        field_specs=field_spec_views(CARD_SCHEMA_V1),
+    )
+
+
+def with_card_schema(
+    view: DdsWorkItemView, snapshot: HandoffSnapshot, schema: CardSchema
+) -> DdsWorkItemView:
+    """`view` rendered by the session's card `schema` (HLD 70 §70.5.4): its `card_schema`, its
+    `field_specs` and the schema's own `required_for_handoff` gaps. A specification, not data —
+    the values stay the snapshot's."""
+    return view.model_copy(
+        update={
+            "card_schema": schema.schema_id,
+            "field_specs": field_spec_views(schema),
+            "missing_field_paths": missing_field_paths(snapshot, schema),
+        }
     )
 
 

@@ -453,7 +453,10 @@ A scenario that fails any of these cannot start a session; `validate_scenario_ve
 12. Every fact id referenced by a `world_events[*]` effect or condition exists.
 13. Every fact id referenced by `expected_response` and by `available_after.condition` exists.
 14. Every card `field_path` referenced by scoring rules and by `prefab_handoff.card_values` exists in
-    `CARD_FIELDS`, and the mapped value matches that field's `value_type`.
+    `CARD_FIELDS`, and the mapped value matches that field's `value_type`. Since I3 E3a the check is
+    against the card schema of the document's own pack (`reference_pack`, `legacy-r1` ⇒ `v1` =
+    `CARD_FIELDS`; `v046_24-r1` ⇒ `v2`), and a prefab value of a field with `options` must be one of
+    their codes (HLD 70 §70.2.3 R38's card half). An unknown pack is rule 38's alone.
 15. `available_resources[*].resource_id` values are unique; `callsign` values are unique.
 16. Every `resource_id` referenced by a world event or a scoring rule exists in `available_resources`.
 17. Every capability in `expected_response.required_resource_capabilities` is covered by at least one
@@ -518,8 +521,8 @@ the check the enum used to make at parse time.
     service catalog of the document's pack (`reference_pack`, `legacy-r1` when absent). The
     `responders` keys join with E5.
 38. `reference_pack` names a pack of `reference/manifest.json`. The card-path half — every path in
-    rule 14's scope exists in *that pack's* card schema — stays rule 14 until E3a adds a second card
-    schema: the only pack today, `legacy-r1`, has card schema `v1` = `CARD_FIELDS`.
+    rule 14's scope exists in *that pack's* card schema — is rule 14 itself since I3 E3a added card
+    schema `v2` (pack `v046_24-r1`).
 
 Rule 39 is added by I3 E4a (HLD 70 §70.2.3, §70.3.4, D15). A non-positive timer is already refused
 when the document is parsed and is reported as rule 39 too; the cross-field half is the validator's.
@@ -813,6 +816,13 @@ checks every service id against the pack's catalog. `createSession` records the 
 sha256 in `SESSION_CREATED.reference_pack`; a stored version naming a pack the running manifest
 lacks cannot start a session (`409 REFERENCE_PACK_UNKNOWN`). A dump omits an absent key, so a
 schema-1 document's `content_sha256` is unchanged (P5).
+
+Since I3 E3a the manifest has a second pack, `v046_24-r1` (card schema `v2` — the organizer's card,
+`reference/card-schema/v2.yaml` —, service catalog `v1`, classifier `v046_24`). A document on it
+writes its `prefab_handoff.card_values`, `CARD_FIELD_*` and `HANDOFF_COMPLETENESS` paths in v2
+paths (rule 14 checks them against v2), and its sessions' cards are v2 cards: `setCardField`
+validates against v2 and the card and ДДС views carry v2's field specs (HLD 70 §70.5.4). The
+committed example is `scenarios/examples/street-rubbish-fire/v1.yaml` (`GENERATED_CARD`).
 
 ## 30.12 `timers` — schema 2 (additive, I3 E4a)
 

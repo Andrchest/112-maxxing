@@ -65,7 +65,10 @@ from app.application.handoff.work_item import (
 )
 from app.application.operator.views import CallStateView, project_call_state
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.card_schemas import field_spec_views, pack_card_schema
+from app.application.reference.queries import reference_catalog
 from app.application.sessions.queries import (
     ForbiddenForRoleError,
     SessionDetailView,
@@ -79,8 +82,9 @@ from app.domain.enums import DDSStageState, GateOutcome, GateReason, RoleType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.layers.caller_belief import CallerBelief
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
-from app.domain.layers.operator_card import OperatorCard
+from app.domain.layers.operator_card import CARD_SCHEMA_V1, OperatorCard
 from app.domain.layers.world_truth import WorldTruth
 from app.domain.scenario.validation import build_fact_definitions
 from app.domain.scenario.version import ScenarioVersion
@@ -147,14 +151,22 @@ class InstructorSessionOverviewView:
     `WorldTruthView.label_ru`/`CallerBeliefView.label_ru`. Empty when the scenario version's
     stored document cannot be loaded (a storage bug, not a request error — this read stays a
     pure GET regardless, same posture as the rest of this module)."""
+    card_schema: CardSchema = CARD_SCHEMA_V1
+    """ADDITIVE (I3 E3a): the session's card schema — `card` and `assignments` render by it."""
 
 
 class GetInstructorSessionOverview:
     """`getInstructorSessionOverview` (`openapi.yaml`): `INSTRUCTOR`/`ADMIN` only, a pure read."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._reference = reference
 
     async def __call__(
         self, session_id: SessionId, user: AuthenticatedUser
@@ -172,6 +184,7 @@ class GetInstructorSessionOverview:
             detail = await assemble_session_detail(uow, session, viewer=user, clock=self._clock)
             events = tuple(await uow.events.read(session_id))
             last_seq_no = events[-1].seq_no if events else 0
+            card_schema = pack_card_schema(reference_catalog(self._reference), events)
 
             incident_id = session.incident.incident_id
             world_truth = await uow.world_truth.get(incident_id)
@@ -183,7 +196,7 @@ class GetInstructorSessionOverview:
 
             card = await uow.operator_cards.get(incident_id)
             handoff = await _handoff(uow, events)
-            assignments = await _assignments(uow, session)
+            assignments = await _assignments(uow, session, card_schema)
             resources = await _resources(uow, session, self._clock)
             fact_labels_ru = await _fact_labels_ru(uow, session)
 
@@ -201,6 +214,7 @@ class GetInstructorSessionOverview:
             call_state=project_call_state(events),
             last_seq_no=last_seq_no,
             fact_labels_ru=fact_labels_ru,
+            card_schema=card_schema,
         )
 
 
@@ -223,7 +237,9 @@ async def _handoff(uow: UnitOfWork, events: Sequence[SessionEvent]) -> HandoffSn
     return None
 
 
-async def _assignments(uow: UnitOfWork, session: SimulationSession) -> tuple[DdsWorkItemView, ...]:
+async def _assignments(
+    uow: UnitOfWork, session: SimulationSession, card_schema: CardSchema
+) -> tuple[DdsWorkItemView, ...]:
     """Every leg of every DDS stage, verbatim (the instructor's reading of `DdsWorkItem`, see the
     module docstring). At most one DDS stage exists today (SPEC §13); the loop is written for the
     role chain the domain model already allows."""
@@ -242,13 +258,16 @@ async def _assignments(uow: UnitOfWork, session: SimulationSession) -> tuple[Dds
             await uow.resources.list_for_session(session.id),
             await uow.resources.dispatch_history(session.id),
         )
-        missing = missing_field_paths(snapshot)
-        items.extend(_leg_work_item(leg, snapshot, missing) for leg in projected)
+        missing = missing_field_paths(snapshot, card_schema)
+        items.extend(_leg_work_item(leg, snapshot, missing, card_schema) for leg in projected)
     return tuple(items)
 
 
 def _leg_work_item(
-    leg: DDSAssignment, snapshot: HandoffSnapshot, missing: tuple[str, ...]
+    leg: DDSAssignment,
+    snapshot: HandoffSnapshot,
+    missing: tuple[str, ...],
+    card_schema: CardSchema,
 ) -> DdsWorkItemView:
     """One `DdsWorkItem` per leg, every field the leg's own — the mirror image of
     `work_item_view`'s primary-leg/min/union projection (see the module docstring)."""
@@ -270,6 +289,8 @@ def _leg_work_item(
         selected_resource_ids=tuple(UUID(str(value)) for value in leg.selected_resource_ids),
         dispatched_resource_ids=tuple(UUID(str(value)) for value in leg.dispatched_resource_ids),
         missing_field_paths=missing,
+        card_schema=card_schema.schema_id,
+        field_specs=field_spec_views(card_schema),
     )
 
 

@@ -40,7 +40,8 @@ from typing import Literal
 
 from app.domain.common.values import FactValue
 from app.domain.enums import EvaluatorType
-from app.domain.layers.operator_card import CARD_FIELDS, OperatorCard
+from app.domain.layers.card_schema import CardSchema
+from app.domain.layers.operator_card import CARD_SCHEMA_V1, OperatorCard
 from app.domain.layers.world_truth import WorldTruth
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.comparisons import compare, is_present
@@ -51,8 +52,6 @@ __all__ = ["TruthVsCardEntry", "Verdict", "truth_vs_card_diff"]
 
 #: `openapi.yaml`'s `TruthVsCardDiffEntry.verdict`.
 Verdict = Literal["MATCH", "MISMATCH", "MISSING", "NOT_COMPARABLE"]
-
-_LABELS_RU: Mapping[str, str] = {spec.field_path: spec.label_ru for spec in CARD_FIELDS}
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,11 +70,14 @@ def truth_vs_card_diff(
     scenario_version: ScenarioVersion,
     card: OperatorCard | None,
     world_truth: WorldTruth | None,
+    card_schema: CardSchema = CARD_SCHEMA_V1,
 ) -> tuple[TruthVsCardEntry, ...]:
     """One row per `CARD_FIELD_CORRECT` rule, in the scenario's own rule order (R4).
 
-    Pure. A session with no card at all (nothing was ever entered) still produces the rows, all
-    `MISSING`: "the operator filled nothing in" is the most important diff there is.
+    Pure. `label_ru` comes from the session's `card_schema` (I3 E3a, HLD 70 §70.5.4; v1 when
+    omitted) — a path the schema does not know is labelled with the path itself. A session with
+    no card at all (nothing was ever entered) still produces the rows, all `MISSING`: "the
+    operator filled nothing in" is the most important diff there is.
     """
     card_values: Mapping[str, FactValue] = {} if card is None else card.values
     entries: list[TruthVsCardEntry] = []
@@ -93,7 +95,7 @@ def truth_vs_card_diff(
         entries.append(
             TruthVsCardEntry(
                 field_path=config.field_path,
-                label_ru=_LABELS_RU.get(config.field_path, config.field_path),
+                label_ru=_label_ru(card_schema, config.field_path),
                 world_fact_id=config.expected_from_fact_id,
                 world_value=world_value,
                 card_value=card_value,
@@ -101,6 +103,11 @@ def truth_vs_card_diff(
             )
         )
     return tuple(entries)
+
+
+def _label_ru(card_schema: CardSchema, field_path: str) -> str:
+    spec = card_schema.spec(field_path)
+    return spec.label_ru if spec is not None else field_path
 
 
 def _card_field_correct_rules(scenario_version: ScenarioVersion) -> Sequence[ScoringRule]:

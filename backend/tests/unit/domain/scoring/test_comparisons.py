@@ -81,3 +81,25 @@ def test_render_value_is_deterministic_and_russian() -> None:
     assert render_value(False) == "нет"
     assert render_value(["a", "b"]) == "a, b"
     assert render_value(27) == "27"
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected", "equal"),
+    [
+        (["1", "13"], "1", True),  # the list holds the code, whatever else it holds
+        (["Мусор"], "мусор", True),  # casefolded like SET_EQUAL
+        (["трава, пух"], "Трава, пух", True),  # a scalar is one code, never split on commas
+        (["1"], ["1", "13"], False),  # a list expectation needs every item
+        (["1", "13", "3"], ["13", "1"], True),
+        (["13"], "1", False),
+        ("1", "1", False),  # a scalar card value contains nothing
+        ([], "1", False),
+        (["1"], None, False),
+        (["1"], [], False),
+    ],
+)
+def test_contains_is_membership_in_a_string_list(
+    actual: FactValue, expected: FactValue, equal: bool
+) -> None:
+    """I3's one additive `Comparison` member (HLD 70 §70.5.2, D17) for `STRING_LIST` fields."""
+    assert compare(actual, expected, mode="CONTAINS") is equal

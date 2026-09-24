@@ -32,8 +32,10 @@ from uuid import UUID
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.operator.views import OperatorCardView, card_view
 from app.application.ports.clock import Clock
+from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.realtime.redaction import source_of_row
+from app.application.reference.queries import reference_catalog
 from app.application.reports.dds_decisions import DdsDecision, dds_decisions
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
 from app.application.reports.timeline import TimelineEntry, timeline_entry
@@ -55,8 +57,9 @@ from app.domain.dds.assignment import DDSAssignment
 from app.domain.enums import RoleType, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
+from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
-from app.domain.layers.operator_card import OperatorCard
+from app.domain.layers.operator_card import CARD_SCHEMA_V1, OperatorCard
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.context import build_context
 from app.domain.scoring.engine import report_checksum
@@ -107,9 +110,15 @@ class SessionReportView:
 class GetSessionReport:
     """`getSessionReport` — one read of everything SPEC §29 asks for, filtered per viewer."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._reference = reference
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> SessionReportView:
         async with self._unit_of_work() as uow:
@@ -136,6 +145,11 @@ class GetSessionReport:
             events = tuple(await uow.events.read(session_id))
             scenario_version = await _scenario_version(uow, session.scenario_version_id)
             score_report = _stored_report(session_id, scenario_version, stored_results, events)
+            # The card is rendered and diffed by the session's card schema (I3 E3a, §70.5.4).
+            card_schema = (
+                reference_catalog(self._reference).card_schema(scenario_version.reference_pack_id)
+                or CARD_SCHEMA_V1
+            )
 
             detail = await assemble_session_detail(uow, session, viewer=user, clock=self._clock)
             card = await uow.operator_cards.get(session.incident.incident_id)
@@ -184,9 +198,9 @@ class GetSessionReport:
             timeline=timeline,
             transcript=transcript_entries(transcript),
             audio_segments=audio_segment_refs(audio),
-            final_card=_final_card(card, visibility),
+            final_card=_final_card(card, visibility, card_schema),
             truth_vs_card_diff=(
-                truth_vs_card_diff(scenario_version, card, world_truth)
+                truth_vs_card_diff(scenario_version, card, world_truth, card_schema)
                 if visibility.shows_operator_sections
                 else ()
             ),
@@ -240,7 +254,9 @@ async def _dds_legs(uow: UnitOfWork, session: SimulationSession) -> list[DDSAssi
     return legs
 
 
-def _final_card(card: OperatorCard | None, visibility: ReportVisibility) -> OperatorCardView | None:
+def _final_card(
+    card: OperatorCard | None, visibility: ReportVisibility, schema: CardSchema
+) -> OperatorCardView | None:
     """The final card as this viewer may see it (§29 item 8, R3).
 
     The contract types `final_card` as a required, non-nullable `OperatorCardView`, so a viewer
@@ -251,8 +267,8 @@ def _final_card(card: OperatorCard | None, visibility: ReportVisibility) -> Oper
     if card is None:  # pragma: no cover - a completed session always has its `incident_cards` row
         return None
     if visibility.shows_operator_sections:
-        return card_view(card)
-    return card_view(card.model_copy(update={"values": {}}))
+        return card_view(card, schema)
+    return card_view(card.model_copy(update={"values": {}}), schema)
 
 
 def _actor_id(event: SessionEvent) -> UUID | None:

@@ -31,11 +31,17 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.application.ports.call_state_cache import CallStateCache
+from app.application.reference.card_schemas import (
+    CardFieldSpecView,
+    CardOptionView,
+    field_spec_views,
+)
 from app.domain.common.ids import SessionId
-from app.domain.enums import Operator112StageState, ServiceId, SessionState, ValueType
+from app.domain.enums import Operator112StageState, ServiceId, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
-from app.domain.layers.operator_card import CARD_FIELDS, CardRevision, OperatorCard
+from app.domain.layers.card_schema import CardSchema
+from app.domain.layers.operator_card import CARD_SCHEMA_V1, CardRevision, OperatorCard
 from app.domain.roles.module import ActionDescriptor
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.session.session import RoleStage, SimulationSession
@@ -47,6 +53,7 @@ __all__ = [
     "CallPhase",
     "CallStateView",
     "CardFieldSpecView",
+    "CardOptionView",
     "CardRevisionView",
     "OperatorCardView",
     "OperatorStageView",
@@ -54,6 +61,7 @@ __all__ = [
     "action_views",
     "call_state_document",
     "card_view",
+    "field_spec_views",
     "operator_stage_view",
     "project_call_state",
     "read_cached_call_state",
@@ -86,17 +94,6 @@ class ActorRefView(ApplicationView):
     actor_id: UUID | None
 
 
-class CardFieldSpecView(ApplicationView):
-    """`openapi.yaml`'s `CardFieldSpec` — one `CARD_FIELDS` entry (§10.6)."""
-
-    field_path: str
-    value_type: ValueType
-    enum_name: str | None
-    label_ru: str
-    scoring_relevant: bool
-    required_for_handoff: bool
-
-
 class OperatorCardView(ApplicationView):
     """`openapi.yaml`'s `OperatorCardView` (SPEC §9)."""
 
@@ -105,6 +102,8 @@ class OperatorCardView(ApplicationView):
     values: dict[str, str | int | float | bool | list[str] | None]
     revision_counter: int
     field_specs: tuple[CardFieldSpecView, ...]
+    card_schema: str = "v1"
+    """The id of the card schema `field_specs` come from (HLD 70 §70.5.4)."""
 
 
 class CardRevisionView(ApplicationView):
@@ -168,28 +167,18 @@ class ServiceSelectionView(ApplicationView):
 # Projections
 # ---------------------------------------------------------------------------------------------
 
-_FIELD_SPEC_VIEWS: tuple[CardFieldSpecView, ...] = tuple(
-    CardFieldSpecView(
-        field_path=spec.field_path,
-        value_type=spec.value_type,
-        enum_name=spec.enum_name,
-        label_ru=spec.label_ru,
-        scoring_relevant=spec.scoring_relevant,
-        required_for_handoff=spec.required_for_handoff,
-    )
-    for spec in CARD_FIELDS
-)
-"""`CARD_FIELDS`, once: "the UI renders the form from this, never from a hard-coded list"."""
 
+def card_view(card: OperatorCard, schema: CardSchema = CARD_SCHEMA_V1) -> OperatorCardView:
+    """`OperatorCard` -> `OperatorCardView`; only the paths the trainee set are present.
 
-def card_view(card: OperatorCard) -> OperatorCardView:
-    """`OperatorCard` -> `OperatorCardView`; only the paths the trainee set are present."""
+    `schema` is the session's card schema (HLD 70 §70.5.4); `v1` when a caller has none."""
     return OperatorCardView(
         card_id=UUID(str(card.card_id)),
         incident_id=UUID(str(card.incident_id)),
         values=dict(card.values),
         revision_counter=card.revision_counter,
-        field_specs=_FIELD_SPEC_VIEWS,
+        field_specs=field_spec_views(schema),
+        card_schema=schema.schema_id,
     )
 
 
@@ -318,6 +307,7 @@ def operator_stage_view(
     card: OperatorCard,
     events: Sequence[SessionEvent],
     last_seq_no: int,
+    schema: CardSchema = CARD_SCHEMA_V1,
 ) -> OperatorStageView:
     """Assemble `OperatorStageView` from the state a command has just produced (D8)."""
     module = ROLE_MODULES[stage.role_type]
@@ -326,7 +316,7 @@ def operator_stage_view(
         role_stage_id=UUID(str(stage.role_stage_id)),
         stage_state=stage.state,
         available_actions=action_views(module.available_actions(stage.state)),
-        card=card_view(card),
+        card=card_view(card, schema),
         call_state=project_call_state(events),
         session_state=session.state,
         last_seq_no=last_seq_no,
