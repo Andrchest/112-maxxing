@@ -5,7 +5,51 @@ import type { DdsWorkItem, DDSStageState } from '@/entities/work-item';
 import type { EmergencyResourceView } from '@/entities/resource';
 import type { NotificationView } from '@/entities/notification';
 import type { RadioMessageView } from '@/entities/radio';
-import type { ActionDescriptor } from '@/shared/api';
+import type { ActionDescriptor, CardFieldSpec } from '@/shared/api';
+
+// A v1 `field_specs` slice matching `makeWorkItem`'s default `card_values` (+ `caller.phone`, its
+// default `missing_field_paths` entry) — `WorkItemPanel` renders from `field_specs` only since I3
+// E3c, so a work item fixture needs one, the same shape `getDdsWorkItem` sends (I3 E3a′, §70.5.4).
+export const WORK_ITEM_FIELD_SPECS: CardFieldSpec[] = [
+  { field_path: 'incident.type', value_type: 'ENUM', enum_name: 'IncidentType', label_ru: 'Тип происшествия', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'address.locality', value_type: 'STRING', enum_name: null, label_ru: 'Населённый пункт', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'address.street', value_type: 'STRING', enum_name: null, label_ru: 'Улица', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'address.house', value_type: 'STRING', enum_name: null, label_ru: 'Дом', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'address.floor', value_type: 'INTEGER', enum_name: null, label_ru: 'Этаж', scoring_relevant: true, required_for_handoff: false },
+  { field_path: 'description.text', value_type: 'STRING', enum_name: null, label_ru: 'Описание происшествия', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'flags.threat_to_life', value_type: 'BOOLEAN', enum_name: null, label_ru: 'Угроза жизни', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'recipients.services', value_type: 'STRING_LIST', enum_name: null, label_ru: 'Службы-получатели', scoring_relevant: true, required_for_handoff: true },
+  { field_path: 'caller.phone', value_type: 'STRING', enum_name: null, label_ru: 'Телефон заявителя', scoring_relevant: true, required_for_handoff: true },
+];
+
+/** One `field_specs` entry by `field_path`, from {@link WORK_ITEM_FIELD_SPECS} — lets `.tsx` tests
+ * build expected label text from server-controlled data instead of a literal Cyrillic string
+ * (`no-cyrillic-guard.test.ts` scans `.tsx` sources, not this `.ts` fixture file). */
+export function workItemFieldSpec(fieldPath: string): CardFieldSpec {
+  const spec = WORK_ITEM_FIELD_SPECS.find((candidate) => candidate.field_path === fieldPath);
+  if (!spec) throw new Error(`no fixture field_spec for ${fieldPath}`);
+  return spec;
+}
+
+// A `visible_when` fixture for the "hidden fields are omitted" test — `flags.threat_to_life` only
+// shows when `address.house` reads `27`.
+export const THREAT_TO_LIFE_HIDDEN_FIELD_SPEC: CardFieldSpec = {
+  ...workItemFieldSpec('flags.threat_to_life'),
+  visible_when: { field_path: 'address.house', op: 'EQ', value: '27' },
+};
+
+// A v2 `STRING_LIST` fixture (the «Что случилось» chips, §70.5.3) for the "option code renders as
+// label_ru" test.
+export const INCIDENT_TYPES_CHIP_FIELD_SPEC: CardFieldSpec = {
+  field_path: 'incident.types',
+  value_type: 'STRING_LIST',
+  enum_name: null,
+  label_ru: 'Что случилось',
+  scoring_relevant: false,
+  required_for_handoff: false,
+  group: 'incident',
+  options: [{ code: '1', label_ru: 'Пожар' }],
+};
 
 export function makeWorkItem(overrides: Partial<DdsWorkItem> = {}): DdsWorkItem {
   return {
@@ -35,6 +79,8 @@ export function makeWorkItem(overrides: Partial<DdsWorkItem> = {}): DdsWorkItem 
     selected_resource_ids: [],
     dispatched_resource_ids: [],
     missing_field_paths: ['caller.phone'],
+    card_schema: 'v1',
+    field_specs: WORK_ITEM_FIELD_SPECS,
     ...overrides,
   };
 }

@@ -1,25 +1,21 @@
-// Card-schema-driven rendering helpers for the report's §29 card sections: the final card
-// (`final-card-section.tsx`, via `format-fact-value.ts`) and the handoff snapshot
-// (`handoff-section.tsx`) — I3 E3c, HLD 70 §70.5.2/§70.5.4, D17. `OperatorCardView.field_specs`
-// (and, through `SessionReport.final_card`, the schema the handoff snapshot's own `card_values`
-// shares — `HandoffSnapshotView` carries no `field_specs` of its own) always carries a
-// server-rendered `label_ru` per field and, for v2, per option — so no field-path catalog lives
-// here any more (the report side's old hand-written field-path -> label list is gone).
+// Card-schema-driven rendering for the DDS console (I3 E3c, HLD 70 §70.5.2/§70.5.4, D17). The
+// server always sends `DdsWorkItem.field_specs` now (E3a′) — the same `CardFieldSpec`s
+// `OperatorCardView` carries, options and all — so this is the one place the DDS side turns a
+// `field_path`/`FactValue` pair into Russian text; the DDS side's old hand-written field-path ->
+// label catalog is gone for good (D17: `label_ru` is server-rendered for every schema field, v1
+// and v2 alike).
 //
 // `evaluateCardCondition` is a hand-ported mirror of the backend's `evaluate_condition`
 // (`backend/app/domain/layers/card_schema.py`) — both run over the one shared fixture file
 // `reference/card-schema/conditions.fixtures.json` (§70.5.2), checked in
-// `snapshot-card-fields.test.ts`.
+// `card-schema-render.test.ts`.
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import type { components } from '@/shared/api';
-import type { CardFieldSpec, FactValue } from '@/shared/api';
-import { serviceLabelRu } from '@/entities/service-catalog';
+import type { CardFieldSpec, FactValue } from '@/entities/card';
+import { serviceTypeLabelRu } from './dds-labels';
 
 export type CardCondition = components['schemas']['CardCondition'];
-
-/** A service's Russian name — the service-catalog lookup (I3 E2a, D18). */
-export const serviceTypeLabelRu = serviceLabelRu;
 
 /** Mirrors the backend's `_is_filled`: not `null`, not `""`, not `[]`. `false` counts as set. */
 export function isCardValueFilled(value: FactValue | undefined): boolean {
@@ -30,7 +26,7 @@ export function isCardValueFilled(value: FactValue | undefined): boolean {
 }
 
 /** Mirrors `evaluate_condition` (`backend/app/domain/layers/card_schema.py`) exactly — see
- * `snapshot-card-fields.test.ts` for the shared-fixture cases this must agree with. */
+ * `card-schema-render.test.ts` for the shared-fixture cases this must agree with. */
 export function evaluateCardCondition(condition: CardCondition, values: Readonly<Record<string, FactValue>>): boolean {
   if ('all' in condition) {
     return condition.all.every((branch) => evaluateCardCondition(branch, values));
@@ -102,15 +98,14 @@ const CALLER_RELATIONSHIP_LABEL_KEY: Record<string, keyof typeof ru> = {
 // binding gives every v2 field (§70.5.2) does not exist for v1, so these two enums still need
 // their value looked up by hand. This is not a field-path label catalog (every field's own
 // `label_ru` already comes from `field_specs`); it is the same small enum-*value* table
-// `features/operator/card-form.tsx` and `features/dds/card-schema-render.ts` each keep.
+// `features/operator/card-form.tsx` and `features/report/snapshot-card-fields.ts` each keep.
 const ENUM_LABEL_KEYS_BY_ENUM_NAME: Record<string, Record<string, keyof typeof ru>> = {
   IncidentType: INCIDENT_TYPE_LABEL_KEY,
   CallerRelationship: CALLER_RELATIONSHIP_LABEL_KEY,
 };
 
-/** Renders one `values[field_path]` as Russian display text, options and all. `undefined`/`null`
- * and the other "unfilled" scalars (`""`, `[]`) all render as `factValueEmpty` — never a guessed
- * value. */
+/** Renders one `card_values[field_path]` as Russian display text, options and all. `undefined`
+ * (never set) and the "unfilled" scalars (`null`, `""`, `[]`) all render as `factValueEmpty`. */
 export function formatCardValueRu(spec: CardFieldSpec, value: FactValue | undefined): string {
   if (!isCardValueFilled(value)) {
     return t('factValueEmpty');
@@ -154,12 +149,13 @@ function derivedGroupKey(fieldPath: string): string {
 }
 
 /** Groups the fields `shouldShow` selects, after dropping anything `visible_when` hides for
- * `values`. Groups keep the order they first appear in `fieldSpecs`; within a group, fields sort
- * by the schema's own `order`. */
+ * `values` (D-9: never a raw dump of every declared path — empty and hidden fields are omitted by
+ * the caller's `shouldShow` and by this function respectively). Groups keep the order they first
+ * appear in `fieldSpecs`; within a group, fields sort by the schema's own `order`. */
 export function groupVisibleCardFields(
   fieldSpecs: readonly CardFieldSpec[],
   values: Readonly<Record<string, FactValue>>,
-  shouldShow: (spec: CardFieldSpec) => boolean = () => true,
+  shouldShow: (spec: CardFieldSpec) => boolean,
 ): CardFieldGroup[] {
   const groups: { key: string; fields: { spec: CardFieldSpec; position: number }[] }[] = [];
   const indexByKey = new Map<string, number>();
@@ -184,3 +180,5 @@ export function groupVisibleCardFields(
       .map((entry) => entry.spec),
   }));
 }
+
+export { serviceTypeLabelRu };

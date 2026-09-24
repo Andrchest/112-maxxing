@@ -159,7 +159,7 @@ export function ReportPage() {
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <FinalCardSection card={report.final_card} />
-        <HandoffSection handoff={report.handoff} />
+        <HandoffSection handoff={report.handoff} fieldSpecs={report.final_card.field_specs} />
       </div>
       <div className="mt-4">
         <TruthDiffSection entries={report.truth_vs_card_diff} />

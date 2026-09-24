@@ -4,6 +4,7 @@
 import type {
   ActorType,
   AudioSegmentRef,
+  CardFieldSpec,
   DdsDecisionView,
   EventType,
   HandoffSnapshotView,
@@ -23,6 +24,21 @@ import type {
   TranscriptSegmentView,
   TruthVsCardDiffEntry,
 } from '@/shared/api';
+
+// `field_specs` fixtures for `handoff-section.test.tsx` — `.tsx` test sources may not carry a
+// literal Cyrillic string (`no-cyrillic-guard.test.ts`), so a test that needs to assert one of
+// these `label_ru` values reads it off the fixture object instead of typing it inline.
+export const HOUSE_FIELD_SPEC: CardFieldSpec = { field_path: 'address.house', value_type: 'STRING', enum_name: null, label_ru: 'Дом', scoring_relevant: true, required_for_handoff: true };
+export const DESCRIPTION_FIELD_SPEC: CardFieldSpec = { field_path: 'description.text', value_type: 'STRING', enum_name: null, label_ru: 'Описание', scoring_relevant: true, required_for_handoff: true };
+export const BUILDING_FIELD_SPEC_HIDDEN: CardFieldSpec = {
+  field_path: 'address.building',
+  value_type: 'STRING',
+  enum_name: null,
+  label_ru: 'Корпус',
+  scoring_relevant: true,
+  required_for_handoff: false,
+  visible_when: { field_path: 'address.house', op: 'EQ', value: '27' },
+};
 
 export function makeScoreEvidence(overrides: Partial<ScoreEvidenceView> = {}): ScoreEvidenceView {
   return {

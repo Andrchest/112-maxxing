@@ -1,7 +1,7 @@
 // Renders one `OperatorCardView.values[field_path]` / `HandoffSnapshotView.card_values[field_path]`
 // as Russian display text — the instructor feature's own copy of the small enum-label lookup every
 // feature that renders `CardFieldSpec`/`FactValue` keeps locally (`features/report/format-fact-
-// value.ts`, `features/dds/card-field-labels.ts`; same treatment, not a shared import).
+// value.ts`, `features/dds/card-schema-render.ts`; same treatment, not a shared import).
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import type { CardFieldSpec, FactValue } from '@/shared/api';

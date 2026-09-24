@@ -1,14 +1,18 @@
-// §29 item 8: card final state. Renders `final_card` exactly as `getSessionReport` returned it —
-// grouped by `entities/card`'s `groupCardFields` (the same field-path-prefix grouping the operator
-// form uses), each value through {@link formatFactValueRu}.
+// §29 item 8: card final state. Renders `final_card` exactly as `getSessionReport` returned it,
+// grouped and ordered by its own `field_specs` (I3 E3c, HLD 70 §70.5.4, D17) — the schema's `group`
+// for a v2 card, the `field_path` prefix for v1 (whose `group` is always `null`) — each value
+// through {@link formatFactValueRu}. A field `visible_when` hides for this card's own `values` is
+// omitted, same as the DDS sentence view (ui-check D-9); every other declared field renders, filled
+// or not.
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { groupCardFields } from '@/entities/card';
 import type { OperatorCardView } from '@/shared/api';
 import { formatFactValueRu } from './format-fact-value';
+import { groupVisibleCardFields } from './snapshot-card-fields';
 
 const GROUP_LABEL_KEY: Record<string, keyof typeof ru> = {
+  // v1 groups (derived from the `field_path` prefix — v1's `group` is always `null`)
   incident: 'operatorGroupIncident',
   address: 'operatorGroupAddress',
   caller: 'operatorGroupCaller',
@@ -18,6 +22,13 @@ const GROUP_LABEL_KEY: Record<string, keyof typeof ru> = {
   flags: 'operatorGroupFlags',
   notes: 'operatorGroupNotes',
   recipients: 'operatorGroupRecipients',
+  // v2 groups (the schema's own explicit `group`, §70.5.2)
+  header: 'operatorGroupHeader',
+  applicant: 'operatorGroupApplicant',
+  q_fire: 'operatorGroupQFire',
+  q_gas: 'operatorGroupQGas',
+  q_explosion: 'operatorGroupQExplosion',
+  services: 'operatorGroupServices',
 };
 
 function groupLabel(key: string): string {
@@ -29,7 +40,7 @@ interface FinalCardSectionProps {
 }
 
 export function FinalCardSection({ card }: FinalCardSectionProps) {
-  const groups = groupCardFields(card.field_specs);
+  const groups = groupVisibleCardFields(card.field_specs, card.values);
 
   return (
     <Card>
