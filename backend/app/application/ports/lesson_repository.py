@@ -71,6 +71,14 @@ class LessonRepository(Protocol):
         """Write back the mutable columns: state, the four timestamps, the release author."""
         ...
 
+    async def save_weights(self, lesson: Lesson) -> None:
+        """Write back `scenario_plan` (its weights) and `weight_proposals` (I3 E9a, §70.3.7).
+
+        The only writer of the plan after creation: `acceptWeightProposals` changes weights and
+        nothing else of an entry.
+        """
+        ...
+
     async def list_lessons(
         self,
         *,

@@ -2,6 +2,10 @@
 // (read verbatim from `LessonSessionView.card_status` — never derived here) and the lifecycle
 // controls (start/abort/release); once the lesson is terminal, the N card reports plus the
 // weighted total (`getLessonReport`, openapi.yaml — "no new evaluator").
+//
+// I3 E9a (70 §70.3.7): each plan entry shows its scenario's «Сложность», its weight and whose
+// workstation it is; the lesson's group is named; `WeightProposalsCard` asks for AI weight
+// proposals and accepts the chosen ones (the only way a proposal becomes a weight).
 import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,6 +21,8 @@ import {
   getLesson,
   getLessonReport,
   getScenarioVersionSummary,
+  listTraineeGroups,
+  listUsers,
   problemMessageRu,
   queryKeys,
   releaseLessonReport,
@@ -29,6 +35,7 @@ import {
 import { ProblemError } from '@/shared/lib/api';
 import { arrivalKindLabelRu, cardStatusLabelRu, isRedFlagCardStatus, lessonStateLabelRu } from './lesson-labels';
 import { AbortLessonButton } from './abort-lesson-button';
+import { WeightProposalsCard } from './weight-proposals-card';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -56,6 +63,21 @@ function ScenarioTitle({ scenarioVersionId }: { scenarioVersionId: string }) {
     enabled: scenarioVersionId !== '',
   });
   return <>{query.data?.title ?? '—'}</>;
+}
+
+/** «Сложность N» of the scenario version (the same trainee-safe summary `ScenarioTitle` reads). */
+function ScenarioDifficulty({ scenarioVersionId }: { scenarioVersionId: string }) {
+  const query = useQuery({
+    queryKey: queryKeys.scenarios.versionSummary(scenarioVersionId),
+    queryFn: () => getScenarioVersionSummary(scenarioVersionId),
+    enabled: scenarioVersionId !== '',
+  });
+  if (!query.data) return null;
+  return (
+    <span data-slot="plan-entry-difficulty">
+      {t('difficultyLabel')} {query.data.difficulty}
+    </span>
+  );
 }
 
 function LessonReportSection({ lessonId }: { lessonId: string }) {
@@ -86,8 +108,13 @@ function LessonReportSection({ lessonId }: { lessonId: string }) {
             <span>
               {t('lessonDetailColumnPosition')} {card.position}
             </span>
-            <span>
-              {card.score.total_points} / {card.score.total_max_points}
+            <span className="flex items-center gap-2">
+              <span>
+                {card.score.total_points} / {card.score.total_max_points}
+              </span>
+              <span className="text-xs text-muted-foreground" data-slot="report-card-weight">
+                × {t('lessonReportCardWeightLabel')} {card.weight}
+              </span>
             </span>
           </li>
         ))}
@@ -115,6 +142,19 @@ export function LessonDetailPage() {
   });
 
   const lesson = lessonOverride ?? lessonQuery.data ?? null;
+
+  const groupsQuery = useQuery({
+    queryKey: queryKeys.traineeGroups.list(),
+    queryFn: listTraineeGroups,
+    enabled: Boolean(lesson?.group_id),
+  });
+  const groupName = (groupsQuery.data?.items ?? []).find((group) => group.group_id === lesson?.group_id)?.name_ru;
+  const traineesQuery = useQuery({
+    queryKey: queryKeys.users.list('TRAINEE'),
+    queryFn: () => listUsers({ role: 'TRAINEE' }),
+  });
+  const nameOf = (userId: string) =>
+    (traineesQuery.data?.items ?? []).find((account) => account.id === userId)?.display_name_ru ?? userId;
 
   function applyUpdate(next: LessonDetail) {
     setLessonOverride(next);
@@ -174,6 +214,11 @@ export function LessonDetailPage() {
               <span className="text-xs text-muted-foreground">{lessonStateLabelRu(lesson.state)}</span>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
+              {lesson.group_id ? (
+                <p className="text-sm" data-slot="lesson-group">
+                  {t('lessonDetailGroupLabel')}: {groupName ?? '—'}
+                </p>
+              ) : null}
               <ul className="flex flex-col gap-1">
                 {lesson.scenario_plan.map((entry) => (
                   <li key={entry.position} className="rounded-md border border-border p-2 text-sm">
@@ -190,6 +235,16 @@ export function LessonDetailPage() {
                       {entry.arrival.kind === 'AT_OFFSET'
                         ? ` (${formatCallDurationMs(entry.arrival.offset_ms ?? 0)})`
                         : null}
+                    </span>
+                    {' · '}
+                    <ScenarioDifficulty scenarioVersionId={entry.scenario_version_id} />
+                    {' · '}
+                    <span data-slot="plan-entry-weight">
+                      {t('lessonDetailWeightLabel')} {entry.weight ?? 1}
+                    </span>
+                    <span className="block text-xs text-muted-foreground" data-slot="plan-entry-participants">
+                      {t('lessonDetailParticipantsLabel')}:{' '}
+                      {entry.participants ? entry.participants.map(nameOf).join(', ') : t('lessonDetailEveryone')}
                     </span>
                   </li>
                 ))}
@@ -262,6 +317,21 @@ export function LessonDetailPage() {
               </table>
             </CardContent>
           </Card>
+
+          <WeightProposalsCard
+            lessonId={lessonId}
+            onWeightsChanged={() => setLessonOverride(null)}
+            renderCardLabel={(position, scenarioVersionId) => (
+              <span className="flex flex-col">
+                <span>
+                  {t('lessonDetailColumnPosition')} {position} · <ScenarioTitle scenarioVersionId={scenarioVersionId} />
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  <ScenarioDifficulty scenarioVersionId={scenarioVersionId} />
+                </span>
+              </span>
+            )}
+          />
 
           {lesson.state === 'COMPLETED' || lesson.state === 'ABORTED' ? (
             <Card className="max-w-2xl">

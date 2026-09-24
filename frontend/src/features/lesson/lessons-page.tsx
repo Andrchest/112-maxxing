@@ -1,6 +1,7 @@
 // Route: /instructor/lessons (I3 E4b, 70 §70.3). Create a lesson (занятие) of N cards and list
 // every lesson, linking into `/instructor/lessons/:lessonId` for the plan, the sessions and (once
-// terminal) the N card reports.
+// terminal) the N card reports. I3 E9a: the trainee groups a lesson may be created for are
+// managed here too (70 §70.3.7).
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { AppShell } from '@/shared/ui/app-shell';
@@ -12,6 +13,7 @@ import { useAuthStore } from '@/entities/session';
 import { listLessons, problemMessageRu, queryKeys, type ProblemCode, type SessionMode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { LessonCreateForm } from '@/features/instructor/lesson-create-form';
+import { TraineeGroupsCard } from '@/features/instructor/trainee-groups-card';
 import { lessonStateLabelRu } from './lesson-labels';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
@@ -83,6 +85,7 @@ export function LessonsPage() {
     >
       <h1 className="text-lg font-semibold tracking-tight">{t('lessonsPageTitle')}</h1>
       <div className="mt-4 flex flex-col gap-4">
+        <TraineeGroupsCard />
         <LessonCreateForm />
         <LessonsList />
       </div>

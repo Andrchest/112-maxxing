@@ -4,6 +4,14 @@
 // "every value listed, unsupported ones disabled" reading of `ScenarioVariantsView`
 // (`create-session-form.tsx`'s own comment). `createLesson` validates the whole plan and creates
 // every session at once (openapi.yaml); nothing here computes a card status or a session state.
+//
+// I3 E9a (70 §70.3.7, F-15): a lesson may be created for a trainee group (the participants are
+// pre-filled from its members and stay editable; `group_id` is recorded); the matrix of plan
+// entries × participants («галочки» per workstation) becomes each entry's `participants` (an
+// entry ticked for everyone sends none — the backend's "every lesson participant"); every
+// scenario and version option shows its «Сложность» and the scenario list filters by it. The
+// per-entry weight is a plain number, default 1 — the difficulty is shown beside it, never
+// turned into a weight here (AI proposals are reviewed on the lesson page).
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
@@ -16,8 +24,9 @@ import { ProblemError } from '@/shared/lib/api';
 import { useServiceCatalogStore } from '@/entities/service-catalog';
 import {
   createLesson,
-  listScenarios,
+  listScenarioPage,
   listScenarioVersions,
+  listTraineeGroups,
   listUsers,
   problemMessageRu,
   queryKeys,
@@ -30,10 +39,12 @@ import {
   type LessonDetail,
   type ProblemCode,
   type RoleType,
+  type ScenarioSummary,
   type ScenarioVariantsView,
   type ScenarioVersionListItem,
   type SessionMode,
   type SessionVariants,
+  type TraineeGroup,
 } from '@/shared/api';
 import { arrivalKindLabelRu } from '@/features/lesson/lesson-labels';
 
@@ -129,6 +140,32 @@ function buildParticipantRows(mode: SessionMode, roleChain: readonly RoleType[])
   return roleChain.map((roleType) => ({ userId: '', assignedRoleType: roleType, assignedServiceId: '' }));
 }
 
+/** «Сложность N» before a picker option's own label (F-15 «Классифицировать задания по уровням
+ * сложности») — first, so a long ticket title never hides it; nothing when the server has none. */
+function withDifficulty(label: string, difficulty: number | null | undefined): string {
+  return difficulty ? `${t('difficultyLabel')} ${difficulty} · ${label}` : label;
+}
+
+const DIFFICULTIES: readonly number[] = [1, 2, 3, 4, 5];
+
+/** A group row keeps the role it had when it is still in the chain, else the chain's first. */
+function buildGroupRows(
+  group: TraineeGroup,
+  mode: SessionMode,
+  roleChain: readonly RoleType[],
+  previous: readonly ParticipantRow[],
+): ParticipantRow[] {
+  return group.members.map((member) => {
+    const before = previous.find((row) => row.userId === member.user_id);
+    const keep = before?.assignedRoleType && roleChain.includes(before.assignedRoleType) ? before.assignedRoleType : null;
+    return {
+      userId: member.user_id,
+      assignedRoleType: mode === 'FULL_CYCLE_SINGLE_TRAINEE' ? null : (keep ?? roleChain[0] ?? null),
+      assignedServiceId: before?.assignedServiceId ?? '',
+    };
+  });
+}
+
 interface PlanEntryRow {
   key: number;
   scenarioId: string;
@@ -139,6 +176,8 @@ interface PlanEntryRow {
   delayMs: number;
   variants: SessionVariants | null;
   weight: number;
+  /** I3 E9a: the ticked participants' user ids, or `null` for every lesson participant. */
+  participantUserIds: string[] | null;
 }
 
 function makeEntry(key: number, defaultOffsetMs: number): PlanEntryRow {
@@ -152,6 +191,7 @@ function makeEntry(key: number, defaultOffsetMs: number): PlanEntryRow {
     delayMs: 0,
     variants: null,
     weight: 1,
+    participantUserIds: null,
   };
 }
 
@@ -170,12 +210,20 @@ interface PlanEntryFieldsProps {
   index: number;
   isFirst: boolean;
   canRemove: boolean;
+  difficultyFilter: number | null;
   onChange: (patch: Partial<PlanEntryRow>) => void;
   onRemove: () => void;
 }
 
-function PlanEntryFields({ row, index, isFirst, canRemove, onChange, onRemove }: PlanEntryFieldsProps) {
-  const scenariosQuery = useQuery({ queryKey: queryKeys.scenarios.list(), queryFn: listScenarios });
+function PlanEntryFields({ row, index, isFirst, canRemove, difficultyFilter, onChange, onRemove }: PlanEntryFieldsProps) {
+  const scenariosQuery = useQuery({
+    queryKey: queryKeys.scenarioPicker.list(),
+    queryFn: () => listScenarioPage({ limit: 200 }),
+  });
+  const scenarioOptions: ScenarioSummary[] = (scenariosQuery.data?.items ?? []).filter(
+    (scenario) =>
+      difficultyFilter === null || scenario.latest_difficulty === difficultyFilter || scenario.scenario_id === row.scenarioId,
+  );
   const versionsQuery = useQuery({
     queryKey: queryKeys.scenarios.versions(row.scenarioId),
     queryFn: () => listScenarioVersions(row.scenarioId),
@@ -212,9 +260,9 @@ function PlanEntryFields({ row, index, isFirst, canRemove, onChange, onRemove }:
           disabled={scenariosQuery.isLoading}
         >
           <option value="">{t('lessonFormSelectScenarioPlaceholder')}</option>
-          {(scenariosQuery.data?.items ?? []).map((scenario) => (
+          {scenarioOptions.map((scenario) => (
             <option key={scenario.scenario_id} value={scenario.scenario_id}>
-              {scenario.title_ru}
+              {withDifficulty(scenario.title_ru, scenario.latest_difficulty)}
             </option>
           ))}
         </select>
@@ -232,7 +280,7 @@ function PlanEntryFields({ row, index, isFirst, canRemove, onChange, onRemove }:
           <option value="">{t('lessonFormSelectVersionPlaceholder')}</option>
           {(versionsQuery.data?.items ?? []).map((version) => (
             <option key={version.id} value={version.id}>
-              {version.title} (v{version.version})
+              {withDifficulty(`${version.title} (v${version.version})`, version.difficulty)}
             </option>
           ))}
         </select>
@@ -323,6 +371,7 @@ function PlanEntryFields({ row, index, isFirst, canRemove, onChange, onRemove }:
           value={row.weight}
           onChange={(event) => onChange({ weight: Number(event.target.value) })}
         />
+        <p className="text-xs text-muted-foreground">{t('lessonFormEntryWeightHint')}</p>
       </div>
 
       {canRemove ? (
@@ -345,6 +394,11 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
   const [nextKey, setNextKey] = useState(1);
   const [entries, setEntries] = useState<PlanEntryRow[]>([makeEntry(0, 0)]);
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
+  const [groupId, setGroupId] = useState('');
+  const [difficultyFilter, setDifficultyFilter] = useState<number | null>(null);
+
+  const groupsQuery = useQuery({ queryKey: queryKeys.traineeGroups.list(), queryFn: listTraineeGroups });
+  const selectedGroup = (groupsQuery.data?.items ?? []).find((group) => group.group_id === groupId) ?? null;
 
   const traineesQuery = useQuery({
     queryKey: queryKeys.users.list('TRAINEE'),
@@ -381,8 +435,62 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     return chain;
   }
 
-  function refreshParticipants(nextEntries: PlanEntryRow[], mode: SessionMode) {
-    setParticipants(buildParticipantRows(mode, roleChainFor(nextEntries)));
+  function refreshParticipants(nextEntries: PlanEntryRow[], mode: SessionMode, group: TraineeGroup | null = selectedGroup) {
+    const chain = roleChainFor(nextEntries);
+    if (group) {
+      setParticipants((rows) => buildGroupRows(group, mode, chain, rows));
+      return;
+    }
+    setParticipants(buildParticipantRows(mode, chain));
+  }
+
+  function handleGroupChange(nextGroupId: string) {
+    setGroupId(nextGroupId);
+    const group = (groupsQuery.data?.items ?? []).find((item) => item.group_id === nextGroupId) ?? null;
+    setEntries((rows) => rows.map((row) => ({ ...row, participantUserIds: null })));
+    if (group) {
+      setParticipants(buildGroupRows(group, sessionMode, roleChainFor(entries), []));
+    } else {
+      setParticipants(buildParticipantRows(sessionMode, roleChainFor(entries)));
+    }
+  }
+
+  function updateParticipantRole(index: number, role: RoleType | null) {
+    setParticipants((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, assignedRoleType: role } : row)));
+  }
+
+  // -- the per-workstation matrix («галочки», F-15) ----------------------------------------------
+  const chosenUserIds = participants.map((row) => row.userId.trim()).filter((userId) => userId !== '');
+  const displayNameOf = (userId: string) =>
+    (traineesQuery.data?.items ?? []).find((user) => user.id === userId)?.display_name_ru ?? userId;
+
+  function effectiveTicks(row: PlanEntryRow): string[] {
+    return row.participantUserIds === null
+      ? chosenUserIds
+      : row.participantUserIds.filter((userId) => chosenUserIds.includes(userId));
+  }
+
+  function toggleTick(index: number, userId: string) {
+    setEntries((rows) =>
+      rows.map((row, rowIndex) => {
+        if (rowIndex !== index) return row;
+        const ticks = effectiveTicks(row);
+        const next = ticks.includes(userId) ? ticks.filter((id) => id !== userId) : [...ticks, userId];
+        const everyone = chosenUserIds.every((id) => next.includes(id));
+        return { ...row, participantUserIds: everyone ? null : next };
+      }),
+    );
+  }
+
+  function distributeCards() {
+    if (chosenUserIds.length === 0) return;
+    setEntries((rows) =>
+      rows.map((row, index) => ({ ...row, participantUserIds: [chosenUserIds[index % chosenUserIds.length]!] })),
+    );
+  }
+
+  function tickEveryone() {
+    setEntries((rows) => rows.map((row) => ({ ...row, participantUserIds: null })));
   }
 
   function updateEntry(index: number, patch: Partial<PlanEntryRow>) {
@@ -432,10 +540,12 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     setParticipants((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
   }
 
+  const everyEntryHasAParticipant = entries.every((row) => effectiveTicks(row).length > 0);
   const entriesValid =
     entries.length > 0 &&
     entries.every((row) => row.versionId !== '') &&
-    entries[0]?.arrivalKind === 'AT_OFFSET';
+    entries[0]?.arrivalKind === 'AT_OFFSET' &&
+    everyEntryHasAParticipant;
   const canCreate =
     title.trim() !== '' &&
     entriesValid &&
@@ -470,7 +580,10 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
         },
         ...(row.variants ? { variants: row.variants } : {}),
         weight: row.weight,
+        // I3 E9a: an entry ticked for everyone sends no subset (every lesson participant).
+        ...(row.participantUserIds === null ? {} : { participants: effectiveTicks(row) }),
       })),
+      ...(groupId !== '' ? { group_id: groupId } : {}),
     };
     createMutation.mutate(body);
   }
@@ -507,6 +620,42 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           </select>
         </div>
 
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lesson-group">{t('lessonFormGroupLabel')}</Label>
+          <select
+            id="lesson-group"
+            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            value={groupId}
+            onChange={(event) => handleGroupChange(event.target.value)}
+            disabled={groupsQuery.isLoading}
+          >
+            <option value="">{t('lessonFormGroupNone')}</option>
+            {(groupsQuery.data?.items ?? []).map((group) => (
+              <option key={group.group_id} value={group.group_id}>
+                {group.name_ru}
+              </option>
+            ))}
+          </select>
+          {selectedGroup ? <p className="text-xs text-muted-foreground">{t('lessonFormGroupHint')}</p> : null}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lesson-difficulty-filter">{t('lessonFormDifficultyFilterLabel')}</Label>
+          <select
+            id="lesson-difficulty-filter"
+            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            value={difficultyFilter ?? ''}
+            onChange={(event) => setDifficultyFilter(event.target.value === '' ? null : Number(event.target.value))}
+          >
+            <option value="">{t('lessonFormDifficultyAll')}</option>
+            {DIFFICULTIES.map((difficulty) => (
+              <option key={difficulty} value={difficulty}>
+                {`${t('difficultyLabel')} ${difficulty}`}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">{t('lessonFormPlanLabel')}</span>
           {entries.map((row, index) => (
@@ -516,6 +665,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
               index={index}
               isFirst={index === 0}
               canRemove={entries.length > 1}
+              difficultyFilter={difficultyFilter}
               onChange={(patch) => updateEntry(index, patch)}
               onRemove={() => removeEntry(index)}
             />
@@ -558,6 +708,23 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
                     </Button>
                   ) : null}
                 </div>
+                {selectedGroup && sessionMode !== 'FULL_CYCLE_SINGLE_TRAINEE' && roleChainFor(entries).length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`lesson-participant-${index}-role`}>{t('lessonFormParticipantRoleLabel')}</Label>
+                    <select
+                      id={`lesson-participant-${index}-role`}
+                      className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                      value={row.assignedRoleType ?? ''}
+                      onChange={(event) => updateParticipantRole(index, (event.target.value || null) as RoleType | null)}
+                    >
+                      {roleChainFor(entries).map((role) => (
+                        <option key={role} value={role}>
+                          {t(ROLE_TYPE_LABEL_KEY[role])}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
                 {row.assignedRoleType === 'DDS' ? (
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor={`lesson-participant-${index}-service`}>{t('instructorParticipantServiceLabel')}</Label>
@@ -584,6 +751,61 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
               </Button>
             ) : null}
           </div>
+        ) : null}
+
+        {chosenUserIds.length > 1 ? (
+          <fieldset className="flex flex-col gap-2 rounded-md border border-border p-2" data-slot="workstation-matrix">
+            <legend className="px-1 text-sm font-medium">{t('lessonFormMatrixTitle')}</legend>
+            <p className="text-xs text-muted-foreground">{t('lessonFormMatrixHint')}</p>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="p-1.5 font-medium">{t('lessonFormMatrixCardColumn')}</th>
+                    {chosenUserIds.map((userId) => (
+                      <th key={userId} className="p-1.5 text-center font-medium">
+                        {displayNameOf(userId)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((row, index) => (
+                    <tr key={row.key} className="border-b border-border/60">
+                      <td className="p-1.5">
+                        {t('lessonFormEntryLabel')} {index + 1}
+                        {row.version ? <span className="text-muted-foreground"> · {row.version.title}</span> : null}
+                      </td>
+                      {chosenUserIds.map((userId) => (
+                        <td key={userId} className="p-1.5 text-center">
+                          <input
+                            type="checkbox"
+                            className="size-4 accent-primary"
+                            aria-label={`${t('lessonFormEntryLabel')} ${index + 1} — ${displayNameOf(userId)}`}
+                            checked={effectiveTicks(row).includes(userId)}
+                            onChange={() => toggleTick(index, userId)}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={distributeCards}>
+                {t('lessonFormMatrixDistributeButton')}
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={tickEveryone}>
+                {t('lessonFormMatrixAllButton')}
+              </Button>
+            </div>
+            {!everyEntryHasAParticipant ? (
+              <p role="alert" className="text-xs text-destructive">
+                {t('lessonFormMatrixEmptyEntry')}
+              </p>
+            ) : null}
+          </fieldset>
         ) : null}
 
         <ProblemAlert error={createMutation.error} />

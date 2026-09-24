@@ -2,7 +2,8 @@
 
 * `GetLesson` — the plan, the sessions, each card's materialised `card_status` and
   `display_number`. An INSTRUCTOR/ADMIN reads any lesson; a TRAINEE only a lesson they are a
-  participant of (`403 PARTICIPANT_NOT_ASSIGNED` otherwise).
+  participant of (`403 PARTICIPANT_NOT_ASSIGNED` otherwise), and only the cards of their own
+  workstation (`PlanEntry.participants`, I3 E9a).
 * `ListLessons` — `scope=MINE` (created or participating) or `scope=ALL` (INSTRUCTOR/ADMIN only).
 * `ListMyIncidents` — the caller's cross-session incident list: the ДДС «Список/Поиск
   происшествий» and the 112 «реестр». One row per session the caller participates in (or
@@ -162,7 +163,20 @@ class GetLesson:
                 raise NotALessonParticipantError(lesson_id)
             view = await assemble_lesson_detail(uow, lesson)
             await uow.commit()
-        return view
+        if user.is_instructor_or_admin:
+            return view
+        return LessonDetailView(
+            lesson=view.lesson,
+            sessions=tuple(
+                card for card in view.sessions if _plays_card(lesson, card.position, user)
+            ),
+        )
+
+
+def _plays_card(lesson: Lesson, position: int, user: AuthenticatedUser) -> bool:
+    """The card is the user's: its entry names no subset, or a subset that includes them."""
+    chosen = lesson.entry(position).participants
+    return chosen is None or user.user_id in chosen
 
 
 class ListLessons:

@@ -1,5 +1,7 @@
 """`lessons` router — `createLesson`, `listLessons`, `getLesson`, `startLesson`, `abortLesson`,
-`getLessonReport`, `releaseLessonReport` (HLD 70 §70.3, `i3-openapi-delta.yaml`, D15).
+`getLessonReport`, `releaseLessonReport` (HLD 70 §70.3, `i3-openapi-delta.yaml`, D15), and I3
+E9a's `requestWeightProposals`, `getWeightProposals`, `acceptWeightProposals` (§70.3.7): the
+proposals are stored and never applied until the instructor accepts them.
 
 The runner wiring mirrors `sessions`' (D7): `startLesson` adopts the lesson into the
 `LessonRunner` **after** its commit and then ticks it once, so a card due at offset 0 arrives with
@@ -26,9 +28,12 @@ from app.api.schemas.lessons import (
     LessonDetailSchema,
     LessonListItemSchema,
     LessonReportSchema,
+    WeightProposalAcceptRequestSchema,
+    WeightProposalSetSchema,
     lesson_detail_schema,
     lesson_list_item_schema,
     lesson_report_schema,
+    weight_proposal_set_schema,
 )
 from app.api.schemas.sessions import AbortSessionRequestSchema
 from app.api.security import AdminOrInstructorDep, CurrentUserDep, actor_of
@@ -67,6 +72,7 @@ async def create_lesson(
                 body.variants.to_domain() if body.variants is not None else PartialVariants()
             ),
             time_scale=body.time_scale,
+            group_id=body.domain_group_id(),
         )
     )
     return await _detail(container, lesson)
@@ -172,6 +178,50 @@ async def release_lesson_report(
 ) -> LessonDetailSchema:
     released = await container.release_lesson_report()(LessonId(lesson_id), user)
     return await _detail(container, released)
+
+
+@router.post(
+    "/{lesson_id}/weight-proposals",
+    operation_id="requestWeightProposals",
+    summary="Ask for difficulty-weight proposals for every card (stored, never applied).",
+    response_model=WeightProposalSetSchema,
+    status_code=201,
+)
+async def request_weight_proposals(
+    lesson_id: UUID, container: ContainerDep, user: AdminOrInstructorDep
+) -> WeightProposalSetSchema:
+    view = await container.request_weight_proposals()(LessonId(lesson_id), user)
+    return weight_proposal_set_schema(view)
+
+
+@router.get(
+    "/{lesson_id}/weight-proposals",
+    operation_id="getWeightProposals",
+    summary="The lesson's latest weight proposals beside the current weights.",
+    response_model=WeightProposalSetSchema,
+    status_code=200,
+)
+async def get_weight_proposals(
+    lesson_id: UUID, container: ContainerDep, _user: AdminOrInstructorDep
+) -> WeightProposalSetSchema:
+    return weight_proposal_set_schema(await container.get_weight_proposals()(LessonId(lesson_id)))
+
+
+@router.post(
+    "/{lesson_id}/weight-proposals/accept",
+    operation_id="acceptWeightProposals",
+    summary="Accept the chosen proposals into the plan's weights.",
+    response_model=WeightProposalSetSchema,
+    status_code=200,
+)
+async def accept_weight_proposals(
+    lesson_id: UUID,
+    body: WeightProposalAcceptRequestSchema,
+    container: ContainerDep,
+    user: AdminOrInstructorDep,
+) -> WeightProposalSetSchema:
+    view = await container.accept_weight_proposals()(LessonId(lesson_id), body.positions, user)
+    return weight_proposal_set_schema(view)
 
 
 async def _detail(container: ContainerDep, lesson: Lesson) -> LessonDetailSchema:

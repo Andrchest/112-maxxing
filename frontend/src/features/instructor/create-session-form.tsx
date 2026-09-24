@@ -372,7 +372,10 @@ export function CreateSessionForm() {
             <option value="">{t('instructorSelectScenarioPlaceholder')}</option>
             {(scenariosQuery.data?.items ?? []).map((scenario) => (
               <option key={scenario.scenario_id} value={scenario.scenario_id}>
-                {scenario.title_ru}
+                {/* I3 E9a: every scenario picker shows its «Сложность». */}
+                {scenario.latest_difficulty
+                  ? `${t('difficultyLabel')} ${scenario.latest_difficulty} · ${scenario.title_ru}`
+                  : scenario.title_ru}
               </option>
             ))}
           </select>
@@ -396,7 +399,7 @@ export function CreateSessionForm() {
             <option value="">{t('instructorSelectVersionPlaceholder')}</option>
             {(versionsQuery.data?.items ?? []).map((version) => (
               <option key={version.id} value={version.id}>
-                {version.title} (v{version.version})
+                {`${t('difficultyLabel')} ${version.difficulty} · ${version.title} (v${version.version})`}
               </option>
             ))}
           </select>

@@ -23,12 +23,14 @@ from app.api.schemas.sessions import (
 )
 from app.application.lessons.lesson_report import LessonReportView
 from app.application.lessons.queries import IncidentListItemView, LessonDetailView
+from app.application.lessons.weight_proposals import WeightProposalsView
 from app.application.ports.lesson_repository import StoredLessonListing
-from app.domain.common.ids import ScenarioVersionId, UserId
+from app.domain.common.ids import ScenarioVersionId, TraineeGroupId, UserId
 from app.domain.dds.card_status import CardStatus
 from app.domain.enums import RoleType, ServiceId, SessionMode, SessionState
 from app.domain.lesson.lesson import LessonState
 from app.domain.lesson.plan import Arrival, ArrivalKind, LessonParticipant, PlanEntry
+from app.domain.lesson.weights import MAX_PROPOSED_WEIGHT, MIN_PROPOSED_WEIGHT, ProposalSource
 
 __all__ = [
     "ArrivalSchema",
@@ -40,10 +42,14 @@ __all__ = [
     "LessonReportSchema",
     "LessonSessionViewSchema",
     "PlanEntrySchema",
+    "WeightProposalAcceptRequestSchema",
+    "WeightProposalLineSchema",
+    "WeightProposalSetSchema",
     "incident_list_item_schema",
     "lesson_detail_schema",
     "lesson_list_item_schema",
     "lesson_report_schema",
+    "weight_proposal_set_schema",
 ]
 
 
@@ -128,6 +134,11 @@ class LessonCreateRequestSchema(ApiModel):
     variants: VariantsRequestSchema | None = None
     scenario_plan: list[PlanEntrySchema] = Field(min_length=1)
     time_scale: float = Field(default=1.0, ge=0.1, le=10)
+    group_id: UUID | None = None
+    """I3 E9a: the trainee group the lesson is created for (recorded; `404` when unknown)."""
+
+    def domain_group_id(self) -> TraineeGroupId | None:
+        return None if self.group_id is None else TraineeGroupId(self.group_id)
 
     def domain_participants(self) -> tuple[LessonParticipant, ...]:
         return tuple(
@@ -184,6 +195,7 @@ class LessonDetailSchema(ApiModel):
     started_at: datetime | None
     completed_at: datetime | None
     report_released_at: datetime | None
+    group_id: UUID | None
 
 
 class LessonReportCardSchema(ApiModel):
@@ -202,6 +214,35 @@ class LessonReportSchema(ApiModel):
     cards: list[LessonReportCardSchema]
     weighted_total: float
     weighted_max: float
+
+
+class WeightProposalLineSchema(ApiModel):
+    """One card of `WeightProposalSet.proposals`: its current weight beside the proposal."""
+
+    position: int = Field(ge=1)
+    scenario_version_id: UUID
+    current_weight: float
+    proposed_weight: int = Field(ge=MIN_PROPOSED_WEIGHT, le=MAX_PROPOSED_WEIGHT)
+    reason_ru: str
+    accepted_at: datetime | None
+
+
+class WeightProposalSetSchema(ApiModel):
+    """`WeightProposalSet` (I3 E9a, HLD 70 §70.3.7) — proposals, never applied until accepted."""
+
+    lesson_id: UUID
+    source: ProposalSource
+    model_name: str | None
+    fallback_reason: str | None
+    requested_at: datetime
+    requested_by_user_id: UUID
+    proposals: list[WeightProposalLineSchema]
+
+
+class WeightProposalAcceptRequestSchema(ApiModel):
+    """`WeightProposalAcceptRequest` — the positions whose proposals become weights."""
+
+    positions: list[int] = Field(min_length=1)
 
 
 class IncidentListItemSchema(ApiModel):
@@ -272,6 +313,29 @@ def lesson_detail_schema(view: LessonDetailView) -> LessonDetailSchema:
         started_at=lesson.started_at,
         completed_at=lesson.completed_at,
         report_released_at=lesson.report_released_at,
+        group_id=None if lesson.group_id is None else UUID(str(lesson.group_id)),
+    )
+
+
+def weight_proposal_set_schema(view: WeightProposalsView) -> WeightProposalSetSchema:
+    return WeightProposalSetSchema(
+        lesson_id=UUID(str(view.lesson_id)),
+        source=view.source,
+        model_name=view.model_name,
+        fallback_reason=view.fallback_reason,
+        requested_at=view.requested_at,
+        requested_by_user_id=UUID(str(view.requested_by_user_id)),
+        proposals=[
+            WeightProposalLineSchema(
+                position=line.position,
+                scenario_version_id=UUID(str(line.scenario_version_id)),
+                current_weight=line.current_weight,
+                proposed_weight=line.proposed_weight,
+                reason_ru=line.reason_ru,
+                accepted_at=line.accepted_at,
+            )
+            for line in view.proposals
+        ],
     )
 
 

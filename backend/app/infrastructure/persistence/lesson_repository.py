@@ -20,11 +20,12 @@ from app.application.ports.lesson_repository import StoredLessonCard, StoredLess
 from app.db.models.session import Incident as IncidentRow
 from app.db.models.session import Lesson as LessonRow
 from app.db.models.session import SimulationSession as SessionRow
-from app.domain.common.ids import IncidentId, LessonId, SessionId, UserId
+from app.domain.common.ids import IncidentId, LessonId, SessionId, TraineeGroupId, UserId
 from app.domain.dds.card_status import CardStatus
 from app.domain.enums import SessionMode, SessionState
 from app.domain.lesson.lesson import Lesson, LessonState
 from app.domain.lesson.plan import LessonParticipant, PlanEntry
+from app.domain.lesson.weights import WeightProposalSet
 from app.domain.session.variants import PartialVariants
 
 __all__ = ["SqlAlchemyLessonRepository", "lesson_from_row", "lesson_row_values"]
@@ -33,7 +34,8 @@ _LESSONS = LessonRow.__table__
 _SESSIONS = SessionRow.__table__
 _INCIDENTS = IncidentRow.__table__
 
-#: Columns an UPDATE may change; the plan, the participants and the title are fixed at creation.
+#: Columns an UPDATE may change; the plan, the participants and the title are fixed at creation
+#: (the plan's weights excepted — `save_weights`, I3 E9a).
 _MUTABLE_COLUMNS: tuple[str, ...] = (
     "state",
     "started_at",
@@ -48,6 +50,22 @@ def _variants_document(variants: PartialVariants) -> dict[str, str]:
     return {key: value for key, value in variants.model_dump(mode="json").items() if value}
 
 
+def _plan_document(lesson: Lesson) -> list[dict[str, Any]]:
+    return [
+        {
+            **entry.model_dump(mode="json", exclude={"variants"}),
+            "variants": (None if entry.variants is None else _variants_document(entry.variants)),
+        }
+        for entry in lesson.scenario_plan
+    ]
+
+
+def _proposals_document(lesson: Lesson) -> Any:
+    """The proposal set's document, or SQL `NULL` (not the JSON `null` a bare `None` writes)."""
+    proposals = lesson.weight_proposals
+    return sa.null() if proposals is None else proposals.model_dump(mode="json")
+
+
 def lesson_row_values(lesson: Lesson) -> dict[str, Any]:
     """Column values for one `lessons` row."""
     return {
@@ -59,15 +77,7 @@ def lesson_row_values(lesson: Lesson) -> dict[str, Any]:
         "participants": [
             participant.model_dump(mode="json") for participant in lesson.participants
         ],
-        "scenario_plan": [
-            {
-                **entry.model_dump(mode="json", exclude={"variants"}),
-                "variants": (
-                    None if entry.variants is None else _variants_document(entry.variants)
-                ),
-            }
-            for entry in lesson.scenario_plan
-        ],
+        "scenario_plan": _plan_document(lesson),
         "state": lesson.state.value,
         "created_at": lesson.created_at,
         "started_at": lesson.started_at,
@@ -78,12 +88,16 @@ def lesson_row_values(lesson: Lesson) -> dict[str, Any]:
             if lesson.report_released_by_user_id is None
             else UUID(str(lesson.report_released_by_user_id))
         ),
+        "group_id": None if lesson.group_id is None else UUID(str(lesson.group_id)),
+        "weight_proposals": _proposals_document(lesson),
     }
 
 
 def lesson_from_row(row: Mapping[str, Any]) -> Lesson:
     """Read one `lessons` row back into the aggregate."""
     released_by = row["report_released_by_user_id"]
+    group_id = row["group_id"]
+    proposals = row["weight_proposals"]
     return Lesson(
         lesson_id=LessonId(UUID(str(row["id"]))),
         title_ru=str(row["title_ru"]),
@@ -101,6 +115,10 @@ def lesson_from_row(row: Mapping[str, Any]) -> Lesson:
         report_released_at=row["report_released_at"],
         report_released_by_user_id=(
             None if released_by is None else UserId(UUID(str(released_by)))
+        ),
+        group_id=None if group_id is None else TraineeGroupId(UUID(str(group_id))),
+        weight_proposals=(
+            None if proposals is None else WeightProposalSet.model_validate(proposals)
         ),
     )
 
@@ -126,6 +144,16 @@ class SqlAlchemyLessonRepository:
             sa.update(_LESSONS)
             .where(_LESSONS.c.id == UUID(str(lesson.lesson_id)))
             .values(**{column: values[column] for column in _MUTABLE_COLUMNS})
+        )
+
+    async def save_weights(self, lesson: Lesson) -> None:
+        await self._session.execute(
+            sa.update(_LESSONS)
+            .where(_LESSONS.c.id == UUID(str(lesson.lesson_id)))
+            .values(
+                scenario_plan=_plan_document(lesson),
+                weight_proposals=_proposals_document(lesson),
+            )
         )
 
     async def list_lessons(

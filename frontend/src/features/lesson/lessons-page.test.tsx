@@ -17,6 +17,8 @@ function stubEverythingBut(lessonsResponse: unknown) {
       const url = String(input);
       if (url.startsWith('/api/v1/lessons')) return jsonResponse(lessonsResponse);
       if (url === '/api/v1/scenarios') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/scenarios?limit=200') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse({ items: [], total: 0 });
       if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
       throw new Error(`unexpected fetch: ${url}`);
     }),

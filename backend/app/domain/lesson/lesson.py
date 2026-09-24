@@ -17,14 +17,14 @@ without it. Every behaviour returns a new frozen value; an illegal trigger raise
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.common.actors import ActorRef
-from app.domain.common.ids import LessonId, UserId
+from app.domain.common.ids import LessonId, TraineeGroupId, UserId
 from app.domain.common.state_machine import (
     GuardContext,
     StateMachine,
@@ -33,6 +33,7 @@ from app.domain.common.state_machine import (
 )
 from app.domain.enums import ActorType, SessionMode, SessionState
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry, validate_plan
+from app.domain.lesson.weights import WeightProposalSet
 from app.domain.session.variants import PartialVariants
 
 __all__ = [
@@ -161,6 +162,11 @@ class Lesson(BaseModel):
     """When the lesson reached `COMPLETED` or `ABORTED`."""
     report_released_at: datetime | None = None
     report_released_by_user_id: UserId | None = None
+    group_id: TraineeGroupId | None = None
+    """E9a: the trainee group the lesson was created for, kept for the record — the lesson's own
+    `participants` stay authoritative (the group may change or go away afterwards)."""
+    weight_proposals: WeightProposalSet | None = None
+    """E9a: the latest weight proposals (§70.3.7) — never applied until `accept_weights`."""
 
     @property
     def is_terminal(self) -> bool:
@@ -208,6 +214,39 @@ class Lesson(BaseModel):
         state = self._fire("abort", actor, ())
         return self.model_copy(update={"state": state, "completed_at": aborted_at})
 
+    def with_weight_proposals(self, proposals: WeightProposalSet) -> Lesson:
+        """Replace the stored proposals; `scenario_plan` (and every weight) is untouched."""
+        known = {entry.position for entry in self.scenario_plan}
+        positions = [proposal.position for proposal in proposals.proposals]
+        if sorted(positions) != sorted(known):
+            raise LessonPlanError(
+                f"weight proposals must cover exactly positions {sorted(known)}, got {positions}"
+            )
+        return self.model_copy(update={"weight_proposals": proposals})
+
+    def accept_weights(self, positions: Collection[int], accepted_at: datetime) -> Lesson:
+        """Write the chosen proposals into `PlanEntry.weight` (§70.3.7, E9a).
+
+        The only path from a proposal to a weight; `LessonPlanError` when there are no proposals
+        or a position has none. Allowed in every state: the report reads weights when it is
+        asked for, and no score is recomputed (D11).
+        """
+        if self.weight_proposals is None:
+            raise LessonPlanError(f"lesson {self.lesson_id} has no weight proposals to accept")
+        accepted = self.weight_proposals.accept(positions, accepted_at)
+        chosen = {
+            proposal.position: float(proposal.proposed_weight)
+            for proposal in accepted.proposals
+            if proposal.position in positions
+        }
+        plan = tuple(
+            entry.model_copy(update={"weight": chosen[entry.position]})
+            if entry.position in chosen
+            else entry
+            for entry in self.scenario_plan
+        )
+        return self.model_copy(update={"scenario_plan": plan, "weight_proposals": accepted})
+
     def release_report(self, released_at: datetime, *, released_by: UserId) -> Lesson:
         """Record the lesson-level release, idempotently (the first release is kept)."""
         if self.report_released_at is not None:
@@ -227,6 +266,7 @@ def create_lesson(
     scenario_plan: Sequence[PlanEntry],
     created_at: datetime,
     variants: PartialVariants | None = None,
+    group_id: TraineeGroupId | None = None,
 ) -> Lesson:
     """A `CREATED` lesson with its plan checked and put in `position` order (`LessonPlanError`)."""
     if not participants:
@@ -240,4 +280,5 @@ def create_lesson(
         participants=tuple(participants),
         scenario_plan=validate_plan(tuple(scenario_plan)),
         created_at=created_at,
+        group_id=group_id,
     )

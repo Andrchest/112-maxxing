@@ -18,7 +18,7 @@ const HEALTH_READY_RESPONSE: HealthReadyResponse = {
 };
 
 const SCENARIOS_RESPONSE = {
-  items: [{ scenario_id: 's1', slug: 'apartment-fire', title_ru: 'Fire test scenario', version_count: 1, latest_version: 1 }],
+  items: [{ scenario_id: 's1', slug: 'apartment-fire', title_ru: 'Fire test scenario', version_count: 1, latest_version: 1, latest_difficulty: 1 }],
   total: 1,
 };
 
@@ -138,11 +138,11 @@ function renderForm() {
 
 async function fillInScenarioVersionAndParticipant(user: ReturnType<typeof userEvent.setup>) {
   const scenarioSelect = await screen.findByLabelText(ru.instructorScenarioLabel);
-  await screen.findByRole('option', { name: 'Fire test scenario' });
+  await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
   await user.selectOptions(scenarioSelect, 's1');
 
   const versionSelect = await screen.findByLabelText(ru.instructorVersionLabel);
-  await screen.findByRole('option', { name: 'Fire scenario v1 (v1)' });
+  await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
   await user.selectOptions(versionSelect, 'v1');
 
   const participantSelect = await screen.findByLabelText(
@@ -391,10 +391,10 @@ describe('CreateSessionForm', () => {
 
   async function pickScenarioAndVersion(user: ReturnType<typeof userEvent.setup>) {
     const scenarioSelect = await screen.findByLabelText(ru.instructorScenarioLabel);
-    await screen.findByRole('option', { name: 'Fire test scenario' });
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
     await user.selectOptions(scenarioSelect, 's1');
     const versionSelect = await screen.findByLabelText(ru.instructorVersionLabel);
-    await screen.findByRole('option', { name: 'Fire scenario v1 (v1)' });
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
     await user.selectOptions(versionSelect, 'v1');
   }
 

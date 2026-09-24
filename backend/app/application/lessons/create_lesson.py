@@ -12,6 +12,10 @@
    implemented and supported, participants assignable under `session_mode`) and ends `READY`;
 3. commit — or, when any entry is refused, roll everything back: no lesson row, no session.
 
+A lesson may be created "for a group" (I3 E9a, §70.3.7): `group_id` names an existing trainee
+group (`404 NOT_FOUND` otherwise) and is recorded on the row; the participants are the request's
+own — the form pre-fills them from the group, and the instructor may change them.
+
 A refusal is `createSession`'s own for the offending entry (`LessonPlanEntryRefusedError`, same
 `ProblemCode`, `detail` naming the position). Nothing ticks until `startLesson`.
 """
@@ -21,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.application.groups.trainee_groups import TraineeGroupNotFoundError
 from app.application.lessons.errors import LessonPlanEntryRefusedError
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
@@ -28,7 +33,7 @@ from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.sessions.create_session import CreateSession, CreateSessionCommand
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
-from app.domain.common.ids import LessonId
+from app.domain.common.ids import LessonId, TraineeGroupId
 from app.domain.enums import SessionMode
 from app.domain.lesson.lesson import Lesson, create_lesson
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry
@@ -48,6 +53,8 @@ class CreateLessonCommand:
     scenario_plan: Sequence[PlanEntry]
     variants: PartialVariants = field(default_factory=PartialVariants)
     time_scale: float = 1.0
+    group_id: TraineeGroupId | None = None
+    """I3 E9a: the trainee group the lesson is created for (recorded, not expanded)."""
 
 
 def merge_variants(lesson: PartialVariants, entry: PartialVariants | None) -> PartialVariants:
@@ -110,8 +117,14 @@ class CreateLesson:
             scenario_plan=command.scenario_plan,
             created_at=self._clock.now(),
             variants=command.variants,
+            group_id=command.group_id,
         )
         async with self._unit_of_work() as uow:
+            if (
+                command.group_id is not None
+                and await uow.trainee_groups.get(command.group_id) is None
+            ):
+                raise TraineeGroupNotFoundError(command.group_id)
             await uow.lessons.add(lesson)
             for entry in lesson.scenario_plan:
                 chosen = _card_participants(lesson, entry)

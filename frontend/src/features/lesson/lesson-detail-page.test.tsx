@@ -12,6 +12,13 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
+function notFound(): Response {
+  return new Response(JSON.stringify({ title: 'Not Found', status: 404, code: 'NOT_FOUND' }), {
+    status: 404,
+    headers: { 'content-type': 'application/problem+json' },
+  });
+}
+
 const SCENARIO_SUMMARY_RESPONSE = {
   id: 'v1',
   scenario_id: 's1',
@@ -65,6 +72,7 @@ function makeLesson(overrides: Partial<LessonDetail>): LessonDetail {
     started_at: null,
     completed_at: null,
     report_released_at: null,
+    group_id: null,
     ...overrides,
   };
 }
@@ -97,6 +105,8 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
       if (url === '/api/v1/lessons/lesson-1' && method === 'GET') return jsonResponse(lesson);
       if (url === '/api/v1/lessons/lesson-1/start' && method === 'POST') return jsonResponse(makeLesson({ state: 'ACTIVE' }));
       if (url === '/api/v1/scenarios/versions/v1/summary' && method === 'GET') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/lessons/lesson-1/weight-proposals') return notFound();
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -153,6 +163,8 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
         if (url === '/api/v1/lessons/lesson-1') return jsonResponse(lesson);
         if (url === '/api/v1/lessons/lesson-1/report') return jsonResponse(report);
         if (url === '/api/v1/scenarios/versions/v1/summary') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+        if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
+        if (url === '/api/v1/lessons/lesson-1/weight-proposals') return notFound();
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );
@@ -162,5 +174,83 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
     expect(await screen.findByText('8 / 10')).toBeInTheDocument();
     expect(screen.getByText(`${ru.lessonDetailWeightedTotalLabel}: 8 / 10`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: ru.lessonDetailReleaseButton })).toBeInTheDocument();
+  });
+  it('asks for AI weight proposals, changes nothing until the instructor accepts the ticked ones', async () => {
+    const user = userEvent.setup();
+    const lesson = makeLesson({
+      group_id: 'group-1',
+      scenario_plan: [
+        { position: 1, scenario_version_id: 'v1', arrival: { kind: 'AT_OFFSET', offset_ms: 0, delay_ms: 0 }, weight: 1, participants: ['trainee-1'] },
+        { position: 2, scenario_version_id: 'v1', arrival: { kind: 'AT_OFFSET', offset_ms: 0, delay_ms: 0 }, weight: 1 },
+        { position: 3, scenario_version_id: 'v1', arrival: { kind: 'AT_OFFSET', offset_ms: 0, delay_ms: 0 }, weight: 1 },
+      ],
+    });
+    const proposals = {
+      lesson_id: 'lesson-1',
+      source: 'HEURISTIC',
+      model_name: null,
+      fallback_reason: 'LLM_UNAVAILABLE',
+      requested_at: '2026-09-24T00:00:00Z',
+      requested_by_user_id: 'instr-1',
+      proposals: [1, 2, 3].map((position) => ({
+        position,
+        scenario_version_id: 'v1',
+        current_weight: 1,
+        proposed_weight: 5 + position,
+        reason_ru: `reason ${position}`,
+        accepted_at: null,
+      })),
+    };
+    const accepted = {
+      ...proposals,
+      proposals: proposals.proposals.map((line) =>
+        line.position === 2 ? line : { ...line, current_weight: line.proposed_weight, accepted_at: '2026-09-24T00:01:00Z' },
+      ),
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/lessons/lesson-1' && method === 'GET') return jsonResponse(lesson);
+      if (url === '/api/v1/scenarios/versions/v1/summary') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE')
+        return jsonResponse({ items: [{ id: 'trainee-1', username: 't1', display_name_ru: 'Trainee One', user_role: 'TRAINEE', created_at: '2026-09-21T00:00:00Z' }], total: 1 });
+      if (url === '/api/v1/trainee-groups?limit=200')
+        return jsonResponse({ items: [{ group_id: 'group-1', name_ru: 'Shift A', created_by_user_id: 'instr-1', created_at: '2026-09-21T00:00:00Z', members: [] }], total: 1 });
+      if (url === '/api/v1/lessons/lesson-1/weight-proposals' && method === 'GET') return notFound();
+      if (url === '/api/v1/lessons/lesson-1/weight-proposals' && method === 'POST') return jsonResponse(proposals);
+      if (url === '/api/v1/lessons/lesson-1/weight-proposals/accept' && method === 'POST') return jsonResponse(accepted);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    expect(await screen.findByText(ru.weightProposalsEmpty)).toBeInTheDocument();
+    expect(await screen.findByText(`${ru.lessonDetailGroupLabel}: Shift A`)).toBeInTheDocument();
+    expect((await screen.findAllByText(`${ru.difficultyLabel} 3`)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(`${ru.lessonDetailParticipantsLabel}: Trainee One`)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: ru.weightProposalsRequestButton }));
+    expect(await screen.findByText('reason 1')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `${ru.weightProposalsSourceHeuristic} — ${ru.weightProposalsFallbackPrefix}: ${ru.weightProposalsFallbackLlmUnavailable}`,
+      ),
+    ).toBeInTheDocument();
+    const acceptButton = screen.getByRole('button', { name: ru.weightProposalsAcceptButton });
+    expect(acceptButton).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/accept'))).toBe(false);
+
+    await user.click(screen.getByLabelText(`${ru.weightProposalsColumnAccept} 1`));
+    await user.click(screen.getByLabelText(`${ru.weightProposalsColumnAccept} 3`));
+    await user.click(acceptButton);
+
+    const acceptCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/weight-proposals/accept'));
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(acceptCall[1].body as string)).toEqual({ positions: [1, 3] });
+    expect(await screen.findAllByText(ru.weightProposalsAccepted)).toHaveLength(2);
   });
 });
