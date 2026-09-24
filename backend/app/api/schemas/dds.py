@@ -39,7 +39,7 @@ from app.domain.enums import (
     ResourceStatus,
     ResourceType,
     RoleType,
-    ServiceType,
+    ServiceId,
     SessionState,
     StatusUpdateKind,
 )
@@ -118,7 +118,7 @@ class EmergencyResourceViewSchema(ApiModel):
     """`openapi.yaml`'s `EmergencyResourceView` — one row of the resource board."""
 
     resource_id: UUID
-    service_type: ServiceType
+    service_type: ServiceId
     resource_type: ResourceType
     callsign: str
     name_ru: str

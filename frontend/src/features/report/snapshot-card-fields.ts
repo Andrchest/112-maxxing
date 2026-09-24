@@ -6,7 +6,8 @@
 // gaps"). Grouping reuses `entities/card`'s `groupCardFields` — only labels/formatting live here.
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import type { CardFieldSpec, FactValue, ServiceType } from '@/shared/api';
+import type { CardFieldSpec, FactValue } from '@/shared/api';
+import { serviceLabelRu } from '@/entities/service-catalog';
 
 // Same enum-value tables `features/report/format-fact-value.ts` keeps for `final_card`'s own
 // `formatFactValueRu` (same treatment, not a shared import) — needed here too so the handoff
@@ -126,17 +127,8 @@ export function snapshotFieldLabelRu(fieldPath: string): string {
   return key ? t(key) : fieldPath;
 }
 
-const SERVICE_TYPE_LABEL_KEY: Record<ServiceType, keyof typeof ru> = {
-  FIRE_RESCUE: 'serviceTypeFireRescue',
-  POLICE: 'serviceTypePolice',
-  AMBULANCE: 'serviceTypeAmbulance',
-  GAS_SERVICE: 'serviceTypeGasService',
-  UTILITY_EMERGENCY: 'serviceTypeUtilityEmergency',
-  EDDS: 'serviceTypeEdds',
-};
-export function serviceTypeLabelRu(value: ServiceType): string {
-  return t(SERVICE_TYPE_LABEL_KEY[value]);
-}
+/** A service's Russian name — the service-catalog lookup (I3 E2a, D18). */
+export const serviceTypeLabelRu = serviceLabelRu;
 
 const SPEC_BY_PATH = new Map(SNAPSHOT_CARD_FIELDS.map((spec) => [spec.field_path, spec]));
 
@@ -153,7 +145,7 @@ export function formatSnapshotValueRu(fieldPath: string, value: FactValue | unde
   }
   if (Array.isArray(value)) {
     if (fieldPath === 'recipients.services') {
-      return value.map((item) => serviceTypeLabelRu(item as ServiceType)).join(', ');
+      return value.map((item) => serviceTypeLabelRu(String(item))).join(', ');
     }
     return value.join(', ');
   }

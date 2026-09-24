@@ -290,8 +290,12 @@ async def test_a_value_outside_supported_is_409_variant_not_supported(
     tokens: dict[str, str],
     users: dict[str, UserId],
     unit_of_work: Callable[[], SqlAlchemyUnitOfWork],
+    isolated_scenario_catalog: None,
 ) -> None:
-    """A schema-2 scenario that declares only the caller refuses `GENERATED_CARD`."""
+    """A schema-2 scenario that declares only the caller refuses `GENERATED_CARD`.
+
+    `isolated_scenario_catalog` truncates `scenarios` after the test, so the extra scenario this
+    imports never leaks into the shared catalog `listScenarios` tests count."""
     document: dict[str, Any] = copy.deepcopy(demo_document())
     document["id"] = str(uuid4())
     document["scenario_id"] = str(uuid4())

@@ -4,12 +4,14 @@ Everything below happens in **one** Unit of Work transaction (D5), in this order
 
 1. read the `scenario_versions` row by id — absent means `ScenarioVersionNotFoundError`
    (`404 NOT_FOUND`);
-2. turn its stored `content` back into a `ScenarioVersion` and re-run `validate_scenario_version`
-   on it. The verdict is a *boolean* carried into `GuardRuntime.scenario_valid`, not an exception:
-   §10.8 makes "the scenario version passed validation" a guard on `CREATED --validate--> READY`,
-   so an invalid version is rejected as an `InvalidTransitionError` on the session machine — which
-   is also how a `role_chain` naming an unimplemented `RoleModule` (`EDDS`, D6) is refused here
-   rather than at import time;
+2. turn its stored `content` back into a `ScenarioVersion`, look up the reference pack it names
+   (`legacy-r1` when none; an unknown pack is `409 REFERENCE_PACK_UNKNOWN`, HLD 70 §70.6.1 — its
+   ids and sha256 become `SESSION_CREATED.reference_pack`) and re-run `validate_scenario_version`
+   on it against that catalog (rules R37/R38). The verdict is a *boolean* carried into
+   `GuardRuntime.scenario_valid`, not an exception: §10.8 makes "the scenario version passed
+   validation" a guard on `CREATED --validate--> READY`, so an invalid version is rejected as an
+   `InvalidTransitionError` on the session machine — which is also how a `role_chain` naming an
+   unimplemented `RoleModule` (`EDDS`, D6) is refused here rather than at import time;
 3. resolve the requested variants against the version (`resolve_variants`, HLD 70 §70.2.2:
    request → scenario default; `409 VARIANT_NOT_AVAILABLE` before `409 VARIANT_NOT_SUPPORTED`),
    then build the aggregate with `app.domain.session.session.create_session` on the **effective**
@@ -37,9 +39,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.application.ports.id_generator import IdGenerator
+from app.application.ports.reference import ReferencePort
 from app.application.ports.resource_repository import StoredResource
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.ports.world_engine_state_repository import WorldEngineState
+from app.application.reference.queries import reference_catalog
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError, ScenarioValidationError
 from app.domain.common.ids import (
@@ -57,12 +61,18 @@ from app.domain.enums import ActorType, RoleType, SessionMode
 from app.domain.events.session_event import DomainEvent
 from app.domain.layers.copies import instantiate_caller_belief, instantiate_world_truth
 from app.domain.layers.operator_card import OperatorCard
+from app.domain.routing.catalog import ReferenceCatalog
 from app.domain.scenario.validation import validate_scenario_version
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession, create_session
 from app.domain.session.variants import PartialVariants, effective_role_chain, resolve_variants
 
-__all__ = ["CreateSession", "CreateSessionCommand", "ScenarioVersionNotFoundError"]
+__all__ = [
+    "CreateSession",
+    "CreateSessionCommand",
+    "ReferencePackUnknownError",
+    "ScenarioVersionNotFoundError",
+]
 
 _SYSTEM = ActorRef(actor_type=ActorType.SYSTEM)
 """`validate` is a `SYSTEM` trigger (§10.8): the engine, not the instructor, decides readiness."""
@@ -76,6 +86,17 @@ class ScenarioVersionNotFoundError(DomainError):
     def __init__(self, scenario_version_id: ScenarioVersionId) -> None:
         self.scenario_version_id = scenario_version_id
         super().__init__(f"no scenario version {scenario_version_id}")
+
+
+class ReferencePackUnknownError(DomainError):
+    """The version names a `reference_pack` the loaded manifest does not have (HLD 70 §70.6.1,
+    `409 REFERENCE_PACK_UNKNOWN`): the session could not record which files it runs with."""
+
+    code = "REFERENCE_PACK_UNKNOWN"
+
+    def __init__(self, pack_id: str) -> None:
+        self.pack_id = pack_id
+        super().__init__(f"reference pack {pack_id!r} is not in reference/manifest.json")
 
 
 @dataclass(frozen=True)
@@ -100,9 +121,15 @@ class CreateSessionCommand:
 class CreateSession:
     """Create one session in one transaction."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, ids: IdGenerator) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        ids: IdGenerator,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._ids = ids
+        self._reference = reference
 
     async def __call__(self, command: CreateSessionCommand) -> SimulationSession:
         """Create the session and return the persisted aggregate (state `READY`)."""
@@ -120,7 +147,11 @@ class CreateSession:
         self, uow: UnitOfWork, command: CreateSessionCommand
     ) -> tuple[ScenarioVersion, SimulationSession, list[DomainEvent]]:
         version, scenario_slug = await self._load_version(uow, command.scenario_version_id)
-        scenario_valid = _is_valid(version)
+        reference = reference_catalog(self._reference)
+        reference_pack = reference.record(version.reference_pack_id)
+        if reference_pack is None:
+            raise ReferencePackUnknownError(version.reference_pack_id)
+        scenario_valid = _is_valid(version, reference)
         variants = resolve_variants(command.variants, version.scenario_variants)
         chain = effective_role_chain(version.role_chain, variants.card_source)
 
@@ -139,6 +170,7 @@ class CreateSession:
             session_seed=command.session_seed,
             time_scale=command.time_scale,
             variants=variants,
+            reference_pack=reference_pack,
         )
         # `now_ms=0`: nothing before `SESSION_STARTED` has a timeline to be offset against —
         # `session_offset_ms(now, started_at=None)` is `0` — and the offset is never taken from a
@@ -221,10 +253,10 @@ def _parse(document: Mapping[str, Any]) -> ScenarioVersion:
     return ScenarioVersion.model_validate(dict(document))
 
 
-def _is_valid(version: ScenarioVersion) -> bool:
+def _is_valid(version: ScenarioVersion, reference: ReferenceCatalog) -> bool:
     """Re-run `validate_scenario_version` and report the verdict as a guard fact (§10.8)."""
     try:
-        validate_scenario_version(version)
+        validate_scenario_version(version, reference=reference)
     except ScenarioValidationError:
         return False
     return True

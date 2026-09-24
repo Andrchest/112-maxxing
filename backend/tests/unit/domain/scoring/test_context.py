@@ -8,7 +8,7 @@ trainee's work only, and a dispatched unit's service comes from the unit.
 from __future__ import annotations
 
 import pytest
-from app.domain.enums import ActorType, RoleType, ServiceType
+from app.domain.enums import ActorType, RoleType, ServiceId
 from app.domain.events.types import EventType
 from app.domain.scoring.context import UnorderedEventLogError, build_context
 
@@ -106,7 +106,7 @@ def test_dispatched_unit_service_comes_from_the_unit_not_the_leg() -> None:
     """Ruling R6: `service_type_by_resource`, never the assignment leg."""
     ctx = build_context(demo_scenario(), good_log())
 
-    services = sorted(unit.service_type.value for unit in ctx.dispatched_units if unit.service_type)
+    services = sorted(unit.service_type for unit in ctx.dispatched_units if unit.service_type)
 
     assert services == ["AMBULANCE", "FIRE_RESCUE", "FIRE_RESCUE"]
     assert "HIGH_RISE_ACCESS" in ctx.dispatched_capabilities
@@ -141,6 +141,6 @@ def test_selected_units_drop_a_deselected_one() -> None:
     ctx = build_context(demo_scenario(), good_log())
 
     assert {unit.service_type for unit in ctx.selected_units} == {
-        ServiceType.FIRE_RESCUE,
-        ServiceType.AMBULANCE,
+        ServiceId("FIRE_RESCUE"),
+        ServiceId("AMBULANCE"),
     }

@@ -446,8 +446,15 @@ FK `role_stage_id → role_stages(id) ON DELETE CASCADE`;
 FK `snapshot_id → handoff_snapshots(id) ON DELETE RESTRICT`.
 Unique `uq_dds_assignments_stage_service (role_stage_id, service_type)`.
 Index `ix_dds_assignments_incident (incident_id)`.
-`CHECK (service_type IN ('FIRE_RESCUE','POLICE','AMBULANCE','GAS_SERVICE','UTILITY_EMERGENCY','EDDS'))`,
+`CHECK (service_type <> '')` *(changed, I3 E2a — was `service_type IN ('FIRE_RESCUE','POLICE','AMBULANCE','GAS_SERVICE','UTILITY_EMERGENCY','EDDS')`)*,
 `CHECK (state IN ('RECEIVED','ACKNOWLEDGED','RESOURCE_SELECTION','DISPATCHED','EN_ROUTE','ARRIVED','WORKING','RESOLVED','CLOSED'))`.
+
+`service_type` is a service-catalog id (`ServiceId`, HLD 70 §70.6.3, D18). Migration
+`0010_service_id_open` (I3 E2a) drops the six-member CHECK and adds `CHECK (service_type <> '')` under
+the same name `ck_dds_assignments_service_type`; no data moves, because the six legacy ids are the
+catalog's first six entries. Its downgrade restores the six-member CHECK (and fails if a leg for any
+other catalog service was stored since). The catalog itself is not a table: it is the sha-pinned
+reference pack `reference/` (HLD 70 §70.6.1), loaded by the composition root.
 
 There is no FK from `dds_assignments` to `incident_cards`: the DDS side reaches the trainee's data
 only through `snapshot_id` (SPEC §10, §42 test 3). Materialized from the event log.

@@ -40,6 +40,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY backend/ backend/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package sim-backend
+# I3 E2a (HLD 70 §70.6.1): the sha-pinned reference pack the composition root loads
+# (`SIM_REFERENCE_DIR`, default `/workspace/reference` — the repository layout). After the sync so a
+# reference-only change does not invalidate the dependency layer.
+COPY reference/ reference/
 
 ENV PATH="/workspace/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \

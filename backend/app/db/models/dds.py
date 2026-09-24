@@ -13,7 +13,6 @@ from app.domain.enums import (
     NotificationSeverity,
     ResourceStatus,
     RoleType,
-    ServiceType,
 )
 
 
@@ -46,7 +45,9 @@ class DDSAssignment(Base):
             "role_stage_id", "service_type", name="uq_dds_assignments_stage_service"
         ),
         sa.Index("ix_dds_assignments_incident", "incident_id"),
-        sa.CheckConstraint(enum_check("service_type", ServiceType), name="service_type"),
+        # `0010_service_id_open` (I3 E2a, HLD 70 §70.8, D18): a service is a catalog id, no longer
+        # one of six enum members, so the CHECK only refuses the empty string.
+        sa.CheckConstraint("service_type <> ''", name="service_type"),
         sa.CheckConstraint(enum_check("state", DDSStageState), name="state"),
     )
 

@@ -2,11 +2,11 @@
 // this task's CHECK: "enum labels ... exhaustive over the generated unions so a new member fails
 // typecheck"). Every `Record<Enum, keyof typeof ru>` below fails `tsc` the moment `schema.d.ts`
 // grows a new member and this file is not updated — the same pattern `client.ts`'s
-// `PROBLEM_MESSAGE_KEYS` and `services-panel.tsx`'s `SERVICE_TYPE_LABEL_KEY` already use.
+// `PROBLEM_MESSAGE_KEYS` uses. A service is not an enum any more (I3 E2a, D18): its name is a
+// service-catalog lookup (`entities/service-catalog`), re-exported here for the console.
 import { ru } from '@/shared/i18n/ru';
 import { t } from '@/shared/i18n';
 import type {
-  ServiceType,
   DDSStageState,
   ResourceType,
   ResourceStatus,
@@ -16,17 +16,7 @@ import type {
   ClosureReason,
 } from '@/shared/api';
 
-export const SERVICE_TYPE_LABEL_KEY: Record<ServiceType, keyof typeof ru> = {
-  FIRE_RESCUE: 'serviceTypeFireRescue',
-  POLICE: 'serviceTypePolice',
-  AMBULANCE: 'serviceTypeAmbulance',
-  GAS_SERVICE: 'serviceTypeGasService',
-  UTILITY_EMERGENCY: 'serviceTypeUtilityEmergency',
-  EDDS: 'serviceTypeEdds',
-};
-export function serviceTypeLabelRu(value: ServiceType): string {
-  return t(SERVICE_TYPE_LABEL_KEY[value]);
-}
+export { serviceLabelRu as serviceTypeLabelRu } from '@/entities/service-catalog';
 
 export const DDS_STAGE_STATE_LABEL_KEY: Record<DDSStageState, keyof typeof ru> = {
   RECEIVED: 'ddsStageReceived',

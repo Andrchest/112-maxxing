@@ -43,7 +43,9 @@ export type CallStateView = components['schemas']['CallStateView'];
 export type OperatorCardView = components['schemas']['OperatorCardView'];
 export type CardFieldSpec = components['schemas']['CardFieldSpec'];
 export type FactValue = components['schemas']['FactValue'];
-export type ServiceType = components['schemas']['ServiceType'];
+// I3 E2a (70 §70.6.3, D18): a service is a catalog id, a plain string (the contract keeps its old
+// schema name so every `$ref` survives); the frontend names it by what it is.
+export type ServiceId = components['schemas']['ServiceCatalogEntry']['id'];
 export type ServiceSelectionView = components['schemas']['ServiceSelectionView'];
 export type ActionDescriptor = components['schemas']['ActionDescriptor'];
 export type SetCardFieldRequest = operations['setCardField']['requestBody']['content']['application/json'];
@@ -117,14 +119,14 @@ export function setCardField(sessionId: string, body: SetCardFieldRequest): Prom
   });
 }
 
-export function selectRecipientService(sessionId: string, serviceType: ServiceType): Promise<ServiceSelectionView> {
+export function selectRecipientService(sessionId: string, serviceType: ServiceId): Promise<ServiceSelectionView> {
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/services/select`, {
     method: 'POST',
     body: JSON.stringify({ service_type: serviceType }),
   });
 }
 
-export function deselectRecipientService(sessionId: string, serviceType: ServiceType): Promise<ServiceSelectionView> {
+export function deselectRecipientService(sessionId: string, serviceType: ServiceId): Promise<ServiceSelectionView> {
   return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/operator/services/deselect`, {
     method: 'POST',
     body: JSON.stringify({ service_type: serviceType }),
@@ -209,7 +211,7 @@ export function backToDdsAcknowledged(sessionId: string): Promise<DdsStageView> 
 
 export function listDdsResources(
   sessionId: string,
-  params: { serviceType?: ServiceType; status?: ResourceStatus[] } = {},
+  params: { serviceType?: ServiceId; status?: ResourceStatus[] } = {},
 ): Promise<{ items: EmergencyResourceView[]; total: number }> {
   const query = new URLSearchParams();
   if (params.serviceType) query.set('service_type', params.serviceType);
@@ -478,6 +480,24 @@ export function abortSession(sessionId: string, body: AbortSessionRequest): Prom
   });
 }
 
+// -- I3 E2a: the reference pack (70 §70.6.1-§70.6.3, D18) --------------------------------------
+// The service catalog («СЛУЖБЫ 112») is the source of every service's Russian name
+// (`entities/service-catalog`); `include_hidden` also returns deprecated ids, so a label for an
+// old log always resolves.
+export type ServiceCatalogEntry = components['schemas']['ServiceCatalogEntry'];
+export type ReferenceManifest = components['schemas']['ReferenceManifest'];
+
+export function listReferenceServices(
+  params: { pack?: string; includeHidden?: boolean; q?: string } = {},
+): Promise<ServiceCatalogEntry[]> {
+  const query = new URLSearchParams();
+  if (params.pack) query.set('pack', params.pack);
+  if (params.includeHidden) query.set('include_hidden', 'true');
+  if (params.q) query.set('q', params.q);
+  const qs = query.toString();
+  return apiFetch(`/reference/services${qs ? `?${qs}` : ''}`);
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails
@@ -511,6 +531,8 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   RANGE_NOT_SATISFIABLE: 'problemRangeNotSatisfiable',
   VARIANT_NOT_SUPPORTED: 'problemVariantNotSupported',
   VARIANT_NOT_AVAILABLE: 'problemVariantNotAvailable',
+  REFERENCE_PACK_UNKNOWN: 'problemReferencePackUnknown',
+  SERVICE_UNKNOWN: 'problemServiceUnknown',
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

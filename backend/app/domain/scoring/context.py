@@ -31,7 +31,7 @@ from uuid import UUID
 
 from app.domain.common.ids import CardRevisionId
 from app.domain.common.values import FactValue
-from app.domain.enums import ActorType, RoleType, ServiceType
+from app.domain.enums import ActorType, RoleType, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.session.variants import SessionVariants
@@ -90,7 +90,7 @@ class SelectedUnit:
     """A unit the DDS trainee put on the board (`RESOURCE_SELECTED`)."""
 
     resource_id: str
-    service_type: ServiceType | None
+    service_type: ServiceId | None
     capabilities: frozenset[str]
     event: SessionEvent
 
@@ -100,7 +100,7 @@ class DispatchedUnit:
     """A dispatched unit with *its own* service type (`RESOURCE_DISPATCHED`, ruling R6)."""
 
     resource_id: str
-    service_type: ServiceType | None
+    service_type: ServiceId | None
     capabilities: frozenset[str]
     event: SessionEvent
 
@@ -466,14 +466,10 @@ def _card_revision_id(value: object) -> CardRevisionId | None:
     return None
 
 
-def _service_type(value: object) -> ServiceType | None:
-    if isinstance(value, ServiceType):
-        return value
-    if isinstance(value, str):
-        try:
-            return ServiceType(value)
-        except ValueError:
-            return None
+def _service_type(value: object) -> ServiceId | None:
+    """A payload's service id (a catalog id, D18); `None` when absent or not a non-empty string."""
+    if isinstance(value, str) and value:
+        return ServiceId(value)
     return None
 
 

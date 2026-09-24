@@ -16,9 +16,16 @@ pytestmark = pytest.mark.integration
 
 
 async def test_list_scenarios_returns_identity_only(
-    client: httpx.AsyncClient, tokens: dict[str, str], demo_version_id: ScenarioVersionId
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
 ) -> None:
-    """`listScenarios` gives slug, title and the version aggregates — never content (D4)."""
+    """`listScenarios` gives slug, title and the version aggregates — never content (D4).
+
+    It counts the whole catalog, so `isolated_scenario_catalog` (before `demo_version_id`, which
+    then re-imports the demo into the emptied table) makes it independent of any other test that
+    imported a scenario of its own into the session-shared `scenarios` table."""
     response = await client.get("/api/v1/scenarios", headers=auth(tokens["trainee1"]))
 
     assert response.status_code == 200

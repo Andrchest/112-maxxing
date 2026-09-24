@@ -392,7 +392,7 @@ def _select_resources(
             if any(capability.value == wanted_capability for capability in resource.capabilities)
         )
     wanted_service = selector.service_type
-    return tuple(resource for resource in ordered if resource.service_type.value == wanted_service)
+    return tuple(resource for resource in ordered if resource.service_type == wanted_service)
 
 
 def resolve_resource_id(

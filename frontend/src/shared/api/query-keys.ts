@@ -10,6 +10,10 @@ export const queryKeys = {
   health: {
     ready: () => ['health', 'ready'] as const,
   },
+  // -- I3 E2a: the reference pack (70 §70.6) --------------------------------------------------
+  reference: {
+    services: (pack?: string) => ['reference', 'services', pack ?? 'default'] as const,
+  },
   scenarios: {
     list: () => ['scenarios'] as const,
     versions: (scenarioId: string) => ['scenarios', scenarioId, 'versions'] as const,

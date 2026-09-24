@@ -39,8 +39,10 @@ from typing import Any
 
 import yaml
 
+from app.application.ports.reference import ReferencePort
 from app.application.ports.scenario_repository import StoredScenarioVersionDetail
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.reference.queries import reference_catalog
 from app.application.scenarios.import_scenarios import canonical_content, content_digest
 from app.application.scenarios.queries import ValidationReport, validation_report_of
 from app.domain.common.errors import DomainError
@@ -151,13 +153,21 @@ def _unparseable_report(message: str) -> ValidationReport:
 class ImportScenarioVersion:
     """Validate and store one scenario version document, in one transaction (D4)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(self, command: ImportScenarioVersionCommand) -> StoredScenarioVersionDetail:
         """Import; returns the stored row. Every rejection leaves the database untouched."""
         document = parse_scenario_document(command.content, command.format)
-        report = validation_report_of(document, content_sha256=None, scenario_slug=None)
+        report = validation_report_of(
+            document,
+            content_sha256=None,
+            scenario_slug=None,
+            reference=reference_catalog(self._reference),
+        )
         if not report.valid:
             raise ScenarioDocumentInvalidError(report)
 

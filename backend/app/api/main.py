@@ -43,6 +43,7 @@ from app.api.routers import (
     instructor,
     operator,
     realtime,
+    reference,
     reports,
     scenarios,
     sessions,
@@ -105,6 +106,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(reports.router)
     app.include_router(reports.audio_router)
     app.include_router(instructor.router)
+    app.include_router(reference.router)
 
     return app
 

@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.domain.enums import RoleType, ServiceType
+from app.domain.enums import RoleType, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.scoring import evidence
@@ -22,8 +22,8 @@ EvaluatedAt = Literal["HANDOFF", "SESSION_END"]
 class ServiceSelectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    required_services: tuple[ServiceType, ...]
-    forbidden_services: tuple[ServiceType, ...] = ()
+    required_services: tuple[ServiceId, ...]
+    forbidden_services: tuple[ServiceId, ...] = ()
     points_per_required: float
     penalty_per_forbidden: float = 0.0
     all_or_nothing: bool = False
@@ -60,9 +60,9 @@ def evaluate(
     for service in present:
         items.append(_service_evidence(ctx, service, cutoff, source))
     for service in missing:
-        items.append(evidence.from_event(source, f"Служба {service.value} не указана получателем."))
+        items.append(evidence.from_event(source, f"Служба {service} не указана получателем."))
     for service in forbidden:
-        items.append(evidence.from_event(source, f"Указана недопустимая служба {service.value}."))
+        items.append(evidence.from_event(source, f"Указана недопустимая служба {service}."))
     if not items:
         items.append(evidence.from_event(source, "Правило не назвало ни одной службы."))
     return evidence.result(rule, points=points, passed=passed, evidence=items)
@@ -72,7 +72,7 @@ def _selected_services(
     ctx: ScoringContext,
     evaluated_at: EvaluatedAt,
     cutoff: int,
-) -> tuple[frozenset[ServiceType], SessionEvent]:
+) -> tuple[frozenset[ServiceId], SessionEvent]:
     """The service set at the cutoff, and the event that is the source of record for it."""
     handoff = ctx.handoff_event
     if evaluated_at == "HANDOFF" and handoff is not None:
@@ -80,7 +80,7 @@ def _selected_services(
         services = _as_services(raw)
         return services, handoff
 
-    selected: set[ServiceType] = set()
+    selected: set[ServiceId] = set()
     for event in ctx.of_type(EventType.SERVICE_SELECTED) + ctx.of_type(
         EventType.SERVICE_DESELECTED
     ):
@@ -99,7 +99,7 @@ def _selected_services(
 
 def _service_evidence(
     ctx: ScoringContext,
-    service: ServiceType,
+    service: ServiceId,
     cutoff: int,
     fallback: SessionEvent,
 ) -> ScoreEvidence:
@@ -107,24 +107,20 @@ def _service_evidence(
     for event in reversed(ctx.of_type(EventType.SERVICE_SELECTED)):
         if event.seq_no > cutoff:
             continue
-        if _one_service(event.payload.get("service_type")) is service:
-            return evidence.from_event(event, f"Служба {service.value} выбрана оператором.")
-    return evidence.from_event(fallback, f"Служба {service.value} указана получателем.")
+        if _one_service(event.payload.get("service_type")) == service:
+            return evidence.from_event(event, f"Служба {service} выбрана оператором.")
+    return evidence.from_event(fallback, f"Служба {service} указана получателем.")
 
 
-def _as_services(raw: object) -> frozenset[ServiceType]:
+def _as_services(raw: object) -> frozenset[ServiceId]:
     if not isinstance(raw, list | tuple):
         return frozenset()
     found = {_one_service(item) for item in raw}
     return frozenset(service for service in found if service is not None)
 
 
-def _one_service(raw: object) -> ServiceType | None:
-    if isinstance(raw, ServiceType):
-        return raw
-    if isinstance(raw, str):
-        try:
-            return ServiceType(raw)
-        except ValueError:
-            return None
+def _one_service(raw: object) -> ServiceId | None:
+    """A payload's service id (a catalog id, D18); `None` when not a non-empty string."""
+    if isinstance(raw, str) and raw:
+        return ServiceId(raw)
     return None

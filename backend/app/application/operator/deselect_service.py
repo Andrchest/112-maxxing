@@ -20,10 +20,13 @@ from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.operator.command_context import OperatorCommandGate
+from app.application.operator.select_service import AVAILABLE_SERVICES, ensure_catalog_service
 from app.application.operator.views import ServiceSelectionView, card_view
 from app.application.ports.id_generator import IdGenerator
+from app.application.ports.reference import ReferencePort
+from app.application.reference.queries import reference_catalog
 from app.domain.common.ids import CardRevisionId, SessionId
-from app.domain.enums import ServiceType, ValueType
+from app.domain.enums import ServiceId, ValueType
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
 from app.domain.layers.operator_card import OperatorCard, set_field
@@ -36,32 +39,39 @@ ACTION_ID = "select_services"
 SERVICES_FIELD_PATH = "recipients.services"
 """The `CARD_FIELDS` path the selection is stored in (§10.6)."""
 
-AVAILABLE_SERVICES: tuple[ServiceType, ...] = tuple(ServiceType)
-"""Every `ServiceType` the UI offers — unchanged by a deselection."""
-
 
 class DeselectRecipientService:
     """`deselectRecipientService` (`openapi.yaml`): remove one recipient service from the card."""
 
-    def __init__(self, gate: OperatorCommandGate, ids: IdGenerator) -> None:
+    def __init__(
+        self,
+        gate: OperatorCommandGate,
+        ids: IdGenerator,
+        reference: ReferencePort | None = None,
+    ) -> None:
         self._gate = gate
         self._ids = ids
+        self._reference = reference
 
     async def __call__(
-        self, session_id: SessionId, user: AuthenticatedUser, service_type: ServiceType
+        self, session_id: SessionId, user: AuthenticatedUser, service_type: str
     ) -> ServiceSelectionView:
-        """Remove the service, or answer unchanged when it was not selected."""
+        """Remove the service, or answer unchanged when it was not selected. An id outside the
+        session's service catalog is `422 SERVICE_UNKNOWN`, as for a selection."""
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
+            service_type = ensure_catalog_service(
+                reference_catalog(self._reference), ctx.full_log, service_type
+            )
             card = await ctx.card()
             current = _selected(card)
             if service_type not in current:
                 return _view(card, current)
 
-            new_selection = tuple(service for service in current if service is not service_type)
+            new_selection = tuple(service for service in current if service != service_type)
             updated, revision, card_event = set_field(
                 card,
                 SERVICES_FIELD_PATH,
-                [service.value for service in new_selection],
+                list(new_selection),
                 ctx.actor,
                 ctx.now_ms,
                 CardRevisionId(self._ids.new()),
@@ -77,8 +87,8 @@ class DeselectRecipientService:
                 payload={
                     "card_id": UUID(str(card.card_id)),
                     "revision_id": UUID(str(revision.revision_id)),
-                    "service_type": service_type.value,
-                    "selected_services": [service.value for service in new_selection],
+                    "service_type": service_type,
+                    "selected_services": list(new_selection),
                     "at_offset_ms": ctx.now_ms,
                 },
             )
@@ -86,12 +96,12 @@ class DeselectRecipientService:
             return _view(updated, new_selection)
 
 
-def _selected(card: OperatorCard) -> tuple[ServiceType, ...]:
-    """The card's `recipients.services`, as `ServiceType` members; empty when unset."""
+def _selected(card: OperatorCard) -> tuple[ServiceId, ...]:
+    """The card's `recipients.services`, as service ids; empty when unset."""
     raw = card.values.get(SERVICES_FIELD_PATH)
     if not isinstance(raw, list):
         return ()
-    return tuple(ServiceType(value) for value in raw)
+    return tuple(ServiceId(value) for value in raw)
 
 
 def _services_value_type(card_event: DomainEvent) -> ValueType:
@@ -101,7 +111,7 @@ def _services_value_type(card_event: DomainEvent) -> ValueType:
     return value_type
 
 
-def _view(card: OperatorCard, selection: tuple[ServiceType, ...]) -> ServiceSelectionView:
+def _view(card: OperatorCard, selection: tuple[ServiceId, ...]) -> ServiceSelectionView:
     return ServiceSelectionView(
         card_id=UUID(str(card.card_id)),
         selected_services=selection,

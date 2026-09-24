@@ -60,7 +60,7 @@ def leg_for(
 ) -> DDSAssignment:
     """The leg `resource` attaches to: its own service's, else the primary one (see above)."""
     for leg in legs:
-        if leg.service_type is resource.service_type:
+        if leg.service_type == resource.service_type:
             return leg
     return primary_leg(legs, snapshot)
 

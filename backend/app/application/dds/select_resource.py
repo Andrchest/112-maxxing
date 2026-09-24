@@ -113,7 +113,7 @@ def _selected(
             "assignment_id": UUID(str(leg.assignment_id)),
             "resource_id": UUID(str(resource.resource_id)),
             "callsign": resource.callsign,
-            "service_type": resource.service_type.value,
+            "service_type": resource.service_type,
             "resource_type": resource.resource_type.value,
             "capabilities": sorted(item.value for item in resource.capabilities),
             "at_offset_ms": ctx.now_ms,

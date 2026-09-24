@@ -35,7 +35,7 @@ from app.domain.enums import (
     DisclosurePolicy,
     KnowledgeState,
     ResourceType,
-    ServiceType,
+    ServiceId,
     ValueType,
 )
 from app.domain.facts.definitions import AvailableAfter
@@ -152,7 +152,7 @@ class PrefabHandoff(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    recipient_services: tuple[ServiceType, ...]
+    recipient_services: tuple[ServiceId, ...]
     card_values: Mapping[str, FactValue]
 
 
@@ -165,10 +165,10 @@ class ExpectedResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    required_services: tuple[ServiceType, ...]
-    optional_services: tuple[ServiceType, ...] = ()
+    required_services: tuple[ServiceId, ...]
+    optional_services: tuple[ServiceId, ...] = ()
     required_resource_capabilities: tuple[ResourceCapability, ...] = ()
-    min_units_by_service: Mapping[ServiceType, int] = Field(default_factory=dict)
+    min_units_by_service: Mapping[ServiceId, int] = Field(default_factory=dict)
     resolution_condition: Condition | None = None
     prefab_handoff: PrefabHandoff | None = None
 
@@ -184,7 +184,7 @@ class ResourceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     resource_id: str
-    service_type: ServiceType
+    service_type: ServiceId
     resource_type: ResourceType
     callsign: str
     name_ru: str

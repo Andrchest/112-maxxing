@@ -32,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.application.ports.call_state_cache import CallStateCache
 from app.domain.common.ids import SessionId
-from app.domain.enums import Operator112StageState, ServiceType, SessionState, ValueType
+from app.domain.enums import Operator112StageState, ServiceId, SessionState, ValueType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.layers.operator_card import CARD_FIELDS, CardRevision, OperatorCard
@@ -159,8 +159,8 @@ class ServiceSelectionView(ApplicationView):
     """`openapi.yaml`'s `ServiceSelectionView` — the answer of select/deselect."""
 
     card_id: UUID
-    selected_services: tuple[ServiceType, ...]
-    available_services: tuple[ServiceType, ...]
+    selected_services: tuple[ServiceId, ...]
+    available_services: tuple[ServiceId, ...]
     card: OperatorCardView
 
 

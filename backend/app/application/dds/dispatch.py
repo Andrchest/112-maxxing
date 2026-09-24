@@ -265,7 +265,7 @@ def _dispatched(
                 str(resource.resource_id): eta_seconds(resource) for resource in resources
             },
             "service_type_by_resource": {
-                str(resource.resource_id): resource.service_type.value for resource in resources
+                str(resource.resource_id): resource.service_type for resource in resources
             },
             "at_offset_ms": ctx.now_ms,
             "is_additional": is_additional,

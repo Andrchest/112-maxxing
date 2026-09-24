@@ -28,7 +28,7 @@ from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.sessions.start_session import SessionNotFoundError
 from app.application.simulation.sim_time import sim_now_ms
 from app.domain.common.ids import SessionId
-from app.domain.enums import DDSStageState, ResourceStatus, RoleType, ServiceType
+from app.domain.enums import DDSStageState, ResourceStatus, RoleType, ServiceId
 from app.domain.roles.registry import ROLE_MODULES
 from app.domain.roles.visibility import VisibilitySource
 from app.domain.session.session import SimulationSession
@@ -63,7 +63,7 @@ class ListDdsResources:
         session_id: SessionId,
         user: AuthenticatedUser,
         *,
-        service_type: ServiceType | None = None,
+        service_type: ServiceId | None = None,
         status: Sequence[ResourceStatus] | None = None,
     ) -> tuple[tuple[EmergencyResourceView, ...], int]:
         """The filtered board and its size, in `callsign` order."""
@@ -82,7 +82,7 @@ class ListDdsResources:
         filtered = [
             stored
             for stored in board
-            if (service_type is None or stored.resource.service_type is service_type)
+            if (service_type is None or stored.resource.service_type == service_type)
             and (wanted is None or stored.resource.current_status in wanted)
         ]
         views = resource_views(

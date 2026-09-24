@@ -1,0 +1,39 @@
+{
+  "manifest_version": 1,
+  "packs": {
+    "legacy-r1": {
+      "card_schema": "v1",
+      "services": "v1",
+      "classifier": null
+    }
+  },
+  "files": {
+    "card-schema/v1.yaml": "d8e93bb32a9087f6db257237e8ff39d5a5ca1d7307c40050c1a8da94ebdfedfd",
+    "classifier/v046_24.json": "3662af593eec0b59b3d47b097b88a2c7c2b984655312496e5f297697cbd35273",
+    "classifier/v046_24.columns.json": "a05cde7051ddd237aec6bd2db90ffbaa05d5d0b5068c7701448d1df0312a9641",
+    "services/v1.yaml": "af5431de289d15d18c931fea794fe5123419ea2f8011a2e4dfb969af403e2eea",
+    "services/sluzhby-112.transcription.tsv": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32"
+  },
+  "sources": {
+    "classifier/v046_24.json": {
+      "path": "requirements/sources/05-organizer-materials/Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx",
+      "sha256": "1d907424ab96ae397cf4b67dfd0193aa94deda56fba2d2ca4f8df8f2c2585937",
+      "tool": "backend/tools/import_classifier.py"
+    },
+    "classifier/v046_24.columns.json": {
+      "path": "requirements/sources/05-organizer-materials/Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx",
+      "sha256": "1d907424ab96ae397cf4b67dfd0193aa94deda56fba2d2ca4f8df8f2c2585937",
+      "tool": "backend/tools/import_classifier.py"
+    },
+    "services/v1.yaml": {
+      "path": "reference/services/sluzhby-112.transcription.tsv",
+      "sha256": "851cc48b86168dd99ac946fed5f62fbae5239c7f31295dd1829241c9a1617e32",
+      "tool": "backend/tools/import_services.py"
+    },
+    "services/sluzhby-112.transcription.tsv": {
+      "path": "requirements/sources/01-qna-session-telegram/files/СЛУЖБЫ 112.docx",
+      "sha256": "3f736a75014d4ae9129da415d8bb834066fa037d9ca5372b90d8c09f8be6220c",
+      "tool": "hand transcription (I3 E2a)"
+    }
+  }
+}

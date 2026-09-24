@@ -201,6 +201,8 @@ export const ru = {
   problemRangeNotSatisfiable: 'Запрошенный диапазон аудио недоступен.',
   problemVariantNotSupported: 'Этот вариант занятия не поддерживается выбранным сценарием.',
   problemVariantNotAvailable: 'Этот вариант занятия пока недоступен в данной версии тренажёра.',
+  problemReferencePackUnknown: 'Справочник, указанный в сценарии, не найден.',
+  problemServiceUnknown: 'Такой службы нет в справочнике служб.',
   problemUnknown: 'Неизвестная ошибка. Попробуйте ещё раз.',
 
   // -- operator 112: handoff dialog + role transition (E10; SPEC §10, §10.10) ----------------

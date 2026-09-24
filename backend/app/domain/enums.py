@@ -2,12 +2,14 @@
 
 All enums are `str, Enum`; the member name is the wire value (member `NAME == VALUE` for every
 member of every enum here). Names, members and member order are copied literally from §10.2 —
-this module is law for every later slice that references these types.
+this module is law for every later slice that references these types. The one non-enum here is
+`ServiceId` (I3 E2a, D18), which replaced the `ServiceType` enum.
 """
 
 from __future__ import annotations
 
 from enum import Enum
+from typing import NewType
 
 
 class SessionMode(str, Enum):
@@ -74,20 +76,27 @@ class ActorType(str, Enum):
     SYSTEM = "SYSTEM"
 
 
-class ServiceType(str, Enum):
-    """Russian System-112 receiving services.
+ServiceId = NewType("ServiceId", str)
+"""A receiving service — an id of the reference pack's service catalog (HLD 70 §70.6.3, D18).
 
-    `UTILITY_EMERGENCY` is the only member the frame did not name; the demo needs a
-    wrong-but-plausible fifth choice so that `SERVICE_SELECTION` scoring has something to
-    penalise.
-    """
+Replaces the closed `ServiceType` enum of §10.2: the catalog («СЛУЖБЫ 112»,
+`reference/services/v1.yaml`) is data, so a service id is a string checked against it where it
+enters — scenario import (rule R37), `selectRecipientService` (`422 SERVICE_UNKNOWN`) — rather than
+a member of a Python enum. Every stored snapshot, payload and fixture stays valid by value.
+"""
 
-    FIRE_RESCUE = "FIRE_RESCUE"
-    POLICE = "POLICE"
-    AMBULANCE = "AMBULANCE"
-    GAS_SERVICE = "GAS_SERVICE"
-    UTILITY_EMERGENCY = "UTILITY_EMERGENCY"
-    EDDS = "EDDS"
+LEGACY_SERVICE_IDS: tuple[ServiceId, ...] = (
+    ServiceId("FIRE_RESCUE"),
+    ServiceId("POLICE"),
+    ServiceId("AMBULANCE"),
+    ServiceId("GAS_SERVICE"),
+    ServiceId("UTILITY_EMERGENCY"),
+    ServiceId("EDDS"),
+)
+"""The six ids the former `ServiceId` enum had, verbatim and in its order — the first six
+catalog entries (§70.6.3). `UTILITY_EMERGENCY` is the demo's wrong-but-plausible choice so that
+`SERVICE_SELECTION` scoring has something to penalise; the catalog keeps it as `deprecated` (C8).
+"""
 
 
 class ResourceType(str, Enum):

@@ -30,12 +30,14 @@ Identifiers, keys and enum members are English. Only `*_ru` fields, `label_ru`, 
 | `world_events` | list | yes (may be empty) | §30.6 |
 | `scoring_rules` | list | yes | §30.7 |
 | `variants` *(additive, I3 E1)* | mapping | no — `schema_version: 2` only | §30.10 |
+| `reference_pack` *(additive, I3 E2a)* | string | no — `schema_version: 2` only | §30.11 |
 
 Additional top-level keys are rejected (`extra="forbid"`). `schema_version` is `1` or `2`
 (`SUPPORTED_SCHEMA_VERSIONS`). A `schema_version: 1` document has exactly the SPEC §4 keys above;
-`schema_version: 2` adds the optional key `variants` (D14 amends D4, HLD 70 §70.2). The later
-schema-2 keys `timers`, `reference_pack` and `expected_response.responders` (HLD 70 §70.3.4,
-§70.6.1, §70.4.5) are not accepted yet — they stay refused until their epics (E4, E2, E5b).
+`schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2) and
+`reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1). The later schema-2 keys `timers` and
+`expected_response.responders` (HLD 70 §70.3.4, §70.4.5) are not accepted yet — they stay refused
+until their epics (E4, E5b).
 
 ## 30.2 The three fact sections
 
@@ -488,7 +490,8 @@ the key is omitted; a schema-1 document's variants are always derived from the d
 are not re-checked (P5).
 
 1. *(extended)* `schema_version ∈ {1, 2}`; a key introduced by schema 2 (`variants`, `timers`,
-   `reference_pack`, `expected_response.responders`) in a schema-1 document is refused.
+   `reference_pack`, `expected_response.responders`) in a schema-1 document is refused
+   (`variants` from E1 and `reference_pack` from E2a are accepted in schema 2).
 32. `variants.default` ∈ `variants.supported`, every `supported` list non-empty and duplicate-free.
 33. `CALLER_VOICE` supported ⇒ `OPERATOR_112 ∈ role_chain` and the three fact sections non-empty.
 34. `GENERATED_CARD` supported ⇒ `expected_response.prefab_handoff` present (rule 29's check, reached
@@ -499,6 +502,23 @@ are not re-checked (P5).
     support `MEMO_STATUSES` yet.
 40. Every `scoring_rules[*].applies_to_variants` key is a `SessionVariants` field and every value a
     member of that switch's enum.
+
+Rules 37 and 38 are added by I3 E2a (HLD 70 §70.2.3, D18). `validate_scenario_version(version, *,
+role_modules=…, reference=…)` receives the reference pack the way it receives `role_modules` and stays
+pure; its default is the six legacy services under pack `legacy-r1`, and every production caller
+(import, `validateScenarioFile`, `createSession`, `make scenarios`) passes the pack loaded from
+`reference/`. Service ids are no longer enum members (`ServiceType` → `ServiceId`), so rule 37 is
+the check the enum used to make at parse time.
+
+37. Every service id in `expected_response.*` (`required_services`, `optional_services`,
+    `min_units_by_service` keys, `prefab_handoff.recipient_services`),
+    `available_resources[*].service_type` and the `SERVICE_SELECTION` / `RESOURCE_SELECTION` scoring
+    configs (`required_services`, `forbidden_services`, `min_units_by_service` keys) exists in the
+    service catalog of the document's pack (`reference_pack`, `legacy-r1` when absent). The
+    `responders` keys join with E5.
+38. `reference_pack` names a pack of `reference/manifest.json`. The card-path half — every path in
+    rule 14's scope exists in *that pack's* card schema — stays rule 14 until E3a adds a second card
+    schema: the only pack today, `legacy-r1`, has card schema `v1` = `CARD_FIELDS`.
 
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 
@@ -771,3 +791,18 @@ behaviour), else `GENERATED_CARD`, and `RESOURCE_PICKER`, `OFF`, `OFF`; a schema
 the key takes the product default (`GENERATED_CARD`, `RESOURCE_PICKER`, `OFF`, `OFF`) wherever the
 derived support allows it. Under `GENERATED_CARD` a session runs the `role_chain` suffix starting at
 DDS on the scenario's `prefab_handoff`.
+
+## 30.11 `reference_pack` — schema 2 (additive, I3 E2a)
+
+```yaml
+reference_pack: legacy-r1          # a pack id of reference/manifest.json
+```
+
+The reference pack (HLD 70 §70.6.1, D18) is the sha-pinned `reference/` directory: the card schema,
+the service catalog («СЛУЖБЫ 112») and the classifier a scenario's sessions use. A schema-1 document
+— and a schema-2 document that omits the key — uses `legacy-r1` (card schema `v1` = today's
+`CARD_FIELDS`, service catalog `v1`, no classifier). Rule 38 refuses an unknown pack and rule 37
+checks every service id against the pack's catalog. `createSession` records the pack's ids and file
+sha256 in `SESSION_CREATED.reference_pack`; a stored version naming a pack the running manifest
+lacks cannot start a session (`409 REFERENCE_PACK_UNKNOWN`). A dump omits an absent key, so a
+schema-1 document's `content_sha256` is unchanged (P5).

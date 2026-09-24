@@ -27,7 +27,7 @@ from app.domain.enums import (
     ClosureReason,
     DDSStageState,
     Operator112StageState,
-    ServiceType,
+    ServiceId,
     SessionState,
 )
 
@@ -60,7 +60,7 @@ class HandoffSnapshotViewSchema(ApiModel):
     card_id: UUID
     card_revision_id: UUID
     card_values: dict[str, FactValueSchema]
-    recipient_services: list[ServiceType]
+    recipient_services: list[ServiceId]
     created_by_user_id: UUID
     created_at_offset_ms: int
     content_sha256: str
@@ -82,10 +82,10 @@ class DdsWorkItemSchema(ApiModel):
     incident_id: UUID
     role_stage_id: UUID
     snapshot_id: UUID
-    service_type: ServiceType
+    service_type: ServiceId
     state: DDSStageState
     card_values: dict[str, FactValueSchema]
-    recipient_services: list[ServiceType]
+    recipient_services: list[ServiceId]
     handoff_content_sha256: str
     received_at_offset_ms: int
     acknowledged_at_offset_ms: int | None = None

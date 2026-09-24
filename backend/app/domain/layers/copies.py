@@ -52,7 +52,7 @@ from app.domain.common.ids import (
 )
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import DDSStageState, ServiceType
+from app.domain.enums import DDSStageState, ServiceId
 from app.domain.layers.caller_belief import CallerBelief
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import OperatorCard
@@ -71,12 +71,12 @@ __all__ = [
 ]
 
 
-def _canonical_json(card_values: dict[str, FactValue], services: tuple[ServiceType, ...]) -> str:
+def _canonical_json(card_values: dict[str, FactValue], services: tuple[ServiceId, ...]) -> str:
     """Canonical JSON over `card_values` + `recipient_services` (§10.7 `content_sha256`)."""
     return json.dumps(
         {
             "card_values": card_values,
-            "recipient_services": [service.value for service in services],
+            "recipient_services": list(services),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -128,7 +128,7 @@ def instantiate_caller_belief(version: ScenarioVersion, incident_id: IncidentId)
 def freeze_card_to_snapshot(
     card: OperatorCard,
     card_revision_id: CardRevisionId,
-    recipient_services: tuple[ServiceType, ...],
+    recipient_services: tuple[ServiceId, ...],
     created_by_user_id: UserId,
     at_offset_ms: int,
 ) -> HandoffSnapshot:
@@ -205,7 +205,7 @@ def snapshot_to_assignments(
             assignment_id=AssignmentId(
                 uuid5(
                     _ID_NAMESPACE,
-                    f"assignment:{snapshot.snapshot_id}:{role_stage_id}:{service_type.value}",
+                    f"assignment:{snapshot.snapshot_id}:{role_stage_id}:{service_type}",
                 )
             ),
             incident_id=snapshot.incident_id,

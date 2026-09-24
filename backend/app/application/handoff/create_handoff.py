@@ -60,7 +60,7 @@ from app.domain.enums import (
     ActorType,
     Operator112StageState,
     RoleType,
-    ServiceType,
+    ServiceId,
     SessionState,
     ValueType,
 )
@@ -135,7 +135,7 @@ class HandoffSnapshotView(BaseModel):
     card_id: UUID
     card_revision_id: UUID
     card_values: dict[str, FactValue]
-    recipient_services: tuple[ServiceType, ...]
+    recipient_services: tuple[ServiceId, ...]
     created_by_user_id: UUID
     created_at_offset_ms: int
     content_sha256: str
@@ -305,7 +305,7 @@ def _handoff_created(ctx: OperatorCommandContext, snapshot: HandoffSnapshot) -> 
             "incident_id": UUID(str(snapshot.incident_id)),
             "card_id": UUID(str(snapshot.card_id)),
             "card_revision_id": UUID(str(snapshot.card_revision_id)),
-            "recipient_services": [service.value for service in snapshot.recipient_services],
+            "recipient_services": list(snapshot.recipient_services),
             "card_values": dict(snapshot.card_values),
             "content_sha256": snapshot.content_sha256,
             "at_offset_ms": ctx.now_ms,
@@ -325,7 +325,7 @@ def _handoff_received(
             "snapshot_id": UUID(str(snapshot.snapshot_id)),
             "assignment_id": UUID(str(leg.assignment_id)),
             "role_stage_id": UUID(str(leg.role_stage_id)),
-            "service_type": leg.service_type.value,
+            "service_type": leg.service_type,
             "at_offset_ms": ctx.now_ms,
         },
     )

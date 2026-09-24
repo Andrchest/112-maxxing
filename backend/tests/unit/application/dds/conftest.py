@@ -29,12 +29,12 @@ from app.domain.dds.resources import (
     ResourceAvailability,
     ResourceCapability,
 )
-from app.domain.enums import DDSStageState, ResourceStatus, ResourceType, ServiceType
+from app.domain.enums import DDSStageState, ResourceStatus, ResourceType, ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
 
-FIRE = ServiceType.FIRE_RESCUE
-AMBULANCE = ServiceType.AMBULANCE
-POLICE = ServiceType.POLICE
+FIRE = ServiceId("FIRE_RESCUE")
+AMBULANCE = ServiceId("AMBULANCE")
+POLICE = ServiceId("POLICE")
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def snapshot() -> HandoffSnapshot:
 def make_leg(
     snapshot: HandoffSnapshot,
     role_stage_id: RoleStageId,
-    service_type: ServiceType,
+    service_type: ServiceId,
     **overrides: object,
 ) -> DDSAssignment:
     """One `dds_assignments` leg of `snapshot`, in `RECEIVED` unless told otherwise."""
@@ -86,7 +86,7 @@ def legs(snapshot: HandoffSnapshot, role_stage_id: RoleStageId) -> list[DDSAssig
 
 def make_resource(
     callsign: str,
-    service_type: ServiceType,
+    service_type: ServiceId,
     *,
     status: ResourceStatus = ResourceStatus.AVAILABLE,
     available_from_ms: int = 0,

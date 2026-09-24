@@ -33,7 +33,7 @@ from uuid import UUID
 
 from app.application.dds.views import StatusUpdateView
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ClosureReason, ServiceType, StatusUpdateKind
+from app.domain.enums import ClosureReason, ServiceId, StatusUpdateKind
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 
@@ -58,7 +58,7 @@ class DdsDecision:
     """`openapi.yaml`'s `DdsDecisionView` — one leg of the work item, as decided."""
 
     assignment_id: UUID
-    service_type: ServiceType
+    service_type: ServiceId
     acknowledged_at_offset_ms: int | None
     dispatch_events: tuple[DispatchEvent, ...]
     status_updates: tuple[StatusUpdateView, ...]

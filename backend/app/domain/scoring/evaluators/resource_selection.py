@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.dds.resources import ResourceCapability
-from app.domain.enums import RoleType, ServiceType
+from app.domain.enums import RoleType, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.scoring import evidence
@@ -27,7 +27,7 @@ class ResourceSelectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     required_capabilities: tuple[ResourceCapability, ...] = ()
-    min_units_by_service: Mapping[ServiceType, int]
+    min_units_by_service: Mapping[ServiceId, int]
     forbidden_resource_ids: tuple[str, ...] = ()
     must_be_dispatched: bool = True
     points: float
@@ -100,23 +100,23 @@ def _capabilities(
     return frozenset(covered)
 
 
-def _counts_by_service(units: tuple[_Unit, ...]) -> Mapping[ServiceType, int]:
-    counts: dict[ServiceType, int] = {}
+def _counts_by_service(units: tuple[_Unit, ...]) -> Mapping[ServiceId, int]:
+    counts: dict[ServiceId, int] = {}
     for unit in units:
         if unit.service_type is not None:
             counts[unit.service_type] = counts.get(unit.service_type, 0) + 1
     return counts
 
 
-def _service_key(item: tuple[ServiceType, int]) -> str:
-    return item[0].value
+def _service_key(item: tuple[ServiceId, int]) -> str:
+    return item[0]
 
 
 def _evidence(
     ctx: ScoringContext,
     units: tuple[_Unit, ...],
     missing_capabilities: list[ResourceCapability],
-    shortfalls: list[tuple[ServiceType, int, int]],
+    shortfalls: list[tuple[ServiceId, int, int]],
     forbidden: list[_Unit],
 ) -> list[ScoreEvidence]:
     items: list[ScoreEvidence] = []
@@ -129,7 +129,7 @@ def _evidence(
             evidence.from_event(
                 unit.event,
                 f"Направлены силы: {unit.resource_id} "
-                f"({unit.service_type.value if unit.service_type else 'служба не указана'}).",
+                f"({unit.service_type if unit.service_type else 'служба не указана'}).",
             )
         )
     if not (missing_capabilities or shortfalls or not items):
@@ -150,7 +150,7 @@ def _evidence(
         items.append(
             evidence.from_event(
                 absence,
-                f"Служба {service.value}: направлено {actual} из требуемых {minimum}.",
+                f"Служба {service}: направлено {actual} из требуемых {minimum}.",
             )
         )
     for unit in forbidden:

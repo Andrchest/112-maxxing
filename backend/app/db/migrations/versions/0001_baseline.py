@@ -40,11 +40,23 @@ from app.domain.enums import (
     ResourceStatus,
     RoleType,
     ScoringCategory,
-    ServiceType,
     SessionMode,
     SessionState,
 )
 from app.domain.events.types import EventType
+
+# The six `dds_assignments.service_type` values this revision created its CHECK from — the members
+# of the closed service enum of the time, inlined so the migration never depends on an app constant
+# a later epic may change (I3 E2a replaced the enum by `ServiceId`; `0010_service_id_open` relaxes
+# the CHECK).
+_SERVICE_TYPES: tuple[str, ...] = (
+    "FIRE_RESCUE",
+    "POLICE",
+    "AMBULANCE",
+    "GAS_SERVICE",
+    "UTILITY_EMERGENCY",
+    "EDDS",
+)
 
 revision: str = "0001_baseline"
 down_revision: str | None = None
@@ -522,7 +534,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "role_stage_id", "service_type", name="uq_dds_assignments_stage_service"
         ),
-        sa.CheckConstraint(enum_check("service_type", ServiceType), name="service_type"),
+        sa.CheckConstraint(enum_check("service_type", _SERVICE_TYPES), name="service_type"),
         sa.CheckConstraint(enum_check("state", DDSStageState), name="state"),
     )
     op.create_index("ix_dds_assignments_incident", "dds_assignments", ["incident_id"])

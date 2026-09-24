@@ -38,12 +38,12 @@ from app.domain.common.ids import (
     UserId,
 )
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ClosureReason, DDSStageState, ServiceType
+from app.domain.enums import ClosureReason, DDSStageState, ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
 from pydantic import BaseModel
 
-FIRE = ServiceType.FIRE_RESCUE
-AMBULANCE = ServiceType.AMBULANCE
+FIRE = ServiceId("FIRE_RESCUE")
+AMBULANCE = ServiceId("AMBULANCE")
 
 
 def _is_identifier_or_timestamp_annotation(annotation: object) -> bool:
@@ -115,7 +115,7 @@ def snapshot() -> HandoffSnapshot:
 def _leg(
     snapshot: HandoffSnapshot,
     role_stage_id: RoleStageId,
-    service_type: ServiceType,
+    service_type: ServiceId,
     **overrides: object,
 ) -> DDSAssignment:
     fields: dict[str, object] = {

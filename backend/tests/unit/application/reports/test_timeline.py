@@ -35,6 +35,7 @@ from app.application.reports.timeline_labels_ru import (
     STATUS_UPDATE_KIND_LABELS_RU,
 )
 from app.domain.enums import (
+    LEGACY_SERVICE_IDS,
     ActorType,
     ClosureReason,
     DDSStageState,
@@ -42,7 +43,6 @@ from app.domain.enums import (
     Operator112StageState,
     ResourceStatus,
     RoleType,
-    ServiceType,
     SessionMode,
     StatusUpdateKind,
 )
@@ -93,7 +93,7 @@ def test_session_mode_label_table_covers_every_member() -> None:
 
 
 def test_service_type_label_table_covers_every_member() -> None:
-    assert {member.value for member in ServiceType} == set(SERVICE_TYPE_LABELS_RU)
+    assert set(LEGACY_SERVICE_IDS) == set(SERVICE_TYPE_LABELS_RU)
 
 
 def test_resource_status_label_table_covers_every_member() -> None:

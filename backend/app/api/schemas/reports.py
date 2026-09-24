@@ -52,7 +52,7 @@ from app.domain.enums import (
     EvaluatorType,
     ResourceStatus,
     ScoringCategory,
-    ServiceType,
+    ServiceId,
 )
 from app.domain.events.types import EventType
 from app.domain.scoring.results import ScoreCategoryTotal, ScoreEvidence, ScoreReport, ScoreResult
@@ -325,7 +325,7 @@ class DdsDecisionViewSchema(ApiModel):
     """`openapi.yaml`'s `DdsDecisionView` — one leg of the work item, as decided."""
 
     assignment_id: UUID
-    service_type: ServiceType
+    service_type: ServiceId
     acknowledged_at_offset_ms: int | None
     dispatch_events: list[DispatchEventSchema]
     status_updates: list[StatusUpdateViewSchema]

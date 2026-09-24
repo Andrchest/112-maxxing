@@ -28,7 +28,7 @@ from app.application.operator.views import (
     OperatorStageView,
     ServiceSelectionView,
 )
-from app.domain.enums import Operator112StageState, ServiceType, SessionState, ValueType
+from app.domain.enums import Operator112StageState, ServiceId, SessionState, ValueType
 
 __all__ = [
     "ActionDescriptorSchema",
@@ -122,15 +122,15 @@ class SetCardFieldResponseSchema(ApiModel):
 class ServiceSelectionRequestSchema(ApiModel):
     """`openapi.yaml`'s `ServiceSelectionRequest`."""
 
-    service_type: ServiceType
+    service_type: ServiceId
 
 
 class ServiceSelectionViewSchema(ApiModel):
     """`openapi.yaml`'s `ServiceSelectionView`."""
 
     card_id: UUID
-    selected_services: list[ServiceType]
-    available_services: list[ServiceType]
+    selected_services: list[ServiceId]
+    available_services: list[ServiceId]
     card: OperatorCardViewSchema
 
 

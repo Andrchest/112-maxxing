@@ -63,7 +63,7 @@ from app.api.schemas.sessions import SessionDetailSchema, session_detail_schema
 from app.api.security import CurrentUserDep
 from app.application.handoff.complete_session import score_completed_session
 from app.domain.common.ids import ResourceId, SessionId
-from app.domain.enums import ResourceStatus, ServiceType, SessionState
+from app.domain.enums import ResourceStatus, ServiceId, SessionState
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["dds"])
 
@@ -99,7 +99,7 @@ async def list_dds_resources(
     session_id: UUID,
     container: ContainerDep,
     user: CurrentUserDep,
-    service_type: ServiceType | None = None,
+    service_type: ServiceId | None = None,
     status: Annotated[list[ResourceStatus] | None, Query()] = None,
 ) -> ResourcePageSchema:
     """Scenario-defined units only; the ETA numbers are read verbatim (D7, SPEC §11)."""

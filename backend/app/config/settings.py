@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     #: explicitly, so no background task can outlive a test.
     runner_enabled: bool = True
     data_dir: str = "data"
+    #: `SIM_REFERENCE_DIR` — the sha-pinned reference pack (I3 E2a, HLD 70 §70.6.1): manifest,
+    #: card schemas, classifier, service catalog. The default is `reference/` at the repository
+    #: root, resolved from this file (`backend/app/config/settings.py` → three levels up), so it is
+    #: right both in a checkout and in the backend/voice-agent images, whose `/workspace` mirrors
+    #: the repository layout (`backend/Dockerfile` COPYs `reference/`; compose mounts it for the
+    #: voice-agent's preflight). The composition root loads it once (`FileReferenceCatalog`).
+    reference_dir: str = str(Path(__file__).resolve().parents[3] / "reference")
     #: `SIM_MODELS_ROOT` — where THIS host keeps the model files a profile names (E20 R15).
     #:
     #: A model profile names container paths (`/models/asr/gigaam-v3-e2e-ctc`), which is exactly

@@ -134,7 +134,7 @@ async def materialise_prefab_handoff(
                     "snapshot_id": UUID(str(snapshot.snapshot_id)),
                     "assignment_id": UUID(str(leg.assignment_id)),
                     "role_stage_id": UUID(str(leg.role_stage_id)),
-                    "service_type": leg.service_type.value,
+                    "service_type": leg.service_type,
                     "at_offset_ms": now_ms,
                 },
             )
@@ -153,7 +153,7 @@ def _prefab_values(prefab: PrefabHandoff) -> dict[str, FactValue]:
     `recipient_services` is the key the snapshot is built from.
     """
     values: dict[str, FactValue] = dict(prefab.card_values)
-    values[SERVICES_FIELD_PATH] = [service.value for service in prefab.recipient_services]
+    values[SERVICES_FIELD_PATH] = list(prefab.recipient_services)
     return values
 
 

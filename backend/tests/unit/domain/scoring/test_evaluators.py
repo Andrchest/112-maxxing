@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from app.domain.common.ids import EventId
-from app.domain.enums import EvaluatorType, ServiceType
+from app.domain.enums import LEGACY_SERVICE_IDS, EvaluatorType
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.scoring.context import ScoringContext, build_context
@@ -771,9 +771,6 @@ def test_bounding_event_is_required_for_an_absence() -> None:
         run(DEMO_RULES["fact_victim_inside"], truncated)
 
 
-def test_service_type_enum_values_are_what_the_payloads_carry() -> None:
-    """Guards the builder: a renamed enum member must not silently stop matching."""
-    assert ServiceType.FIRE_RESCUE.value == "FIRE_RESCUE"
-    assert {service.value for _, service, _ in GOOD_UNITS} <= {
-        member.value for member in ServiceType
-    }
+def test_service_ids_are_what_the_payloads_carry() -> None:
+    """Guards the builder: the units' services are legacy catalog ids, verbatim (D18)."""
+    assert {service for _, service, _ in GOOD_UNITS} <= set(LEGACY_SERVICE_IDS)

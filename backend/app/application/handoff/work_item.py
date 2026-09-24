@@ -45,7 +45,7 @@ from pydantic import BaseModel, ConfigDict
 from app.domain.common.ids import ResourceId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ClosureReason, DDSStageState, ServiceType
+from app.domain.enums import ClosureReason, DDSStageState, ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import CARD_FIELDS
 
@@ -72,10 +72,10 @@ class DdsWorkItemView(BaseModel):
     incident_id: UUID
     role_stage_id: UUID
     snapshot_id: UUID
-    service_type: ServiceType
+    service_type: ServiceId
     state: DDSStageState
     card_values: dict[str, FactValue]
-    recipient_services: tuple[ServiceType, ...]
+    recipient_services: tuple[ServiceId, ...]
     handoff_content_sha256: str
     received_at_offset_ms: int
     acknowledged_at_offset_ms: int | None
@@ -127,7 +127,7 @@ def primary_leg(legs: Sequence[DDSAssignment], snapshot: HandoffSnapshot) -> DDS
     if snapshot.recipient_services:
         first = snapshot.recipient_services[0]
         for leg in legs:
-            if leg.service_type is first:
+            if leg.service_type == first:
                 return leg
     return legs[0]
 

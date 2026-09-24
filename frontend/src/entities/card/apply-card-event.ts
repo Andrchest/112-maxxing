@@ -14,7 +14,7 @@ import type { OperatorCardView, FactValue } from './card-store';
 import type { components } from '@/shared/api';
 
 type SessionEventEnvelope = components['schemas']['SessionEventEnvelope'];
-type ServiceType = components['schemas']['ServiceType'];
+type ServiceId = components['schemas']['ServiceCatalogEntry']['id'];
 
 interface CardFieldChangedPayload {
   card_id: string;
@@ -25,7 +25,7 @@ interface CardFieldChangedPayload {
 
 interface ServiceSelectionChangedPayload {
   card_id: string;
-  selected_services: ServiceType[];
+  selected_services: ServiceId[];
 }
 
 /** Folds one event onto `previous`. Returns `previous` unchanged for any event type this card

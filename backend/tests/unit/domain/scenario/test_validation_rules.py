@@ -1,4 +1,4 @@
-"""One failing fixture per §30.8 rule R01-R31 and I3's R32-R36, R40
+"""One failing fixture per §30.8 rule R01-R31 and I3's R32-R38, R40
 (`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
@@ -269,6 +269,16 @@ def _r36_memo_statuses_without_responders(document: Document) -> None:
     _schema_2(document, supported_dds_mode=["RESOURCE_PICKER", "MEMO_STATUSES"])
 
 
+def _r37_unknown_service_id(document: Document) -> None:
+    # A catalog id, not an enum member (D18): parsing accepts any string, R37 checks the catalog.
+    document["expected_response"]["required_services"].append("NOT_A_SERVICE")
+
+
+def _r38_unknown_reference_pack(document: Document) -> None:
+    document["schema_version"] = 2
+    document["reference_pack"] = "no-such-pack-r1"
+
+
 def _r40_applies_to_variants_names_an_unknown_value(document: Document) -> None:
     _rule(document, "fact_victim_inside")["applies_to_variants"] = {"dds_mode": ["BOGUS_MODE"]}
 
@@ -310,6 +320,8 @@ MUTATIONS: dict[int, Mutation] = {
     34: _r34_generated_card_without_a_prefab,
     35: _r35_picker_without_a_resolution_condition,
     36: _r36_memo_statuses_without_responders,
+    37: _r37_unknown_service_id,
+    38: _r38_unknown_reference_pack,
     40: _r40_applies_to_variants_names_an_unknown_value,
 }
 
@@ -349,12 +361,12 @@ def test_each_rule_has_a_failing_fixture(rule_no: int) -> None:
 
 def test_mutation_table_covers_exactly_the_rule_registry() -> None:
     """Every rule the validator runs has a failing fixture, and no fixture names a rule it does
-    not run (R37-R39 arrive with E2/E4 and register themselves then, HLD 70 §70.2.3)."""
+    not run (R39 arrives with E4 and registers itself then, HLD 70 §70.2.3)."""
     assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
 
 
-def test_the_rule_registry_after_e1() -> None:
-    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 37), 40]
+def test_the_rule_registry_after_e2a() -> None:
+    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 39), 40]
 
 
 def test_a_schema_2_document_with_variants_loads_clean() -> None:
@@ -384,14 +396,78 @@ def test_r01_refuses_the_variants_key_in_a_schema_1_document() -> None:
     assert any("variants" in violation for violation in violations)
 
 
-@pytest.mark.parametrize("key", ["timers", "reference_pack"])
-def test_r01_refuses_the_later_schema_2_top_level_keys(key: str) -> None:
-    """E1 leaves `timers` (E4) and `reference_pack` (E2) refused in every document."""
+def test_r01_refuses_the_later_schema_2_top_level_keys() -> None:
+    """`timers` (E4) stays refused in every document."""
     for schema_version in (1, 2):
         document = demo_document()
         document["schema_version"] = schema_version
-        document[key] = {} if key == "timers" else "v046_24-r1"
+        document["timers"] = {}
         assert _rule_numbers(validate_scenario_document(document)) == {1}
+
+
+def test_r01_refuses_the_reference_pack_key_in_a_schema_1_document() -> None:
+    document = demo_document()
+    document["reference_pack"] = "legacy-r1"
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {1}
+    assert any("reference_pack" in violation for violation in violations)
+
+
+def test_a_schema_2_document_naming_the_legacy_pack_loads_clean() -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    document["reference_pack"] = "legacy-r1"
+    assert validate_scenario_document(document) == []
+    assert ScenarioVersion.model_validate(document).reference_pack_id == "legacy-r1"
+
+
+def test_a_document_without_reference_pack_uses_legacy_r1_and_dumps_without_the_key() -> None:
+    """P5: a schema-1 document's canonical dump (its identity, D4) gains no key."""
+    version = ScenarioVersion.model_validate(demo_document())
+    assert version.reference_pack is None
+    assert version.reference_pack_id == "legacy-r1"
+    assert "reference_pack" not in version.model_dump(mode="json")
+
+
+def test_r37_names_every_place_a_service_id_can_hide() -> None:
+    """R37 replaces the enum check everywhere the closed `ServiceType` guarded (D18)."""
+    document = demo_document()
+    expected = document["expected_response"]
+    expected["optional_services"] = ["GHOST_OPTIONAL"]
+    expected["min_units_by_service"] = {"GHOST_UNITS": 1}
+    expected["prefab_handoff"]["recipient_services"] = ["GHOST_PREFAB"]
+    document["available_resources"][0]["service_type"] = "GHOST_RESOURCE"
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) - {16, 17} == {37}
+    for ghost in ("GHOST_OPTIONAL", "GHOST_UNITS", "GHOST_PREFAB", "GHOST_RESOURCE"):
+        assert any(ghost in violation and violation.startswith("R37") for violation in violations)
+
+
+def test_r37_accepts_a_catalog_service_beyond_the_six_legacy_ids() -> None:
+    """With a catalog that has it, a new UPPER_SNAKE id is valid; without, it is R37."""
+    from app.domain.routing.catalog import (
+        DEFAULT_PACK_ID,
+        LEGACY_REFERENCE,
+        ReferenceCatalog,
+        ReferencePack,
+        ServiceCatalog,
+    )
+
+    legacy = LEGACY_REFERENCE.services(DEFAULT_PACK_ID)
+    assert legacy is not None
+    mosvodokanal = legacy.services[0].model_copy(update={"id": "MOSVODOKANAL"})
+    reference = ReferenceCatalog(
+        packs=[
+            ReferencePack(pack_id="legacy-r1", card_schema="v1", services="v1", classifier=None)
+        ],
+        service_catalogs=[
+            ServiceCatalog(catalog_id="v1", services=(*legacy.services, mosvodokanal))
+        ],
+    )
+    document = demo_document()
+    document["expected_response"]["optional_services"] = ["MOSVODOKANAL"]
+    assert _rule_numbers(validate_scenario_document(document)) == {37}
+    assert validate_scenario_document(document, reference=reference) == []
 
 
 def test_r01_refuses_expected_response_responders() -> None:

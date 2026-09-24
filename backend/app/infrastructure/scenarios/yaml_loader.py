@@ -21,8 +21,10 @@ from typing import Any
 import yaml
 
 from app.domain.common.errors import ScenarioValidationError
+from app.domain.routing.catalog import ReferenceCatalog
 from app.domain.scenario.validation import validate_scenario_document
 from app.domain.scenario.version import ScenarioVersion
+from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 
 VERSION_FILE_PATTERN = re.compile(r"^v(?P<version>\d+)\.yaml$")
 
@@ -45,19 +47,23 @@ def scenario_slug(path: Path) -> str:
     return path.parent.name
 
 
-def load_scenario_version(path: Path) -> ScenarioVersion:
+def load_scenario_version(
+    path: Path, *, reference: ReferenceCatalog | None = None
+) -> ScenarioVersion:
     """Load, parse and fully validate one scenario file (§30.1, §30.8).
 
     Raises `ScenarioValidationError` whose `violations` lists every problem found: an unreadable or
     malformed YAML file, a file name that does not follow `v<N>.yaml`, a `version` key that does
-    not match that file name, and every §30.8 rule the document breaks.
+    not match that file name, and every §30.8 rule the document breaks. Rules R37/R38 check
+    against `reference`, by default the repository's `reference/` pack (HLD 70 §70.6.1).
     """
     violations = list(_path_violations(path))
     document = _load_yaml(path, violations)
     if document is None:
         raise ScenarioValidationError(violations)
 
-    violations.extend(validate_scenario_document(document))
+    catalog = reference if reference is not None else FileReferenceCatalog().catalog()
+    violations.extend(validate_scenario_document(document, reference=catalog))
     violations.extend(_version_mismatch(path, document))
     if violations:
         raise ScenarioValidationError(sorted(violations))

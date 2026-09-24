@@ -15,7 +15,7 @@ import pytest
 from app.application.dds.leg_for import leg_for
 from app.domain.common.ids import RoleStageId
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ServiceType
+from app.domain.enums import ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
 
 from tests.unit.application.dds.conftest import AMBULANCE, FIRE, POLICE, make_leg, make_resource
@@ -85,7 +85,7 @@ def test_a_single_leg_handoff_takes_everything(
     """One recipient service: every unit, of any service, hangs on the one leg there is."""
     only = [make_leg(snapshot, role_stage_id, FIRE)]
 
-    for service in (FIRE, AMBULANCE, POLICE, ServiceType.GAS_SERVICE):
+    for service in (FIRE, AMBULANCE, POLICE, ServiceId("GAS_SERVICE")):
         assert leg_for(make_resource("X", service), only, snapshot) is only[0]
 
 

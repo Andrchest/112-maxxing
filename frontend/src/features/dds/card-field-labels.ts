@@ -10,7 +10,6 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { serviceTypeLabelRu } from './dds-labels';
 import type { CardFieldSpec, FactValue } from '@/entities/card';
-import type { ServiceType } from '@/shared/api';
 
 export const DDS_CARD_FIELDS: readonly CardFieldSpec[] = [
   { field_path: 'incident.type', value_type: 'ENUM', enum_name: 'IncidentType', label_ru: '', scoring_relevant: true, required_for_handoff: true },
@@ -138,7 +137,7 @@ export function formatFactValueRu(spec: CardFieldSpec, value: FactValue): string
   if (spec.value_type === 'STRING_LIST') {
     const items = Array.isArray(value) ? value : [];
     if (spec.field_path === 'recipients.services') {
-      return items.map((item) => serviceTypeLabelRu(item as ServiceType)).join(', ');
+      return items.map((item) => serviceTypeLabelRu(String(item))).join(', ');
     }
     return items.join(', ');
   }

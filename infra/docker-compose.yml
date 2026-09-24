@@ -152,6 +152,8 @@ services:
       SIM_MODEL_PROFILE: ${SIM_MODEL_PROFILE:-DEV_3060TI}
       SIM_DATA_DIR: /data
       SIM_LLM_BASE_URL: http://llama-server:8080/v1
+      # I3 E2a: the reference pack baked into the image by backend/Dockerfile (HLD 70 §70.6.1).
+      SIM_REFERENCE_DIR: /workspace/reference
     volumes:
       - recordings-data:/data
     ports:
@@ -239,6 +241,10 @@ services:
       # `llama-server:8080`, `/models`, the GPU) — and check #10 validates `scenarios/examples`
       # relative to the WORKDIR /workspace. See infra/scripts/preflight.sh.
       - ../scenarios:/workspace/scenarios:ro
+      # I3 E2a: preflight check #10's scenario validation checks service ids and the pack name
+      # against the reference pack (rules R37/R38, HLD 70 §70.6.1), found at the repository
+      # layout's `/workspace/reference`.
+      - ../reference:/workspace/reference:ro
     # Publishes NO port (HLD 60 §9). Does not hard-depend on `tts-qwen3`: that service is the
     # profiled eighth and a plain `up` (the SPEC's seven) never starts it — `Qwen3TTS`'s httpx
     # client fails its own calls if unreachable, exactly like any other TTS-provider failure

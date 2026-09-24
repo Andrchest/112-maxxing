@@ -67,6 +67,8 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             # own chain; `role_chain` above is the session's effective chain.
             "variants": "SessionVariants",
             "scenario_role_chain": "list[RoleType]",
+            # Additive, I3 E2a (HLD 70 §70.6.1, §70.7): the reference pack's ids and sha256.
+            "reference_pack": "ReferencePackRecord",
         },
         visible_to=frozenset({_INSTRUCTOR}),
     ),
@@ -266,8 +268,8 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         payload_keys={
             "card_id": "uuid",
             "revision_id": "uuid",
-            "service_type": "ServiceType",
-            "selected_services": "list[ServiceType]",
+            "service_type": "ServiceId",
+            "selected_services": "list[ServiceId]",
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_OP, _INSTRUCTOR}),
@@ -280,7 +282,7 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "incident_id": "uuid",
             "card_id": "uuid",
             "card_revision_id": "uuid",
-            "recipient_services": "list[ServiceType]",
+            "recipient_services": "list[ServiceId]",
             "card_values": "object",
             "content_sha256": "str",
             "at_offset_ms": "int",
@@ -294,7 +296,7 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "snapshot_id": "uuid",
             "assignment_id": "uuid",
             "role_stage_id": "uuid",
-            "service_type": "ServiceType",
+            "service_type": "ServiceId",
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
@@ -317,7 +319,7 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "assignment_id": "uuid",
             "resource_id": "uuid",
             "callsign": "str",
-            "service_type": "ServiceType",
+            "service_type": "ServiceId",
             "resource_type": "ResourceType",
             "capabilities": "list[str]",
             "at_offset_ms": "int",
@@ -333,7 +335,7 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "callsigns": "list[str]",
             "capabilities_union": "list[str]",
             "eta_seconds_by_resource": "object",
-            # Additive (E9): `resource_id -> ServiceType` for every dispatched unit. §10.13 L1290
+            # Additive (E9): `resource_id -> ServiceId` for every dispatched unit. §10.13 L1290
             # already claims the payload "carries `capabilities_union` and `service_type` per
             # resource, so no resource table lookup is needed" while the row had no such key.
             # It is needed because a unit's `assignment_id` does NOT imply its service: an
@@ -504,8 +506,8 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         payload_keys={
             "card_id": "uuid",
             "revision_id": "uuid",
-            "service_type": "ServiceType",
-            "selected_services": "list[ServiceType]",
+            "service_type": "ServiceId",
+            "selected_services": "list[ServiceId]",
             "at_offset_ms": "int",
         },
         visible_to=frozenset({_OP, _INSTRUCTOR}),

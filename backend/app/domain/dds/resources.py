@@ -51,7 +51,7 @@ from app.domain.enums import (
     ResourceStatus,
     ResourceType,
     RoleType,
-    ServiceType,
+    ServiceId,
 )
 from app.domain.events.types import EventType
 
@@ -112,7 +112,7 @@ class EmergencyResource(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     resource_id: ResourceId
-    service_type: ServiceType
+    service_type: ServiceId
     resource_type: ResourceType
     callsign: str
     name_ru: str

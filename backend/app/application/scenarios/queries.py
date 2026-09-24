@@ -30,14 +30,17 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.application.ports.reference import ReferencePort
 from app.application.ports.scenario_repository import (
     StoredScenarioListing,
     StoredScenarioVersionDetail,
 )
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.application.reference.queries import reference_catalog
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import AgeGroup, CallerRelationship, RoleType
+from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
 from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS, validate_scenario_document
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.variants import ScenarioVariants
@@ -258,7 +261,11 @@ def _issue_of(violation: str, severity: str) -> ValidationIssue:
 
 
 def validation_report_of(
-    document: Mapping[str, Any], *, content_sha256: str | None, scenario_slug: str | None
+    document: Mapping[str, Any],
+    *,
+    content_sha256: str | None,
+    scenario_slug: str | None,
+    reference: ReferenceCatalog = LEGACY_REFERENCE,
 ) -> ValidationReport:
     """Run the complete §30.8 list over a raw document and render the report.
 
@@ -266,7 +273,7 @@ def validation_report_of(
     are read from the raw mapping rather than from a parsed `ScenarioVersion`, because a document
     that fails to parse still has a slug and a version the author needs to see in the report.
     """
-    violations = validate_scenario_document(document)
+    violations = validate_scenario_document(document, reference=reference)
     warnings = _warnings_of(document)
     issues = [_issue_of(violation, "ERROR") for violation in violations]
     issues.extend(_issue_of(warning, "WARNING") for warning in warnings)
@@ -359,8 +366,11 @@ class GetScenarioVersionSummary:
 class GetScenarioValidationReport:
     """`getScenarioValidationReport` — the §30.8 verdict of a stored version."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(self, scenario_version_id: ScenarioVersionId) -> ValidationReport:
         """The report; raises `ScenarioNotFoundError` when the version does not exist."""
@@ -374,6 +384,7 @@ class GetScenarioValidationReport:
             document,
             content_sha256=detail.content_sha256,
             scenario_slug=detail.scenario_slug,
+            reference=reference_catalog(self._reference),
         )
 
 
@@ -385,8 +396,16 @@ class ValidateScenarioDocument:
     Unit of Work: nothing is read from and nothing is written to the database.
     """
 
+    def __init__(self, reference: ReferencePort | None = None) -> None:
+        self._reference = reference
+
     def __call__(
         self, document: Mapping[str, Any], *, content_sha256: str | None = None
     ) -> ValidationReport:
         """The report for a document that was never imported."""
-        return validation_report_of(document, content_sha256=content_sha256, scenario_slug=None)
+        return validation_report_of(
+            document,
+            content_sha256=content_sha256,
+            scenario_slug=None,
+            reference=reference_catalog(self._reference),
+        )

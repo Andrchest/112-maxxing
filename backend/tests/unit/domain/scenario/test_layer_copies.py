@@ -30,7 +30,7 @@ from app.domain.common.ids import (
     RoleStageId,
     UserId,
 )
-from app.domain.enums import ActorType, DDSStageState, KnowledgeState, ServiceType
+from app.domain.enums import ActorType, DDSStageState, KnowledgeState, ServiceId
 from app.domain.layers.caller_belief import CallerBelief
 from app.domain.layers.copies import (
     freeze_card_to_snapshot,
@@ -179,7 +179,7 @@ def test_snapshot_holds_the_card_value_even_against_world_truth(
     snapshot = freeze_card_to_snapshot(
         card,
         CardRevisionId(uuid4()),
-        (ServiceType.FIRE_RESCUE, ServiceType.AMBULANCE),
+        (ServiceId("FIRE_RESCUE"), ServiceId("AMBULANCE")),
         UserId(uuid4()),
         60_000,
     )
@@ -194,7 +194,7 @@ def test_snapshot_holds_the_card_value_even_against_world_truth(
 def test_later_card_edits_do_not_reach_the_snapshot(incident_id: IncidentId) -> None:
     card = _card_with_house_72(incident_id)
     snapshot = freeze_card_to_snapshot(
-        card, CardRevisionId(uuid4()), (ServiceType.FIRE_RESCUE,), UserId(uuid4()), 60_000
+        card, CardRevisionId(uuid4()), (ServiceId("FIRE_RESCUE"),), UserId(uuid4()), 60_000
     )
 
     changed_card, revision, _event = set_field(
@@ -209,7 +209,7 @@ def test_later_card_edits_do_not_reach_the_snapshot(incident_id: IncidentId) -> 
 def test_snapshot_shares_no_mutable_object_with_the_card(incident_id: IncidentId) -> None:
     card = _card_with_house_72(incident_id)
     snapshot = freeze_card_to_snapshot(
-        card, CardRevisionId(uuid4()), (ServiceType.FIRE_RESCUE,), UserId(uuid4()), 60_000
+        card, CardRevisionId(uuid4()), (ServiceId("FIRE_RESCUE"),), UserId(uuid4()), 60_000
     )
 
     card.values["address.house"] = "99"
@@ -227,7 +227,7 @@ def _snapshot(incident_id: IncidentId) -> HandoffSnapshot:
     return freeze_card_to_snapshot(
         _card_with_house_72(incident_id),
         CardRevisionId(uuid4()),
-        (ServiceType.FIRE_RESCUE, ServiceType.AMBULANCE),
+        (ServiceId("FIRE_RESCUE"), ServiceId("AMBULANCE")),
         UserId(uuid4()),
         60_000,
     )
@@ -265,8 +265,10 @@ def test_derived_ids_are_deterministic(incident_id: IncidentId) -> None:
     user_id = UserId(uuid4())
     role_stage_id = RoleStageId(uuid4())
 
-    first = freeze_card_to_snapshot(card, revision_id, (ServiceType.FIRE_RESCUE,), user_id, 60_000)
-    second = freeze_card_to_snapshot(card, revision_id, (ServiceType.FIRE_RESCUE,), user_id, 60_000)
+    first = freeze_card_to_snapshot(card, revision_id, (ServiceId("FIRE_RESCUE"),), user_id, 60_000)
+    second = freeze_card_to_snapshot(
+        card, revision_id, (ServiceId("FIRE_RESCUE"),), user_id, 60_000
+    )
 
     assert isinstance(first.snapshot_id, UUID)
     assert first.snapshot_id == second.snapshot_id

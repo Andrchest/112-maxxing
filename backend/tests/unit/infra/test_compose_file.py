@@ -117,3 +117,15 @@ def test_llama_server_command_is_the_committed_entrypoint_script(compose_doc: di
     entrypoint = llama.get("entrypoint")
     assert entrypoint is not None
     assert any("entrypoint.sh" in part for part in entrypoint)
+
+
+def test_the_reference_pack_reaches_both_python_images(compose_doc: dict) -> None:
+    """I3 E2a (HLD 70 §70.6.1): the backend image carries `reference/` (COPY in its Dockerfile,
+    `SIM_REFERENCE_DIR` pinned to it) and the voice-agent mounts it read-only for preflight #10."""
+    dockerfile = (COMPOSE_PATH.parents[1] / "backend" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^COPY reference/ reference/$", dockerfile, re.M)
+    backend = compose_doc["services"]["backend"]
+    assert backend["build"]["context"] == ".."
+    assert backend["environment"]["SIM_REFERENCE_DIR"] == "/workspace/reference"
+    voice_agent_volumes = compose_doc["services"]["voice-agent"]["volumes"]
+    assert "../reference:/workspace/reference:ro" in voice_agent_volumes

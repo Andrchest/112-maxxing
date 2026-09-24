@@ -6,7 +6,6 @@
 import { ru } from '@/shared/i18n/ru';
 import { t } from '@/shared/i18n';
 import type {
-  ServiceType,
   ResourceType,
   ResourceStatus,
   DDSStageState,
@@ -58,17 +57,8 @@ export function stageStateLabelRu(roleType: RoleType, state: StageState): string
   return key ? t(key) : state;
 }
 
-export const SERVICE_TYPE_LABEL_KEY: Record<ServiceType, keyof typeof ru> = {
-  FIRE_RESCUE: 'serviceTypeFireRescue',
-  POLICE: 'serviceTypePolice',
-  AMBULANCE: 'serviceTypeAmbulance',
-  GAS_SERVICE: 'serviceTypeGasService',
-  UTILITY_EMERGENCY: 'serviceTypeUtilityEmergency',
-  EDDS: 'serviceTypeEdds',
-};
-export function serviceTypeLabelRu(value: ServiceType): string {
-  return t(SERVICE_TYPE_LABEL_KEY[value]);
-}
+// A service's name is a service-catalog lookup (I3 E2a, D18), not an exhaustive enum table.
+export { serviceLabelRu as serviceTypeLabelRu } from '@/entities/service-catalog';
 
 export const RESOURCE_TYPE_LABEL_KEY: Record<ResourceType, keyof typeof ru> = {
   FIRE_ENGINE: 'resourceTypeFireEngine',

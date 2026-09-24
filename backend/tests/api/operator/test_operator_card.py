@@ -280,10 +280,29 @@ async def test_every_service_type_is_offered_including_the_wrong_ones(
     interview: OperatorFlow,
 ) -> None:
     """SPEC §10: the trainee must be able to pick the wrong service, so the UI offers them all."""
-    from app.domain.enums import ServiceType
+    from app.domain.enums import LEGACY_SERVICE_IDS
 
     response = await interview.select("FIRE_RESCUE")
-    assert response.json()["available_services"] == [service.value for service in ServiceType]
+    assert response.json()["available_services"] == list(LEGACY_SERVICE_IDS)
+
+
+async def test_a_service_is_a_catalog_id_and_an_unknown_one_is_422(
+    interview: OperatorFlow,
+) -> None:
+    """I3 E2a (D18): any id of the session's service catalog is accepted — here one beyond the six
+    legacy ids — and an id the catalog does not have is `422 SERVICE_UNKNOWN`, writing nothing."""
+    selected = await interview.select("MOSVODOKANAL")
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["selected_services"] == ["MOSVODOKANAL"]
+
+    before = await interview.event_types()
+    for response in (
+        await interview.select("NOT_A_SERVICE"),
+        await interview.deselect("NOT_A_SERVICE"),
+    ):
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "SERVICE_UNKNOWN"
+    assert await interview.event_types() == before
 
 
 # ---------------------------------------------------------------------------------------------

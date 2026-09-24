@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from app.domain.common.ids import EventId, SessionId, UserId
-from app.domain.enums import ActorType, RoleType, ServiceType
+from app.domain.enums import ActorType, RoleType, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.scenario.version import ScenarioVersion
@@ -85,10 +85,10 @@ GOOD_DELIVERIES: tuple[tuple[int, tuple[str, ...]], ...] = (
 )
 
 #: The units the good DDS run sends: two FIRE_RESCUE (one with the ladder) and one AMBULANCE.
-GOOD_UNITS: tuple[tuple[str, ServiceType, tuple[str, ...]], ...] = (
-    ("ac1", ServiceType.FIRE_RESCUE, ("FIRE_SUPPRESSION", "WATER_SUPPLY", "SMOKE_DIVING")),
-    ("al1", ServiceType.FIRE_RESCUE, ("HIGH_RISE_ACCESS", "LADDER_RESCUE")),
-    ("smp11", ServiceType.AMBULANCE, ("BASIC_LIFE_SUPPORT",)),
+GOOD_UNITS: tuple[tuple[str, ServiceId, tuple[str, ...]], ...] = (
+    ("ac1", ServiceId("FIRE_RESCUE"), ("FIRE_SUPPRESSION", "WATER_SUPPLY", "SMOKE_DIVING")),
+    ("al1", ServiceId("FIRE_RESCUE"), ("HIGH_RISE_ACCESS", "LADDER_RESCUE")),
+    ("smp11", ServiceId("AMBULANCE"), ("BASIC_LIFE_SUPPORT",)),
 )
 
 
@@ -148,7 +148,7 @@ def good_log(
     handoff_ms: int = HANDOFF_MS,
     recipient_services: Sequence[str] = ("FIRE_RESCUE", "AMBULANCE"),
     extra_services: Sequence[str] = (),
-    units: Sequence[tuple[str, ServiceType, tuple[str, ...]]] | None = None,
+    units: Sequence[tuple[str, ServiceId, tuple[str, ...]]] | None = None,
     status_update_ms: int | None = STATUS_UPDATE_MS,
     call_answered_count: int = 1,
     caller_text: str = "Горит квартира на четвёртом этаже, дом 27!",
@@ -457,7 +457,7 @@ def _off_service_unit() -> tuple[SessionEvent, ...]:
     """The ladder truck is replaced by a police patrol: allowed, but it is not a fire unit."""
     units = (
         GOOD_UNITS[0],
-        ("pps204", ServiceType.POLICE, ("PUBLIC_ORDER", "AREA_CORDON")),
+        ("pps204", ServiceId("POLICE"), ("PUBLIC_ORDER", "AREA_CORDON")),
         GOOD_UNITS[2],
     )
     return good_log(units=units)
@@ -709,7 +709,7 @@ def _card_field(
 
 def _dispatch(
     log: LogBuilder,
-    units: Sequence[tuple[str, ServiceType, tuple[str, ...]]],
+    units: Sequence[tuple[str, ServiceId, tuple[str, ...]]],
     offset_ms: int,
 ) -> None:
     for position, (key, service, capabilities) in enumerate(units):
@@ -719,7 +719,7 @@ def _dispatch(
                 "assignment_id": str(ASSIGNMENT_ID),
                 "resource_id": str(det_uuid(f"resource:{key}")),
                 "callsign": key.upper(),
-                "service_type": service.value,
+                "service_type": service,
                 "resource_type": "FIRE_ENGINE",
                 "capabilities": list(capabilities),
                 "at_offset_ms": offset_ms + position * 100,
@@ -743,7 +743,7 @@ def _dispatch(
                 str(det_uuid(f"resource:{key}")): 180 for key, _, _ in units
             },
             "service_type_by_resource": {
-                str(det_uuid(f"resource:{key}")): service.value for key, service, _ in units
+                str(det_uuid(f"resource:{key}")): service for key, service, _ in units
             },
             "at_offset_ms": offset_ms + 1_000,
             "is_additional": False,

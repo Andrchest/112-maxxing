@@ -32,7 +32,6 @@ from app.domain.enums import (
     Operator112StageState,
     ResourceStatus,
     RoleType,
-    ServiceType,
     SessionMode,
     StatusUpdateKind,
 )
@@ -71,14 +70,15 @@ SESSION_MODE_LABELS_RU: Mapping[str, str] = {
     SessionMode.ASSESSMENT.value: "Аттестация",
 }
 
-#: Matches `ru.ts`'s `serviceType*`.
+#: The six legacy service ids (`LEGACY_SERVICE_IDS`); matches `ru.ts`'s `serviceType*` and the
+#: `name_ru` of their `reference/services/v1.yaml` entries. Any other catalog id is shown raw.
 SERVICE_TYPE_LABELS_RU: Mapping[str, str] = {
-    ServiceType.FIRE_RESCUE.value: "Пожарно-спасательная служба",
-    ServiceType.POLICE.value: "Полиция",
-    ServiceType.AMBULANCE.value: "Скорая медицинская помощь",
-    ServiceType.GAS_SERVICE.value: "Газовая служба",
-    ServiceType.UTILITY_EMERGENCY.value: "Аварийная коммунальная служба",
-    ServiceType.EDDS.value: "РЕДДС",
+    "FIRE_RESCUE": "Пожарно-спасательная служба",
+    "POLICE": "Полиция",
+    "AMBULANCE": "Скорая медицинская помощь",
+    "GAS_SERVICE": "Газовая служба",
+    "UTILITY_EMERGENCY": "Аварийная коммунальная служба",
+    "EDDS": "РЕДДС",
 }
 
 #: Matches `ru.ts`'s `resourceStatus*`.
@@ -184,7 +184,7 @@ def stage_state_label_ru(role_type: str, state: str) -> str:
 
 
 def service_type_list_label_ru(values: object) -> str:
-    """A `list[ServiceType]` payload value (`recipient_services`), each item labelled, joined."""
+    """A `list[ServiceId]` payload value (`recipient_services`), each item labelled, joined."""
     if not isinstance(values, (list, tuple)):
         return str(values)
     return ", ".join(SERVICE_TYPE_LABELS_RU.get(str(item), str(item)) for item in values)
@@ -211,7 +211,7 @@ def card_field_label_ru(field_path: str) -> str:
 def card_field_value_label_ru(field_path: str, value: object) -> str:
     """One `CARD_FIELD_CHANGED` `new_value`/`previous_value`, labelled the way `CARD_FIELDS`
     says that field's values should read: `recipients.services` (a `STRING_LIST` of
-    `ServiceType`) per item, an `ENUM` field through its own enum's table, a boolean as да/нет, a
+    `ServiceId`) per item, an `ENUM` field through its own enum's table, a boolean as да/нет, a
     plain list joined, anything else as its own string."""
     if isinstance(value, bool):
         return "да" if value else "нет"

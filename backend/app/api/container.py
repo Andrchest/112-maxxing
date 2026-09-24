@@ -77,6 +77,7 @@ from app.application.ports.inference_readiness import InferenceReadiness
 from app.application.ports.last_seq_no_cache import LastSeqNoCache
 from app.application.ports.llm import LLMClient
 from app.application.ports.password_hasher import PasswordHasher
+from app.application.ports.reference import ReferencePort
 from app.application.ports.runner_lock import RunnerLock
 from app.application.ports.token_service import TokenService
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -85,6 +86,12 @@ from app.application.ports.voice_token_service import VoiceTokenService
 from app.application.realtime.event_stream import SessionEventStream
 from app.application.realtime.list_events import ListSessionEvents
 from app.application.recording.purge_recordings import PurgeRecordings
+from app.application.reference.queries import (
+    GetClassifierRow,
+    GetReferenceManifest,
+    ListReferenceServices,
+    SearchClassifier,
+)
 from app.application.reports.assemble_report import GetSessionReport
 from app.application.reports.explanation.generate_explanation import GenerateExplanation
 from app.application.reports.explanation.get_explanation import GetExplanation
@@ -135,6 +142,7 @@ from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCa
 from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
+from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
 from app.infrastructure.transport.livekit_transport_status import LiveKitTransportStatus
 from app.infrastructure.transport.local_call_transport_status import LocalCallTransportStatus
@@ -191,6 +199,7 @@ class Container:
         call_state_cache: CallStateCache | None = None,
         health_probes: Sequence[HealthProbe] | None = None,
         idempotency: IdempotencyStore | None = None,
+        reference: ReferencePort | None = None,
         owns_engine: bool = True,
         owns_redis: bool = True,
     ) -> None:
@@ -308,6 +317,15 @@ class Container:
         self.inference_health: VoiceHealthSubscriber = VoiceHealthSubscriber(
             self.redis, self.append_inference_health_changed.from_message
         )
+        # -- I3 E2a: the reference pack (HLD 70 §70.6.1, D18) ----------------------------------
+        #
+        # `settings.reference_dir` (`SIM_REFERENCE_DIR`, default `<repo>/reference`), loaded lazily
+        # on first use and cached for the process (`FileReferenceCatalog`); a test passes a
+        # fixture pack instead. Appended at the
+        # end of `__init__` so nothing above it moves.
+        self.reference: ReferencePort = (
+            reference if reference is not None else FileReferenceCatalog(settings.reference_dir)
+        )
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -336,19 +354,19 @@ class Container:
 
     def get_scenario_validation_report(self) -> GetScenarioValidationReport:
         """`getScenarioValidationReport`."""
-        return GetScenarioValidationReport(self.unit_of_work)
+        return GetScenarioValidationReport(self.unit_of_work, self.reference)
 
     def import_scenario_version(self) -> ImportScenarioVersion:
-        """`importScenarioVersion`."""
-        return ImportScenarioVersion(self.unit_of_work)
+        """`importScenarioVersion`; rules R37/R38 check against the reference pack."""
+        return ImportScenarioVersion(self.unit_of_work, self.reference)
 
     def validate_scenario_document(self) -> ValidateScenarioDocument:
         """`validateScenarioFile`."""
-        return ValidateScenarioDocument()
+        return ValidateScenarioDocument(self.reference)
 
     def create_session(self) -> CreateSession:
-        """`createSession`."""
-        return CreateSession(self.unit_of_work, self.ids)
+        """`createSession`; records `SESSION_CREATED.reference_pack` (HLD 70 §70.6.1)."""
+        return CreateSession(self.unit_of_work, self.ids, self.reference)
 
     def start_session(self) -> StartSession:
         """`startSession`. `require_inference_ready` is read from `Settings` here (D2)."""
@@ -499,12 +517,30 @@ class Container:
         return ListCardRevisions(self.unit_of_work)
 
     def select_recipient_service(self) -> SelectRecipientService:
-        """`selectRecipientService`."""
-        return SelectRecipientService(self.operator_command_gate(), self.ids)
+        """`selectRecipientService`; an id outside the catalog is `422 SERVICE_UNKNOWN`."""
+        return SelectRecipientService(self.operator_command_gate(), self.ids, self.reference)
 
     def deselect_recipient_service(self) -> DeselectRecipientService:
-        """`deselectRecipientService`."""
-        return DeselectRecipientService(self.operator_command_gate(), self.ids)
+        """`deselectRecipientService`; an id outside the catalog is `422 SERVICE_UNKNOWN`."""
+        return DeselectRecipientService(self.operator_command_gate(), self.ids, self.reference)
+
+    # -- I3 E2a: the reference pack reads (HLD 70 §70.6, D18) ----------------------------------
+
+    def get_reference_manifest(self) -> GetReferenceManifest:
+        """`getReferenceManifest`."""
+        return GetReferenceManifest(self.reference)
+
+    def list_reference_services(self) -> ListReferenceServices:
+        """`listReferenceServices`."""
+        return ListReferenceServices(self.reference)
+
+    def search_classifier(self) -> SearchClassifier:
+        """`searchClassifier`."""
+        return SearchClassifier(self.reference)
+
+    def get_classifier_row(self) -> GetClassifierRow:
+        """`getClassifierRow`."""
+        return GetClassifierRow(self.reference)
 
     def begin_handoff_preparation(self) -> BeginHandoffPreparation:
         """`beginHandoffPreparation`."""

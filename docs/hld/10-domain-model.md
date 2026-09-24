@@ -20,7 +20,8 @@ backend/app/domain/
 │   ├── ids.py               typed UUID aliases (SessionId, IncidentId, …)
 │   └── state_machine.py     Transition, TransitionTable, StateMachine[S]
 ├── enums.py                 SessionMode, SessionState, Operator112StageState, DDSStageState,
-│                            RoleType, ActorType, ServiceType, ResourceType, ResourceStatus,
+│                            RoleType, ActorType, ServiceId (+ LEGACY_SERVICE_IDS; was the
+│                            ServiceType enum until I3 E2a), ResourceType, ResourceStatus,
 │                            KnowledgeState, DisclosurePolicy, SpeechAct, IncidentType,
 │                            CallerRelationship, AgeGroup, EmotionLabel, ValueType,
 │                            NotificationSeverity, StatusUpdateKind, HealthStatus,
@@ -66,6 +67,11 @@ backend/app/domain/
 │   │                        RESOURCE_STATUS_TRANSITIONS
 │   ├── notification.py      Notification
 │   └── radio.py             RadioMessage
+├── routing/                 (additive, I3 E2a — HLD 70 §70.6)
+│   ├── catalog.py           ServiceCatalogEntry, ServiceCatalog, ReferencePack,
+│   │                        ReferencePackRecord, ReferenceCatalog, LEGACY_REFERENCE
+│   └── classifier.py        ClassifierRow, RoutingCell, ClassifierOrg, Classifier,
+│                            cell_counts_as_notification (A-1)
 ├── world/
 │   ├── conditions.py        Condition (the declarative expression language), evaluate_condition
 │   ├── effects.py           MutateWorldTruth, MutateCallerBelief, CreateNotification,
@@ -135,6 +141,17 @@ All enums are `str, Enum`; the member name is the wire value.
 
 `UTILITY_EMERGENCY` is the only member the frame did not name; the demo needs a wrong-but-plausible
 fifth choice so that `SERVICE_SELECTION` scoring has something to penalise.
+
+(changed, I3 E2a — HLD 70 §70.6.3, D18) **`ServiceType` is no longer an enum.**
+`ServiceId = NewType("ServiceId", str)` replaces it in `domain/enums.py`: a service is an id of the
+reference pack's service catalog (`reference/services/v1.yaml`, «СЛУЖБЫ 112»). The six members above
+are kept verbatim as `LEGACY_SERVICE_IDS`, the catalog's first six entries (`UTILITY_EMERGENCY`
+`deprecated`, C8), so every stored snapshot, payload and fixture stays valid by value; the product's
+Russian names are the catalog's `name_ru` (for the six: Пожарно-спасательная служба, Полиция, Скорая
+медицинская помощь, Газовая служба, Аварийная коммунальная служба, РЕДДС). A service id is checked
+against the catalog where it enters: scenario import (rule R37) and `selectRecipientService` /
+`deselectRecipientService` (`422 SERVICE_UNKNOWN`). Wherever a type below says `ServiceType`, read
+`ServiceId`; `service_type` keeps its key name everywhere (payload compatibility).
 
 ### ResourceType
 `FIRE_ENGINE`, `LADDER_TRUCK`, `RESCUE_UNIT`, `AMBULANCE_UNIT`, `RESUSCITATION_UNIT`,
@@ -258,7 +275,7 @@ def instantiate_caller_belief(version: ScenarioVersion, incident_id: IncidentId)
 def freeze_card_to_snapshot(
     card: OperatorCard,
     card_revision_id: CardRevisionId,
-    recipient_services: tuple[ServiceType, ...],
+    recipient_services: tuple[ServiceId, ...],
     created_by_user_id: UserId,
     at_offset_ms: int,
 ) -> HandoffSnapshot: ...
@@ -467,7 +484,7 @@ Setting a field to its current value is a no-op: no revision, no event. Only `Ac
 | `flags.requires_escalation` | BOOLEAN | Требует эскалации | |
 | `flags.false_call` | BOOLEAN | Ложный вызов | ✔ |
 | `notes.free_text` | STRING | Дополнительная информация | |
-| `recipients.services` | STRING_LIST (`ServiceType` names) | Службы-получатели | ✔ |
+| `recipients.services` | STRING_LIST (`ServiceId` catalog ids, I3 E2a) | Службы-получатели | ✔ |
 | `recipients.comment` | STRING | Комментарий для служб | |
 
 `required_for_handoff` is `True` for exactly `incident.type`, `address.locality`,
@@ -490,7 +507,7 @@ Frozen (`model_config = ConfigDict(frozen=True)`); the DB trigger enforces the s
 | `card_id` | `CardId` |
 | `card_revision_id` | `CardRevisionId` (the last revision included) |
 | `card_values` | `Mapping[str, FactValue]` (deep copy of `OperatorCard.values`) |
-| `recipient_services` | `tuple[ServiceType, ...]` |
+| `recipient_services` | `tuple[ServiceId, ...]` |
 | `created_by_user_id` | `UserId` |
 | `created_at_offset_ms` | `int` |
 | `content_sha256` | `str` (over canonical JSON of `card_values` + `recipient_services`) |
@@ -503,7 +520,7 @@ Frozen (`model_config = ConfigDict(frozen=True)`); the DB trigger enforces the s
 | `incident_id` | `IncidentId` |
 | `role_stage_id` | `RoleStageId` |
 | `snapshot_id` | `SnapshotId` |
-| `service_type` | `ServiceType` (the receiving profile service) |
+| `service_type` | `ServiceId` (the receiving profile service) |
 | `state` | `DDSStageState` |
 | `received_at_offset_ms` | `int` |
 | `acknowledged_at_offset_ms` | `int \| None` |
@@ -521,7 +538,7 @@ the DDS application service is constructed without a world-truth repository.
 | Field | Type | SPEC §11 item |
 |:--|:--|:--|
 | `resource_id` | `ResourceId` | id |
-| `service_type` | `ServiceType` | service_type |
+| `service_type` | `ServiceId` | service_type |
 | `resource_type` | `ResourceType` | resource_type |
 | `callsign` | `str` (e.g. `"АЦ-1"`) | callsign/name |
 | `name_ru` | `str` | callsign/name |
@@ -1214,7 +1231,7 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 
 | Event type | Actor type(s) | Payload keys (`name: type`) | Visible to |
 |:--|:--|:--|:--|
-| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]` (the effective chain, I3 E1), `created_by_user_id: uuid`, `variants: SessionVariants` (additive, I3 E1), `scenario_role_chain: list[RoleType]` (additive, I3 E1) | INSTRUCTOR |
+| `SESSION_CREATED` | `SYSTEM`, `INSTRUCTOR` | `session_id: uuid`, `scenario_id: uuid`, `scenario_version_id: uuid`, `scenario_slug: str`, `scenario_version: int`, `session_mode: SessionMode`, `session_seed: str`, `time_scale: float` (additive, E5), `role_chain: list[RoleType]` (the effective chain, I3 E1), `created_by_user_id: uuid`, `variants: SessionVariants` (additive, I3 E1), `scenario_role_chain: list[RoleType]` (additive, I3 E1), `reference_pack: ReferencePackRecord` (additive, I3 E2a: `{pack_id, card_schema, card_schema_sha256, classifier, classifier_sha256, services, services_sha256}`) | INSTRUCTOR |
 | `SESSION_STARTED` | `INSTRUCTOR` | `started_at_utc: datetime`, `first_role_stage_id: uuid`, `first_role_type: RoleType` | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_STAGE_STARTED` | `SIMULATION` | `role_stage_id: uuid`, `role_type: RoleType`, `order_index: int`, `initial_state: str`, `participant_user_id: uuid \| null` | OPERATOR_112, DDS, INSTRUCTOR |
 | `CALL_RINGING` | `SIMULATION` | `call_id: uuid`, `room_name: str`, `caller_display_ru: str` (a neutral incoming-call line, **never** `CallerProfile.identity_ru` — see below), `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
@@ -1229,11 +1246,11 @@ report). Every payload below is self-sufficient for scoring: no evaluator needs 
 | `CALLER_TTS_ENDED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `at_offset_ms: int`, `total_audio_ms: int`, `completed: bool`, `audio_segment_id: uuid \| null` | OPERATOR_112, INSTRUCTOR |
 | `CALLER_UTTERANCE_INTERRUPTED` | `SIMULATION` | `call_id: uuid`, `turn_index: int`, `planned_text: str`, `delivered_text: str`, `delivered_audio_ms: int`, `total_audio_ms_generated: int`, `cutoff_latency_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `CARD_FIELD_CHANGED` | `TRAINEE`, `INSTRUCTOR` | `card_id: uuid`, `revision_id: uuid`, `revision_no: int`, `field_path: str`, `previous_value: FactValue`, `new_value: FactValue`, `value_type: ValueType`, `actor_user_id: uuid`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
-| `SERVICE_SELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceType`, `selected_services: list[ServiceType]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
-| `HANDOFF_CREATED` | `TRAINEE` | `snapshot_id: uuid`, `incident_id: uuid`, `card_id: uuid`, `card_revision_id: uuid`, `recipient_services: list[ServiceType]`, `card_values: object` (the complete frozen card), `content_sha256: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
-| `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceType`, `at_offset_ms: int` | DDS, INSTRUCTOR |
+| `SERVICE_SELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceId`, `selected_services: list[ServiceId]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `HANDOFF_CREATED` | `TRAINEE` | `snapshot_id: uuid`, `incident_id: uuid`, `card_id: uuid`, `card_revision_id: uuid`, `recipient_services: list[ServiceId]`, `card_values: object` (the complete frozen card), `content_sha256: str`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `HANDOFF_RECEIVED` | `SIMULATION` | `snapshot_id: uuid`, `assignment_id: uuid`, `role_stage_id: uuid`, `service_type: ServiceId`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_ACKNOWLEDGED` | `TRAINEE` | `assignment_id: uuid`, `at_offset_ms: int`, `latency_from_handoff_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
-| `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceType`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
+| `RESOURCE_SELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `service_type: ServiceId`, `resource_type: ResourceType`, `capabilities: list[str]`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `RESOURCE_DISPATCHED` | `TRAINEE` | `assignment_id: uuid`, `resource_ids: list[uuid]`, `callsigns: list[str]`, `capabilities_union: list[str]`, `eta_seconds_by_resource: object`, `service_type_by_resource: object` (additive, E9), `at_offset_ms: int`, `is_additional: bool`, `note_ru: str \| null` (additive, E17 R2) | DDS, INSTRUCTOR |
 | `RESOURCE_STATUS_CHANGED` | `SIMULATION` | `resource_id: uuid`, `callsign: str`, `previous_status: ResourceStatus`, `new_status: ResourceStatus`, `trigger: str`, `assignment_id: uuid \| null`, `source_world_event_id: str \| null`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `WORLD_EVENT_TRIGGERED` | `SIMULATION` | `world_event_id: str`, `kind: WorldEventKind`, `occurrence: int`, `title_ru: str`, `caller_observable: bool`, `trigger_reason: str`, `effect_kinds: list[EffectKind]`, `at_offset_ms: int` | INSTRUCTOR |
@@ -1261,7 +1278,7 @@ property name, does remain `CallerProfile.identity_ru`.
 | `STAGE_STATE_CHANGED` | `SIMULATION`, `TRAINEE`, `INSTRUCTOR` | `role_stage_id: uuid`, `role_type: RoleType`, `previous_state: str`, `new_state: str`, `trigger: str`, `fired_by_actor_type: ActorType`, `fired_by_user_id: uuid \| null`, `at_offset_ms: int` | the stage's own role, INSTRUCTOR |
 | `ROLE_TRANSITION_STARTED` | `SIMULATION` | `from_role_stage_id: uuid`, `from_role_type: RoleType`, `to_role_stage_id: uuid`, `to_role_type: RoleType`, `pause_seconds: int`, `at_offset_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
 | `ROLE_TRANSITION_COMPLETED` | `SIMULATION` | `to_role_stage_id: uuid`, `to_role_type: RoleType`, `incident_id: uuid`, `at_offset_ms: int` | OPERATOR_112, DDS, INSTRUCTOR |
-| `SERVICE_DESELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceType`, `selected_services: list[ServiceType]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
+| `SERVICE_DESELECTED` | `TRAINEE` | `card_id: uuid`, `revision_id: uuid`, `service_type: ServiceId`, `selected_services: list[ServiceId]`, `at_offset_ms: int` | OPERATOR_112, INSTRUCTOR |
 | `RESOURCE_DESELECTED` | `TRAINEE` | `assignment_id: uuid`, `resource_id: uuid`, `callsign: str`, `at_offset_ms: int` | DDS, INSTRUCTOR |
 | `DDS_STATUS_UPDATE_SENT` | `TRAINEE` | `assignment_id: uuid`, `update_kind: StatusUpdateKind`, `text_ru: str`, `at_offset_ms: int`, `actor_user_id: uuid` | DDS, INSTRUCTOR |
 | `DDS_INCIDENT_CLOSED` | `TRAINEE` | `assignment_id: uuid`, `closure_reason: ClosureReason`, `released_resource_ids: list[uuid]`, `at_offset_ms: int`, `actor_user_id: uuid`, `comment_ru: str \| null` (additive, E17 R2) | DDS, INSTRUCTOR |
@@ -1444,7 +1461,7 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 - Evidence: the offending `CARD_FIELD_CHANGED` **and** the `FACTS_DELIVERED` that carried the fact.
 
 #### 5. `SERVICE_SELECTION` — `service_selection.py`
-- Config keys: `required_services: list[ServiceType]`, `forbidden_services: list[ServiceType] = []`,
+- Config keys: `required_services: list[ServiceId]`, `forbidden_services: list[ServiceId] = []`,
   `points_per_required: float`, `penalty_per_forbidden: float = 0.0`,
   `all_or_nothing: bool = false`, `evaluated_at: "HANDOFF" | "SESSION_END"`.
 - Reads: `SERVICE_SELECTED`, `SERVICE_DESELECTED`, `HANDOFF_CREATED.recipient_services`.
@@ -1474,7 +1491,7 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 
 #### 8. `RESOURCE_SELECTION` — `resource_selection.py`
 - Config keys: `required_capabilities: list[ResourceCapability] = []`,
-  `min_units_by_service: object` (`ServiceType → int`), `forbidden_resource_ids: list[str] = []`,
+  `min_units_by_service: object` (`ServiceId → int`), `forbidden_resource_ids: list[str] = []`,
   `must_be_dispatched: bool = true`, `points: float`, `penalty_per_missing: float = 0.0`,
   `penalty_per_forbidden: float = 0.0`.
 - Reads: `RESOURCE_SELECTED`, `RESOURCE_DESELECTED`, `RESOURCE_DISPATCHED` (whose payload carries
@@ -1587,11 +1604,14 @@ class ScenarioVersion(BaseModel):
     world_events: tuple[WorldEventDefinition, ...]
     scoring_rules: tuple[ScoringRule, ...]
     variants: ScenarioVariants | None = None      # schema 2 only (additive, I3 E1)
+    reference_pack: str | None = None             # schema 2 only (additive, I3 E2a)
 ```
 
 The top-level key names are exactly SPEC §4 for `schema_version: 1`; `schema_version: 2` adds the
-optional key `variants` (D14 amends D4; the later schema-2 keys `timers`, `reference_pack` and
-`expected_response.responders` stay refused until E4/E2/E5b). `scenario_variants` is the declared key
+optional keys `variants` (D14 amends D4) and `reference_pack` (I3 E2a: the `reference/manifest.json`
+pack, `legacy-r1` when absent — `reference_pack_id`); the later schema-2 keys `timers` and
+`expected_response.responders` stay refused until E4/E5b. `scenario_variants` is the declared key
 or its derivation (HLD 70 §70.2.2); a dump omits an absent `variants` and an empty
-`applies_to_variants`, so a schema-1 document's `content_sha256` is unchanged. `validate_scenario_version` implements the complete D4
+`applies_to_variants` (and an absent `reference_pack`), so a schema-1 document's `content_sha256` is
+unchanged. `validate_scenario_version` implements the complete D4
 load-time list; the rules and the YAML shape are specified in `docs/hld/30-scenario-format.md` §30.4.

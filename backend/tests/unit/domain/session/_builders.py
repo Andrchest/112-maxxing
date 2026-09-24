@@ -33,7 +33,7 @@ from app.domain.enums import (
     ResourceStatus,
     ResourceType,
     RoleType,
-    ServiceType,
+    ServiceId,
 )
 from app.domain.layers.operator_card import OperatorCard
 from app.domain.scenario.version import ScenarioVersion
@@ -155,7 +155,7 @@ def resources(*statuses: ResourceStatus) -> Mapping[str, EmergencyResource]:
         resource_id = ResourceId(det_uuid(f"resource:{index}"))
         board[str(resource_id)] = EmergencyResource(
             resource_id=resource_id,
-            service_type=ServiceType.FIRE_RESCUE,
+            service_type=ServiceId("FIRE_RESCUE"),
             resource_type=ResourceType.FIRE_ENGINE,
             callsign=f"АЦ-{index + 1}",
             name_ru="Автоцистерна",

@@ -1,0 +1,852 @@
+{
+ "classifier_id": "v046_24",
+ "source": {
+  "path": "requirements/sources/05-organizer-materials/Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx",
+  "sheet": "Лист1",
+  "dimensions": "A1:CU1310",
+  "max_row": 1310,
+  "max_column": 99,
+  "header_rows": 3
+ },
+ "record_columns": {
+  "code": "E",
+  "group": "F",
+  "features": [
+   "G",
+   "H",
+   "I"
+  ],
+  "extra_features": "J",
+  "final_type_ru": "K",
+  "ekp35_ru": "L",
+  "main_service": "M"
+ },
+ "notification_rule": "a cell is a notification iff it is non-empty and not «нет реагирования» (A-1)",
+ "flags": {
+  "no_access": "НД - НЕТ ДОСТУПА",
+  "threat_to_people": "УЛ - УГРОЗА ЛЮДЯМ / угроза людям",
+  "casualties": "ПП - ПОСТРАДАВШИЕ ПОГИБШИЕ / Пострадавшие / пострадавшие/погибшие",
+  "casualties_not_on_site": "Пострадавшие не на месте",
+  "offence": "Правонарушение",
+  "gasification": "газификация",
+  "medical_help": "мед. помощь",
+  "evacuation_required": "треб. Эвакуация",
+  "over_five_people": ">5 чел / ОД",
+  "traffic_blocked": "перекрытие движение",
+  "tunnel": "тоннель",
+  "pedestrian": "пеш",
+  "road": "ав",
+  "communication_object": "на объектах связи",
+  "construction_site": "стройка",
+  "listed_object": "объект из перечня"
+ },
+ "orgs": {
+  "MCHS_SLUZHBA_101": {
+   "name_ru": "Служба 101",
+   "sub_columns": [
+    {
+     "column": "N",
+     "label_ru": "Служба 101 (признак НД - НЕТ ДОСТУПА не выбран)",
+     "when": {
+      "no_access": false
+     }
+    },
+    {
+     "column": "O",
+     "label_ru": "Служба 101 (выбран признак НД - НЕТ ДОСТУПА)",
+     "when": {
+      "no_access": true
+     }
+    }
+   ]
+  },
+  "MCHS_ODS_PSC": {
+   "name_ru": "ОДС ПСЦ",
+   "sub_columns": [
+    {
+     "column": "P",
+     "label_ru": "ОДС ПСЦ (другие признаки не выбраны)",
+     "when": {
+      "threat_to_people": false,
+      "casualties": false,
+      "no_access": false
+     }
+    },
+    {
+     "column": "Q",
+     "label_ru": "ОДС ПСЦ (выбран признак УЛ - УГРОЗА ЛЮДЯМ)",
+     "when": {
+      "threat_to_people": true
+     }
+    },
+    {
+     "column": "R",
+     "label_ru": "ОДС ПСЦ (выбран признак ПП - ПОСТРАДАВШИЕ ПОГИБШИЕ)",
+     "when": {
+      "casualties": true
+     }
+    },
+    {
+     "column": "S",
+     "label_ru": "ОДС ПСЦ (выбран признак НД - НЕТ ДОСТУПА)",
+     "when": {
+      "no_access": true
+     }
+    }
+   ]
+  },
+  "MCHS_MGPSS": {
+   "name_ru": "МГПСС",
+   "sub_columns": [
+    {
+     "column": "T",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MVD": {
+   "name_ru": "Классификатор МВД",
+   "sub_columns": [
+    {
+     "column": "U",
+     "label_ru": "признак Правонарушение или Пострадавшие не выбран",
+     "when": {
+      "offence": false,
+      "casualties": false
+     }
+    },
+    {
+     "column": "V",
+     "label_ru": "выбран признак Правонарушение",
+     "when": {
+      "offence": true
+     }
+    },
+    {
+     "column": "W",
+     "label_ru": "выбран признак Пострадавшие",
+     "when": {
+      "casualties": true
+     }
+    }
+   ]
+  },
+  "SMP": {
+   "name_ru": "Классификатор СМП",
+   "sub_columns": [
+    {
+     "column": "X",
+     "label_ru": "Классификатор СМП (признак Пострадавшие не выбран)",
+     "when": {
+      "casualties": false
+     }
+    },
+    {
+     "column": "Y",
+     "label_ru": "Классификатор СМП (выбран признак Пострадавшие)",
+     "when": {
+      "casualties": true
+     }
+    },
+    {
+     "column": "Z",
+     "label_ru": "Классификатор СМП (выбран признак Пострадавшие не на месте)",
+     "when": {
+      "casualties_not_on_site": true
+     }
+    }
+   ]
+  },
+  "MOSGAZ": {
+   "name_ru": "Классификатор МОСГАЗ",
+   "sub_columns": [
+    {
+     "column": "AA",
+     "label_ru": "признак не выбран",
+     "when": {
+      "gasification": false
+     }
+    },
+    {
+     "column": "AB",
+     "label_ru": "газификация",
+     "when": {
+      "gasification": true
+     }
+    }
+   ]
+  },
+  "TSEMP": {
+   "name_ru": "ЦЭМП",
+   "sub_columns": [
+    {
+     "column": "AC",
+     "label_ru": "признаки не выбраны",
+     "when": {
+      "threat_to_people": false,
+      "casualties": false,
+      "medical_help": false,
+      "evacuation_required": false
+     }
+    },
+    {
+     "column": "AD",
+     "label_ru": "угроза людям",
+     "when": {
+      "threat_to_people": true
+     }
+    },
+    {
+     "column": "AE",
+     "label_ru": "пострадавшие/погибшие",
+     "when": {
+      "casualties": true
+     }
+    },
+    {
+     "column": "AF",
+     "label_ru": "мед. помощь",
+     "when": {
+      "medical_help": true
+     }
+    },
+    {
+     "column": "AG",
+     "label_ru": "треб. Эвакуация",
+     "when": {
+      "evacuation_required": true
+     }
+    }
+   ]
+  },
+  "FSB": {
+   "name_ru": "Классификатор ФСБ",
+   "sub_columns": [
+    {
+     "column": "AH",
+     "label_ru": "признак не выбран",
+     "when": {
+      "over_five_people": false
+     }
+    },
+    {
+     "column": "AI",
+     "label_ru": ">5 чел / ОД",
+     "when": {
+      "over_five_people": true
+     }
+    }
+   ]
+  },
+  "MOSOBLGAZ": {
+   "name_ru": "Классификатор Мособлгаз",
+   "sub_columns": [
+    {
+     "column": "AJ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "AVTODOROGI": {
+   "name_ru": "Автомобильные дороги",
+   "sub_columns": [
+    {
+     "column": "AK",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSGORTRANS": {
+   "name_ru": "Мосгортранс",
+   "sub_columns": [
+    {
+     "column": "AL",
+     "label_ru": "признак не выбран",
+     "when": {
+      "casualties": false,
+      "traffic_blocked": false
+     }
+    },
+    {
+     "column": "AM",
+     "label_ru": "постр / погибшие",
+     "when": {
+      "casualties": true
+     }
+    },
+    {
+     "column": "AN",
+     "label_ru": "перекрытие движение",
+     "when": {
+      "traffic_blocked": true
+     }
+    }
+   ]
+  },
+  "GOR_KHOZYAYSTVO": {
+   "name_ru": "Гор. Хозяйство",
+   "sub_columns": [
+    {
+     "column": "AO",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "GORMOST": {
+   "name_ru": "ГОРМОСТ",
+   "sub_columns": [
+    {
+     "column": "AP",
+     "label_ru": "признак не выбран",
+     "when": {
+      "tunnel": false,
+      "pedestrian": false,
+      "road": false
+     }
+    },
+    {
+     "column": "AQ",
+     "label_ru": "тоннель",
+     "when": {
+      "tunnel": true
+     }
+    },
+    {
+     "column": "AR",
+     "label_ru": "пеш",
+     "when": {
+      "pedestrian": true
+     }
+    },
+    {
+     "column": "AS",
+     "label_ru": "ав",
+     "when": {
+      "road": true
+     }
+    }
+   ]
+  },
+  "KANAL_IMENI_MOSKVY": {
+   "name_ru": "Канал имени Москвы",
+   "sub_columns": [
+    {
+     "column": "AT",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MGTS": {
+   "name_ru": "МГТС",
+   "sub_columns": [
+    {
+     "column": "AU",
+     "label_ru": "реагирование всегда",
+     "when": {}
+    },
+    {
+     "column": "AV",
+     "label_ru": "на объектах связи",
+     "when": {
+      "communication_object": true
+     }
+    }
+   ]
+  },
+  "METRO": {
+   "name_ru": "Метро",
+   "sub_columns": [
+    {
+     "column": "AW",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSVODOKANAL": {
+   "name_ru": "Мосводоканал",
+   "sub_columns": [
+    {
+     "column": "AX",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOEK": {
+   "name_ru": "МОЭК",
+   "sub_columns": [
+    {
+     "column": "AY",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOESK": {
+   "name_ru": "МОЭСК (ПАО \"Россети Московский регион\")",
+   "sub_columns": [
+    {
+     "column": "AZ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "OEK": {
+   "name_ru": "ОЭК",
+   "sub_columns": [
+    {
+     "column": "BA",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSLIFT": {
+   "name_ru": "Мослифт",
+   "sub_columns": [
+    {
+     "column": "BB",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "TSODD": {
+   "name_ru": "ЦОДД",
+   "sub_columns": [
+    {
+     "column": "BC",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_ZHKH": {
+   "name_ru": "Деп. ЖКХ",
+   "sub_columns": [
+    {
+     "column": "BD",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_RBIPK": {
+   "name_ru": "Департамент РБиПК (ГКУ МОСБЕЗ)",
+   "sub_columns": [
+    {
+     "column": "BE",
+     "label_ru": "Дежурная служба АРМ-112",
+     "when": {}
+    },
+    {
+     "column": "BF",
+     "label_ru": "МКП, Аналитика (Старый КРИМ)",
+     "when": {}
+    }
+   ]
+  },
+  "APPARAT_MERA": {
+   "name_ru": "Аппарат МЭРА",
+   "sub_columns": [
+    {
+     "column": "BG",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSKOLLEKTOR": {
+   "name_ru": "Москоллектор",
+   "sub_columns": [
+    {
+     "column": "BH",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "RZHD": {
+   "name_ru": "РЖД (МосковскаяЖД)",
+   "sub_columns": [
+    {
+     "column": "BI",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_EDUCATION": {
+   "name_ru": "Департамент образования",
+   "sub_columns": [
+    {
+     "column": "BJ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "TSENTRREGIONVODKHOZ": {
+   "name_ru": "Центррегионводхоз (Московско-Окское БВУ)",
+   "sub_columns": [
+    {
+     "column": "BK",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MILITARY_COMMANDANT": {
+   "name_ru": "Военная комендатура",
+   "sub_columns": [
+    {
+     "column": "BL",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "OATI": {
+   "name_ru": "ОАТИ",
+   "sub_columns": [
+    {
+     "column": "BM",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSVODOSTOK": {
+   "name_ru": "Мосводосток",
+   "sub_columns": [
+    {
+     "column": "BN",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_PPIOOS": {
+   "name_ru": "Департамент ППиООС",
+   "sub_columns": [
+    {
+     "column": "BO",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_TSZN": {
+   "name_ru": "ОД Департамент ТСЗН",
+   "sub_columns": [
+    {
+     "column": "BP",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "RSVO": {
+   "name_ru": "РСВО",
+   "sub_columns": [
+    {
+     "column": "BQ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "EVAZHD": {
+   "name_ru": "ЭВАЖД",
+   "sub_columns": [
+    {
+     "column": "BR",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MSPPN": {
+   "name_ru": "МСППН",
+   "sub_columns": [
+    {
+     "column": "BS",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DTU_RITUAL": {
+   "name_ru": "ДТУ_Р (Ритуал)",
+   "sub_columns": [
+    {
+     "column": "BT",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DTU": {
+   "name_ru": "ДТУ",
+   "sub_columns": [
+    {
+     "column": "BU",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "ROSGVARDIYA": {
+   "name_ru": "Росгвардия",
+   "sub_columns": [
+    {
+     "column": "BV",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "TERRITORIAL_OIV": {
+   "name_ru": "Территориальные ОИВ",
+   "sub_columns": [
+    {
+     "column": "BW",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "TERRITORIAL_OIV_TINAO": {
+   "name_ru": "Территориальные ОИВ ТиНАО",
+   "sub_columns": [
+    {
+     "column": "BX",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "AVTODOROGI_AO": {
+   "name_ru": "Автомобильные дороги АО г.Москвы",
+   "sub_columns": [
+    {
+     "column": "BY",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_CONSTRUCTION": {
+   "name_ru": "Департамент строительства города Москвы",
+   "sub_columns": [
+    {
+     "column": "BZ",
+     "label_ru": "признак не выбран",
+     "when": {
+      "construction_site": false
+     }
+    },
+    {
+     "column": "CA",
+     "label_ru": "стройка",
+     "when": {
+      "construction_site": true
+     }
+    }
+   ]
+  },
+  "COMMITTEE_VETERINARY": {
+   "name_ru": "Комитет ветеринарии",
+   "sub_columns": [
+    {
+     "column": "CB",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MOSZHILINSPEKTSIYA": {
+   "name_ru": "Мосжилинспекция",
+   "sub_columns": [
+    {
+     "column": "CC",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_CULTURE": {
+   "name_ru": "Департамент культуры",
+   "sub_columns": [
+    {
+     "column": "CD",
+     "label_ru": "объект из перечня",
+     "when": {
+      "listed_object": true
+     }
+    }
+   ]
+  },
+  "GKU_TSSA": {
+   "name_ru": "ГКУ ЦСА имени Е.П.Глинки",
+   "sub_columns": [
+    {
+     "column": "CE",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "GKU_NTU": {
+   "name_ru": "ГКУ НТУ",
+   "sub_columns": [
+    {
+     "column": "CF",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "FSO": {
+   "name_ru": "ФСО",
+   "sub_columns": [
+    {
+     "column": "CG",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "GUP_MSR": {
+   "name_ru": "ГУП МСР",
+   "sub_columns": [
+    {
+     "column": "CH",
+     "label_ru": "(КУБ)",
+     "when": {}
+    },
+    {
+     "column": "CI",
+     "label_ru": "пожары",
+     "when": {}
+    }
+   ]
+  },
+  "MOSTURIZM": {
+   "name_ru": "Комитет по туризму г.Москвы",
+   "sub_columns": [
+    {
+     "column": "CJ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DGP": {
+   "name_ru": "ДГП (Департамент градостроительной политики)",
+   "sub_columns": [
+    {
+     "column": "CK",
+     "label_ru": "интеграция",
+     "when": {}
+    },
+    {
+     "column": "CL",
+     "label_ru": "АРМ-112",
+     "when": {}
+    }
+   ]
+  },
+  "TSUKB_MO": {
+   "name_ru": "ЦУКБ Министерство обороны",
+   "sub_columns": [
+    {
+     "column": "CM",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "TSUKB_BPLA_MO": {
+   "name_ru": "ЦУКБ.БПЛА Министерство обороны",
+   "sub_columns": [
+    {
+     "column": "CN",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "ORGANIZATOR_PEREVOZOK": {
+   "name_ru": "ГКУ Организатор перевозок",
+   "sub_columns": [
+    {
+     "column": "CO",
+     "label_ru": "признак не выбран",
+     "when": {
+      "traffic_blocked": false
+     }
+    },
+    {
+     "column": "CP",
+     "label_ru": "перекрытие движение",
+     "when": {
+      "traffic_blocked": true
+     }
+    }
+   ]
+  },
+  "MOSEKOMONITORING": {
+   "name_ru": "ГПБУ Мосэкомониторинг",
+   "sub_columns": [
+    {
+     "column": "CQ",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "MO_RKHBZ": {
+   "name_ru": "Министерство обороны РХБЗ",
+   "sub_columns": [
+    {
+     "column": "CR",
+     "label_ru": "События по полигонам",
+     "when": {}
+    },
+    {
+     "column": "CS",
+     "label_ru": "Москва",
+     "when": {}
+    }
+   ]
+  },
+  "SITIENERGO": {
+   "name_ru": "ООО Ситиэнерго",
+   "sub_columns": [
+    {
+     "column": "CT",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  },
+  "DEP_CIVIL_CONSTRUCTION": {
+   "name_ru": "Депортамент гражданского строительства",
+   "sub_columns": [
+    {
+     "column": "CU",
+     "label_ru": null,
+     "when": {}
+    }
+   ]
+  }
+ }
+}

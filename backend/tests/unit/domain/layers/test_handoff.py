@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from app.domain.enums import ServiceType
+from app.domain.enums import ServiceId
 from app.domain.layers.handoff import HandoffSnapshot
 from pydantic import ValidationError
 
@@ -20,7 +20,7 @@ def _snapshot() -> HandoffSnapshot:
         card_id=uuid.uuid4(),
         card_revision_id=uuid.uuid4(),
         card_values={"address.street": "Ленина"},
-        recipient_services=(ServiceType.FIRE_RESCUE,),
+        recipient_services=(ServiceId("FIRE_RESCUE"),),
         created_by_user_id=uuid.uuid4(),
         created_at_offset_ms=1_000,
         content_sha256="a" * 64,
@@ -30,7 +30,7 @@ def _snapshot() -> HandoffSnapshot:
 def test_handoff_snapshot_constructs() -> None:
     snapshot = _snapshot()
     assert snapshot.card_values == {"address.street": "Ленина"}
-    assert snapshot.recipient_services == (ServiceType.FIRE_RESCUE,)
+    assert snapshot.recipient_services == (ServiceId("FIRE_RESCUE"),)
 
 
 def test_handoff_snapshot_rejects_attribute_mutation() -> None:

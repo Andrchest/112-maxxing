@@ -58,6 +58,7 @@ from app.domain.enums import (
 from app.domain.events.catalog import validate_payload
 from app.domain.events.session_event import DomainEvent
 from app.domain.events.types import EventType
+from app.domain.routing.catalog import ReferencePackRecord
 from app.domain.session.guards import TERMINAL_STAGE_STATES
 from app.domain.session.machine import SESSION_STATE_MACHINE
 from app.domain.session.policy import SESSION_POLICIES, ParticipantAssignmentRule, SessionPolicy
@@ -767,6 +768,7 @@ def create_session(
     session_seed: str | None = None,
     time_scale: float = 1.0,
     variants: SessionVariants | None = None,
+    reference_pack: ReferencePackRecord | None = None,
 ) -> tuple[SimulationSession, list[DomainEvent]]:
     """Build a `CREATED` session with its one `Incident` and one `RoleStage` per entry of the
     **effective** role chain, and return it with the `SESSION_CREATED` event (§10.8, §10.10, D6,
@@ -778,7 +780,9 @@ def create_session(
     at DDS (`effective_role_chain`). `SESSION_CREATED.role_chain` records the effective chain and
     the additive `scenario_role_chain` the scenario's; `SESSION_CREATED.variants` records the
     switches. An empty effective chain (`GENERATED_CARD` on a chain without DDS) is
-    `VariantNotSupportedError`.
+    `VariantNotSupportedError`. `reference_pack` is the pack the session runs with (ids and sha256
+    of its files, HLD 70 §70.6.1); `SESSION_CREATED.reference_pack` records it — `null` only for a
+    caller that has no reference pack at hand (domain-level tests), never from `CreateSession`.
 
     Every id is passed in: the domain calls neither `uuid4` nor a clock. `session_seed` defaults to
     `scenario_version.deterministic_seed` (D7, SPEC §42 test 7).
@@ -882,6 +886,9 @@ def create_session(
         "created_by_user_id": str(created_by_user_id),
         "variants": variants_payload(variants),
         "scenario_role_chain": [role.value for role in scenario_version.role_chain],
+        "reference_pack": (
+            reference_pack.model_dump(mode="json") if reference_pack is not None else None
+        ),
     }
     validate_payload(EventType.SESSION_CREATED, payload)
     event = DomainEvent(

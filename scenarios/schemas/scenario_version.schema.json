@@ -1147,16 +1147,13 @@
           "additionalProperties": {
             "type": "integer"
           },
-          "propertyNames": {
-            "$ref": "#/$defs/ServiceType"
-          },
           "title": "Min Units By Service",
           "type": "object"
         },
         "optional_services": {
           "default": [],
           "items": {
-            "$ref": "#/$defs/ServiceType"
+            "type": "string"
           },
           "title": "Optional Services",
           "type": "array"
@@ -1182,7 +1179,7 @@
         },
         "required_services": {
           "items": {
-            "$ref": "#/$defs/ServiceType"
+            "type": "string"
           },
           "title": "Required Services",
           "type": "array"
@@ -1466,7 +1463,7 @@
         },
         "recipient_services": {
           "items": {
-            "$ref": "#/$defs/ServiceType"
+            "type": "string"
           },
           "title": "Recipient Services",
           "type": "array"
@@ -1656,7 +1653,8 @@
           "$ref": "#/$defs/ResourceType"
         },
         "service_type": {
-          "$ref": "#/$defs/ServiceType"
+          "title": "Service Type",
+          "type": "string"
         }
       },
       "required": [
@@ -1938,19 +1936,6 @@
       ],
       "title": "SeededRandomEvent",
       "type": "object"
-    },
-    "ServiceType": {
-      "description": "Russian System-112 receiving services.\n\n`UTILITY_EMERGENCY` is the only member the frame did not name; the demo needs a\nwrong-but-plausible fifth choice so that `SERVICE_SELECTION` scoring has something to\npenalise.",
-      "enum": [
-        "FIRE_RESCUE",
-        "POLICE",
-        "AMBULANCE",
-        "GAS_SERVICE",
-        "UTILITY_EMERGENCY",
-        "EDDS"
-      ],
-      "title": "ServiceType",
-      "type": "string"
     },
     "SessionVariants": {
       "additionalProperties": false,
@@ -2326,7 +2311,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One immutable scenario version: the SPEC §4 top-level keys, plus `variants` from schema 2\n(§10.15, §30.1, D14).",
+  "description": "One immutable scenario version: the SPEC §4 top-level keys, plus `variants` and\n`reference_pack` from schema 2 (§10.15, §30.1, D14, D18).",
   "properties": {
     "available_resources": {
       "items": {
@@ -2365,6 +2350,18 @@
       "format": "uuid",
       "title": "Id",
       "type": "string"
+    },
+    "reference_pack": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Pack"
     },
     "role_chain": {
       "items": {

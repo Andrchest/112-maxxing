@@ -54,6 +54,8 @@ tags:
     description: Liveness and per-service readiness (SPEC §37, D8).
   - name: admin
     description: Retention purge and inference health administration (SPEC §41, D9).
+  - name: reference
+    description: (additive, I3 E2a) The reference pack — manifest, service catalog, classifier (70 §70.6, D18).
 
 paths:
 
@@ -1644,6 +1646,114 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # ----------------------------------------------------------- reference ----
+  # Additive, I3 E2a (70 §70.6.1-§70.6.3, D18): pure reads of the reference pack.
+  /api/v1/reference/manifest:
+    get:
+      tags: [reference]
+      operationId: getReferenceManifest
+      summary: The reference packs and the sha256 of every reference file.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: '`reference/manifest.json`, verbatim.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferenceManifest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/reference/services:
+    get:
+      tags: [reference]
+      operationId: listReferenceServices
+      summary: The service catalog («СЛУЖБЫ 112») of a pack.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: include_hidden
+          in: query
+          required: false
+          description: 'Include `display: false` and `deprecated` entries (labels for old logs).'
+          schema: { type: boolean, default: false }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Catalog entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ServiceCatalogEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/reference/classifier:
+    get:
+      tags: [reference]
+      operationId: searchClassifier
+      summary: Search the incident classifier (v_046_24) of a pack — the «Класс.:» picker.
+      description: |
+        `404 NOT_FOUND` for an unknown pack and for a pack that has no classifier (`legacy-r1`).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Matching rows (routing omitted; fetch one row for it).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClassifierRowSummary' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/reference/classifier/{code}:
+    get:
+      tags: [reference]
+      operationId: getClassifierRow
+      summary: One classifier row with its routing cells (instructor tooling, resolver fixtures).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/PackQueryParam'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The row.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClassifierRow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -1669,6 +1779,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PackQueryParam:
+      name: pack
+      in: query
+      required: false
+      description: (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest.
+      schema: { type: string, examples: [v046_24-r1, legacy-r1] }
 
   responses:
     Unauthorized:
@@ -1695,14 +1811,17 @@ components:
         stage state, plus `SCENARIO_VERSION_LOCKED`, `SCENARIO_VERSION_EXISTS`,
         `PREFAB_HANDOFF_REQUIRED`, `RECIPIENT_SERVICES_EMPTY`, `HANDOFF_ALREADY_CREATED`,
         `RESOURCE_UNAVAILABLE`, `SESSION_NOT_ACTIVE`, `REPORT_NOT_READY`; (additive, I3 E1)
-        `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`.
+        `VARIANT_NOT_SUPPORTED`, `VARIANT_NOT_AVAILABLE`; (additive, I3 E2a)
+        `REFERENCE_PACK_UNKNOWN` — the scenario version names a reference pack the manifest
+        does not have.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     UnprocessableEntity:
       description: |
         `VALIDATION_ERROR`, `CARD_FIELD_UNKNOWN`, `CARD_VALUE_TYPE_MISMATCH` or
-        `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable.
+        `SCENARIO_INVALID` — the request body is well-formed JSON but not acceptable; (additive,
+        I3 E2a) `SERVICE_UNKNOWN` — a service id outside the session's service catalog.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1748,6 +1867,8 @@ components:
         - RANGE_NOT_SATISFIABLE
         - VARIANT_NOT_SUPPORTED        # additive, I3 E1
         - VARIANT_NOT_AVAILABLE        # additive, I3 E1
+        - REFERENCE_PACK_UNKNOWN       # additive, I3 E2a
+        - SERVICE_UNKNOWN              # additive, I3 E2a
 
     Problem:
       type: object
@@ -1816,8 +1937,14 @@ components:
         - $ref: '#/components/schemas/Operator112StageState'
         - $ref: '#/components/schemas/DDSStageState'
     ServiceType:
+      description: |
+        (changed, I3 E2a) `ServiceId` — a service catalog id (70 §70.6.3, D18), no longer a closed
+        enum. The six legacy ids (`FIRE_RESCUE`, `POLICE`, `AMBULANCE`, `GAS_SERVICE`,
+        `UTILITY_EMERGENCY`, `EDDS`) stay valid verbatim; the name `ServiceType` is kept so every
+        existing `$ref` survives.
       type: string
-      enum: [FIRE_RESCUE, POLICE, AMBULANCE, GAS_SERVICE, UTILITY_EMERGENCY, EDDS]
+      minLength: 1
+      pattern: '^[A-Z][A-Z0-9_]*$'
     ResourceType:
       type: string
       enum:
@@ -2709,7 +2836,9 @@ components:
           items: { $ref: '#/components/schemas/ServiceType' }
         available_services:
           type: array
-          description: Every `ServiceType` the UI offers, including plausibly wrong ones.
+          description: |
+            Every service the UI offers, including plausibly wrong ones. Until E2b's catalog
+            picker (I3), the six legacy catalog ids.
           items: { $ref: '#/components/schemas/ServiceType' }
         card: { $ref: '#/components/schemas/OperatorCardView' }
 
@@ -3700,3 +3829,103 @@ components:
         reason:
           type: string
           enum: [RETENTION_WINDOW, MANUAL_REQUEST, ADMIN_DELETE]
+
+    # ----------------------------------------------------------- reference ----
+    # Additive, I3 E2a (70 §70.6.1-§70.6.3, D18).
+    ReferencePackRecord:
+      description: What `SESSION_CREATED.reference_pack` records (ids and sha256 of the files used).
+      type: object
+      additionalProperties: false
+      required: [pack_id, card_schema, card_schema_sha256, classifier, classifier_sha256, services, services_sha256]
+      properties:
+        pack_id: { type: string }
+        card_schema: { type: string }
+        card_schema_sha256: { type: string }
+        classifier: { type: [string, 'null'] }
+        classifier_sha256: { type: [string, 'null'] }
+        services: { type: string }
+        services_sha256: { type: string }
+    ReferenceManifest:
+      type: object
+      additionalProperties: false
+      required: [manifest_version, packs, files, sources]
+      properties:
+        manifest_version: { type: integer, const: 1 }
+        packs:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [card_schema, services, classifier]
+            properties:
+              card_schema: { type: string }
+              services: { type: string }
+              classifier: { type: [string, 'null'] }
+        files:
+          type: object
+          additionalProperties: { type: string, pattern: '^[0-9a-f]{64}$' }
+        sources:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [path, sha256, tool]
+            properties:
+              path: { type: string }
+              sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+              tool: { type: string }
+    ServiceCatalogEntry:
+      type: object
+      additionalProperties: false
+      required: [id, name_ru, full_name_ru, kind, code, okrug, district, classifier_org_id, status_policy, display, deprecated]
+      properties:
+        id: { $ref: '#/components/schemas/ServiceType' }
+        name_ru: { type: string }
+        full_name_ru: { type: string }
+        kind: { type: string, enum: [CITY, DISTRICT, PREFECTURE, DEPARTMENT] }
+        code: { type: [string, 'null'], examples: ['101', '103'] }
+        okrug: { type: [string, 'null'] }
+        district: { type: [string, 'null'] }
+        classifier_org_id: { type: [string, 'null'] }
+        status_policy: { type: string, enum: [DEFAULT, NO_REFUSAL] }
+        display: { type: boolean }
+        deprecated: { type: boolean }
+        phone: { type: [string, 'null'] }
+    ClassifierRowSummary:
+      type: object
+      additionalProperties: false
+      required: [code, group_no, group_ru, features, final_type_ru, main_service]
+      properties:
+        code: { type: string }
+        group_no: { type: integer }
+        group_ru: { type: string }
+        features:
+          type: array
+          maxItems: 3
+          items: { type: string }
+        final_type_ru: { type: string }
+        main_service: { type: [string, 'null'] }
+    ClassifierRow:
+      allOf:
+        - $ref: '#/components/schemas/ClassifierRowSummary'
+        - type: object
+          required: [extra_features, ekp35_ru, routing]
+          properties:
+            extra_features:
+              type: array
+              items: { type: string }
+            ekp35_ru: { type: [string, 'null'] }
+            routing:
+              description: Per organisation column, the sub-column cells; a cell counts as a notification iff non-empty and not «нет реагирования» (assumption A-1).
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [when, value]
+                  properties:
+                    when:
+                      type: object
+                      additionalProperties: { type: boolean }
+                    value: { type: [string, 'null'] }

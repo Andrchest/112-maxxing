@@ -3,12 +3,12 @@
 
 Two public entry points:
 
-* `validate_scenario_version(version, *, role_modules=ROLE_MODULES)` — the rules of §30.8 (R01-R31,
-  plus I3's R32-R36 and R40, HLD 70 §70.2.3)
+* `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
+  the rules of §30.8 (R01-R31, plus I3's R32-R38 and R40, HLD 70 §70.2.3)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
-* `validate_scenario_document(document, *, role_modules=ROLE_MODULES)` — the same thirty rules
+* `validate_scenario_document(document, *, role_modules=ROLE_MODULES, reference=…)` — the same rules
   against a raw mapping (a `yaml.safe_load` result). Several §30.8 rules are structural and are
   therefore already enforced by the Pydantic models of `sections.py`, `world/events.py` and
   `world/conditions.py`, so a document violating them never becomes a `ScenarioVersion` at all:
@@ -44,9 +44,12 @@ from app.domain.facts.gate import unsupported_available_after_leaves
 from app.domain.layers.operator_card import CARD_FIELDS, CardFieldSpec
 from app.domain.roles import ROLE_MODULES
 from app.domain.roles.module import RoleModule
+from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
 from app.domain.scenario.sections import CallerFactSpec, WorldFactSpec
 from app.domain.scenario.version import SUPPORTED_SCHEMA_VERSIONS, ScenarioVersion
 from app.domain.scoring.evaluators.registry import parse_rule_config
+from app.domain.scoring.evaluators.resource_selection import ResourceSelectionConfig
+from app.domain.scoring.evaluators.service_selection import ServiceSelectionConfig
 from app.domain.session.variants import (
     SWITCH_ENUMS,
     SWITCHES,
@@ -186,14 +189,16 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
             f"(supported: {supported})"
         )
     # R01 (extended, HLD 70 §70.2.3): a key schema 2 introduced is refused in a schema-1
-    # document. `variants` is the one such key a model carries today; `timers`, `reference_pack`
-    # and `expected_response.responders` are not model fields yet, so `extra="forbid"` refuses
-    # them in every document until their epics (E4, E2, E5b) add them.
-    if version.schema_version < 2 and version.variants is not None:
-        out.append(
-            f"R01: variants is a schema_version 2 key; schema_version {version.schema_version} "
-            f"does not allow it"
-        )
+    # document. `variants` (E1) and `reference_pack` (E2a) are the model fields today; `timers`
+    # and `expected_response.responders` are not, so `extra="forbid"` refuses them in every
+    # document until their epics (E4, E5b) add them.
+    if version.schema_version < 2:
+        for key in ("variants", "reference_pack"):
+            if getattr(version, key) is not None:
+                out.append(
+                    f"R01: {key} is a schema_version 2 key; schema_version "
+                    f"{version.schema_version} does not allow it"
+                )
 
 
 def _check_fact_sections(version: ScenarioVersion, out: list[str]) -> None:
@@ -687,6 +692,71 @@ def _check_applies_to_variants(version: ScenarioVersion, out: list[str]) -> None
                     )
 
 
+def _check_reference_pack(
+    version: ScenarioVersion, reference: ReferenceCatalog, out: list[str]
+) -> None:
+    """Rule R38 (HLD 70 §70.2.3, I3 E2a): `reference_pack` names a pack of the manifest.
+
+    The card-path half of R38 — every rule-14 path exists in *that pack's* card schema — stays
+    rule 14 until E3a adds a second card schema: the only pack today, `legacy-r1`, has card schema
+    `v1`, which is `CARD_FIELDS`, exactly what R14 checks against.
+    """
+    if version.reference_pack is not None and reference.pack(version.reference_pack) is None:
+        known = ", ".join(reference.pack_ids)
+        out.append(
+            f"R38: reference_pack '{version.reference_pack}' is not a pack of "
+            f"reference/manifest.json (packs: {known})"
+        )
+
+
+def _check_service_ids(
+    version: ScenarioVersion, reference: ReferenceCatalog, out: list[str]
+) -> None:
+    """Rule R37 (HLD 70 §70.2.3, D18, I3 E2a): every service id the document names exists in its
+    pack's service catalog — `expected_response.*`, `available_resources[*].service_type`,
+    `prefab_handoff.recipient_services` and the `SERVICE_SELECTION` / `RESOURCE_SELECTION` scoring
+    configs. It replaces the closed `ServiceType` enum's parse-time check, so every place that enum
+    guarded is covered. An unknown pack is R38's to report; R37 then has no catalog to check."""
+    catalog = reference.services(version.reference_pack_id)
+    if catalog is None:
+        return
+    for path, service_id in _service_id_references(version):
+        if service_id not in catalog:
+            out.append(
+                f"R37: {path} names service '{service_id}', which is not in service catalog "
+                f"'{catalog.catalog_id}' of reference pack '{version.reference_pack_id}'"
+            )
+
+
+def _service_id_references(version: ScenarioVersion) -> Iterator[tuple[str, str]]:
+    expected = version.expected_response
+    for index, service in enumerate(expected.required_services):
+        yield f"expected_response.required_services[{index}]", service
+    for index, service in enumerate(expected.optional_services):
+        yield f"expected_response.optional_services[{index}]", service
+    for service in expected.min_units_by_service:
+        yield f"expected_response.min_units_by_service['{service}']", service
+    if expected.prefab_handoff is not None:
+        for index, service in enumerate(expected.prefab_handoff.recipient_services):
+            yield f"expected_response.prefab_handoff.recipient_services[{index}]", service
+    for resource in version.available_resources:
+        yield f"available_resources['{resource.resource_id}'].service_type", resource.service_type
+    for rule in version.scoring_rules:
+        try:
+            config = parse_rule_config(rule)
+        except ValidationError:
+            continue  # rule 20's to report
+        where = f"scoring_rules['{rule.rule_id}'].config"
+        if isinstance(config, ServiceSelectionConfig):
+            for index, service in enumerate(config.required_services):
+                yield f"{where}.required_services[{index}]", service
+            for index, service in enumerate(config.forbidden_services):
+                yield f"{where}.forbidden_services[{index}]", service
+        elif isinstance(config, ResourceSelectionConfig):
+            for service in config.min_units_by_service:
+                yield f"{where}.min_units_by_service['{service}']", service
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -697,25 +767,46 @@ def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-_Check = Callable[[ScenarioVersion, Mapping[RoleType, RoleModule], list[str]], None]
+_Check = Callable[
+    [ScenarioVersion, Mapping[RoleType, RoleModule], ReferenceCatalog, list[str]], None
+]
 
 _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
-    ((1,), lambda version, _modules, out: _check_schema_version(version, out)),
-    ((2, 3, 4), lambda version, _modules, out: _check_fact_sections(version, out)),
-    ((5, 6, 7, 8, 9, 10), lambda version, _modules, out: _check_knowledge_states(version, out)),
-    ((11, 12, 13), lambda version, _modules, out: _check_fact_references(version, out)),
-    ((14,), lambda version, _modules, out: _check_card_field_paths(version, out)),
-    ((15, 16, 17), lambda version, _modules, out: _check_resources(version, out)),
-    ((18,), _check_role_chain),
-    ((19, 20), lambda version, _modules, out: _check_scoring_rules(version, out)),
-    ((21, 22, 23, 24, 25), lambda version, _modules, out: _check_world_events(version, out)),
-    ((26,), lambda version, _modules, out: _check_conditions_parse(version, out)),
-    ((27,), lambda version, _modules, out: _check_emotion_rules(version, out)),
-    ((28, 29), lambda version, _modules, out: _check_expected_response(version, out)),
-    ((31,), lambda version, _modules, out: _check_available_after_condition_kinds(version, out)),
-    ((30,), lambda version, _modules, out: _check_seed(version, out)),
-    ((32, 33, 34, 35, 36), lambda version, _modules, out: _check_variants(version, out)),
-    ((40,), lambda version, _modules, out: _check_applies_to_variants(version, out)),
+    ((1,), lambda version, _modules, _reference, out: _check_schema_version(version, out)),
+    ((2, 3, 4), lambda version, _modules, _reference, out: _check_fact_sections(version, out)),
+    (
+        (5, 6, 7, 8, 9, 10),
+        lambda version, _modules, _reference, out: _check_knowledge_states(version, out),
+    ),
+    ((11, 12, 13), lambda version, _modules, _reference, out: _check_fact_references(version, out)),
+    ((14,), lambda version, _modules, _reference, out: _check_card_field_paths(version, out)),
+    ((15, 16, 17), lambda version, _modules, _reference, out: _check_resources(version, out)),
+    ((18,), lambda version, modules, _reference, out: _check_role_chain(version, modules, out)),
+    ((19, 20), lambda version, _modules, _reference, out: _check_scoring_rules(version, out)),
+    (
+        (21, 22, 23, 24, 25),
+        lambda version, _modules, _reference, out: _check_world_events(version, out),
+    ),
+    ((26,), lambda version, _modules, _reference, out: _check_conditions_parse(version, out)),
+    ((27,), lambda version, _modules, _reference, out: _check_emotion_rules(version, out)),
+    ((28, 29), lambda version, _modules, _reference, out: _check_expected_response(version, out)),
+    (
+        (31,),
+        lambda version, _modules, _reference, out: _check_available_after_condition_kinds(
+            version, out
+        ),
+    ),
+    ((30,), lambda version, _modules, _reference, out: _check_seed(version, out)),
+    (
+        (32, 33, 34, 35, 36),
+        lambda version, _modules, _reference, out: _check_variants(version, out),
+    ),
+    ((37,), lambda version, _modules, reference, out: _check_service_ids(version, reference, out)),
+    (
+        (38,),
+        lambda version, _modules, reference, out: _check_reference_pack(version, reference, out),
+    ),
+    ((40,), lambda version, _modules, _reference, out: _check_applies_to_variants(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
 it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_NUMBERS` — hence
@@ -724,18 +815,25 @@ it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_N
 VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
-"""Every §30.8 rule number a validation run executes (R01-R36 and R40 after I3 E1)."""
+"""Every §30.8 rule number a validation run executes (R01-R38 and R40 after I3 E2a)."""
 
 
 def scenario_version_violations(
     version: ScenarioVersion,
     *,
     role_modules: Mapping[RoleType, RoleModule] = ROLE_MODULES,
+    reference: ReferenceCatalog = LEGACY_REFERENCE,
 ) -> list[str]:
-    """Every §30.8 violation in `version`, sorted by rule number then message."""
+    """Every §30.8 violation in `version`, sorted by rule number then message.
+
+    `reference` is the reference pack rules R37/R38 check against (HLD 70 §70.2.3), passed the way
+    `role_modules` is so the function stays pure; the default is `LEGACY_REFERENCE` (the six
+    legacy services, pack `legacy-r1`), and production passes the catalog the composition root
+    loaded from `reference/`.
+    """
     out: list[str] = []
     for _numbers, check in _CHECKS:
-        check(version, role_modules, out)
+        check(version, role_modules, reference, out)
     return sorted(out)
 
 
@@ -763,9 +861,12 @@ def validate_scenario_version(
     version: ScenarioVersion,
     *,
     role_modules: Mapping[RoleType, RoleModule] = ROLE_MODULES,
+    reference: ReferenceCatalog = LEGACY_REFERENCE,
 ) -> None:
     """Raise one `ScenarioValidationError` listing every §30.8 violation, or return `None`."""
-    violations = scenario_version_violations(version, role_modules=role_modules)
+    violations = scenario_version_violations(
+        version, role_modules=role_modules, reference=reference
+    )
     if violations:
         raise ScenarioValidationError(violations)
 
@@ -774,6 +875,7 @@ def validate_scenario_document(
     document: Mapping[str, Any],
     *,
     role_modules: Mapping[RoleType, RoleModule] = ROLE_MODULES,
+    reference: ReferenceCatalog = LEGACY_REFERENCE,
 ) -> list[str]:
     """Every §30.8 violation in a raw scenario mapping (parse errors included).
 
@@ -783,7 +885,7 @@ def validate_scenario_document(
         version = ScenarioVersion.model_validate(document)
     except ValidationError as exc:
         return sorted(_parse_error_violations(exc))
-    return scenario_version_violations(version, role_modules=role_modules)
+    return scenario_version_violations(version, role_modules=role_modules, reference=reference)
 
 
 def build_fact_definitions(version: ScenarioVersion) -> dict[str, FactDefinition]:

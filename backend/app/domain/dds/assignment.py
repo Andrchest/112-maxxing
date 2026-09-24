@@ -11,7 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.ids import AssignmentId, IncidentId, ResourceId, RoleStageId, SnapshotId
-from app.domain.enums import ClosureReason, DDSStageState, ServiceType
+from app.domain.enums import ClosureReason, DDSStageState, ServiceId
 
 
 class DDSAssignment(BaseModel):
@@ -23,7 +23,7 @@ class DDSAssignment(BaseModel):
     incident_id: IncidentId
     role_stage_id: RoleStageId
     snapshot_id: SnapshotId
-    service_type: ServiceType
+    service_type: ServiceId
     state: DDSStageState
     received_at_offset_ms: int
     acknowledged_at_offset_ms: int | None = None

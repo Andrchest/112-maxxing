@@ -19,7 +19,7 @@ from app.domain.common.ids import (
     SnapshotId,
 )
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ActorType, ClosureReason, DDSStageState, ServiceType
+from app.domain.enums import ActorType, ClosureReason, DDSStageState, ServiceId
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 
@@ -38,7 +38,7 @@ AMBULANCE = AssignmentId(det_uuid("leg-ambulance"))
 
 def _leg(
     assignment_id: AssignmentId,
-    service_type: ServiceType,
+    service_type: ServiceId,
     *,
     received_at_offset_ms: int,
     acknowledged_at_offset_ms: int | None = None,
@@ -76,20 +76,20 @@ def test_each_leg_becomes_its_own_decision() -> None:
     """No aggregation: two legs, two rows, in `received_at_offset_ms` order."""
     decisions = dds_decisions(
         [
-            _leg(AMBULANCE, ServiceType.AMBULANCE, received_at_offset_ms=200),
-            _leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=100),
+            _leg(AMBULANCE, ServiceId("AMBULANCE"), received_at_offset_ms=200),
+            _leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=100),
         ],
         [],
     )
     assert [decision.service_type for decision in decisions] == [
-        ServiceType.FIRE_RESCUE,
-        ServiceType.AMBULANCE,
+        ServiceId("FIRE_RESCUE"),
+        ServiceId("AMBULANCE"),
     ]
 
 
 def test_a_leg_with_no_activity_renders_with_empty_lists() -> None:
     """A leg with no activity is a finding, not an absence — it renders, with empty lists."""
-    (decision,) = dds_decisions([_leg(FIRE, ServiceType.POLICE, received_at_offset_ms=0)], [])
+    (decision,) = dds_decisions([_leg(FIRE, ServiceId("POLICE"), received_at_offset_ms=0)], [])
     assert decision.dispatch_events == ()
     assert decision.status_updates == ()
     assert decision.acknowledged_at_offset_ms is None
@@ -103,8 +103,8 @@ def test_dispatches_are_grouped_by_leg_and_keep_their_units_together() -> None:
     unit_a, unit_b = det_uuid("unit-a"), det_uuid("unit-b")
     decisions = dds_decisions(
         [
-            _leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0),
-            _leg(AMBULANCE, ServiceType.AMBULANCE, received_at_offset_ms=1),
+            _leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0),
+            _leg(AMBULANCE, ServiceId("AMBULANCE"), received_at_offset_ms=1),
         ],
         [
             _event(
@@ -140,7 +140,7 @@ def test_dispatches_are_grouped_by_leg_and_keep_their_units_together() -> None:
 def test_status_updates_are_folded_out_of_the_event_log() -> None:
     """There is no `status_updates` table (§20.5 declares none); the log is the record (D5)."""
     (decision,) = dds_decisions(
-        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [_leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0)],
         [
             _event(
                 1,
@@ -164,7 +164,7 @@ def test_closure_comes_from_the_leg_itself() -> None:
         [
             _leg(
                 FIRE,
-                ServiceType.FIRE_RESCUE,
+                ServiceId("FIRE_RESCUE"),
                 received_at_offset_ms=0,
                 acknowledged_at_offset_ms=1500,
                 closed_at_offset_ms=60000,
@@ -183,7 +183,7 @@ def test_closure_comes_from_the_leg_itself() -> None:
 
 def test_a_dispatch_note_is_carried_onto_its_dispatch_event() -> None:
     (decision,) = dds_decisions(
-        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [_leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0)],
         [
             _event(
                 1,
@@ -203,7 +203,7 @@ def test_a_dispatch_note_is_carried_onto_its_dispatch_event() -> None:
 
 def test_a_dispatch_with_no_note_is_none_not_an_empty_string() -> None:
     (decision,) = dds_decisions(
-        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [_leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0)],
         [
             _event(
                 1,
@@ -225,7 +225,7 @@ def test_a_closure_comment_is_carried_onto_the_decision() -> None:
         [
             _leg(
                 FIRE,
-                ServiceType.FIRE_RESCUE,
+                ServiceId("FIRE_RESCUE"),
                 received_at_offset_ms=0,
                 closed_at_offset_ms=60000,
                 closure_reason=ClosureReason.RESOLVED,
@@ -252,7 +252,7 @@ def test_a_closure_with_no_comment_is_none() -> None:
         [
             _leg(
                 FIRE,
-                ServiceType.FIRE_RESCUE,
+                ServiceId("FIRE_RESCUE"),
                 received_at_offset_ms=0,
                 closed_at_offset_ms=60000,
                 closure_reason=ClosureReason.RESOLVED,
@@ -266,10 +266,10 @@ def test_a_closure_with_no_comment_is_none() -> None:
 def test_another_legs_note_and_comment_do_not_leak_onto_this_leg() -> None:
     decisions = dds_decisions(
         [
-            _leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0),
+            _leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0),
             _leg(
                 AMBULANCE,
-                ServiceType.AMBULANCE,
+                ServiceId("AMBULANCE"),
                 received_at_offset_ms=1,
                 closed_at_offset_ms=60000,
                 closure_reason=ClosureReason.RESOLVED,
@@ -306,7 +306,7 @@ def test_another_legs_note_and_comment_do_not_leak_onto_this_leg() -> None:
 def test_an_event_without_a_resolvable_assignment_is_ignored() -> None:
     """A payload that cannot name its leg is dropped rather than attributed to an arbitrary one."""
     (decision,) = dds_decisions(
-        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [_leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0)],
         [_event(1, EventType.RESOURCE_DISPATCHED, resource_ids=[], callsigns=[])],
     )
     assert decision.dispatch_events == ()
@@ -314,7 +314,7 @@ def test_an_event_without_a_resolvable_assignment_is_ignored() -> None:
 
 def test_an_unrelated_event_type_contributes_nothing() -> None:
     (decision,) = dds_decisions(
-        [_leg(FIRE, ServiceType.FIRE_RESCUE, received_at_offset_ms=0)],
+        [_leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0)],
         [_event(1, EventType.CARD_FIELD_CHANGED, field_path="incident.type")],
     )
     assert decision.dispatch_events == ()

@@ -14,7 +14,6 @@ import {
   closureReasonLabelRu,
 } from './dds-labels';
 import type {
-  ServiceType,
   DDSStageState,
   ResourceType,
   ResourceStatus,
@@ -24,7 +23,9 @@ import type {
   ClosureReason,
 } from '@/shared/api';
 
-const SERVICE_TYPES: readonly ServiceType[] = ['FIRE_RESCUE', 'POLICE', 'AMBULANCE', 'GAS_SERVICE', 'UTILITY_EMERGENCY', 'EDDS'];
+// Services are catalog ids now (I3 E2a, D18), not an enum: the six legacy ids must still resolve
+// to six distinct Russian names without the catalog loaded (`entities/service-catalog`).
+const LEGACY_SERVICE_IDS: readonly string[] = ['FIRE_RESCUE', 'POLICE', 'AMBULANCE', 'GAS_SERVICE', 'UTILITY_EMERGENCY', 'EDDS'];
 const DDS_STAGE_STATES: readonly DDSStageState[] = ['RECEIVED', 'ACKNOWLEDGED', 'RESOURCE_SELECTION', 'DISPATCHED', 'EN_ROUTE', 'ARRIVED', 'WORKING', 'RESOLVED', 'CLOSED'];
 const RESOURCE_TYPES: readonly ResourceType[] = ['FIRE_ENGINE', 'LADDER_TRUCK', 'RESCUE_UNIT', 'AMBULANCE_UNIT', 'RESUSCITATION_UNIT', 'POLICE_PATROL', 'GAS_EMERGENCY_UNIT', 'UTILITY_CREW', 'FIRE_CHIEF_CAR'];
 const RESOURCE_STATUSES: readonly ResourceStatus[] = ['AVAILABLE', 'SELECTED', 'DISPATCHED', 'EN_ROUTE', 'ON_SCENE', 'WORKING', 'RETURNING', 'OUT_OF_SERVICE', 'UNAVAILABLE'];
@@ -47,7 +48,7 @@ function assertExhaustive<T extends string>(members: readonly T[], labelFn: (val
 }
 
 describe('DDS console enum label tables', () => {
-  it('ServiceType', () => assertExhaustive(SERVICE_TYPES, serviceTypeLabelRu));
+  it('legacy service ids (catalog lookup)', () => assertExhaustive(LEGACY_SERVICE_IDS, serviceTypeLabelRu));
   it('DDSStageState', () => assertExhaustive(DDS_STAGE_STATES, ddsStageStateLabelRu));
   it('ResourceType', () => assertExhaustive(RESOURCE_TYPES, resourceTypeLabelRu));
   it('ResourceStatus', () => assertExhaustive(RESOURCE_STATUSES, resourceStatusLabelRu));

@@ -1,32 +1,23 @@
 // The services panel (SPEC §9/§10: `recipients.services`, "the services-getter" the handoff goes
 // to). Edited only through the dedicated select/deselect commands — never through `setCardField`
 // (D12 design decision #2) — and renders the server's returned selection after each command.
+// Services are catalog ids (I3 E2a, D18): the buttons are the six legacy ids the backend offers
+// (`available_services`) until E2b's catalog picker, each named by the service catalog.
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
-import { ru } from '@/shared/i18n/ru';
 import { useCardStore } from '@/entities/card';
+import { LEGACY_SERVICE_IDS, serviceLabelRu } from '@/entities/service-catalog';
 import { useStageStore, hasAvailableAction } from '@/entities/stage';
 import {
   deselectRecipientService,
   problemMessageRu,
   selectRecipientService,
   type ProblemCode,
-  type ServiceType,
+  type ServiceId,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-
-const SERVICE_TYPES: readonly ServiceType[] = ['FIRE_RESCUE', 'POLICE', 'AMBULANCE', 'GAS_SERVICE', 'UTILITY_EMERGENCY', 'EDDS'];
-
-const SERVICE_TYPE_LABEL_KEY: Record<ServiceType, keyof typeof ru> = {
-  FIRE_RESCUE: 'serviceTypeFireRescue',
-  POLICE: 'serviceTypePolice',
-  AMBULANCE: 'serviceTypeAmbulance',
-  GAS_SERVICE: 'serviceTypeGasService',
-  UTILITY_EMERGENCY: 'serviceTypeUtilityEmergency',
-  EDDS: 'serviceTypeEdds',
-};
 
 interface ServicesPanelProps {
   sessionId: string;
@@ -36,13 +27,13 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
   const card = useCardStore((state) => state.card);
   const availableActions = useStageStore((state) => state.availableActions);
   const canSelect = hasAvailableAction(availableActions, 'select_services');
-  const [pendingService, setPendingService] = useState<ServiceType | null>(null);
+  const [pendingService, setPendingService] = useState<ServiceId | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const selectedValue = card?.values['recipients.services'];
-  const selected = new Set(Array.isArray(selectedValue) ? (selectedValue as ServiceType[]) : []);
+  const selected = new Set(Array.isArray(selectedValue) ? (selectedValue as ServiceId[]) : []);
 
-  async function toggle(serviceType: ServiceType): Promise<void> {
+  async function toggle(serviceType: ServiceId): Promise<void> {
     setErrorMessage(null);
     setPendingService(serviceType);
     try {
@@ -64,7 +55,7 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
-          {SERVICE_TYPES.map((serviceType) => {
+          {LEGACY_SERVICE_IDS.map((serviceType) => {
             const isSelected = selected.has(serviceType);
             return (
               <Button
@@ -76,7 +67,7 @@ export function ServicesPanel({ sessionId }: ServicesPanelProps) {
                 aria-pressed={isSelected}
                 onClick={() => void toggle(serviceType)}
               >
-                {t(SERVICE_TYPE_LABEL_KEY[serviceType])}
+                {serviceLabelRu(serviceType)}
               </Button>
             );
           })}

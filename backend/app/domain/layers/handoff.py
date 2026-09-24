@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.ids import CardId, CardRevisionId, IncidentId, SnapshotId, UserId
 from app.domain.common.values import FactValue
-from app.domain.enums import ServiceType
+from app.domain.enums import ServiceId
 
 
 class HandoffSnapshot(BaseModel):
@@ -28,7 +28,7 @@ class HandoffSnapshot(BaseModel):
     card_id: CardId
     card_revision_id: CardRevisionId
     card_values: Mapping[str, FactValue]
-    recipient_services: tuple[ServiceType, ...]
+    recipient_services: tuple[ServiceId, ...]
     created_by_user_id: UserId
     created_at_offset_ms: int
     content_sha256: str

@@ -83,6 +83,7 @@ STATUS_BY_CODE: Mapping[str, int] = {
     # 409 — I3 additions to Conflict (`docs/hld/contracts/i3-openapi-delta.yaml` `ConflictI3`)
     "VARIANT_NOT_SUPPORTED": 409,
     "VARIANT_NOT_AVAILABLE": 409,
+    "REFERENCE_PACK_UNKNOWN": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,
@@ -92,6 +93,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "CARD_FIELD_UNKNOWN": 422,
     "CARD_VALUE_TYPE_MISMATCH": 422,
     "SCENARIO_INVALID": 422,
+    # 422 — I3 additions to UnprocessableEntity (`i3-openapi-delta.yaml` `UnprocessableEntityI3`)
+    "SERVICE_UNKNOWN": 422,
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,
