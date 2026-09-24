@@ -489,3 +489,22 @@ voice_agent    -> application, inference, infrastructure
 - Browser vs SIP is the endpoint per call (a live softphone registration wins, else the browser widget),
   recorded on `DDS_CALL_STARTED.endpoint` — not a variant value and not a `SIM_CALL_TRANSPORT` value.
 - The default stays `OFF` (C7) until the owner answers Q2 (80 §80.10).
+
+## D26. The classifier's feature sub-columns are read "base plus flags" (R2) (I3 E8 — `70-i3-alignment.md` §70.6.4)
+
+- Date: 2026-09-24. Supersedes the A-1 reading of §70.6.4 as built by E2b′ (R1: an org is notified iff
+  a *holding* sub-column's cell counts, so a selected flag — ПП, «Нет доступа», … — made the org's base
+  «признак не выбран» column stop holding).
+- Decision: an org's base sub-column (`when` empty or every key `false`) always applies; each flag
+  sub-column whose condition holds **adds**; the org is notified iff any of those cells counts (A-1).
+  `RECIPIENTS_RESOLVED.reasons` gains the additive keys `sub_column_role` (`BASE | FLAG`) and `reading`
+  (`BASE_PLUS_FLAGS`); both are `null` on reasons written before E8.
+- Evidence and criterion (manager ruling): run both readings over the fixtures and adopt the one that
+  reproduces every screenshot fixture exactly; if both do, adopt R2. Both did — «КАРТОЧКА 112.docx»
+  images 19, 22 (the G5 case), 24 exactly and 39 (seven of eight, «Деп. ЖКХ» has no cell), and all
+  seven DDS-memo worked examples — so R2 won the tie. It is the plausible reading: under R1 15060202
+  «Массовая драка» with five injured notified no police, 17010700 «Изнасилование» with injuries no
+  police, 2021700 «ДТП с заблокированными» neither police nor Служба 101. On the 108 E8 ticket prefabs
+  R2 changes 23 auto lists and only ever adds services.
+- Consequence: rescoring an existing log is unchanged (scoring reads the stored `RECIPIENTS_RESOLVED`,
+  never re-resolves); a new session whose card sets a flag may notify more services than before.

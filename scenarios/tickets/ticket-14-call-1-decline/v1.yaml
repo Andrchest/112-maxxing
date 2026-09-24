@@ -1,0 +1,198 @@
+# Ticket 14, call 1 of «Билеты- задачи по C 112 . АГС_ГСИ (1).pdf» as a schema-2
+# scenario (I3 E8; HLD 30 §30.13). Extraction: requirements/normalized/SRC-005 (authoritative),
+# cross-checked against requirements/evidence/tickets-ocr.md and the page image.
+# «Ситуация»: Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС, Потапов Иван Сергеевич (работник АЗС), 916-123-98-78
+# «Адрес»: МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш. (при уточнении адреса – 25 км по столбам в сторону Москвы, вл.2)
+# VARIANT of ticket-14-call-1: competence decline — TSODD answers «Не принята» by script.
+# Why natural: The grass fire is on the federal M-2 highway in Moscow Oblast, outside Moscow's road network that ЦОДД manages.
+# The script plays only when no ДДС participant is bound to that service (HLD 70 §70.4.5);
+# a trainee who plays the leg is rewarded for declining it (memo_competence_decline).
+# Routing (pack v046_24-r1, resolver): classifier row 1010201;
+# automatic ['FIRE_RESCUE', 'TSODD']; manual (recipient_services) ['FIRE_RESCUE', 'TSODD'].
+# Fields the ticket does not state are left out (no invented values).
+id: d138b965-23ff-5118-9440-fc5fb2d001d4
+schema_version: 2
+scenario_id: da50a6ca-9c59-5fc7-841c-86806ec23a05
+version: 1
+title: "Билет 14, вызов 1: Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС (отказ службы по компетенции)"
+description: "Ticket 14 call 1: TSODD declines by competence."
+difficulty: 3
+deterministic_seed: "ticket-14-call-1-decline-v1"
+role_chain: [OPERATOR_112, DDS]
+reference_pack: v046_24-r1
+
+# Candidate for later generation (owner, I3: «с пометкой, о возможном переводе в генерацию»).
+provenance: { source: TICKET, ticket: 14, call: 1, generation_candidate: true }
+
+# GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
+# Memo statuses only: the ticket names no resources, so the picker is not offered.
+variants:
+  supported:
+    card_source: [GENERATED_CARD, CALLER_VOICE]
+    dds_mode: [MEMO_STATUSES]
+    dds_card_check: ["OFF", "ON"]
+    dds_brigade_call: ["OFF"]
+  default:
+    card_source: GENERATED_CARD
+    dds_mode: MEMO_STATUSES
+    dds_card_check: "OFF"
+    dds_brigade_call: "OFF"
+
+world_truth:
+  scene_summary_ru: "Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС, Потапов Иван Сергеевич (работник АЗС), 916-123-98-78 Адрес: МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш. (при уточнении адреса – 25 км по столбам в сторону Москвы, вл.2)"
+  facts:
+    incident.description: { world_value: "Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС.", value_type: STRING, label_ru: "Что случилось" }
+    address.text: { world_value: "МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш.", value_type: STRING, label_ru: "Адрес со слов заявителя" }
+    address.clarification: { world_value: "25 км по столбам в сторону Москвы, вл.2", value_type: STRING, label_ru: "Уточнение адреса" }
+    caller.full_name: { world_value: "Потапов Иван Сергеевич", value_type: STRING, label_ru: "ФИО заявителя" }
+    caller.phone: { world_value: "+79161239878", value_type: STRING, label_ru: "Телефон заявителя" }
+
+caller_knowledge:
+  facts:
+    incident.description: { caller_value: "Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС.", knowledge: KNOWN }
+    address.text: { caller_value: "МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш.", knowledge: KNOWN }
+    address.clarification: { caller_value: "25 км по столбам в сторону Москвы, вл.2", knowledge: KNOWN }
+    caller.full_name: { caller_value: "Потапов Иван Сергеевич", knowledge: KNOWN }
+    caller.phone: { caller_value: "+79161239878", knowledge: KNOWN }
+
+disclosure_rules:
+  facts:
+    incident.description: { policy: SPONTANEOUS, categories: ["incident"], aliases_ru: ["что случилось", "что произошло"] }
+    address.text: { policy: ON_ASK, categories: ["address"], aliases_ru: ["адрес", "где это", "куда ехать"] }
+    address.clarification: { policy: ON_ASK, categories: ["address"], aliases_ru: ["уточните адрес", "какой город", "точный адрес", "номер дома"] }
+    caller.full_name: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["как вас зовут", "фамилия", "представьтесь"] }
+    caller.phone: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["телефон", "номер телефона"] }
+
+caller_profile:
+  identity_ru: "Работник АЗС: Потапов Иван Сергеевич"
+  relationship: OFFICIAL
+  language: "ru-RU"
+  voice_id: "ru_male_adult_01"
+  age_group: ADULT
+  baseline_emotion: FRIGHTENED
+  cooperativeness: 0.8
+  verbosity: 0.5
+  confusion: 0.2
+  interruption_tendency: 0.2
+  speaking_rate: 1.0
+  baseline_stress_level: 0.6
+  persona_whitelist_ru: ["Потапов", "Иван", "Сергеевич"]
+  emotion_rules: []
+
+available_resources: []
+
+expected_response:
+  required_services: [FIRE_RESCUE]
+  optional_services: [TSODD]
+  resolution_condition: { sim_time: { op: GTE, ms: 600000 } }
+  prefab_handoff:
+    recipient_services: [FIRE_RESCUE, TSODD]
+    card_values:   # v2 paths (reference/card-schema/v2.yaml)
+      caller.phone_aon: "+79161239878"
+      caller.phone: "+79161239878"
+      caller.full_name: "Потапов Иван Сергеевич"
+      address.line: "МО, трасса М-2 , АЗС Роснефть, не доезжая до Расторгуевского ш. (при уточнении адреса – 25 км по столбам в сторону Москвы, вл.2)"
+      address.region: "Московская область"
+      address.object: "АЗС Роснефть"
+      address.street: "трасса М-2, 25 км по столбам в сторону Москвы"
+      address.house: "2"
+      address.descriptive: "не доезжая до Расторгуевского ш."
+      description.text: "Горит сухая трава рядом с АЗС Роснефть, огонь подходит к территории АЗС."
+      incident.types: ["1"]
+      incident.classifier_code: "1010201"
+      q.fire.where: ["на улице"]
+      q.fire.sign_street: ["открытое пламя / дым"]
+      q.fire.street_object: ["трава, пух"]
+  # The declining service's script; every other scripted leg walks DEFAULT (HLD 70 §70.4.5).
+  responders:
+    TSODD:
+      - { after_ms: 0, status: RECEIVED }
+      - { after_ms: 20000, status: NOT_ACCEPTED, comment_ru: "Не принята: трасса М-2 в Московской области не относится к улично-дорожной сети Москвы — вне компетенции ЦОДД." }
+
+world_events: []
+
+scoring_rules:
+  - rule_id: dds_acknowledged
+    name_ru: "Карточка принята ДДС"
+    description_ru: "ДДС принял сгенерированную карточку ровно один раз."
+    category: WORKFLOW
+    max_points: 4
+    critical: true
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { event_type: DDS_ACKNOWLEDGED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: -4, penalty_per_excess: 0 }
+
+  - rule_id: dds_acknowledged_in_time
+    name_ru: "Карточка принята в течение 30 секунд"
+    description_ru: "От поступления карточки в ДДС до её принятия — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_ACKNOWLEDGED,
+              to_payload_match: null, max_offset_ms: 30000, points: 4,
+              penalty_if_late: -2, scale: STEP, linear_zero_ms: null }
+
+  - rule_id: memo_main_service_decision_in_time
+    name_ru: "Решение по службе «Пожарно-спасательная служба» в течение 30 секунд"
+    description_ru: "От поступления карточки до статуса «Принята» или «Не принята» по службе «Пожарно-спасательная служба» — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_SERVICE_STATUS_SET,
+              to_payload_match: { service_type: FIRE_RESCUE, new_status: [ACCEPTED, NOT_ACCEPTED] },
+              max_offset_ms: 30000, points: 4, penalty_if_late: -2, scale: STEP,
+              linear_zero_ms: null }
+
+  - rule_id: memo_main_service_completed
+    name_ru: "Работы службы «Пожарно-спасательная служба» завершены"
+    description_ru: "По службе «Пожарно-спасательная служба» выставлен статус «Работы завершены»."
+    category: WORKFLOW
+    max_points: 4
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_SERVICE_STATUS_SET,
+              payload_match: { service_type: FIRE_RESCUE, new_status: COMPLETED }, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: 0, penalty_per_excess: 0 }
+
+  - rule_id: memo_card_closed
+    name_ru: "Происшествие закрыто"
+    description_ru: "ДДС закрыл происшествие, когда по всем службам выставлен итоговый статус."
+    category: WORKFLOW
+    max_points: 2
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_INCIDENT_CLOSED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 2, penalty_if_missing: 0, penalty_per_excess: 0 }
+
+  - rule_id: memo_competence_decline
+    name_ru: "Служба «ЦОДД» не принята с причиной"
+    description_ru: "Когда службу «ЦОДД» играет стажёр, он выставляет «Не принята» с комментарием: случай вне её компетенции."
+    category: SERVICE_ROUTING
+    max_points: 4
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_SERVICE_STATUS_SET,
+              payload_match: { service_type: TSODD, new_status: NOT_ACCEPTED, source: TRAINEE },
+              min_count: 1, max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: 0, penalty_per_excess: 0 }

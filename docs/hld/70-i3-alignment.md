@@ -598,8 +598,10 @@ stored snapshot, payload and fixture that says `FIRE_RESCUE` stays valid by valu
 `resolve_notification_list(classifier, catalog, card_values) -> Resolution` (`domain/routing/resolve.py`,
 pure): (1) `incident.types` + questionnaire answers (or `incident.classifier_code` when set) → candidate
 rows; one candidate ⇒ `classifier_code`; several ⇒ `candidate_codes` and the operator picks in «Класс.:»;
-(2) per org column group, the sub-column whose feature condition holds; the org is notified iff the
-cell counts (A-1); (3) «Территориальные ОИВ» non-empty ⇒ the district ДДС of `address.district` and its
+(2) per org column group, ~~the sub-column whose feature condition holds; the org is notified iff the
+cell counts (A-1)~~ *(superseded 2026-09-24 by D26)* the base sub-column (the «признак не выбран»
+column, `when` empty or all-false) always applies and every flag sub-column whose condition holds
+adds to it; the org is notified iff any of those cells counts (A-1) — reading R2; (3) «Территориальные ОИВ» non-empty ⇒ the district ДДС of `address.district` and its
 prefecture ДДС (msg690); department columns are the subordination hook. `display: false` orgs go to
 `informed_services` (REQ-5280), not to legs.
 
@@ -619,8 +621,19 @@ table lookup — the LLM never sees the card (SPEC §2 holds, C11).
 = rows of the selected group(s) whose every признак is covered by the card's codes; one ⇒
 `classifier_code`; several ⇒ `candidate_codes` and `auto_services` = the union of their routing until
 `incident.classifier_code` is set, then that row alone. Step 2: a flag is true iff its key is among
-the card's codes; an org is notified iff any holding sub-column's cell counts (A-1);
-`reasons.sub_column` = the first such. Step 3: `TERRITORIAL_OIV` (BW; BX when `address.okrug` =
+the card's codes; ~~an org is notified iff any holding sub-column's cell counts (A-1);
+`reasons.sub_column` = the first such~~ *(reading R1, superseded 2026-09-24 by D26: under it a
+selected flag made the base column stop holding, so e.g. 15060202 «Массовая драка» with ПП notified
+no police)*. **Reading R2 — base plus flags (I3 E8, D26):** an org's base sub-column (`when` empty
+or every key `false`) always applies, each flag sub-column whose `when` holds adds, and the org is
+notified iff any of those cells counts (A-1); `reasons.sub_column` = the first such column,
+`reasons.sub_column_role` = `BASE | FLAG` (which kind put the service on the list) and
+`reasons.reading` = `BASE_PLUS_FLAGS` (both additive; `null` on a reason written before E8, whose
+reading was R1). Evidence: R1 and R2 both reproduce every fixture exactly — «КАРТОЧКА 112.docx»
+images 19/22/24 (22 is the G5 case), image 39 (seven of eight) and the seven DDS-memo worked
+examples — so the fixtures cannot decide; R2 won the tie per the manager ruling (a mass fight with
+injured must still notify the police). On the 108 E8 ticket prefabs R2 only adds services (23
+differ), never removes one. Step 3: `TERRITORIAL_OIV` (BW; BX when `address.okrug` =
 ТиНАО) counts ⇒ the `DISTRICT` entry with `district = address.district` and the `PREFECTURE` entry
 with `okrug = address.okrug`; absent values ⇒ that leg is absent. Orgs with no catalog entry are
 impossible after E3a′; `display: false` entries go to `informed_services`.

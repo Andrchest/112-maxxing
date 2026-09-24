@@ -1529,6 +1529,14 @@
       "title": "PrefabHandoff",
       "type": "object"
     },
+    "ProvenanceSource": {
+      "description": "Where a scenario's content comes from (`provenance.source`).",
+      "enum": [
+        "TICKET"
+      ],
+      "title": "ProvenanceSource",
+      "type": "string"
+    },
     "ResourceAvailability": {
       "description": "Scenario-defined availability window (§10.7).",
       "properties": {
@@ -1765,6 +1773,35 @@
       ],
       "title": "RoleType",
       "type": "string"
+    },
+    "ScenarioProvenance": {
+      "additionalProperties": false,
+      "description": "`provenance` (schema 2 only, I3 E8; HLD 30 §30.13): the source a scenario was authored from\nand whether it is a candidate for later generation.\n\nStrict types: a well-formed key is rule R43's first half (a malformed one is reported as R43,\nnot as a bare parse error); `ticket` / `call` in range is its second half, checked by the\nvalidator so it is reported with every other violation of the file.",
+      "properties": {
+        "call": {
+          "title": "Call",
+          "type": "integer"
+        },
+        "generation_candidate": {
+          "title": "Generation Candidate",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/ProvenanceSource"
+        },
+        "ticket": {
+          "title": "Ticket",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "ticket",
+        "call",
+        "generation_candidate"
+      ],
+      "title": "ScenarioProvenance",
+      "type": "object"
     },
     "ScenarioVariants": {
       "additionalProperties": false,
@@ -2463,6 +2500,17 @@
       "format": "uuid",
       "title": "Id",
       "type": "string"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScenarioProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "reference_pack": {
       "anyOf": [

@@ -166,9 +166,17 @@ async def test_import_is_idempotent(
 
 
 async def test_changed_content_under_the_same_version_is_409(
-    client: httpx.AsyncClient, tokens: dict[str, str], demo_yaml: str
+    isolated_scenario_catalog: None,
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    demo_yaml: str,
 ) -> None:
-    """Changed content at an existing version number is `409 SCENARIO_VERSION_EXISTS` (D4)."""
+    """Changed content at an existing version number is `409 SCENARIO_VERSION_EXISTS` (D4).
+
+    `isolated_scenario_catalog`: the shared demo version is locked as soon as any earlier test on
+    the same worker creates a session on it, and a changed import under a *locked* version is
+    `SCENARIO_VERSION_LOCKED` instead — so this test imports its own, never-locked copy (I3 E8).
+    """
     await client.post(
         "/api/v1/scenarios/import",
         headers=auth(tokens["instructor1"]),

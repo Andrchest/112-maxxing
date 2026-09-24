@@ -24,6 +24,8 @@ from app.domain.routing.resolve import (
     PackRouting,
     ReasonSource,
     RowMatch,
+    SubColumnReading,
+    SubColumnRole,
     notification_list,
     pack_routing,
     resolve_notification_list,
@@ -96,12 +98,49 @@ def test_image39_reproduces_seven_of_eight_and_deps_zhkh_is_a_finding() -> None:
 
 def test_any_holding_sub_column_notifies_image22() -> None:
     """G5: with УЛ and НД both set, ОДС ПСЦ's column Q (УЛ) is empty and S (НД) is filled — the
-    bar still shows Служба 101, so any holding sub-column counts; the reason names S."""
+    bar still shows Служба 101. Under reading R2 (I3 E8) Служба 101's own base column N (the
+    «нет доступа: нет» column) keeps applying, so it is the first counting column; ОДС ПСЦ's S
+    would add the same service."""
     reason = next(r for r in resolve(IMAGE_22).reasons if r.service_id == "FIRE_RESCUE")
-    assert reason.column in {"MCHS_SLUZHBA_101", "MCHS_ODS_PSC"}
-    assert (reason.column, reason.sub_column) == ("MCHS_ODS_PSC", "S")
+    assert (reason.column, reason.sub_column) == ("MCHS_SLUZHBA_101", "N")
+    assert reason.sub_column_role is SubColumnRole.BASE
+    assert reason.reading is SubColumnReading.BASE_PLUS_FLAGS
     assert reason.source is ReasonSource.CLASSIFIER
     assert reason.row_match is RowMatch.COVERED
+
+
+def test_a_holding_flag_column_adds_a_service_image24() -> None:
+    """«Есть правонарушение» adds the police through МВД's `offence: true` column."""
+    reason = next(r for r in resolve(IMAGE_24).reasons if r.service_id == "POLICE")
+    assert reason.column == "MVD"
+    assert reason.sub_column_role is SubColumnRole.FLAG
+
+
+@pytest.mark.parametrize(
+    ("code", "flags", "expected"),
+    [
+        # A mass fight with five injured (ticket 1 №2): ПП adds 103 and keeps the police.
+        ("15060202", {"flags.casualties": True}, {"POLICE", "AMBULANCE"}),
+        # A rape with injuries (ticket 20 №3): the police stay notified under ПП.
+        ("17010700", {"flags.casualties": True}, {"POLICE", "AMBULANCE"}),
+        # A driver blocked in a car (ticket 3 №3): ПП + НД keep Служба 101 and the police.
+        (
+            "2021700",
+            {"flags.casualties": True, "flags.blocked": True},
+            {"FIRE_RESCUE", "POLICE", "AMBULANCE"},
+        ),
+    ],
+)
+def test_a_selected_flag_never_removes_the_base_column(
+    code: str, flags: Mapping[str, Any], expected: set[str]
+) -> None:
+    """Reading R2 (I3 E8): the base column always applies and flag columns add; under the
+    earlier reading R1 a selected flag made the base column stop holding, and each of these
+    rows lost the police (and 2021700 Служба 101 too)."""
+    without = set(resolve({"incident.classifier_code": code}).auto_services)
+    with_flags = set(resolve({"incident.classifier_code": code, **flags}).auto_services)
+    assert without <= with_flags
+    assert expected <= with_flags
 
 
 def test_display_false_orgs_are_informed_never_auto() -> None:

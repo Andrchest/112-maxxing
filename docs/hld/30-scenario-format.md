@@ -32,12 +32,14 @@ Identifiers, keys and enum members are English. Only `*_ru` fields, `label_ru`, 
 | `variants` *(additive, I3 E1)* | mapping | no — `schema_version: 2` only | §30.10 |
 | `reference_pack` *(additive, I3 E2a)* | string | no — `schema_version: 2` only | §30.11 |
 | `timers` *(additive, I3 E4a)* | mapping | no — `schema_version: 2` only | §30.12 |
+| `provenance` *(additive, I3 E8)* | mapping | no — `schema_version: 2` only | §30.13 |
 
 Additional top-level keys are rejected (`extra="forbid"`). `schema_version` is `1` or `2`
 (`SUPPORTED_SCHEMA_VERSIONS`). A `schema_version: 1` document has exactly the SPEC §4 keys above;
 `schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2) and
 `reference_pack` (I3 E2a, HLD 70 §70.5.4, §70.6.1) and `timers` (I3 E4a, HLD 70 §70.3.4), and the
-nested `expected_response.responders` (I3 E5b, HLD 70 §70.4.5 — §30.5 below).
+nested `expected_response.responders` (I3 E5b, HLD 70 §70.4.5 — §30.5 below). *(Additive, I3 E8.)*
+Schema 2 also accepts the optional metadata key `provenance` (§30.13).
 
 ## 30.2 The three fact sections
 
@@ -547,6 +549,15 @@ when the document is parsed and is reported as rule 39 too; the cross-field half
 39. `timers.*` are positive integers; `timers.accept_within_ms < timers.not_completed_after_ms`
     (after the defaults of §30.12 are applied to absent keys).
 
+Rule 43 is added by I3 E8 (§30.13); numbers 41 and 42 are reserved by the telephony HLD
+(`80-telephony.md`, E6b/E6c). Rule 1 is extended once more: `provenance` in a schema-1 document is
+refused.
+
+43. `provenance`, when present, is well formed — exactly the keys `source` (`TICKET`), `ticket`
+    (integer), `call` (integer) and `generation_candidate` (boolean), strictly typed; a malformed key
+    is reported as rule 43, not rule 1 — and names a call that exists: for `source: TICKET`,
+    `1 ≤ ticket ≤ 32` and `1 ≤ call ≤ 3` (the organizer's 32 tickets × 3 calls, REQ-5203/REQ-5206).
+
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 
 `scenarios/examples/apartment-fire/v1.yaml`, abridged: the fact table, resources and events are
@@ -860,3 +871,28 @@ at `received + accept_within_ms` turns the card `NOT_NOTIFIED`, a leg not comple
 `DDS_CARD_STATUS_CHANGED` stamped with the deadline offset. The *scoring* of a late action stays an
 ordinary `DEADLINE` rule in `scoring_rules`. Rule 39 checks the key; a dump omits an absent key, so a
 schema-1 document's `content_sha256` is unchanged (P5).
+
+## 30.13 `provenance` — schema 2 (additive, I3 E8)
+
+```yaml
+provenance:                     # optional; metadata only — no machine reads it at runtime
+  source: TICKET                # ProvenanceSource: the organizer's tickets «Билеты- задачи по C 112»
+  ticket: 17                    # 1–32 (one «БИЛЕТ» per page)
+  call: 2                       # 1–3 (the ticket table's row «№»)
+  generation_candidate: true    # a candidate for later generation (owner, I3)
+```
+
+Where a scenario's content was authored from, and whether it is a candidate for later generation
+(the owner's «переводим в сценарии с пометкой, о возможном переводе в генерацию»). The model is
+`ScenarioProvenance` (`backend/app/domain/scenario/sections.py`, frozen, `extra="forbid"`, strict
+types); rule 43 checks it (§30.8) and rule 1 refuses it in a schema-1 document. A dump omits an
+absent key, so the `content_sha256` of every document without it is unchanged (P5). Nothing in a
+session reads the key: it is catalog metadata for authors and for a future generator.
+
+The 96 ticket scenarios live in `scenarios/tickets/ticket-NN-call-M/v1.yaml` (one per call,
+`generation_candidate: true`), with special variants beside their base
+(`…-decline`: a competence decline scripted through `expected_response.responders`;
+`…-card-error`: a deliberately imperfect prefab card with `dds_card_check: ON` by default); the
+index is `scenarios/tickets/README.md`. They load through the same `<slug>/v<N>.yaml` convention
+(`python -m app.tools.validate_scenarios scenarios/tickets`, `app.tools.import_scenarios
+scenarios/tickets`).

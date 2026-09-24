@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import (
@@ -216,3 +217,33 @@ class ResourceSpec(BaseModel):
     capabilities: tuple[ResourceCapability, ...]
     availability: ResourceAvailability
     eta: EtaProfile
+
+
+TICKET_COUNT = 32
+"""The organizer's tickets: «Билеты- задачи по C 112», 32 pages, one «БИЛЕТ» each (REQ-5203)."""
+CALLS_PER_TICKET = 3
+"""Each ticket's table has exactly three numbered calls (REQ-5203, REQ-5206: 96 calls in all)."""
+
+
+class ProvenanceSource(str, Enum):
+    """Where a scenario's content comes from (`provenance.source`)."""
+
+    TICKET = "TICKET"
+    """One call of the organizer's tickets (SRC-005, REQ-5202–REQ-5242)."""
+
+
+class ScenarioProvenance(BaseModel):
+    """`provenance` (schema 2 only, I3 E8; HLD 30 §30.13): the source a scenario was authored from
+    and whether it is a candidate for later generation.
+
+    Strict types: a well-formed key is rule R43's first half (a malformed one is reported as R43,
+    not as a bare parse error); `ticket` / `call` in range is its second half, checked by the
+    validator so it is reported with every other violation of the file.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: ProvenanceSource
+    ticket: int = Field(strict=True)
+    call: int = Field(strict=True)
+    generation_candidate: bool = Field(strict=True)

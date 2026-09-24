@@ -4,7 +4,7 @@
 Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
-  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3)
+  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, and R43, HLD 30 §30.13)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -47,7 +47,13 @@ from app.domain.layers.card_schema import CardOptionUnknownError, CardSchema, ch
 from app.domain.roles import ROLE_MODULES
 from app.domain.roles.module import RoleModule
 from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
-from app.domain.scenario.sections import CallerFactSpec, WorldFactSpec
+from app.domain.scenario.sections import (
+    CALLS_PER_TICKET,
+    TICKET_COUNT,
+    CallerFactSpec,
+    ProvenanceSource,
+    WorldFactSpec,
+)
 from app.domain.scenario.version import SUPPORTED_SCHEMA_VERSIONS, ScenarioVersion
 from app.domain.scoring.evaluators.registry import parse_rule_config
 from app.domain.scoring.evaluators.resource_selection import ResourceSelectionConfig
@@ -190,10 +196,10 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
             f"(supported: {supported})"
         )
     # R01 (extended, HLD 70 §70.2.3): a key schema 2 introduced is refused in a schema-1
-    # document — `variants` (E1), `reference_pack` (E2a), `timers` (E4a) and
+    # document — `variants` (E1), `reference_pack` (E2a), `timers` (E4a), `provenance` (E8) and
     # `expected_response.responders` (E5b).
     if version.schema_version < 2:
-        for key in ("variants", "reference_pack", "timers"):
+        for key in ("variants", "reference_pack", "timers", "provenance"):
             if getattr(version, key) is not None:
                 out.append(
                     f"R01: {key} is a schema_version 2 key; schema_version "
@@ -826,6 +832,25 @@ def _check_timers(version: ScenarioVersion, out: list[str]) -> None:
         )
 
 
+def _check_provenance(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R43 (I3 E8, HLD 30 §30.13): `provenance.ticket` / `provenance.call` name a call that
+    exists — tickets 1-32, calls 1-3 (REQ-5203, REQ-5206). A malformed key (wrong type, unknown
+    field, unknown `source`) never parses and is reported as R43 too (`_rule_for_parse_error`)."""
+    provenance = version.provenance
+    if provenance is None or provenance.source is not ProvenanceSource.TICKET:
+        return
+    if not 1 <= provenance.ticket <= TICKET_COUNT:
+        out.append(
+            f"R43: provenance.ticket {provenance.ticket} is outside 1-{TICKET_COUNT} "
+            f"(source {provenance.source.value})"
+        )
+    if not 1 <= provenance.call <= CALLS_PER_TICKET:
+        out.append(
+            f"R43: provenance.call {provenance.call} is outside 1-{CALLS_PER_TICKET} "
+            f"(source {provenance.source.value})"
+        )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -881,6 +906,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
     ),
     ((39,), lambda version, _modules, _reference, out: _check_timers(version, out)),
     ((40,), lambda version, _modules, _reference, out: _check_applies_to_variants(version, out)),
+    ((43,), lambda version, _modules, _reference, out: _check_provenance(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
 it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_NUMBERS` — hence
@@ -889,7 +915,8 @@ it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_N
 VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
-"""Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a)."""
+"""Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, and R43 after I3 E8;
+R41/R42 are reserved by the telephony HLD, `80-telephony.md`)."""
 
 
 def scenario_version_violations(
@@ -1027,6 +1054,10 @@ def _rule_for_parse_error(loc: tuple[int | str, ...], message: str) -> str:
         return "R20"
     if "scoring_rules" in names and "applies_to_variants" in names:
         return "R40"
+    if loc and loc[0] == "provenance":
+        # R43 (I3 E8): a malformed `provenance` — a missing or unknown field, a wrong type, an
+        # unknown `source` — is the rule's "well-formed" half.
+        return "R43"
     if loc and loc[0] == "timers" and len(loc) > 1:
         # R39 (I3 E4a): a timer that is not a positive integer. An unknown key under `timers`
         # stays rule 1's.

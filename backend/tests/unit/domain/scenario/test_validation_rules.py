@@ -1,5 +1,6 @@
-"""One failing fixture per §30.8 rule R01-R31 and I3's R32-R38, R40
-(`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3).
+"""One failing fixture per §30.8 rule R01-R31 and I3's R32-R40, R43
+(`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3; R43 is I3 E8's,
+HLD 30 §30.13 — R41/R42 are reserved by the telephony HLD).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
 document (`scenarios/examples/apartment-fire/v1.yaml`). The test asserts that the resulting
@@ -290,6 +291,21 @@ def _r40_applies_to_variants_names_an_unknown_value(document: Document) -> None:
     _rule(document, "fact_victim_inside")["applies_to_variants"] = {"dds_mode": ["BOGUS_MODE"]}
 
 
+PROVENANCE: dict[str, Any] = {
+    "source": "TICKET",
+    "ticket": 17,
+    "call": 2,
+    "generation_candidate": True,
+}
+"""A well-formed `provenance` (I3 E8): ticket 17, call 2 of the organizer's tickets."""
+
+
+def _r43_provenance_names_a_ticket_that_does_not_exist(document: Document) -> None:
+    # Well-formed, but the tickets are 1-32 (REQ-5203): the range half of R43.
+    document["schema_version"] = 2
+    document["provenance"] = {**PROVENANCE, "ticket": 33}
+
+
 MUTATIONS: dict[int, Mutation] = {
     1: _r01_unknown_top_level_key,
     2: _r02_caller_fact_without_world_fact,
@@ -331,6 +347,7 @@ MUTATIONS: dict[int, Mutation] = {
     38: _r38_unknown_reference_pack,
     39: _r39_accept_deadline_not_before_not_completed,
     40: _r40_applies_to_variants_names_an_unknown_value,
+    43: _r43_provenance_names_a_ticket_that_does_not_exist,
 }
 
 # Rule numbers a fixture may additionally report because the second rule is logically implied by
@@ -373,8 +390,69 @@ def test_mutation_table_covers_exactly_the_rule_registry() -> None:
     assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
 
 
-def test_the_rule_registry_after_e4a() -> None:
-    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 41)]
+def test_the_rule_registry_after_e8() -> None:
+    """R01-R40, then R43 (I3 E8); R41/R42 belong to the telephony HLD and are not run yet."""
+    assert list(VALIDATION_RULE_NUMBERS) == [*range(1, 41), 43]
+
+
+def test_a_schema_2_document_with_provenance_loads_clean() -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    document["provenance"] = dict(PROVENANCE)
+    assert validate_scenario_document(document) == []
+    version = ScenarioVersion.model_validate(document)
+    assert version.provenance is not None
+    assert (version.provenance.ticket, version.provenance.call) == (17, 2)
+    assert version.provenance.generation_candidate is True
+    assert version.model_dump(mode="json")["provenance"] == PROVENANCE
+
+
+def test_a_document_without_provenance_dumps_without_the_key() -> None:
+    """P5: a document without the key keeps its canonical dump (its identity, D4)."""
+    version = ScenarioVersion.model_validate(demo_document())
+    assert version.provenance is None
+    assert "provenance" not in version.model_dump(mode="json")
+
+
+def test_r01_refuses_provenance_in_a_schema_1_document() -> None:
+    document = demo_document()
+    document["provenance"] = dict(PROVENANCE)
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {1}
+    assert any("provenance" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {**PROVENANCE, "call": 4},
+        {**PROVENANCE, "call": 0},
+        {**PROVENANCE, "ticket": 0},
+    ],
+)
+def test_r43_refuses_a_call_outside_the_tickets(provenance: dict[str, Any]) -> None:
+    document = demo_document()
+    document["schema_version"] = 2
+    document["provenance"] = provenance
+    assert _rule_numbers(validate_scenario_document(document)) == {43}
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {**PROVENANCE, "source": "VIDEO"},
+        {**PROVENANCE, "ticket": "17"},
+        {**PROVENANCE, "generation_candidate": "yes"},
+        {key: value for key, value in PROVENANCE.items() if key != "call"},
+        {**PROVENANCE, "row": 2},
+    ],
+)
+def test_r43_refuses_a_malformed_provenance(provenance: dict[str, Any]) -> None:
+    """The "well-formed" half: a wrong type, an unknown source, a missing or an unknown field."""
+    document = demo_document()
+    document["schema_version"] = 2
+    document["provenance"] = provenance
+    assert _rule_numbers(validate_scenario_document(document)) == {43}
 
 
 def test_a_schema_2_document_with_variants_loads_clean() -> None:

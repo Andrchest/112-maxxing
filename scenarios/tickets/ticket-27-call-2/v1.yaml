@@ -1,0 +1,169 @@
+# Ticket 27, call 2 of «Билеты- задачи по C 112 . АГС_ГСИ (1).pdf» as a schema-2
+# scenario (I3 E8; HLD 30 §30.13). Extraction: requirements/normalized/SRC-005 (authoritative),
+# cross-checked against requirements/evidence/tickets-ocr.md and the page image.
+# «Ситуация»: ДТП, Б/П, Б/Р, пежо + фольксваген, Иванова Елена Сергеевна, 916 897 5623
+# «Адрес»: Москва, СК, от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель
+# Routing (pack v046_24-r1, resolver): classifier row 2011000;
+# automatic ['POLICE', 'TSODD', 'GORMOST', 'MOSBEZ', 'DDS_PREFECTURE_TSAO']; manual (recipient_services) ['POLICE', 'TSODD', 'GORMOST', 'MOSBEZ'].
+# Fields the ticket does not state are left out (no invented values).
+id: 4d266b05-e3cc-536c-b8ea-d1d2bdf7144a
+schema_version: 2
+scenario_id: c8ef4bb6-7ee4-5948-8a56-86d65999dc67
+version: 1
+title: "Билет 27, вызов 2: ДТП, Б/П, Б/Р, пежо + фольксваген"
+description: "Ticket 27 call 2: a generated 112 card (v2) reaches the DDS."
+difficulty: 3
+deterministic_seed: "ticket-27-call-2-v1"
+role_chain: [OPERATOR_112, DDS]
+reference_pack: v046_24-r1
+
+# Candidate for later generation (owner, I3: «с пометкой, о возможном переводе в генерацию»).
+provenance: { source: TICKET, ticket: 27, call: 2, generation_candidate: true }
+
+# GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
+# Memo statuses only: the ticket names no resources, so the picker is not offered.
+variants:
+  supported:
+    card_source: [GENERATED_CARD, CALLER_VOICE]
+    dds_mode: [MEMO_STATUSES]
+    dds_card_check: ["OFF", "ON"]
+    dds_brigade_call: ["OFF"]
+  default:
+    card_source: GENERATED_CARD
+    dds_mode: MEMO_STATUSES
+    dds_card_check: "OFF"
+    dds_brigade_call: "OFF"
+
+world_truth:
+  scene_summary_ru: "ДТП, Б/П, Б/Р, пежо + фольксваген, Иванова Елена Сергеевна, 916 897 5623 Адрес: Москва, СК, от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель"
+  facts:
+    incident.description: { world_value: "ДТП, Б/П, Б/Р, пежо + фольксваген.", value_type: STRING, label_ru: "Что случилось" }
+    address.text: { world_value: "Москва, СК, от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель", value_type: STRING, label_ru: "Адрес со слов заявителя" }
+    caller.full_name: { world_value: "Иванова Елена Сергеевна", value_type: STRING, label_ru: "ФИО заявителя" }
+    caller.phone: { world_value: "+79168975623", value_type: STRING, label_ru: "Телефон заявителя" }
+
+caller_knowledge:
+  facts:
+    incident.description: { caller_value: "ДТП, Б/П, Б/Р, пежо + фольксваген.", knowledge: KNOWN }
+    address.text: { caller_value: "Москва, СК, от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель", knowledge: KNOWN }
+    caller.full_name: { caller_value: "Иванова Елена Сергеевна", knowledge: KNOWN }
+    caller.phone: { caller_value: "+79168975623", knowledge: KNOWN }
+
+disclosure_rules:
+  facts:
+    incident.description: { policy: SPONTANEOUS, categories: ["incident"], aliases_ru: ["что случилось", "что произошло"] }
+    address.text: { policy: ON_ASK, categories: ["address"], aliases_ru: ["адрес", "где это", "куда ехать"] }
+    caller.full_name: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["как вас зовут", "фамилия", "представьтесь"] }
+    caller.phone: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["телефон", "номер телефона"] }
+
+caller_profile:
+  identity_ru: "Участник ДТП: Иванова Елена Сергеевна"
+  relationship: VICTIM
+  language: "ru-RU"
+  voice_id: "ru_female_adult_01"
+  age_group: ADULT
+  baseline_emotion: CALM
+  cooperativeness: 0.8
+  verbosity: 0.5
+  confusion: 0.2
+  interruption_tendency: 0.2
+  speaking_rate: 1.0
+  baseline_stress_level: 0.2
+  persona_whitelist_ru: ["Иванова", "Елена", "Сергеевна"]
+  emotion_rules: []
+
+available_resources: []
+
+expected_response:
+  required_services: [POLICE]
+  optional_services: [TSODD, GORMOST, MOSBEZ, DDS_PREFECTURE_TSAO]
+  resolution_condition: { sim_time: { op: GTE, ms: 600000 } }
+  prefab_handoff:
+    recipient_services: [POLICE, TSODD, GORMOST, MOSBEZ]
+    card_values:   # v2 paths (reference/card-schema/v2.yaml)
+      caller.phone_aon: "+79168975623"
+      caller.phone: "+79168975623"
+      caller.full_name: "Иванова Елена Сергеевна"
+      address.line: "Москва, СК, от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель"
+      address.region: "Москва"
+      address.okrug: "ЦАО"
+      address.street: "Садовое кольцо"
+      address.descriptive: "от проспекта Мира, после ул. Малая Дмитровка, въезд в тоннель"
+      description.text: "ДТП, Б/П, Б/Р, пежо + фольксваген."
+      incident.types: ["2"]
+      incident.classifier_code: "2011000"
+  # Services no ДДС participant is bound to answer by the default schedule (HLD 70 §70.4.5, R36).
+  responders: DEFAULT
+
+world_events: []
+
+scoring_rules:
+  - rule_id: dds_acknowledged
+    name_ru: "Карточка принята ДДС"
+    description_ru: "ДДС принял сгенерированную карточку ровно один раз."
+    category: WORKFLOW
+    max_points: 4
+    critical: true
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { event_type: DDS_ACKNOWLEDGED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: -4, penalty_per_excess: 0 }
+
+  - rule_id: dds_acknowledged_in_time
+    name_ru: "Карточка принята в течение 30 секунд"
+    description_ru: "От поступления карточки в ДДС до её принятия — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_ACKNOWLEDGED,
+              to_payload_match: null, max_offset_ms: 30000, points: 4,
+              penalty_if_late: -2, scale: STEP, linear_zero_ms: null }
+
+  - rule_id: memo_main_service_decision_in_time
+    name_ru: "Решение по службе «Полиция» в течение 30 секунд"
+    description_ru: "От поступления карточки до статуса «Принята» или «Не принята» по службе «Полиция» — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_SERVICE_STATUS_SET,
+              to_payload_match: { service_type: POLICE, new_status: [ACCEPTED, NOT_ACCEPTED] },
+              max_offset_ms: 30000, points: 4, penalty_if_late: -2, scale: STEP,
+              linear_zero_ms: null }
+
+  - rule_id: memo_main_service_completed
+    name_ru: "Работы службы «Полиция» завершены"
+    description_ru: "По службе «Полиция» выставлен статус «Работы завершены»."
+    category: WORKFLOW
+    max_points: 4
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_SERVICE_STATUS_SET,
+              payload_match: { service_type: POLICE, new_status: COMPLETED }, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: 0, penalty_per_excess: 0 }
+
+  - rule_id: memo_card_closed
+    name_ru: "Происшествие закрыто"
+    description_ru: "ДДС закрыл происшествие, когда по всем службам выставлен итоговый статус."
+    category: WORKFLOW
+    max_points: 2
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_INCIDENT_CLOSED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 2, penalty_if_missing: 0, penalty_per_excess: 0 }

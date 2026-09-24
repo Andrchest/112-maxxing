@@ -19,9 +19,22 @@ The three steps (§70.6.4, the resolver defaults of B1 §4 and the manager's ste
    group. One candidate ⇒ `classifier_code`; several ⇒ `candidate_codes`, and `auto_services` is
    the union of their routing until the operator sets `incident.classifier_code`.
 2. **Orgs.** A flag (`no_access`, `threat_to_people`, …) is true iff its key is among the card's
-   codes; a flag no field carries is false. An org is notified iff **any** of its sub-columns
-   whose `when` holds has a cell that counts (A-1: non-empty and not «нет реагирования»);
-   `reasons.sub_column` names the first such column letter.
+   codes; a flag no field carries is false. Reading **R2 — base plus flags** (I3 E8, manager
+   ruling on the E8 hand-back): an org's **base** sub-column (the «признак не выбран» column —
+   its `when` empty or every key `false`) always applies, and each flag sub-column whose `when`
+   holds **adds** to it; the org is notified iff any of those cells counts (A-1: non-empty and not
+   «нет реагирования»). `reasons.sub_column` names the first such column letter,
+   `reasons.sub_column_role` says whether it is the base column or a flag column, and
+   `reasons.reading` records the reading (`BASE_PLUS_FLAGS`).
+
+   Why R2, not the earlier R1 (only *holding* sub-columns, so a selected flag made the base column
+   stop holding): both readings reproduce every organizer fixture exactly — «КАРТОЧКА 112.docx»
+   images 19/22/24 (image 22 is the G5 case) and 39 (seven of eight) and every DDS-memo worked
+   example — so the fixtures cannot tell them apart, and R2 is the plausible one: under R1 a
+   mass fight with injured (15060202 with ПП) notified no police, a rape with injuries (17010700)
+   no police, a blocked-driver road accident (2021700 with ПП + НД) neither police nor Служба 101,
+   because each org's `casualties: true` / `no_access: true` cell is empty. On the 108 ticket
+   prefabs R2 only ever adds services (23 files differ), never removes one.
 3. **Territorial ДДС.** «Территориальные ОИВ» (BW; BX when `address.okrug` = ТиНАО) counting ⇒
    the `DISTRICT` entry whose `district` is `address.district` and the `PREFECTURE` entry whose
    `okrug` is `address.okrug`; an absent value means that leg is absent.
@@ -72,6 +85,8 @@ __all__ = [
     "Resolution",
     "RoutingReason",
     "RowMatch",
+    "SubColumnReading",
+    "SubColumnRole",
     "last_resolution",
     "notification_list",
     "pack_routing",
@@ -139,9 +154,28 @@ class RowMatch(str, Enum):
     GROUP_FALLBACK = "GROUP_FALLBACK"
 
 
+class SubColumnReading(str, Enum):
+    """How an org's feature sub-columns combine (additive, I3 E8; see the module docstring)."""
+
+    BASE_PLUS_FLAGS = "BASE_PLUS_FLAGS"
+    """R2: the base («признак не выбран») column always applies; holding flag columns add."""
+
+
+class SubColumnRole(str, Enum):
+    """Which kind of sub-column put the service on the list (additive, I3 E8)."""
+
+    BASE = "BASE"
+    """The org's base column — `when` empty or every key `false`."""
+    FLAG = "FLAG"
+    """A flag column whose condition holds on the card (ПП, НД, угроза людям, …)."""
+
+
 class RoutingReason(BaseModel):
     """Why one service is on the list: the org column group, its first counting sub-column, and
-    the classifier row (and how that row was matched)."""
+    the classifier row (and how that row was matched).
+
+    `sub_column_role` and `reading` are additive (I3 E8): `None` only on a reason parsed back from
+    a log written before E8, whose reading was R1 (holding sub-columns only)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -151,6 +185,8 @@ class RoutingReason(BaseModel):
     sub_column: str | None
     row_code: str
     row_match: RowMatch
+    sub_column_role: SubColumnRole | None = None
+    reading: SubColumnReading | None = None
 
 
 class Resolution(BaseModel):
@@ -284,21 +320,29 @@ def _candidates(
     return found
 
 
+def _is_base(when: Mapping[str, bool]) -> bool:
+    """The «признак не выбран» column: no condition, or every condition `false`."""
+    return all(wanted is False for wanted in when.values())
+
+
 def _counting_sub_column(
     classifier: Classifier, org_id: str, cells: Sequence[Any], flags: frozenset[str]
-) -> tuple[bool, str | None]:
-    """(notified, first counting sub-column letter) — A-1 over every holding sub-column."""
+) -> tuple[bool, str | None, SubColumnRole | None]:
+    """(notified, first counting sub-column letter, its role) — reading R2 (module docstring):
+    the base column always applies, a flag column applies when its condition holds; A-1 decides
+    whether an applying cell counts."""
     org = next((org for org in classifier.orgs if org.org_id == org_id), None)
     for index, cell in enumerate(cells):
-        holds = all((key in flags) == wanted for key, wanted in cell.when.items())
-        if holds and cell.counts:
+        base = _is_base(cell.when)
+        applies = base or all((key in flags) == wanted for key, wanted in cell.when.items())
+        if applies and cell.counts:
             column = (
                 org.sub_columns[index].column
                 if org is not None and index < len(org.sub_columns)
                 else None
             )
-            return True, column
-    return False, None
+            return True, column, SubColumnRole.BASE if base else SubColumnRole.FLAG
+    return False, None, None
 
 
 def _org_entries(catalog: ServiceCatalog) -> dict[str, ServiceCatalogEntry]:
@@ -364,7 +408,9 @@ def resolve_notification_list(
         for org_id, cells in row.routing.items():
             if org_id in _TERRITORIAL_ORGS and org_id != territorial_org:
                 continue
-            notified, sub_column = _counting_sub_column(classifier, org_id, cells, codes.flags)
+            notified, sub_column, role = _counting_sub_column(
+                classifier, org_id, cells, codes.flags
+            )
             if not notified:
                 continue
             base = {
@@ -372,6 +418,8 @@ def resolve_notification_list(
                 "sub_column": sub_column,
                 "row_code": row.code,
                 "row_match": match,
+                "sub_column_role": role,
+                "reading": SubColumnReading.BASE_PLUS_FLAGS,
             }
             if org_id in _TERRITORIAL_ORGS:
                 for dds in catalog.services:

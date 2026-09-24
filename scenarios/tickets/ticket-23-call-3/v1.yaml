@@ -1,0 +1,171 @@
+# Ticket 23, call 3 of «Билеты- задачи по C 112 . АГС_ГСИ (1).pdf» as a schema-2
+# scenario (I3 E8; HLD 30 §30.13). Extraction: requirements/normalized/SRC-005 (authoritative),
+# cross-checked against requirements/evidence/tickets-ocr.md and the page image.
+# «Ситуация»: Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку, желтые шарф и варежки, синие брюки и черные ботинки, гулял с бабушкой во дворе, Степанова Антонина Марковна, бабушка, 916 896 3254
+# «Адрес»: Москва, улица Домодедовская, дом 34 корп.1 двор у 3 подъезда
+# Routing (pack v046_24-r1, resolver): classifier row 18070000;
+# automatic ['POLICE']; manual (recipient_services) ['POLICE'].
+# Fields the ticket does not state are left out (no invented values).
+id: 9ddfc4a6-173d-5454-a40f-11c48c564bb1
+schema_version: 2
+scenario_id: 1273fda0-1af8-578a-b0ef-5480c2bf75b4
+version: 1
+title: "Билет 23, вызов 3: Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку"
+description: "Ticket 23 call 3: a generated 112 card (v2) reaches the DDS."
+difficulty: 2
+deterministic_seed: "ticket-23-call-3-v1"
+role_chain: [OPERATOR_112, DDS]
+reference_pack: v046_24-r1
+
+# Candidate for later generation (owner, I3: «с пометкой, о возможном переводе в генерацию»).
+provenance: { source: TICKET, ticket: 23, call: 3, generation_candidate: true }
+
+# GENERATED_CARD by default; CALLER_VOICE (frozen) is kept playable from the facts below.
+# Memo statuses only: the ticket names no resources, so the picker is not offered.
+variants:
+  supported:
+    card_source: [GENERATED_CARD, CALLER_VOICE]
+    dds_mode: [MEMO_STATUSES]
+    dds_card_check: ["OFF", "ON"]
+    dds_brigade_call: ["OFF"]
+  default:
+    card_source: GENERATED_CARD
+    dds_mode: MEMO_STATUSES
+    dds_card_check: "OFF"
+    dds_brigade_call: "OFF"
+
+world_truth:
+  scene_summary_ru: "Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку, желтые шарф и варежки, синие брюки и черные ботинки, гулял с бабушкой во дворе, Степанова Антонина Марковна, бабушка, 916 896 3254 Адрес: Москва, улица Домодедовская, дом 34 корп.1 двор у 3 подъезда"
+  facts:
+    incident.description: { world_value: "Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку, желтые шарф и варежки, синие брюки и черные ботинки, гулял с бабушкой во дворе.", value_type: STRING, label_ru: "Что случилось" }
+    address.text: { world_value: "Москва, улица Домодедовская, дом 34 корп.1 двор у 3 подъезда", value_type: STRING, label_ru: "Адрес со слов заявителя" }
+    caller.full_name: { world_value: "Степанова Антонина Марковна", value_type: STRING, label_ru: "ФИО заявителя" }
+    caller.phone: { world_value: "+79168963254", value_type: STRING, label_ru: "Телефон заявителя" }
+
+caller_knowledge:
+  facts:
+    incident.description: { caller_value: "Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку, желтые шарф и варежки, синие брюки и черные ботинки, гулял с бабушкой во дворе.", knowledge: KNOWN }
+    address.text: { caller_value: "Москва, улица Домодедовская, дом 34 корп.1 двор у 3 подъезда", knowledge: KNOWN }
+    caller.full_name: { caller_value: "Степанова Антонина Марковна", knowledge: KNOWN }
+    caller.phone: { caller_value: "+79168963254", knowledge: KNOWN }
+
+disclosure_rules:
+  facts:
+    incident.description: { policy: SPONTANEOUS, categories: ["incident"], aliases_ru: ["что случилось", "что произошло"] }
+    address.text: { policy: ON_ASK, categories: ["address"], aliases_ru: ["адрес", "где это", "куда ехать"] }
+    caller.full_name: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["как вас зовут", "фамилия", "представьтесь"] }
+    caller.phone: { policy: ON_ASK, categories: ["caller"], aliases_ru: ["телефон", "номер телефона"] }
+
+caller_profile:
+  identity_ru: "Бабушка ребёнка: Степанова Антонина Марковна"
+  relationship: RELATIVE
+  language: "ru-RU"
+  voice_id: "ru_female_adult_01"
+  age_group: ELDERLY
+  baseline_emotion: PANICKED
+  cooperativeness: 0.8
+  verbosity: 0.5
+  confusion: 0.2
+  interruption_tendency: 0.2
+  speaking_rate: 1.0
+  baseline_stress_level: 0.8
+  persona_whitelist_ru: ["Степанова", "Антонина", "Марковна"]
+  emotion_rules: []
+
+available_resources: []
+
+expected_response:
+  required_services: [POLICE]
+  optional_services: []
+  resolution_condition: { sim_time: { op: GTE, ms: 600000 } }
+  prefab_handoff:
+    recipient_services: [POLICE]
+    card_values:   # v2 paths (reference/card-schema/v2.yaml)
+      caller.phone_aon: "+79168963254"
+      caller.phone: "+79168963254"
+      caller.full_name: "Степанова Антонина Марковна"
+      address.line: "Москва, улица Домодедовская, дом 34 корп.1 двор у 3 подъезда"
+      address.region: "Москва"
+      address.okrug: "ЮАО"
+      address.street: "улица Домодедовская"
+      address.house: "34"
+      address.building: "1"
+      address.descriptive: "двор у 3 подъезда"
+      description.text: "Потерялся ребенок 30 минут назад- 5 лет, Степанов Гриша, одет в синюю куртку, желтую шапку, желтые шарф и варежки, синие брюки и черные ботинки, гулял с бабушкой во дворе."
+      incident.types: ["18"]
+      incident.classifier_code: "18070000"
+  # Services no ДДС participant is bound to answer by the default schedule (HLD 70 §70.4.5, R36).
+  responders: DEFAULT
+
+world_events: []
+
+scoring_rules:
+  - rule_id: dds_acknowledged
+    name_ru: "Карточка принята ДДС"
+    description_ru: "ДДС принял сгенерированную карточку ровно один раз."
+    category: WORKFLOW
+    max_points: 4
+    critical: true
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { event_type: DDS_ACKNOWLEDGED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: -4, penalty_per_excess: 0 }
+
+  - rule_id: dds_acknowledged_in_time
+    name_ru: "Карточка принята в течение 30 секунд"
+    description_ru: "От поступления карточки в ДДС до её принятия — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_ACKNOWLEDGED,
+              to_payload_match: null, max_offset_ms: 30000, points: 4,
+              penalty_if_late: -2, scale: STEP, linear_zero_ms: null }
+
+  - rule_id: memo_main_service_decision_in_time
+    name_ru: "Решение по службе «Полиция» в течение 30 секунд"
+    description_ru: "От поступления карточки до статуса «Принята» или «Не принята» по службе «Полиция» — не более 30 секунд."
+    category: TIMELINESS
+    max_points: 4
+    critical: false
+    evaluator_type: DEADLINE
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_SERVICE_STATUS_SET,
+              to_payload_match: { service_type: POLICE, new_status: [ACCEPTED, NOT_ACCEPTED] },
+              max_offset_ms: 30000, points: 4, penalty_if_late: -2, scale: STEP,
+              linear_zero_ms: null }
+
+  - rule_id: memo_main_service_completed
+    name_ru: "Работы службы «Полиция» завершены"
+    description_ru: "По службе «Полиция» выставлен статус «Работы завершены»."
+    category: WORKFLOW
+    max_points: 4
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_SERVICE_STATUS_SET,
+              payload_match: { service_type: POLICE, new_status: COMPLETED }, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 4, penalty_if_missing: 0, penalty_per_excess: 0 }
+
+  - rule_id: memo_card_closed
+    name_ru: "Происшествие закрыто"
+    description_ru: "ДДС закрыл происшествие, когда по всем службам выставлен итоговый статус."
+    category: WORKFLOW
+    max_points: 2
+    critical: false
+    evaluator_type: WORKFLOW_ACTION
+    applies_to_roles: [DDS]
+    applies_to_variants: { dds_mode: [MEMO_STATUSES] }
+    min_evidence: 1
+    config: { event_type: DDS_INCIDENT_CLOSED, payload_match: null, min_count: 1,
+              max_count: 1, required_stage_state: null, must_occur_after: null,
+              points: 2, penalty_if_missing: 0, penalty_per_excess: 0 }

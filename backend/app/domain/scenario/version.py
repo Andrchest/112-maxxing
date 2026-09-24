@@ -4,10 +4,10 @@
 `Scenario` (identity: slug, title) and `ScenarioVersion` (content) are separate types and separate
 tables (D4). A `schema_version: 1` document has exactly the SPEC §4 top-level keys, in that order;
 `schema_version: 2` adds the optional keys `variants` (D14 amends D4, HLD 70 §70.2),
-`reference_pack` (I3 E2a, §70.5.4, §70.6) and `timers` (I3 E4a, §70.3.4), and the nested
-`expected_response.responders` (I3 E5b, §70.4.5). `extra="forbid"` rejects any other key (§30.8
-rule 1), and rule R01 refuses `variants`, `reference_pack`, `timers` and `responders` in a
-schema-1 document.
+`reference_pack` (I3 E2a, §70.5.4, §70.6), `timers` (I3 E4a, §70.3.4) and `provenance` (I3 E8,
+HLD 30 §30.13), and the nested `expected_response.responders` (I3 E5b, §70.4.5).
+`extra="forbid"` rejects any other key (§30.8 rule 1), and rule R01 refuses `variants`,
+`reference_pack`, `timers`, `provenance` and `responders` in a schema-1 document.
 
 A `ScenarioVersion` becomes immutable as soon as a simulation starts using it (SPEC §4); the model
 is frozen here, and the DB trigger enforces the same at rest (D4).
@@ -29,6 +29,7 @@ from app.domain.scenario.sections import (
     DisclosureRulesSection,
     ExpectedResponse,
     ResourceSpec,
+    ScenarioProvenance,
     WorldTruthSection,
 )
 from app.domain.scoring.rules import ScoringRule
@@ -80,6 +81,10 @@ class ScenarioVersion(BaseModel):
     timers: CardTimers | None = None
     """Schema 2 only (HLD 70 §70.3.4): the per-card timers in session ms; every absent key (and
     an absent `timers`) takes its default — `card_timers` resolves them."""
+    provenance: ScenarioProvenance | None = None
+    """Schema 2 only (I3 E8, HLD 30 §30.13): the source the content was authored from (a ticket
+    call) and whether it is a candidate for later generation. Metadata only: no machine reads it
+    at runtime."""
 
     @model_serializer(mode="wrap")
     def _omit_absent_schema_2_keys(self, handler: SerializerFunctionWrapHandler) -> Any:
@@ -91,7 +96,7 @@ class ScenarioVersion(BaseModel):
         """
         data = handler(self)
         if isinstance(data, dict):
-            for key in ("variants", "reference_pack", "timers"):
+            for key in ("variants", "reference_pack", "timers", "provenance"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data

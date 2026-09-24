@@ -309,6 +309,7 @@ boundaries:
 	$(UV) run python backend/tools/check_imports.py
 scenarios:
 	$(UV) run python -m app.tools.validate_scenarios scenarios/examples
+	$(UV) run python -m app.tools.validate_scenarios scenarios/tickets
 	$(UV) run python -m app.tools.export_scenario_schema --check
 # Apply the Alembic history to SIM_DATABASE_URL (HLD 20-db-schema.md, D5).
 migrate:
