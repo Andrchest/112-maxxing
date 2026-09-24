@@ -544,3 +544,132 @@ voice_agent    -> application, inference, infrastructure
 - Revertible: set `variants.default.dds_brigade_call` back to `"OFF"` in `scenarios/tickets/*/v1.yaml`
   (108 files) and `scenarios/examples/street-rubbish-fire/v1.yaml`, or `git revert` the I4 E21 commit.
   The ticket YAMLs were produced by a generator that is not in the repo, so edit the YAMLs directly.
+
+## D29. I4: an ambiguous organizer answer becomes an owner question, not two variants (I4 E24 — `71-i4-wave4.md` §71.1)
+
+- Date: 2026-09-25. **Manager decision** on the collision the E22 analysis found (its finding 8,
+  question Q-RULE).
+- The two owner rules:
+  - 2026-09-23: «Ambiguous organizer answers → BOTH variants behind switches».
+  - 2026-09-25 (I4): build only what the organizers fully define; «всё, что на наше усмотрение —
+    пока оставляй».
+- Decision: the 2026-09-25 rule governs I4. An ambiguous organizer answer is not "fully defined".
+  It becomes an owner question in `docs/owner-decisions.md`, and neither variant is built.
+- Scope: D14's switch mechanism stays, and every switch built in I3 stays as built. The decision only
+  stops new I4 work from adding a second variant for an ambiguity.
+- The owner's confirmation of this reading is recorded as an observation in `docs/owner-decisions.md`.
+
+## D30. Wave 4 is cut into eleven slices E25–E35; migrations 0016–0018 are pre-allocated (I4 E24 — `71-i4-wave4.md` §71.0)
+
+- Date: 2026-09-25. **Manager decision** (D-a, D-b) on the accepted E22 analysis §3.3.
+- The owner's seven epics (E9b, E11–E16) are replaced by slices S1–S11:
+  - E25 S1 Audit + JSON logs;
+  - E26 S2 Ops + backup;
+  - E27 S3 TLS edge;
+  - E28 S4 Accounts backend;
+  - E29 S5 Admin monitoring backend;
+  - E30 S6 Admin UI;
+  - E31 S7 Instructor core;
+  - E32 S8 Instructor misc;
+  - E33 S9 Reports/statistics/CSV/history;
+  - E34 S10 Materials;
+  - E35 S11 Text quality.
+- Waves α/β/γ/δ as in 71 §71.0.
+- E16 «Форматы данных» dissolves:
+  - CSV goes to E33;
+  - JSON logs go to E25;
+  - compression goes to E26 (backups) and E27 (HTTP);
+  - DOCX/PDF uploads go to E34;
+  - the rest are owner questions Q-E16-1…4 or recorded conflicts.
+- Migration numbers:
+  - `0016_audit_log` (E25);
+  - `0017_result_comments_scenario_archive` (E32);
+  - `0018_training_materials` (E34).
+  - `0015_users_sip_ha1` was confirmed as the last migration by listing
+    `backend/app/db/migrations/versions/`.
+- Hot shared files: each epic appends its own section. The manager regenerates `schema.d.ts` last.
+
+## D31. Audit = one API middleware + one append-only table; JSON logs everywhere (I4 E25 — `71-i4-wave4.md` §71.2)
+
+- Date: 2026-09-25. From the analysis §3.1/§3.2, confirmed by the manager (D-e).
+- The audit:
+  - An ASGI middleware records every authenticated request after the response into `audit_log`
+    (`0016`, append-only via `trg_reject_mutation()`). An entry holds the operationId, the path
+    template, the target ids, the status, the ip and the outcome, and never a body.
+  - It also records 401/403 and WebSocket connects. It excludes `/health/*`.
+  - `loginUser` records its own success and failure.
+  - A persisted rescore carries the real INSTRUCTOR/ADMIN actor (¶246).
+- Config:
+  - `SIM_AUDIT_RETENTION_DAYS` (default 365) is refused below 183 (¶297);
+  - `SIM_LOG_FORMAT=json` is the default, with a stdlib formatter in the backend, voice agent and
+    SIP gateway;
+  - `SIM_LOG_DIR` holds the backend's rotated JSON log.
+- `session_events` stay the in-session record (D5 unchanged). No domain change.
+- Not built: a semantic before/after journal (owner question Q-E15-3, analysis §5).
+
+## D32. TLS at a Caddy edge proxy with a local CA; a native-TLS fallback is named (I4 E27 — `71-i4-wave4.md` §71.4)
+
+- Date: 2026-09-25. From the analysis finding 2 and §3.1, **manager decision** D-f.
+- Why: browsers grant the microphone only in a secure context, so plain http from a classroom PC
+  breaks every voice feature (¶293, REQ-5903).
+- The edge:
+  - one `edge` service on 443 fronts the frontend, `/api`, `/api/v1/ws` and LiveKit `/rtc`;
+  - `SIM_LIVEKIT_PUBLIC_URL=wss://…`;
+  - `infra/scripts/make-certs.sh` makes a local CA and a server certificate;
+  - media stays DTLS-SRTP.
+- The first step of E27 is pulling the Caddy image within a time-box.
+- Fallback, built only if the pull fails: uvicorn TLS, plus Vite https, plus the backend proxying
+  LiveKit's `/rtc`.
+- SIP stays plain (owner question Q-E15-2).
+
+## D33. Backup is a compose loop on postgres:16; restore is a script; a purge needs a fresh backup (I4 E26/E29 — `71-i4-wave4.md` §71.3, §71.6)
+
+- Date: 2026-09-25. From the analysis §3.1/§3.2.
+- The backup service `backup`:
+  - runs `pg_dump -Fc` daily, plus a `tar.gz` of the recordings volume, into `./backups/`;
+  - keeps `SIM_BACKUP_KEEP` (default 14);
+  - writes `backups/last.json`.
+- `infra/scripts/restore.sh` plus the RUNBOOK sections. There is no gate-side restore test (too
+  slow); `make backup-verify` stands in, with one recorded manual walk.
+- The rest of the hardening:
+  - redis gets `requirepass`;
+  - postgres and redis bind to loopback;
+  - postgres, redis and livekit get `restart: unless-stopped`.
+- ¶216: `purgeRecordings` (non-dry-run) is `409 BACKUP_REQUIRED` unless `last.json` reports a
+  successful backup newer than every row being purged.
+
+## D34. The instructor's timer override drives DEADLINE through the log; aborted cards are listed unscored (I4 E31 — `71-i4-wave4.md` §71.8)
+
+- Date: 2026-09-25. From the analysis findings 3 and 6 and §3.1.
+- `PlanEntry.timers` and `SessionCreateRequest.timers` override the scenario `timers` per key. The
+  resolved timers are recorded in `SESSION_CREATED.timers`.
+- The DEADLINE change:
+  - `DeadlineConfig.max_offset_timer` (optional) makes DEADLINE read the recorded timer, not a
+    literal. INV 9 holds.
+  - Pre-change logs rescore unchanged.
+  - New rule R43: `max_offset_timer` names an existing timer key.
+  - The tickets' `memo_*_in_time` rules switch to it.
+- A lesson ended early lists its ABORTED cards in `getLessonReport` with `score: null` and `unscored`
+  (the timeline and the times). The weighted sum ignores them.
+- SPEC §28 and the session transitions are unchanged.
+- Not built:
+  - scoring an unfinished card (Q-E9b-6);
+  - the ДДС 3-minute fill norm (Q-E9b-2).
+
+## D35. Text quality (E11) is a report-only annotation; no score effect until the owner answers (I4 E35 — `71-i4-wave4.md` §71.12)
+
+- Date: 2026-09-25. **Manager decision** D-d, D-i, on the analysis finding 1 and the E23 recon.
+- The annotation:
+  - It runs at report time, never live (REQ-6017).
+  - Spelling uses the ru_RU hunspell dictionary read by `spylls`, over the texts the trainee typed.
+  - Street lookup runs against the OSM Moscow name list, on the 112 card path only.
+  - It becomes report section «Грамотность и адреса».
+- When the data is absent, the section says «Проверка недоступна…», and never «0 ошибок».
+- **No effect on the score until Q-E11-1 is answered.** A scoring version would be an 11th
+  `EvaluatorType`, which is a recorded SPEC §28 departure.
+- Whether street names bypass the general spell check is not decided (Q-E23-4). E35 escalates it if
+  it is still open.
+- E35 decides the packaging of the data under `reference/{lexicon,streets}`, with the licence notes
+  (BSD-style LibreOffice dictionary; ODbL OSM). E24 adds no data file.
+- «ул. Зверенецкая» (ticket-15-call-3) is organizer-verbatim and is not changed (D-h). It is an
+  observation for the owner.

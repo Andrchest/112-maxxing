@@ -1,0 +1,46 @@
+@startuml i4-tls-edge-topology
+' I4 S3 / E27 — TLS edge (docs/hld/71-i4-wave4.md §71.4, D32).
+' Browsers grant the microphone only in a secure context: a trainee PC opening
+' http://<server-LAN-IP> gets no microphone. One TLS endpoint fixes UI, API, WS and LiveKit signalling.
+
+title TLS edge — Caddy on 443 in front of frontend, API, WS and LiveKit signalling
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowFontSize 11
+
+node "classroom PC (trainee / instructor)" as pc {
+  component "browser\nhttps://<host or LAN IP>\nwindow.isSecureContext = true\ngetUserMedia allowed" as browser
+  component "local CA installed once\n(RUNBOOK)" as ca
+}
+
+node "SIP phone / softphone" as phone
+
+node "server (docker compose)" as srv {
+  component "edge (Caddy)\n:443 TLS, gzip/zstd (¶390)\ncert from infra/scripts/make-certs.sh\n(SANs: localhost, LAN IP, hostname)" as edge
+  component "frontend\nVite dev :5173 or built assets" as fe
+  component "backend :8100\n/api/*, /api/v1/ws (upgrade)" as be
+  component "livekit :7880 signalling\n:7882/udp media" as lk
+  component "sip-gateway :5060\n(plain SIP, Q-E15-2)" as sip
+}
+
+browser --> edge : HTTPS / WSS 443
+edge --> fe : /  (http, inside compose)
+edge --> be : /api, /api/v1/ws
+edge --> lk : /rtc -> livekit:7880\n(SIM_LIVEKIT_PUBLIC_URL=wss://<host>)
+browser <--> lk : WebRTC media UDP 7882\n(DTLS-SRTP, already encrypted)
+phone --> sip : SIP 5060 / RTP (unchanged)
+ca ..> browser : trusts the edge cert
+
+note right of edge
+  First step of E27: pull the Caddy image within
+  the time-box its brief sets (slow proxy).
+  Fallback if the pull fails (described, built only then):
+  - uvicorn --ssl-keyfile / --ssl-certfile on the backend;
+  - Vite server.https for the frontend;
+  - the backend proxies LiveKit's /rtc WebSocket.
+  CORS and Vite allowedHosts updated in both paths.
+end note
+
+@enduml

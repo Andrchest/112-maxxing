@@ -1,0 +1,59 @@
+@startuml i4-backup-restore
+' I4 S2 / E26 — backup and restore (docs/hld/71-i4-wave4.md §71.3, D33), and the S5 / E29 purge
+' guard (§71.6, ТЗ ¶216). The backup service runs on the already-local postgres:16 image.
+
+title Daily backup, restore, and the purge that needs a fresh backup
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "administrator\n(shell)" as OP
+actor "ADMIN\n(web)" as A
+
+box "docker compose" #F3FFF3
+  participant "backup service\n(postgres:16 loop)" as BK
+  database "postgres" as PG
+  collections "recordings-data\nvolume" as REC
+  collections "./backups/\n*.dump, *.tar.gz,\nlast.json" as DIR
+  participant "backend\n(reads last.json)" as BE
+end box
+
+== 1. Daily loop (and make backup-now) ==
+loop every 24 h
+  BK -> PG : pg_dump -Fc (compressed, ¶390)
+  BK -> REC : tar.gz of the recordings
+  BK -> DIR : write dump + archive
+  BK -> DIR : rotate: keep SIM_BACKUP_KEEP (default 14)
+  BK -> DIR : last.json {ts, sizes, sha256, status}
+end
+
+== 2. Restore (infra/scripts/restore.sh, make restore FILE=…) ==
+OP -> BE : stop backend
+OP -> PG : pg_restore --clean FILE
+OP -> REC : restore the recordings archive
+OP -> BE : start backend
+note right of OP
+  RUNBOOK «Восстановление»: one recorded manual walk;
+  make backup-verify. No gate-side restore test (too slow).
+end note
+
+== 3. Purge guard and status (E29) ==
+A -> BE : GET /api/v1/admin/backup-status
+BE -> DIR : read last.json
+BE --> A : {available, finished_at, status, …}
+A -> BE : POST /api/v1/admin/recordings/purge {dry_run: false}
+BE -> DIR : read last.json
+alt last.json OK and newer than every row to purge
+  BE -> REC : delete WAVs, write recording_purge_audit (as today)
+  BE --> A : 200 PurgeRecordingsResult
+else missing, failed or older
+  BE --> A : 409 BACKUP_REQUIRED
+end
+note over BE
+  listAdminAlerts: BACKUP_STALE when last.json is older than 26 h,
+  BACKUP_FAILED when its status is not OK.
+end note
+
+@enduml

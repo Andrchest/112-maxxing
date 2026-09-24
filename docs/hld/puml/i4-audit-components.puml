@@ -1,0 +1,59 @@
+@startuml i4-audit-components
+' I4 S1 / E25 — audit + JSON logs (docs/hld/71-i4-wave4.md §71.2, D31); read side S5 / E29 (§71.6).
+' One API-layer middleware and one append-only table. session_events stay the in-session record (D5).
+
+title Audit and JSON logs — middleware, audit_log, JSON log files, admin read side
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowFontSize 11
+
+actor "user\n(TRAINEE / INSTRUCTOR / ADMIN)" as user
+
+node "backend process\nbackend/app" as backend {
+  component "api/main.py\nAuditMiddleware (ASGI)\nafter the response: path template,\noperationId, status, ip, target ids;\nnever bodies; /health/* excluded;\n401/403 = ACCESS_DENIED; WS connect" as mw
+  component "api/routers/*\n(every existing and I4 route)" as routers
+  component "api/routers/auth.py loginUser\nLOGIN_SUCCEEDED / LOGIN_FAILED\n(explicit: unauthenticated)" as login
+  component "application/ports/audit_log.py\nAuditRecorder.record(entry)\nAuditReader.page(filter)" as port
+  component "infrastructure/persistence/\naudit_log_repository.py" as repo
+  component "infrastructure/logging/json_formatter.py\n(stdlib; SIM_LOG_FORMAT=json|text)" as jsonfmt
+  component "application/admin/* (E29)\nlistAuditLog, getUsageStats,\ngetErrorReport, listAdminAlerts" as admin
+  component "Settings\nSIM_AUDIT_RETENTION_DAYS (default 365, >= 183)\nSIM_LOG_DIR" as settings
+}
+
+node "voice-agent / sip-gateway\nworkers/voice_agent" as workers {
+  component "logging: json_formatter\n(replaces basicConfig)" as wjson
+}
+
+node "livekit" as lk {
+  component "livekit.yaml json: true (E26)" as lkjson
+}
+
+database "postgres" as pg {
+  component "audit_log (0016)\nappend-only trigger\nix (ts), (user_id, ts)" as audit
+  component "session_events\n(unchanged, in-session record)" as evt
+}
+
+folder "SIM_LOG_DIR\nbackend JSON log (rotated)" as logdir
+
+user --> mw : HTTP / WS
+mw --> routers
+mw --> login
+mw ..> port : record(entry)
+login ..> port : record(entry)
+port <|.. repo
+repo --> audit : INSERT only
+routers --> evt : session actions (as today)
+jsonfmt --> logdir
+admin ..> port : page(filter)
+admin ..> logdir : level >= ERROR
+admin ..> evt : MODEL_ERROR,\nINFERENCE_HEALTH_CHANGED -> FATAL
+settings ..> repo : retention floor
+
+note bottom of audit
+  UPDATE / DELETE rejected by trg_reject_mutation() (HLD 20 §20.9 pattern).
+  No before/after values: a semantic journal is owner question Q-E15-3.
+end note
+
+@enduml

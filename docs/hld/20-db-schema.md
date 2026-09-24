@@ -1064,3 +1064,113 @@ Three properties this schema is shaped to give:
   `INSERT … ON CONFLICT DO UPDATE`.
 - **Disposable.** The row is derived, cheap to regenerate, and carries nothing the simulation
   depends on; deleting a session takes it along (`CASCADE`).
+
+## 20.11 I4 — planned tables of migrations 0016–0018 (TBD; `71-i4-wave4.md`)
+
+**Planned, not built.** Nothing in this section is in §20.1 yet: a §20.1 row without its table fails
+`test_migrated_tables_equal_the_hld_inventory`. Each implementing epic moves its table here into §20.1
+(next free row number — 33 onward; `dds_calls` is row 32) and into the matching §20.x in the same
+commit as its migration. Numbers are pre-allocated by the manager (D30) so parallel slices never
+collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
+
+| Migration | Epic | Change | Kind |
+|:--|:--|:--|:--|
+| `0016_audit_log` | E25 (S1) | new table `audit_log` + append-only trigger | append-only audit (outside sessions) |
+| `0017_result_comments_scenario_archive` | E32 (S8) | new table `result_comments` + append-only trigger; column `scenarios.archived_at` | append-only; additive column |
+| `0018_training_materials` | E34 (S10) | new table `training_materials` | reference data (files on disk by sha256) |
+
+### 20.11.1 `audit_log` (E25, `0016_audit_log`; D31)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `ts` | `timestamptz` | no | `now()` |
+| `user_id` | `uuid` | yes | |
+| `role` | `text` | yes | |
+| `action` | `text` | no | |
+| `operation_id` | `text` | yes | |
+| `method` | `text` | no | |
+| `path_template` | `text` | no | |
+| `target_ids` | `jsonb` | no | `'{}'::jsonb` |
+| `status` | `integer` | no | |
+| `client_ip` | `text` | yes | |
+| `outcome` | `text` | no | |
+
+PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts (ts)`,
+`ix_audit_log_user_ts (user_id, ts)`.
+`CHECK (role IS NULL OR role IN ('TRAINEE','INSTRUCTOR','ADMIN'))`;
+`CHECK (action IN ('HTTP_REQUEST','LOGIN_SUCCEEDED','LOGIN_FAILED','ACCESS_DENIED','WS_CONNECTED'))`;
+`CHECK (outcome IN ('OK','DENIED','ERROR'))`.
+
+- Written only by E25's ASGI middleware (after the response) and by `loginUser` (success and failure,
+  which are unauthenticated). `user_id`/`role` are `NULL` for an unauthenticated request; for
+  `LOGIN_*` the attempted username is `target_ids.username`. `target_ids` holds the request's path
+  parameters. **No request or response body is ever stored** (passwords, personal data).
+- `/health/*` is not recorded (the instructor page polls readiness).
+- **Append-only:** `CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log FOR EACH
+  ROW EXECUTE FUNCTION trg_reject_mutation();` (§20.9 function, one more attachment).
+- **Retention:** ТЗ ¶297 «не менее 6 месяцев». `SIM_AUDIT_RETENTION_DAYS` (default 365) is refused
+  below 183 at settings load; no row younger than the setting is ever removed. Any removal of older
+  rows goes through a maintenance command, as §20.9 describes for cascades (the trigger blocks the
+  application path).
+- Volume: roughly ≤ 50k rows/day for a 30-seat class (analysis §3.2); read by E29 `listAuditLog` and
+  `getUsageStats`.
+- `session_events` stay the in-session audit source (§20.6, D5); this table covers everything else
+  (login, user admin, scenario import, report release, groups, lessons, weight acceptance, rescore
+  with its real actor).
+
+### 20.11.2 `result_comments` (E32, `0017_result_comments_scenario_archive`)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `session_id` | `uuid` | yes | |
+| `lesson_id` | `uuid` | yes | |
+| `author_user_id` | `uuid` | no | |
+| `text` | `text` | no | |
+| `replaces_comment_id` | `uuid` | yes | |
+| `created_at` | `timestamptz` | no | `now()` |
+
+PK `(id)`. FK `session_id → simulation_sessions(id) ON DELETE CASCADE`;
+FK `lesson_id → lessons(id) ON DELETE CASCADE`; FK `author_user_id → users(id) ON DELETE RESTRICT`;
+FK `replaces_comment_id → result_comments(id) ON DELETE RESTRICT`.
+`CHECK ((session_id IS NULL) <> (lesson_id IS NULL))` (exactly one target);
+`CHECK (length(text) > 0)`.
+Index `ix_result_comments_session (session_id, created_at) WHERE session_id IS NOT NULL`,
+`ix_result_comments_lesson (lesson_id, created_at) WHERE lesson_id IS NOT NULL`.
+
+- Instructor feedback on a result (ТЗ ¶236, ¶237). An edit is a new row pointing at the one it
+  replaces; nothing is updated. The trainee reads them under the report's own visibility gate.
+- **Append-only:** `result_comments_append_only` on `trg_reject_mutation()` (§20.9). A session delete
+  is the §20.9 maintenance operation.
+- Retention: kept with the session / lesson.
+
+### 20.11.3 `scenarios.archived_at` (E32, same migration)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `archived_at` | `timestamptz` | yes | |
+
+`NULL` = active. Set by `archiveScenario`, cleared by `unarchiveScenario`; `listScenarios` hides
+archived rows unless `include_archived=true`. «Удалять неактуальные сценарии» (ТЗ ¶229) is this
+archive: FKs from `scenario_versions` and sessions stay `RESTRICT`, so no scenario row is deleted.
+
+### 20.11.4 `training_materials` (E34, `0018_training_materials`)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `title_ru` | `text` | no | |
+| `file_name` | `text` | no | |
+| `content_type` | `text` | no | |
+| `size_bytes` | `bigint` | no | |
+| `sha256` | `text` | no | |
+| `uploaded_by` | `uuid` | no | |
+| `created_at` | `timestamptz` | no | `now()` |
+| `archived_at` | `timestamptz` | yes | |
+
+PK `(id)`. FK `uploaded_by → users(id) ON DELETE RESTRICT`.
+`CHECK (sha256 ~ '^[0-9a-f]{64}$')`; `CHECK (size_bytes >= 0)`.
+Index `ix_training_materials_sha256 (sha256)`, `ix_training_materials_created (created_at)`.
+
+- Metadata only; the bytes live at `Settings.data_dir/materials/<sha256>` (identical bytes stored
+  once — the same pattern as recordings under `data_dir`), inside the data E26 backs up.
+- Allow-list pdf, docx, doc, xlsx, txt, md, png, jpg; max size `SIM_MATERIAL_MAX_MB` (ТЗ ¶387, ¶370).
+- Archive hides a material from trainees; the file is kept. Retention: none (reference data).
+- No assignment column: whom a material is assigned to is owner question Q-E13-1.

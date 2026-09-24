@@ -1,0 +1,1341 @@
+# HLD — I4 contract delta (docs/hld/71-i4-wave4.md, D29–D35)
+#
+# A standalone OpenAPI 3.1 FRAGMENT. It is not served and not used for type generation: each
+# implementing epic (E28, E29, E31, E32, E33, E34 — see docs/hld/90-tbd-epics.md "I4 TBD epics")
+# merges its part into docs/hld/openapi.yaml in the same commit as the code, copying names literally.
+# E25 (audit) exposes no operation of its own (its read side is E29's listAuditLog); E35's report
+# section is not here (71 §71.16).
+#
+# Conventions (as in openapi.yaml and i3-openapi-delta.yaml):
+#   - `x-epic` names the epic that merges the item;
+#   - `x-change: NEW | CHANGED | ADDITIVE` — CHANGED replaces a definition, ADDITIVE only adds
+#     optional or new required-in-response properties to an existing schema;
+#   - `x-optional: true` — the epic merges the item only if it takes the technical option named
+#     in 71 (E32 `getLessonBoard`);
+#   - `x-action` / `x-emits` as in openapi.yaml;
+#   - references to unchanged definitions point into openapi.yaml.
+openapi: 3.1.0
+info:
+  title: System-112 / DDS training simulator — I4 contract delta
+  version: 1.2.0-i4-delta
+  summary: New and changed operations and schemas of initiative I4 wave 4 (accounts, admin monitoring, timers, comments, scenario archive, statistics, CSV, materials).
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: admin
+  - name: auth
+  - name: sessions
+  - name: lessons
+  - name: reports
+  - name: scenarios
+  - name: statistics
+    description: (additive, I4 E33) Per-trainee statistics and own history (71 §71.10).
+  - name: materials
+    description: (additive, I4 E34) Methodical materials — the reference base (71 §71.11).
+
+paths:
+
+  # ------------------------------------------------------------ E28 accounts ----
+  /api/v1/users:
+    get:
+      tags: [auth]
+      operationId: listUsers
+      x-epic: E28
+      x-change: CHANGED
+      summary: List user accounts — now optionally including blocked ones (ADMIN).
+      description: |
+        As before (openapi.yaml), plus `include_inactive` (ADMIN only; an INSTRUCTOR passing it
+        gets `403`). Without it only active accounts are listed, as today. `UserAccount` gains
+        `is_active` (UserAccountI4).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema: { $ref: '../openapi.yaml#/components/schemas/UserRole' }
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: User accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/UserAccountI4' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/users:
+    post:
+      tags: [admin]
+      operationId: createUser
+      x-epic: E28
+      x-change: NEW
+      summary: Create an account of any role (ADMIN) — ТЗ ¶195.
+      description: |
+        Password hashed with argon2 as today; shorter than the configured minimum is
+        `422 VALIDATION_ERROR`; an existing username is `409 USERNAME_TAKEN`. Audited by E25's
+        middleware (no session event).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreateRequest' }
+      responses:
+        '201':
+          description: The created account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserAccountI4' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictI4' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/admin/users/{user_id}:
+    patch:
+      tags: [admin]
+      operationId: updateUser
+      x-epic: E28
+      x-change: NEW
+      summary: Change role, display name or block/unblock (ADMIN) — ТЗ ¶196, ¶197.
+      description: |
+        Every field optional. Guards: an ADMIN cannot block or demote themself
+        (`409 SELF_MODIFICATION_FORBIDDEN`); the last active ADMIN cannot be blocked or demoted
+        (`409 LAST_ADMIN_REQUIRED`). A blocked user's existing token is refused on the next request
+        (`get_current_user` already checks `is_active`).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdateRequest' }
+      responses:
+        '200':
+          description: The account after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserAccountI4' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictI4' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/admin/users/{user_id}/password:
+    post:
+      tags: [admin]
+      operationId: resetUserPassword
+      x-epic: E28
+      x-change: NEW
+      summary: Set a new password for an account (ADMIN).
+      description: The password is never echoed, logged or audited in clear (E25 records the operation, not the body).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequest' }
+      responses:
+        '204':
+          description: The password was replaced.
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  # ------------------------------------------------- E29 admin monitoring ----
+  /api/v1/admin/audit-log:
+    get:
+      tags: [admin]
+      operationId: listAuditLog
+      x-epic: E29
+      x-change: NEW
+      summary: Page the audit log written by E25 (ADMIN) — ТЗ ¶205, ¶296.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/AuditAction' }
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Audit entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEntryView' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/usage-stats:
+    get:
+      tags: [admin]
+      operationId: getUsageStats
+      x-epic: E29
+      x-change: NEW
+      summary: Per-day usage counts (ADMIN) — ТЗ ¶206; metric set to be confirmed (Q-E14-3).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: One row per calendar day in the period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageStats' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/server-load:
+    get:
+      tags: [admin]
+      operationId: getServerLoad
+      x-epic: E29
+      x-change: NEW
+      summary: CPU / memory / disk (+ GPU when visible) of the server (ADMIN) — ТЗ ¶208, ¶289.
+      description: |
+        Read from `/proc/stat`, `/proc/meminfo`, `shutil.disk_usage`; GPU from the voice-agent
+        heartbeat if it carries it. An absent metric is `null`, never 0 (SPEC §27 rule).
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: A point-in-time load sample.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerLoad' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/errors:
+    get:
+      tags: [admin]
+      operationId: getErrorReport
+      x-epic: E29
+      x-change: NEW
+      summary: Errors and failures over a period (ADMIN) — ТЗ ¶207.
+      description: |
+        Merges backend JSON-log records with level ≥ ERROR (`SIM_LOG_DIR`, E25), `MODEL_ERROR`
+        session events and `INFERENCE_HEALTH_CHANGED` transitions to FATAL, newest first.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Error records.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ErrorRecordView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/alerts:
+    get:
+      tags: [admin]
+      operationId: listAdminAlerts
+      x-epic: E29
+      x-change: NEW
+      summary: Current administrator alerts, derived not stored (ADMIN) — ТЗ ¶308.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Active alerts (empty list = nothing to report).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminAlertView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/backup-status:
+    get:
+      tags: [admin]
+      operationId: getBackupStatus
+      x-epic: E29
+      x-change: NEW
+      summary: The last backup as recorded by E26's `backups/last.json` (ADMIN) — ТЗ ¶143, ¶216.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: The backup status, or `available = false` when no `last.json` is readable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupStatus' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/admin/recordings/purge:
+    post:
+      tags: [admin]
+      operationId: purgeRecordings
+      x-epic: E29
+      x-change: CHANGED
+      summary: Purge recordings past the retention window (ADMIN) — now refused without a fresh backup.
+      description: |
+        As before (openapi.yaml), plus ТЗ ¶216: a non-dry-run purge is `409 BACKUP_REQUIRED` unless
+        `backups/last.json` reports a successful backup newer than every row being purged.
+        `dry_run: true` is never refused.
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '../openapi.yaml#/components/schemas/PurgeRecordingsRequest' }
+      responses:
+        '200':
+          description: What was purged, or would be purged under `dry_run`.
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/PurgeRecordingsResult' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictI4' }
+
+  # ------------------------------------------------------ E31 instructor core ----
+  /api/v1/sessions:
+    post:
+      tags: [sessions]
+      operationId: createSession
+      x-epic: E31
+      x-change: ADDITIVE
+      summary: Create a simulation session — now with an optional per-card timer override.
+      description: |
+        As before (openapi.yaml), plus `timers` (SessionCreateRequestI4): resolved as scenario
+        `timers` ← request override per key, recorded in `SESSION_CREATED.timers`. A DEADLINE rule
+        with `max_offset_timer` reads the recorded value (71 §71.8, D34).
+      x-action: '-'
+      x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionCreateRequestI4' }
+      responses:
+        '201':
+          description: The created session.
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/SessionDetail' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '../openapi.yaml#/components/responses/Conflict' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/lessons/{lesson_id}/report:
+    get:
+      tags: [lessons]
+      operationId: getLessonReport
+      x-epic: [E31, E33]
+      x-change: CHANGED
+      summary: The lesson report — now listing ABORTED cards unscored (E31) and per-card norms (E33).
+      description: |
+        E31: a card whose session was aborted (early lesson end, ТЗ ¶342–343) is listed with
+        `score: null` and `unscored` (state, timeline, times); the weighted sum ignores it.
+        E33: every scored card carries `norms` (measured vs the system's norm), `failed_rule_count`
+        and `critical_error_count`. Nothing is re-scored (D11).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The lesson report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LessonReportI4' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '../openapi.yaml#/components/responses/Conflict' }
+
+  # ------------------------------------------------------ E32 instructor misc ----
+  /api/v1/reports/{session_id}/comments:
+    get:
+      tags: [reports]
+      operationId: listSessionComments
+      x-epic: E32
+      x-change: NEW
+      summary: Instructor comments on a session result — ТЗ ¶236, ¶237, ¶267.
+      description: |
+        INSTRUCTOR / ADMIN always; the session's TRAINEE exactly when the report is visible to them
+        (the same `report_visibility` gate, else `403 REPORT_NOT_RELEASED`). Superseded rows are
+        returned with `superseded: true`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: Comments, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentList' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+    post:
+      tags: [reports]
+      operationId: createSessionComment
+      x-epic: E32
+      x-change: NEW
+      summary: Add a comment (or an edit, as a new row) to a session result (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResultCommentRequest' }
+      responses:
+        '201':
+          description: The stored comment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/lessons/{lesson_id}/comments:
+    get:
+      tags: [lessons]
+      operationId: listLessonComments
+      x-epic: E32
+      x-change: NEW
+      summary: Instructor comments on a lesson result — the lesson equivalent of listSessionComments.
+      description: Trainee access follows the lesson report's release (every card released).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: Comments, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentList' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+    post:
+      tags: [lessons]
+      operationId: createLessonComment
+      x-epic: E32
+      x-change: NEW
+      summary: Add a comment (or an edit, as a new row) to a lesson result (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResultCommentRequest' }
+      responses:
+        '201':
+          description: The stored comment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/scenarios:
+    get:
+      tags: [scenarios]
+      operationId: listScenarios
+      x-epic: E32
+      x-change: ADDITIVE
+      summary: List scenarios — archived ones hidden unless asked for.
+      description: |
+        As before (openapi.yaml), plus `include_archived` (default `false`, so every picker hides
+        archived scenarios); `ScenarioSummary` gains `archived_at` (ScenarioSummaryI4).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: include_archived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Scenarios.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScenarioSummaryI4' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+
+  /api/v1/scenarios/{scenario_id}/archive:
+    post:
+      tags: [scenarios]
+      operationId: archiveScenario
+      x-epic: E32
+      x-change: NEW
+      summary: Archive (= «удалить неактуальный») a scenario (INSTRUCTOR / ADMIN) — ТЗ ¶229.
+      description: Sets `scenarios.archived_at` (idempotent). Existing sessions and versions are untouched (FK RESTRICT stays).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/ScenarioIdParam'
+      responses:
+        '200':
+          description: The scenario after archiving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSummaryI4' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/scenarios/{scenario_id}/unarchive:
+    post:
+      tags: [scenarios]
+      operationId: unarchiveScenario
+      x-epic: E32
+      x-change: NEW
+      summary: Return an archived scenario to the pickers (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/ScenarioIdParam'
+      responses:
+        '200':
+          description: The scenario after unarchiving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSummaryI4' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/lessons/{lesson_id}/board:
+    get:
+      tags: [lessons]
+      operationId: getLessonBoard
+      x-epic: E32
+      x-change: NEW
+      x-optional: true
+      summary: All-trainees board of one lesson (INSTRUCTOR / ADMIN) — Q&A L786–789, ТЗ ¶224, ¶235.
+      description: |
+        Merged only if E32 takes the read-model option instead of `getLesson` + one WS per active
+        card (71 §71.9; a technical choice). One row per card of the lesson.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The board rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [lesson_id, rows]
+                properties:
+                  lesson_id: { type: string, format: uuid }
+                  rows:
+                    type: array
+                    items: { $ref: '#/components/schemas/LessonBoardRow' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  # ------------------------------------------- E33 reports, statistics, CSV ----
+  /api/v1/lessons/{lesson_id}/report.csv:
+    get:
+      tags: [lessons]
+      operationId: getLessonReportCsv
+      x-epic: E33
+      x-change: NEW
+      summary: The lesson report as CSV — ТЗ ¶360, ¶379.
+      description: |
+        Same access and numbers as `getLessonReport`. UTF-8 with BOM, `;` separator, Russian
+        column headers; one row per card (and per leg for the norms).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The CSV file.
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '../openapi.yaml#/components/responses/Conflict' }
+
+  /api/v1/statistics:
+    get:
+      tags: [statistics]
+      operationId: getTraineeStatistics
+      x-epic: E33
+      x-change: NEW
+      summary: Per-trainee statistics across sessions and lessons — ТЗ ¶101, ¶138, ¶225, ¶232.
+      description: |
+        INSTRUCTOR / ADMIN: every trainee (optionally one, or one group). TRAINEE: self only —
+        asking for another `trainee_id` is `403`. Read from stored scores; nothing is re-scored (D11).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: One row per trainee.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraineeStatistics' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/statistics.csv:
+    get:
+      tags: [statistics]
+      operationId: getTraineeStatisticsCsv
+      x-epic: E33
+      x-change: NEW
+      summary: getTraineeStatistics as CSV (same access, same numbers) — ТЗ ¶360, ¶379.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: The CSV file (UTF-8 with BOM, `;`, Russian headers).
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/me/history:
+    get:
+      tags: [statistics]
+      operationId: getMyHistory
+      x-epic: E33
+      x-change: NEW
+      summary: The caller's own statistics plus their completed sessions with score and date — ТЗ ¶252, ¶265, ¶266.
+      description: A session appears with its score only once its report is visible to the caller (the existing release rule).
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Own history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyHistory' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+
+  # -------------------------------------------------------- E34 materials ----
+  /api/v1/materials:
+    post:
+      tags: [materials]
+      operationId: uploadMaterial
+      x-epic: E34
+      x-change: NEW
+      summary: Upload a methodical material (INSTRUCTOR / ADMIN) — ТЗ ¶227, ¶387, ¶370.
+      description: |
+        Allow-list pdf, docx, doc, xlsx, txt, md, png, jpg (else `422 MATERIAL_TYPE_NOT_ALLOWED`);
+        larger than `SIM_MATERIAL_MAX_MB` is `422 MATERIAL_TOO_LARGE`. Stored under
+        `data_dir/materials/<sha256>` (identical bytes stored once).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title_ru, file]
+              properties:
+                title_ru: { type: string, minLength: 1 }
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: The stored material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntityI4' }
+    get:
+      tags: [materials]
+      operationId: listMaterials
+      x-epic: E34
+      x-change: NEW
+      summary: The reference base «Справочная база» (every authenticated role) — ТЗ ¶256.
+      description: |
+        Unarchived materials for everyone; `include_archived` only for INSTRUCTOR / ADMIN. No
+        per-trainee assignment (Q-E13-1 open).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: include_archived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Materials, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+
+  /api/v1/materials/{material_id}/file:
+    get:
+      tags: [materials]
+      operationId: getMaterialFile
+      x-epic: E34
+      x-change: NEW
+      summary: Download or open a material (every authenticated role).
+      description: The stored content type; a PDF is sent inline (Content-Disposition inline), other types as an attachment.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '200':
+          description: The file bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/materials/{material_id}/archive:
+    post:
+      tags: [materials]
+      operationId: archiveMaterial
+      x-epic: E34
+      x-change: NEW
+      summary: Archive a material — hidden from trainees, file kept (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '200':
+          description: The material after archiving (idempotent).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UserIdParam:
+      name: user_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionIdParam:
+      name: session_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LessonIdParam:
+      name: lesson_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MaterialIdParam:
+      name: material_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    FromParam:
+      name: from
+      in: query
+      required: false
+      description: Inclusive lower bound (UTC).
+      schema: { type: string, format: date-time }
+    ToParam:
+      name: to
+      in: query
+      required: false
+      description: Exclusive upper bound (UTC).
+      schema: { type: string, format: date-time }
+    TraineeIdQueryParam:
+      name: trainee_id
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+    GroupIdQueryParam:
+      name: group_id
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+
+  responses:
+    ConflictI4:
+      description: |
+        Everything of openapi.yaml's `Conflict`, plus `USERNAME_TAKEN`,
+        `SELF_MODIFICATION_FORBIDDEN`, `LAST_ADMIN_REQUIRED` (E28) and `BACKUP_REQUIRED` (E29).
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+    UnprocessableEntityI4:
+      description: openapi.yaml's `UnprocessableEntity`, plus `MATERIAL_TYPE_NOT_ALLOWED`, `MATERIAL_TOO_LARGE` (E34).
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+
+  schemas:
+
+    # ------------------------------------------------------------ errors ----
+    ProblemCodeI4Additions:
+      x-epic: [E28, E29, E34]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ProblemCode'
+      type: string
+      enum:
+        - USERNAME_TAKEN               # E28
+        - SELF_MODIFICATION_FORBIDDEN  # E28
+        - LAST_ADMIN_REQUIRED          # E28
+        - BACKUP_REQUIRED              # E29
+        - MATERIAL_TYPE_NOT_ALLOWED    # E34
+        - MATERIAL_TOO_LARGE           # E34
+
+    # ---------------------------------------------------------- accounts ----
+    UserAccountI4:
+      x-epic: E28
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/UserAccount'
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name_ru, user_role, created_at, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+        user_role: { $ref: '../openapi.yaml#/components/schemas/UserRole' }
+        created_at: { type: string, format: date-time }
+        is_active:
+          type: boolean
+          description: (additive, I4 E28) `false` = blocked (ТЗ ¶197); refused at login and per request.
+    UserCreateRequest:
+      x-epic: E28
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [username, display_name_ru, user_role, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        display_name_ru: { type: string, minLength: 1 }
+        user_role: { $ref: '../openapi.yaml#/components/schemas/UserRole' }
+        password:
+          type: string
+          writeOnly: true
+          description: Minimum length from config; never logged or audited.
+    UserUpdateRequest:
+      x-epic: E28
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name_ru: { type: string, minLength: 1 }
+        user_role: { $ref: '../openapi.yaml#/components/schemas/UserRole' }
+        is_active: { type: boolean }
+    PasswordResetRequest:
+      x-epic: E28
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { type: string, writeOnly: true }
+
+    # ----------------------------------------------------- admin monitoring ----
+    AuditAction:
+      x-epic: [E25, E29]
+      x-change: NEW
+      description: The `audit_log.action` CHECK list (HLD 20 §20.11.1), written by E25, read by E29.
+      type: string
+      enum: [HTTP_REQUEST, LOGIN_SUCCEEDED, LOGIN_FAILED, ACCESS_DENIED, WS_CONNECTED]
+    AuditOutcome:
+      x-epic: [E25, E29]
+      x-change: NEW
+      type: string
+      enum: [OK, DENIED, ERROR]
+    AuditEntryView:
+      x-epic: E29
+      x-change: NEW
+      description: One `audit_log` row. Never carries request or response bodies.
+      type: object
+      additionalProperties: false
+      required: [id, ts, user_id, role, action, operation_id, method, path_template, target_ids, status, client_ip, outcome]
+      properties:
+        id: { type: string, format: uuid }
+        ts: { type: string, format: date-time }
+        user_id: { type: [string, 'null'], format: uuid }
+        role: { type: [string, 'null'] }
+        action: { $ref: '#/components/schemas/AuditAction' }
+        operation_id: { type: [string, 'null'] }
+        method: { type: string }
+        path_template: { type: string }
+        target_ids:
+          type: object
+          description: Path parameters of the request (e.g. `session_id`); for LOGIN_* the attempted `username`.
+          additionalProperties: { type: string }
+        status: { type: integer }
+        client_ip: { type: [string, 'null'] }
+        outcome: { $ref: '#/components/schemas/AuditOutcome' }
+    UsageStats:
+      x-epic: E29
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [days]
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [date, logins, sessions, lessons, active_users]
+            properties:
+              date: { type: string, format: date }
+              logins: { type: integer, minimum: 0 }
+              sessions: { type: integer, minimum: 0 }
+              lessons: { type: integer, minimum: 0 }
+              active_users: { type: integer, minimum: 0 }
+    ServerLoad:
+      x-epic: E29
+      x-change: NEW
+      description: Every metric is `null` when it cannot be read — never 0.
+      type: object
+      additionalProperties: false
+      required: [sampled_at, cpu_percent, memory_used_mb, memory_total_mb, disk_used_gb, disk_total_gb, gpu_memory_used_mb, gpu_memory_total_mb]
+      properties:
+        sampled_at: { type: string, format: date-time }
+        cpu_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        memory_used_mb: { type: [number, 'null'], minimum: 0 }
+        memory_total_mb: { type: [number, 'null'], minimum: 0 }
+        disk_used_gb: { type: [number, 'null'], minimum: 0 }
+        disk_total_gb: { type: [number, 'null'], minimum: 0 }
+        gpu_memory_used_mb: { type: [number, 'null'], minimum: 0 }
+        gpu_memory_total_mb: { type: [number, 'null'], minimum: 0 }
+    ErrorRecordView:
+      x-epic: E29
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [ts, source, message, session_id]
+      properties:
+        ts: { type: string, format: date-time }
+        source: { type: string, enum: [BACKEND_LOG, MODEL_ERROR, INFERENCE_FATAL] }
+        message: { type: string }
+        session_id: { type: [string, 'null'], format: uuid }
+    AdminAlertView:
+      x-epic: E29
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [kind, since, detail_ru]
+      properties:
+        kind: { type: string, enum: [INFERENCE_FATAL, BACKUP_STALE, BACKUP_FAILED, LOGIN_FAILURES] }
+        since: { type: string, format: date-time }
+        detail_ru: { type: string }
+    BackupStatus:
+      x-epic: E29
+      x-change: NEW
+      description: '`backups/last.json` written by E26''s backup service; `available: false` when absent or unreadable.'
+      type: object
+      additionalProperties: false
+      required: [available, finished_at, status, database_bytes, recordings_bytes, database_sha256, recordings_sha256]
+      properties:
+        available: { type: boolean }
+        finished_at: { type: [string, 'null'], format: date-time }
+        status: { type: [string, 'null'], enum: [OK, FAILED, null] }
+        database_bytes: { type: [integer, 'null'], minimum: 0 }
+        recordings_bytes: { type: [integer, 'null'], minimum: 0 }
+        database_sha256: { type: [string, 'null'] }
+        recordings_sha256: { type: [string, 'null'] }
+
+    # --------------------------------------------------- instructor core ----
+    CardTimersRequest:
+      x-epic: E31
+      x-change: NEW
+      description: |
+        A per-key override of the scenario's `timers` (HLD 30 §30.12), session ms; an absent key keeps
+        the scenario value. R39 applies to the resolved result.
+      type: object
+      additionalProperties: false
+      properties:
+        accept_within_ms: { type: integer, exclusiveMinimum: 0 }
+        fill_within_ms: { type: integer, exclusiveMinimum: 0 }
+        not_completed_after_ms: { type: integer, exclusiveMinimum: 0 }
+    SessionCreateRequestI4:
+      x-epic: E31
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/SessionCreateRequest'
+      description: openapi.yaml's `SessionCreateRequest` plus `timers`.
+      allOf:
+        - $ref: '../openapi.yaml#/components/schemas/SessionCreateRequest'
+        - type: object
+          properties:
+            timers:
+              description: (additive, I4 E31) Override of the scenario timers, recorded in `SESSION_CREATED.timers`.
+              oneOf:
+                - $ref: '#/components/schemas/CardTimersRequest'
+                - type: 'null'
+    PlanEntryI4:
+      x-epic: E31
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/PlanEntry'
+      description: openapi.yaml's `PlanEntry` plus `timers` (createLesson / getLesson).
+      allOf:
+        - $ref: '../openapi.yaml#/components/schemas/PlanEntry'
+        - type: object
+          properties:
+            timers:
+              description: (additive, I4 E31) Per-card timer override, resolved as scenario ← this entry.
+              oneOf:
+                - $ref: '#/components/schemas/CardTimersRequest'
+                - type: 'null'
+    UnscoredCardView:
+      x-epic: E31
+      x-change: NEW
+      description: An ABORTED card of the lesson (early end, ТЗ ¶342–343) — actions and times, no points (Q-E9b-6 open).
+      type: object
+      additionalProperties: false
+      required: [state, timeline, times]
+      properties:
+        state: { $ref: '../openapi.yaml#/components/schemas/SessionState' }
+        timeline:
+          type: array
+          items: { $ref: '../openapi.yaml#/components/schemas/TimelineEntryView' }
+        times:
+          type: object
+          additionalProperties: false
+          required: [started_at, aborted_at, elapsed_ms]
+          properties:
+            started_at: { type: [string, 'null'], format: date-time }
+            aborted_at: { type: [string, 'null'], format: date-time }
+            elapsed_ms: { type: [integer, 'null'], minimum: 0 }
+    NormView:
+      x-epic: E33
+      x-change: NEW
+      description: One measured interval against the norm the system holds (the session's recorded timers).
+      type: object
+      additionalProperties: false
+      required: [kind, service_id, measured_ms, norm_ms, deviation_ms]
+      properties:
+        kind: { type: string, enum: [ACCEPT, FILL] }
+        service_id:
+          type: [string, 'null']
+          description: The leg's service for ACCEPT; `null` for the 112 FILL interval.
+        measured_ms: { type: [integer, 'null'], minimum: 0 }
+        norm_ms: { type: integer, minimum: 0 }
+        deviation_ms:
+          type: [integer, 'null']
+          description: measured − norm (positive = late); `null` when not measured.
+    LessonReportI4:
+      x-epic: [E31, E33]
+      x-change: CHANGED
+      x-replaces: '../openapi.yaml#/components/schemas/LessonReport'
+      type: object
+      additionalProperties: false
+      required: [lesson_id, cards, weighted_total, weighted_max]
+      properties:
+        lesson_id: { type: string, format: uuid }
+        cards:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [position, session_id, weight, score, unscored]
+            properties:
+              position: { type: integer, minimum: 1 }
+              session_id: { type: string, format: uuid }
+              weight: { type: number }
+              score:
+                description: (CHANGED, I4 E31) `null` for an ABORTED card.
+                oneOf:
+                  - $ref: '../openapi.yaml#/components/schemas/ScoreReportView'
+                  - type: 'null'
+              unscored:
+                description: (additive, I4 E31) Present exactly when `score` is `null`.
+                oneOf:
+                  - $ref: '#/components/schemas/UnscoredCardView'
+                  - type: 'null'
+              norms:
+                description: (additive, I4 E33) Per card and per leg.
+                type: array
+                items: { $ref: '#/components/schemas/NormView' }
+              failed_rule_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
+              critical_error_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
+        weighted_total: { type: number, description: Scored cards only (unchanged). }
+        weighted_max: { type: number }
+
+    # --------------------------------------------------- instructor misc ----
+    ResultCommentRequest:
+      x-epic: E32
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1 }
+        replaces_comment_id:
+          description: An edit is a new row that supersedes this one (append-only).
+          type: [string, 'null']
+          format: uuid
+    ResultCommentView:
+      x-epic: E32
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [comment_id, session_id, lesson_id, author_user_id, author_display_name_ru, text, created_at, replaces_comment_id, superseded]
+      properties:
+        comment_id: { type: string, format: uuid }
+        session_id: { type: [string, 'null'], format: uuid }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        author_user_id: { type: string, format: uuid }
+        author_display_name_ru: { type: string }
+        text: { type: string }
+        created_at: { type: string, format: date-time }
+        replaces_comment_id: { type: [string, 'null'], format: uuid }
+        superseded: { type: boolean }
+    ResultCommentList:
+      x-epic: E32
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ResultCommentView' }
+    ScenarioSummaryI4:
+      x-epic: E32
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ScenarioSummary'
+      allOf:
+        - $ref: '../openapi.yaml#/components/schemas/ScenarioSummary'
+        - type: object
+          required: [archived_at]
+          properties:
+            archived_at:
+              description: (additive, I4 E32) `null` = active; set = hidden from pickers.
+              type: [string, 'null']
+              format: date-time
+    LessonBoardRow:
+      x-epic: E32
+      x-change: NEW
+      x-optional: true
+      type: object
+      additionalProperties: false
+      required: [position, session_id, trainee_user_ids, card_title_ru, state, card_status, accept_deadline_offset_ms, score_percent]
+      properties:
+        position: { type: integer, minimum: 1 }
+        session_id: { type: string, format: uuid }
+        trainee_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+        card_title_ru: { type: string }
+        state: { $ref: '../openapi.yaml#/components/schemas/SessionState' }
+        card_status: { $ref: '../openapi.yaml#/components/schemas/CardStatus' }
+        accept_deadline_offset_ms: { type: [integer, 'null'] }
+        score_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+
+    # ------------------------------------------------ statistics, history ----
+    TraineeStatisticsRow:
+      x-epic: E33
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [trainee_user_id, display_name_ru, session_count, lesson_count, average_percent, failed_rules_by_category, accept_deviation_ms_avg, fill_deviation_ms_avg]
+      properties:
+        trainee_user_id: { type: string, format: uuid }
+        display_name_ru: { type: string }
+        session_count: { type: integer, minimum: 0 }
+        lesson_count: { type: integer, minimum: 0 }
+        average_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        failed_rules_by_category:
+          type: object
+          description: '`ScoringCategory` → count of failed rules.'
+          additionalProperties: { type: integer, minimum: 0 }
+        accept_deviation_ms_avg: { type: [number, 'null'] }
+        fill_deviation_ms_avg: { type: [number, 'null'] }
+    TraineeStatistics:
+      x-epic: E33
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/TraineeStatisticsRow' }
+    MyHistorySession:
+      x-epic: E33
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [session_id, lesson_id, scenario_title_ru, completed_at, score_percent, failed_rule_count]
+      properties:
+        session_id: { type: string, format: uuid }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        scenario_title_ru: { type: string }
+        completed_at: { type: string, format: date-time }
+        score_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        failed_rule_count: { type: [integer, 'null'], minimum: 0 }
+    MyHistory:
+      x-epic: E33
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [statistics, sessions]
+      properties:
+        statistics: { $ref: '#/components/schemas/TraineeStatisticsRow' }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/MyHistorySession' }
+
+    # ------------------------------------------------------------ materials ----
+    TrainingMaterialView:
+      x-epic: E34
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [material_id, title_ru, file_name, content_type, size_bytes, sha256, uploaded_by_user_id, created_at, archived_at]
+      properties:
+        material_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        file_name: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        uploaded_by_user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        archived_at: { type: [string, 'null'], format: date-time }

@@ -1,0 +1,792 @@
+# HLD 71 — I4 wave 4: audit, operations, TLS, administrator, instructor, reports, materials, text quality
+
+Turns the accepted wave-4 analysis (I4 E22, "wave-4 analysis (E9b, E11, E12, E13, E14, E15, E16)",
+HEAD f94a257) into the repo's design. The E23 data recon supplies the spelling dictionary and street
+list facts for §71.12. The manager's decisions on that analysis are final and are recorded as D29–D35
+in `00-decisions.md`. **This document does not re-decide the design.** Where the analysis offered a
+choice, the manager's decision is copied. Where a name was missing (an operationId, a path, a problem
+code), E24 chose it as a technical detail, and every such name is listed in §71.16.
+
+Nothing here edits HLD 10/30/40 or `openapi.yaml`. Those documents are parsed by tests
+(`tests/api/test_contract.py`, `tests/integration/db/test_migration_baseline.py` and others), so
+**each implementing epic updates them together with its code**, copying identifiers from this file
+and from `docs/hld/contracts/i4-openapi-delta.yaml` literally. HLD 20 gains only a *planned* I4
+section, §20.11. The §20.1 inventory is not touched, because a row there without its table fails
+`test_migrated_tables_equal_the_hld_inventory`. The schemes are `docs/hld/puml/i4-*.puml`. The epic
+list is the "I4 TBD epics" section of `docs/hld/90-tbd-epics.md`. The owner questions are in Russian
+in `docs/owner-decisions.md`, under «Ждёт решения владельца».
+
+Language rule unchanged (header of 00): identifiers are English, and trainee-facing labels are Russian.
+
+Source shorthand, as in the analysis:
+- ¶ is the ordinal paragraph of the ТЗ docx (`requirements/normalized/SRC-001-formal-docs.md`).
+- REQ-nnnn are the normalized requirement ids.
+- F-nn and §n.n point into the assessment `requirements/assessments/2026-09-23-requirements-vs-product.md`.
+- «Q&A Lnnn» is a line of the Q&A transcript.
+
+## 71.0 The eleven slices in one table
+
+The owner's seven epics (E9b, E11, E12, E13, E14, E15, E16) are re-cut into the eleven slices of the
+analysis §3.3 (D30). The epic ids are E25 = S1 … E35 = S11.
+
+| Slice | Epic | Content | Deps | Wave | Tier | Migration |
+|:--|:--|:--|:--|:--|:--|:--|
+| S1 | E25 | Audit + JSON logs | — | α | opus | `0016_audit_log` |
+| S2 | E26 | Ops hardening + backup/restore | — | α | sonnet | none |
+| S3 | E27 | TLS edge | E26 | β | opus | none |
+| S4 | E28 | Accounts backend | E25 | β | sonnet | none |
+| S5 | E29 | Admin monitoring backend | E25, E26 | γ | sonnet | none |
+| S6 | E30 | Admin UI | E28, E29 | δ | sonnet | none |
+| S7 | E31 | Instructor core (timers, ABORTED cards) | E21 committed (tickets) | α → β | opus | none |
+| S8 | E32 | Instructor misc (comments, scenario upload/archive, all-trainees board) | — | α | sonnet | `0017_result_comments_scenario_archive` |
+| S9 | E33 | Reports, statistics, CSV, trainee history | E31 | γ | sonnet (opus review of the norms definitions) | none |
+| S10 | E34 | Materials | — | α | sonnet | `0018_training_materials` |
+| S11 | E35 | Text quality (report-only) | E23 data, E33 | δ | sonnet; any scoring waits for Q-E11-1 | none |
+
+Waves, copied from §3.3 (parallel, no file overlap except the hot files of §71.1):
+- α: S1 ∥ S2 ∥ S8 ∥ S10. S7 starts as soon as E21 is committed, because it edits tickets.
+  E21 is committed as 3ee2764.
+- β: S3 (after S2) ∥ S4 (after S1) ∥ S7.
+- γ: S5 (after S1 and S2) ∥ S9 (after S7).
+- δ: S6 ∥ S11.
+
+The gate runs alone between commits, as usual.
+
+## 71.1 Rules every I4 slice follows
+
+- **Build only what the organizers fully define (D29).** An ambiguous organizer answer is not fully
+  defined, so it becomes an owner question, not two variants behind a switch. Every excluded item
+  below names its owner-question id.
+- **Audit first.** S1 lands in wave α. Every later slice's HTTP actions are then audited by the
+  middleware without per-slice code.
+- **Hot shared files.** Each slice appends its own section to these files and never rewrites
+  another slice's section. The manager regenerates `schema.d.ts` last, the same as E9a/E6b.
+  - `backend/app/api/container.py`
+  - `docs/hld/openapi.yaml`
+  - `frontend/src/shared/i18n/ru.ts`
+  - `frontend/src/shared/api/client.ts`
+  - `docs/hld/20-db-schema.md`: the epic moves its §20.11 table into §20.1/§20.x when it builds it.
+- **Migrations are pre-allocated (D30).** `0016` is audit (E25), `0017` is comments + scenario
+  archive (E32), and `0018` is materials (E34). Parallel slices therefore never collide on
+  `down_revision`. The chain at E24 ends at `0015_users_sip_ha1` (listed:
+  `backend/app/db/migrations/versions/0001…0015`).
+  - E32 and E34 set their `down_revision` to whatever is head when they land. The numbers are fixed;
+    the order of landing is not.
+- **SPEC invariants.** INV 1–14 stay as they are. The one scoring change is S7's timer-driven
+  DEADLINE (§71.8); INV 9 holds, because the value comes from the log.
+
+---
+
+## 71.2 S1 / E25 — Audit + JSON logs
+
+**Purpose.** One cross-cutting audit of every user action outside a session's own event log, plus
+JSON logs from every process (analysis finding 4).
+
+**Organizer sources** (analysis §1: E15 rows 3–5, E9b row 7, E16 row 2):
+- ¶296 REQ-2244, ¶128 REQ-2114 and ¶213 REQ-2180: «Аудит всех действий пользователей», «Ведение
+  учета всех действий» (F-26).
+- ¶297 REQ-2245: «Хранение журналов безопасности не менее 6 месяцев».
+- ¶246 REQ-2206: no change of grades «без фиксации в журнале аудита». A persisted rescore logs actor
+  SYSTEM today (`application/scoring/rescore_session.py:93-124`, F-17).
+- ¶372 REQ-2308: «JSON для логов и журналов».
+- ¶205 REQ-2173: the admin views the logs. S1 writes them and S5 reads them.
+
+**Design** (D31; scheme `puml/i4-audit-components.puml`, `puml/i4-audit-sequence.puml`).
+- Domain: none. The audit is not a domain concern. `session_events` stay the in-session record
+  (D5 unchanged).
+- Application:
+  - port `application/ports/audit_log.py`, with `AuditRecorder.record(entry)` and
+    `AuditReader.page(filter)`;
+  - `AuditEntry` holds ts, user_id, role, action, operation_id, method, path template, target ids,
+    status, client ip and outcome.
+- Infrastructure:
+  - `infrastructure/persistence/audit_log_repository.py`;
+  - `infrastructure/logging/json_formatter.py`, stdlib only and with no dependency. It is wired
+    into the uvicorn `log_config` and the backend app logger. The voice agent and the SIP gateway
+    replace their `logging.basicConfig` with it (`workers/voice_agent/voice_agent/main.py:1115`).
+  - LiveKit's `livekit.yaml` `json: true` belongs to S2.
+- API: an ASGI middleware in `api/main.py` records every authenticated request after the response.
+  - It uses the path template and the operationId, and never the bodies (passwords, personal data).
+  - It also records 401/403 as security events, and WebSocket connects.
+  - It excludes `/health/*`: the instructor page polls readiness every `HEALTH_POLL_INTERVAL_MS`.
+- `loginUser` records success and failure explicitly, because it is unauthenticated. The attempted
+  username sits in `target_ids`, and a password never does.
+- `rescoreSession persist=true` carries the real INSTRUCTOR/ADMIN user id in its audit entry.
+- Config:
+  - `SIM_AUDIT_RETENTION_DAYS`: default 365, and a settings validator refuses `< 183` (¶297).
+  - `SIM_LOG_FORMAT=json|text`: default `json`.
+  - `SIM_LOG_DIR`: the backend JSON log file with rotation, which S5's error report reads.
+- What an entry does not hold: a before/after value. See "Not built".
+
+**Data / DB.** Migration `0016_audit_log` creates the table `audit_log`, append-only through the
+shared `trg_reject_mutation()` (HLD 20 §20.9 pattern), with indexes `(ts)` and `(user_id, ts)`. The
+columns are in HLD 20 §20.11.1.
+
+**API.** None of its own. `listAuditLog` is S5's read side. `loginUser` and `rescoreSession` keep
+their contracts, and only their audit side-effect is new.
+
+**Acceptance** (tests from the analysis):
+- UPDATE/DELETE on `audit_log` is rejected.
+- Every route in `openapi.yaml` except health produces exactly one entry. The test is parametrised
+  over the contract, the same way `test_contract.py` iterates routes.
+- A login failure is recorded, and no password appears in the entry.
+- A retention below 183 is refused at settings load.
+- The backend, voice agent and SIP gateway emit one JSON object per log line under
+  `SIM_LOG_FORMAT=json`.
+
+**Not built (owner questions).**
+- **Q-E15-3**: a semantic before/after journal, such as «Иванов изменил оценку с 42 на 50»
+  (analysis §5, first case; D-e). If the owner wants it, S1 grows domain-level records in the
+  mutating use cases outside sessions. Everything else stands.
+- Audit volume: roughly 50k rows or fewer per day for a 30-seat class, fine for PostgreSQL over
+  6 months (§3.2). Health is excluded.
+
+## 71.3 S2 / E26 — Ops hardening + backup/restore
+
+**Purpose.** A classroom server that restarts itself, has no open datastore ports and has a daily
+backup with a documented restore.
+
+**Organizer sources** (E15 rows 2, 6, 7, 8; E16 row 3):
+- ¶295 REQ-2243: «Защита от несанкционированного доступа». Today redis on host 16379 has no
+  `requirepass`, and postgres 15432 has the defaults `sim/sim` (`infra/docker-compose.yml`, F-24).
+- ¶143 REQ-2126, ¶286 REQ-2235 and ¶193 REQ-2164: backup «не реже 1 раза в сутки».
+- ¶307 REQ-2252: documented procedures of installation, configuration and **restore**.
+- ¶288 REQ-2237: automatic restart of services. `restart: unless-stopped` is missing on postgres,
+  redis and livekit.
+- ¶390 REQ-2321: «Поддержка сжатия данных», met here by `pg_dump -Fc` and a gzip of the recordings.
+
+**Design** (D33; scheme `puml/i4-backup-restore.puml`).
+- Compose:
+  - redis gets `requirepass` via `SIM_REDIS_PASSWORD`, and `SIM_REDIS_URL` carries it;
+  - postgres and redis ports are bound to `127.0.0.1`; the test compose is untouched;
+  - postgres, redis and livekit get `restart: unless-stopped`;
+  - `infra/livekit/livekit.yaml` gets `json: true`.
+- Backup service `backup`, on image `postgres:16`, which is already local:
+  - it loops `pg_dump -Fc` daily, plus a `tar.gz` of the recordings volume (`recordings-data`,
+    mounted at `/data` in `backend`), into `./backups/`;
+  - it keeps N = `SIM_BACKUP_KEEP` (default 14);
+  - it writes `backups/last.json` (ts, sizes, sha256, status).
+- `infra/scripts/restore.sh`: stops the backend, runs `pg_restore --clean`, restores the recordings
+  and starts the backend again.
+- `make backup-now`, `make restore FILE=…` and `make backup-verify`.
+- RUNBOOK sections «Резервное копирование» and «Восстановление», including one recorded manual
+  restore walk.
+- The backend reads `last.json` from a mounted volume. S5 serves it, together with the purge guard.
+- The FATAL latch stays manual (by design, SPEC §39).
+
+**Data / DB.** No migration. The backups are files outside the database.
+
+**API.** None. Backup status and the purge guard are S5.
+
+**Acceptance.**
+- `make backup-now` produces a dump and a recordings archive plus `last.json`.
+- `make restore FILE=…` on the dev stack brings the data back, walked once and recorded in RUNBOOK.
+- `redis-cli` without a password is refused.
+- `docker compose config` shows loopback binds and the restart policies.
+- Unit side: `last.json` parsing.
+- A gate-side restore test is **not** added: it is too slow for the gate (§3.1).
+
+**Not built (owner questions).** Q-E14-2: starting and stopping services, updating, and configuring
+SIP/DB/logs/backup from the UI (¶189–¶203). Today these stay shell commands plus RUNBOOK. There is no
+off-box backup copy, because none exists in a closed contour.
+
+## 71.4 S3 / E27 — TLS edge
+
+**Purpose.** Finding 2: browsers grant the microphone (`getUserMedia`, a WebRTC mic) only in a
+secure context. A classroom where trainee PCs open `http://<server-LAN-IP>` gets no microphone. That
+breaks the phone widget, the ДДС call-back (E6b) and the service-head calls (E6c). TLS is a working
+prerequisite.
+
+**Organizer sources** (E15 rows 1 and 13; E16 row 3):
+- ¶293 REQ-2241: «Шифрование всех передаваемых данных (TLS/SSL внутри контура)».
+- ¶142 REQ-2125: «Защиту каналов передачи данных» (F-24).
+- REQ-5903: «Да, все в классе» (a real classroom LAN).
+- ¶390 REQ-2321: compression, via gzip/zstd at the proxy.
+- ¶279 REQ-2231 is met in part: TLS, least privilege and audit cover the technical side.
+- Today everything is http/ws (`backend/Dockerfile:64`; `.env.example` `SIM_LIVEKIT_URL=ws://…`).
+
+**Design** (D32; scheme `puml/i4-tls-edge-topology.puml`).
+- One reverse-proxy service `edge` on 443, with these routes:
+  - the frontend (Vite dev, or built assets);
+  - `/api`, and `/api/v1/ws` with upgrade;
+  - LiveKit signalling `/rtc` → `livekit:7880`.
+- `SIM_LIVEKIT_PUBLIC_URL=wss://<host>`. Media stays WebRTC DTLS-SRTP on UDP 7882, which is already
+  encrypted.
+- `infra/scripts/make-certs.sh` (the host has `/usr/bin/openssl`) creates a local CA and a server
+  certificate with SANs for `localhost`, the LAN IP and a hostname. RUNBOOK tells the teacher how to
+  install the CA on classroom PCs.
+- CORS and Vite `allowedHosts` are updated.
+- **Proxy: Caddy** (D-f).
+  - **The first step of E27 is pulling the image, within the time-box its brief sets.** The image
+    is not local and the network is a slow proxy (analysis §5, fourth case).
+  - **Fallback, if the pull fails:** uvicorn `--ssl-keyfile`/`--ssl-certfile`, Vite `server.https`,
+    and the backend proxying LiveKit's `/rtc` WebSocket.
+  - The fallback is doable, but it puts transport plumbing in the API process. It is described
+    here and built only if the pull fails.
+
+**Data / DB.** None.
+
+**API.** None changed. URLs become `https://` and `wss://`, and paths are unchanged.
+
+**Acceptance.**
+- Open `https://<LAN-IP>` in Chrome on the same machine. A non-localhost origin is exactly the
+  insecure-context case, so the microphone prompt appearing is a real test.
+- Playwright asserts `window.isSecureContext === true`.
+- The ДДС phone widget connects over `wss://`.
+- HMR through the proxy works, or its absence is recorded in RUNBOOK.
+
+**Not built (owner questions).** Q-E15-2: SIP TLS/SRTP. Real phones and softphones may not support
+it, and E6e left it out. The SIP gateway stays plain. Separately, the self-signed CA is a one-time
+manual step on each workstation.
+
+## 71.5 S4 / E28 — Accounts backend
+
+**Purpose.** An administrator can create, block/unblock, re-role and reset accounts. Today only a
+CLI seed of three accounts exists (`backend/app/tools/seed_users.py`).
+
+**Organizer sources** (E14 rows 1–3):
+- ¶195 REQ-2165: «Создавать учетные записи пользователей всех категорий».
+- ¶196 REQ-2166: «Назначать роли и права доступа». This is defined for the three fixed roles.
+- ¶197 REQ-2167: «Блокировать/разблокировать учетные записи». `is_active` is already honoured at
+  login and per request (`application/auth/get_current_user.py:59`), but it cannot be set.
+
+**Design.**
+- `application/users/{create_user,update_user,set_active,reset_password}.py`.
+- Technical guards: you cannot block or demote yourself, and the last active ADMIN cannot be
+  removed.
+- Passwords are argon2 as today, with a minimum length from config.
+- Every action is audited by S1 automatically.
+
+**Data / DB.** No migration: `users.is_active` exists.
+
+**API** (delta, `x-epic: E28`):
+- `createUser` `POST /api/v1/admin/users`;
+- `updateUser` `PATCH /api/v1/admin/users/{user_id}` (role, display name, is_active);
+- `resetUserPassword` `POST /api/v1/admin/users/{user_id}/password`;
+- `listUsers` gains `include_inactive` (ADMIN only), and `UserAccount` gains `is_active`.
+
+ADMIN only. New problem codes are `USERNAME_TAKEN`, `SELF_MODIFICATION_FORBIDDEN` and
+`LAST_ADMIN_REQUIRED`. A short password is the existing `422 VALIDATION_ERROR`.
+
+**Acceptance.**
+- The role gate: INSTRUCTOR and TRAINEE get 403.
+- The self and last-admin guards hold.
+- A blocked user's live token is rejected on the next request (already true; assert it).
+- Each operation leaves one audit entry.
+
+**Not built (owner questions).**
+- Q-E14-1: whether ADMIN keeps instructor powers (¶218 least privilege, ¶215).
+- Q-E15-1: multi-level authentication or a second factor (§8.1).
+- Q-E14-4: an external access-control system.
+- Q-E16-4: a JSON profile export (¶363).
+- Custom rights beyond the three roles are discretion (no id; outside the ТЗ's defined part).
+
+## 71.6 S5 / E29 — Admin monitoring backend
+
+**Purpose.** The administrator's read side:
+- logs;
+- usage statistics;
+- server load;
+- errors and failures;
+- alerts;
+- backup status;
+- a purge that is refused without a backup.
+
+**Organizer sources** (E14 rows 4–8 and 11; E15 rows 9–10):
+- ¶205 REQ-2173: «Просматривать системные журналы».
+- ¶206 REQ-2174: «Анализировать статистику использования системы».
+- ¶207 REQ-2175: «Формировать отчеты об ошибках и сбоях». Partial today: `MODEL_ERROR` events and
+  the FATAL latch.
+- ¶208 REQ-2176: «Отслеживать нагрузку на сервер». `gpu_memory_mb` is always None (F-23).
+- ¶289 REQ-2238: real-time monitoring of critical parameters.
+- ¶209 REQ-2177: already met (`/health/ready`, preflight).
+- ¶308 REQ-2253: «система оповещения администратора об ошибках». The channel is in-app, because
+  there is no internet and no mail server (technical).
+- ¶216 REQ-2182: no deletion of critical data without a backup. `purgeRecordings` deletes WAVs with
+  no backup check today (`application/recording/purge_recordings.py`).
+
+**Design.**
+- `application/admin/*`, `api/routers/admin.py`.
+- `listAuditLog`: filters by user, action and period; paged.
+- `getUsageStats`: per-day counts of logins, sessions, lessons and active users, from `audit_log`,
+  `simulation_sessions` and `lessons`.
+- `getServerLoad`: CPU from `/proc/stat`, memory from `/proc/meminfo` and disk from
+  `shutil.disk_usage` (there is no `psutil`).
+  - GPU comes from the voice-agent health heartbeat if it carries it, else `null`.
+  - A metric is never faked: an absent metric is never 0 (the SPEC §27 rule, reused).
+- `getErrorReport`, over a period, merges:
+  - backend JSON-log records at level ≥ ERROR (from `SIM_LOG_DIR`);
+  - `MODEL_ERROR` events;
+  - `INFERENCE_HEALTH_CHANGED` to FATAL.
+- `listAdminAlerts`: derived, not stored. It covers:
+  - FATAL latches;
+  - a stale backup (`last.json` older than 26 h) or a failed one;
+  - repeated login failures.
+- `getBackupStatus`: `last.json` as read, or `available: false`.
+- `purgeRecordings`: refused with `409 BACKUP_REQUIRED` unless `last.json` is newer than the rows
+  being purged.
+
+**Data / DB.** No migration. It reads `audit_log` (0016) and existing tables.
+
+**API** (delta, `x-epic: E29`):
+- `listAuditLog` `GET /api/v1/admin/audit-log`;
+- `getUsageStats` `GET /api/v1/admin/usage-stats`;
+- `getServerLoad` `GET /api/v1/admin/server-load`;
+- `getErrorReport` `GET /api/v1/admin/errors`;
+- `listAdminAlerts` `GET /api/v1/admin/alerts`;
+- `getBackupStatus` `GET /api/v1/admin/backup-status`;
+- `purgeRecordings` CHANGED (`409 BACKUP_REQUIRED`).
+
+ADMIN only.
+
+**Acceptance.**
+- An API test for each operation.
+- The load endpoint returns `null`, never 0, for an absent metric.
+- The purge is refused without a fresh `last.json` and allowed with one.
+- An alert appears for a stale `last.json` and for a FATAL latch.
+
+**Not built (owner questions).**
+- Q-E14-3 (confirm only): the usage metric set above is built as proposed, and the owner confirms
+  it is enough.
+- Q-E14-2: service control from the UI.
+- Q-E14-4: an external monitoring system (Zabbix/Prometheus).
+- Q-E14-1: whether ADMIN reads reports, transcripts and recordings.
+
+## 71.7 S6 / E30 — Admin UI
+
+**Purpose.** The screens over S4 and S5.
+
+**Organizer sources.** Those of §71.5 and §71.6 (¶195–¶197, ¶205–¶209, ¶216, ¶289, ¶308).
+
+**Design.**
+- `frontend/src/features/admin/*` at route `/admin`, ADMIN only. `homeRouteForRole` is updated.
+- Tabs: Пользователи / Журнал / Статистика / Нагрузка / Ошибки / Оповещения.
+- The app shell shows an alerts badge for ADMIN.
+- The backup status is shown on the admin page (S2 → S5).
+- Russian strings are in `ru.ts`.
+
+**Data / DB.** None.
+
+**API.** None new; it consumes the S4 and S5 operations.
+
+**Acceptance.**
+- A vitest per tab.
+- The route is refused to non-ADMIN users.
+- An absent metric renders «нет данных», never 0.
+
+**Not built (owner questions).** Q-E14-1, Q-E14-2, Q-E14-3, Q-E14-4 and Q-E15-1, as in §71.5–§71.6.
+
+## 71.8 S7 / E31 — Instructor core (scoring-adjacent)
+
+**Purpose.**
+- The instructor sets the per-card timers.
+- Scoring follows those timers.
+- An early-ended lesson keeps the unfinished cards in its report (findings 3 and 6).
+
+**Organizer sources** (E9b rows 3 and 14; E12 row 1):
+- ¶240 REQ-2200/2201: «Устанавливать временные рамки… По умолчанию значение - 30 сек.». See also
+  REQ-6020 and assessment §9.5.
+  - The 30 s default is the accept timer, and already exists as `accept_within_ms: 30_000`
+    (`backend/app/domain/dds/card_status.py`).
+  - It is not settable at assignment, and DEADLINE rules carry literal ms (`max_offset_ms: 30000`).
+- ¶342–343 REQ-2288/2289: «Преподаватель завершает занятие (в любой момент)», and then a report «с
+  информацией о действиях, замечаниях (ошибках), времени заполнения карточки…».
+  - Today `abortLesson` aborts every open card (`application/lessons/abort_lesson.py`).
+  - `getLessonReport` skips any card that is not COMPLETED (`application/lessons/lesson_report.py`).
+- ¶329/¶343 REQ-2271–2273 (partial): the lesson report lists all actions.
+
+**Design** (D34).
+- Timer override:
+  - `PlanEntry.timers: CardTimers | None` and `SessionCreateRequest.timers`;
+  - resolved as scenario timers ← lesson/session override, in the same precedence style as the
+    variants (HLD 70 §70.2.2);
+  - recorded in `SESSION_CREATED.timers`, which is already recorded (`create_session.py:39-40`).
+- DEADLINE:
+  - a new optional `DeadlineConfig.max_offset_timer: accept_within_ms | fill_within_ms`;
+  - when it is set, the evaluator reads the session's recorded timers from the log
+    (`SESSION_CREATED.timers`), not a literal;
+  - INV 9 holds because the value comes from the log;
+  - a rescore of a pre-change log is unchanged, because the field is optional.
+- Tickets' `memo_*_in_time` rules switch to `max_offset_timer: accept_within_ms`. This is a
+  scenario content edit of `scenarios/tickets/**`, possible now that E21 is committed.
+- Scenario validation gets rule **R43**: `max_offset_timer` names an existing timer key (HLD 30).
+- ABORTED cards in the lesson report:
+  - `LessonReport.cards[].score` becomes nullable;
+  - a new `unscored: {state, timeline, times}` is built from the same `timeline_entry` projection
+    and visibility;
+  - no change to SPEC §28 or to the session transitions;
+  - the weighted sum ignores unscored cards, unchanged.
+
+**Data / DB.** None: `SESSION_CREATED.timers` is already in the payload.
+
+**API** (delta, `x-epic: E31`):
+- `createSession` ADDITIVE `timers`;
+- `createLesson` via `PlanEntry` ADDITIVE `timers`;
+- `getLessonReport` CHANGED (`LessonReportI4`: nullable `score`, `unscored`).
+
+**Acceptance.**
+- INV 9 on a session with an overridden timer.
+- R43 allow and deny.
+- A lesson aborted mid-card lists the card unscored with its events.
+- The weighted sum ignores it.
+- Ticket scoring fixtures still pass with the default timer.
+
+**Not built (owner questions).**
+- Q-E9b-2: what "filling" means for a ДДС card under the 3-minute norm. REQ-6020's 3 minutes are not
+  measured in the default ДДС mode, because `fill_within_ms` starts at `CALL_ANSWERED`, which never
+  happens under `GENERATED_CARD` (HLD 70 §70.3.4).
+- Q-E9b-6: scoring an unfinished card. It is shown unscored.
+- Q-E9b-3: pass/fail criteria (¶241).
+- Q-E9b-5: the instructor's expert grade (¶231).
+
+## 71.9 S8 / E32 — Instructor misc
+
+**Purpose.**
+- Teacher comments on results.
+- The scenario upload UI with archive.
+- One live board of every trainee's cards.
+
+**Organizer sources** (E9b rows 1, 2, 9, 10, 11; E13 row 8):
+- ¶236 REQ-2197: «Предоставлять обратную связь (комментарии к результатам) через интерфейс»
+  (§7.6 F-17).
+- ¶237 REQ-2198: «Давать рекомендации по улучшению навыков», through the same channel.
+- ¶267 REQ-2222: «Видеть рекомендации системы». The trainee side is completed by the comments.
+- Q&A L786–789: «видит действия обучаемых, их результаты… всех обучаемых» (REQ-4059 context).
+- ¶224/¶235 REQ-2188/2196: real-time monitoring.
+- ¶222 REQ-2186: «Создавать, редактировать и валидировать (утверждать) учебные сценарии».
+  - REST `importScenarioVersion`/`validateScenarioFile` exist (`routers/scenarios.py:115-160`), but
+    no UI calls them.
+  - "Edit" means uploading a new version, because versions are immutable (D4).
+  - "Approve generated" belongs to E10.
+- ¶229 REQ-2192: «Редактировать и удалять неактуальные сценарии». Delete means archive, because the
+  FKs are RESTRICT.
+
+**Design.**
+- Comments:
+  - table `result_comments` on a session or a lesson, append-only, with edits as new rows;
+  - the trainee sees them when the report is visible to them (the same `report_visibility` gate);
+  - report section «Комментарии преподавателя».
+- Scenario upload UI:
+  - an «Сценарии» page with a file input → the `validateScenarioFile` report →
+    `importScenarioVersion`, using existing operations;
+  - the content is read client-side, and `format` comes from the file extension.
+- Archive:
+  - `scenarios.archived_at`, with archive and unarchive operations;
+  - pickers hide archived scenarios, and existing sessions are untouched (FK RESTRICT stays).
+- All-trainees board `/instructor/board`:
+  - a per-lesson table of every card: trainee, card title, `card_status`, countdown, and the score
+    when completed;
+  - built from `getLesson` plus one WS per active card, the pattern E4b uses;
+  - or from a new `getLessonBoard` read model if N sockets per instructor is too many. That choice
+    is technical and E32's. The delta carries `getLessonBoard` marked `x-optional`.
+
+**Data / DB.** Migration `0017_result_comments_scenario_archive`:
+- table `result_comments`, append-only trigger;
+- column `scenarios.archived_at`.
+
+See HLD 20 §20.11.2–§20.11.3.
+
+**API** (delta, `x-epic: E32`):
+- `listSessionComments` / `createSessionComment` `…/reports/{session_id}/comments`;
+- `listLessonComments` / `createLessonComment` `…/lessons/{lesson_id}/comments`;
+- `archiveScenario` / `unarchiveScenario` `…/scenarios/{scenario_id}/archive|unarchive`;
+- `listScenarios` ADDITIVE `include_archived`, and `ScenarioSummary.archived_at`;
+- optional `getLessonBoard` `…/lessons/{lesson_id}/board`.
+
+**Acceptance.**
+- A comment is visible to the trainee exactly when the report is.
+- An edit adds a row and never updates one.
+- Archive hides the scenario from `listScenarios` by default, and a running session on it is
+  unaffected.
+- The upload page shows the validation issues before importing.
+- The board lists every card of a lesson with its status.
+
+**Not built (owner questions).**
+- **Q-E9b-4**: instructor isolation (¶245 REQ-2205) against the E9a shared-groups decision and
+  Q&A L786–789. No change is made (D-g). Every INSTRUCTOR still manages every session, lesson and
+  comment.
+- Q-E9b-5: the expert grade (¶231).
+
+## 71.10 S9 / E33 — Reports, statistics, CSV, trainee history
+
+**Purpose.**
+- A lesson report with times against the system's norms.
+- A per-trainee statistics table.
+- CSV export.
+- The trainee's own history.
+
+**Organizer sources** (E12 rows 1, 2, 5, 7, 10; E13 row 7; E16 row 1):
+- ¶329/¶343 REQ-2271–2273: the lesson report «с информацией о действиях, замечаниях (ошибках)».
+- ¶329 REQ-2274/2275: «времени заполнения карточки, отличия времени от нормативного (заданного в
+  системе)». Today there is only the DEADLINE evidence string «N мс при норме M мс»
+  (`domain/scoring/evaluators/deadline.py:74-78`).
+- These ask for keeping records of results and progress, the history of performance, and
+  statistics (there is no aggregate endpoint today):
+  - ¶101 REQ-2092;
+  - ¶225 REQ-2189;
+  - ¶138 REQ-2122;
+  - ¶232 REQ-2194.
+- ¶252 REQ-2210 and ¶265/266 REQ-2220/2221: the trainee's own results, progress and history of
+  errors. Today `/report` lists own sessions without scores.
+- ¶360 REQ-2299 and ¶379 REQ-2313: «CSV для выгрузки отчетов и статистики».
+- ¶165 REQ-2142: «Время формирования аналитических отчетов не более 30 секунд».
+
+**Design.**
+- The pure module `application/reports/norms.py` works per card and per leg:
+  - `accept_ms` (HANDOFF_RECEIVED → first ACCEPTED/NOT_ACCEPTED) vs `accept_within_ms`;
+  - `fill_ms` (112: CALL_ANSWERED → HANDOFF_CREATED) vs `fill_within_ms`;
+  - the deviation;
+  - the failed-rules count;
+  - the critical errors.
+- The norms are the ones the system holds: the session's recorded timers (after S7).
+- `getTraineeStatistics`: per trainee, the sessions, lessons, average %, failed-rule counts by
+  category and norm deviations. INSTRUCTOR/ADMIN see everyone, and a TRAINEE only themselves.
+- `getMyHistory`: the same scoped to self, plus the list of own completed sessions with score and
+  date.
+- CSV:
+  - `GET …/lessons/{lesson_id}/report.csv` and `GET …/statistics.csv`;
+  - stdlib `csv`, UTF-8 with BOM, `;` separator, column headers in Russian.
+- Frontend:
+  - the lesson report table plus «Скачать CSV»;
+  - `/instructor/statistics`;
+  - the trainee's `/history`.
+- Reports never recompute scores (the existing D11 guard).
+
+**Data / DB.** None.
+
+**API** (delta, `x-epic: E33`):
+- `getTraineeStatistics` `GET /api/v1/statistics`;
+- `getTraineeStatisticsCsv` `GET /api/v1/statistics.csv`;
+- `getMyHistory` `GET /api/v1/me/history`;
+- `getLessonReportCsv` `GET /api/v1/lessons/{lesson_id}/report.csv`;
+- `getLessonReport` ADDITIVE per-card `norms`, `failed_rule_count` and `critical_error_count`
+  (in `LessonReportI4`, together with S7).
+
+**Acceptance.**
+- The CSV parses back to the same numbers.
+- No score is recomputed by a report path.
+- A TRAINEE asking for another trainee's statistics gets 403.
+- ¶165: one integration test, marked, generates the statistics in 30 s or less on a seeded
+  1000-session dataset.
+
+**Not built (owner questions).**
+- Q-E12-1: which interval is the «время реакции». Both are measurable; neither is labelled so until
+  the owner answers.
+- Q-E12-2: a leaderboard, «уровень подготовленности», and charts. Charts are «рекомендуется» in
+  ¶151, a bonus.
+- Q-E12-3: «номер рабочего места».
+- Q-E9b-2: the ДДС fill norm.
+- Bonus items not built: charts, heat maps and Excel/PDF export (¶151–152, on the owner's bonus
+  list).
+- Out of scope: «инсайты ИИ» (¶233, ML).
+
+## 71.11 S10 / E34 — Materials
+
+**Purpose.** A reference base of methodical materials that instructors upload and trainees open.
+
+**Organizer sources** (E13 rows 1–4; E16 row 4):
+- ¶256 REQ-2213: «Просматривать инструкции и методические материалы (справочную базу)».
+- ¶227 REQ-2190: «Создавать новые учебные материалы и загружать дополнительные ресурсы».
+- ¶249 REQ-2207: «Доступ к назначенным учебным материалам и сценариям». Defined for scenarios, which
+  already exist; for materials see Q-E13-1.
+- ¶387 «DOCX для методических материалов», ¶370 «PDF для документации», ¶386: the accepted upload
+  types.
+
+**Design.**
+- Table `training_materials`. Files live under `Settings.data_dir/materials/<sha256>`, the same
+  pattern as recordings.
+- Allow-list: pdf, docx, doc, xlsx, txt, md, png, jpg. The maximum size is `SIM_MATERIAL_MAX_MB`.
+- Frontend:
+  - the instructor page «Материалы»: upload, list and archive;
+  - the trainee page «Справочная база»: list, open or download. A PDF opens inline and a DOCX
+    downloads.
+- The materials directory is inside the backed-up data (S2).
+
+**Data / DB.** Migration `0018_training_materials` (HLD 20 §20.11.4).
+
+**API** (delta, `x-epic: E34`):
+- `uploadMaterial` `POST /api/v1/materials` (multipart; INSTRUCTOR/ADMIN);
+- `listMaterials` `GET /api/v1/materials` (every authenticated role);
+- `getMaterialFile` `GET /api/v1/materials/{material_id}/file` (every authenticated role);
+- `archiveMaterial` `POST /api/v1/materials/{material_id}/archive`.
+
+**Acceptance.**
+- The role gates.
+- The allow-list refusal.
+- The sha dedupe: the same bytes are stored once.
+- The download content type.
+
+**Not built (owner questions).**
+- **Q-E13-1**: whom a material is assigned to. Until it is answered, there is no assignment: every
+  trainee sees the unarchived list, which is the ¶256 «справочная база» reading the analysis builds.
+- Q-E13-2: preloading the organizers' memo, manual and classifier. Redistribution rights are not
+  stated.
+- ¶368 «XML для структурирования методических материалов»: discretion, no structure defined.
+- Q-E16-2: PDF certificates and documents.
+
+## 71.12 S11 / E35 — Text quality (report-only)
+
+**Purpose.** The lesson report's «…а также грамматики» (¶329). It is a **report-time** annotation
+of the text the trainee typed, with **no effect on the score** until the owner answers Q-E11-1
+(D35, D-d).
+
+**Organizer sources** (E11 rows 1–5):
+- ¶329/¶343 REQ-2276, 2289: the lesson report «…а также грамматики» (F-21).
+- ¶106 REQ-2096: «Оценка уровня подготовки… на основе анализа ручного ввода текста». Defined as
+  "analysed"; "scored" is discretion.
+- REQ-6017 (mentor): «проверка грамматики нужна только в момент оценки… опечатки в названиях улиц».
+  So the check runs at report time, and **live underlining would contradict it**; it is not built.
+- REQ-6018 (room): «Дубнинская… Дубининская… высылка пошла не туда». **A directory cannot detect
+  this**: E23 found both streets in OSM. The error is caught by the existing truth comparison
+  (`CARD_FIELD_CORRECT`, `domain/scoring/comparisons.py`), only in scenarios that carry that rule.
+- The street directory, F-20: defined only on the 112 card path. In the default ДДС mode the trainee
+  types no street (REQ-6029).
+
+**Design.**
+- The port `application/ports/text_checker.py` has two methods:
+  - `misspellings(text) -> list[Span]`;
+  - `street_status(street, locality) -> KNOWN | UNKNOWN | NEAR(n)`.
+- Adapters in `infrastructure/reference/`:
+  - spelling: the LibreOffice `ru_RU` hunspell dictionary (BSD-style, 146269 stems), read by
+    `spylls` 0.1.7 (MIT, pure Python). E23 proved it offline.
+  - streets: the OSM Moscow named-highway name list (ODbL 1.0, 5629 unique names). OSM carries no
+    okrug or district.
+- Where these live: E23 left them in `/tmp/teamwork-112-maxxing/data/{spell,streets}/` with
+  `SOURCES.txt` and sha256. **E35 decides the packaging** (`reference/{lexicon,streets}`, sha-pinned
+  in the manifest, licence notes) and adds `spylls` as a dependency (D-i). E24 adds no data file.
+- The annotation is a pure function over the texts the trainee typed:
+  - the final 112 card (`address.street`, `description.text`, `recipients.comment`);
+  - the ДДС texts (`DDS_SERVICE_STATUS_SET.comment`, the reasons and the close comment). The ТЗ's
+    own example is ¶341 «Сообщение принято, дежурная бригада направлена на место».
+- The annotation becomes report section «Грамотность и адреса», plus a column in the lesson report
+  and the statistics (after S9).
+- Absent-data fallback: `available: false` renders «Проверка недоступна: словарь/справочник не
+  установлен». It never shows «0 ошибок» (the SPEC §27 honesty rule).
+- If the owner later wants a score, that is an 11th `EvaluatorType`. SPEC §28 says «exact ten», so
+  it is a SPEC departure to record, not a silent add.
+- Invariants:
+  - INV 3 is unaffected: the directory is reference data, not WorldTruth.
+  - INV 9: the checker is deterministic, and its data sha is recorded in the report envelope.
+  - INV 10 is unaffected.
+- Facts E23 measured that this design must survive:
+  - the dictionary rejects the real street «Дубининская» and suggests «Дубнинская»;
+  - 53 of the 75 scenario `address.street` values hit the OSM list. The misses are word order
+    («улица Домодедовская»), МКАД by kilometre, oblast roads, «набережная Яузы», and «ул.
+    Зверенецкая».
+
+**Data / DB.** None.
+
+**API.** Its report-section schema is **not** in the I4 delta. The shape depends on Q-E11-2 and
+Q-E23-3/Q-E23-4, so E35 writes its own `openapi.yaml` section when it lands (§71.16).
+
+**Acceptance.**
+- A seeded misspelling in a ДДС comment appears in the section.
+- With the data removed the section says «Проверка недоступна».
+- The score and the report checksum are identical with and without the checker.
+- The data sha is recorded.
+
+**Not built (owner questions).**
+- **Q-E11-1**: whether grammar changes the score.
+- **Q-E11-2**: checking streets outside Moscow.
+- **Q-E23-1**: registering an apidata.mos.ru key for ОМК УМ.
+- **Q-E23-2**: pulling КЛАДР.
+- **Q-E23-3**: pairs of real names like Дубнинская/Дубининская.
+- **Q-E23-4**: whether street names bypass the general spell check. The analysis does not say so,
+  so it is not decided here (D-d). E35 escalates if it is still open when E35 starts.
+- Live underlining in the 112 card contradicts REQ-6017 and is not built. A "live, in the default
+  flow" answer would need a 112-trainee text path (A-7), a new epic (analysis §5).
+- «ул. Зверенецкая» in `scenarios/tickets/ticket-15-call-3` is **organizer-verbatim**: the same
+  spelling is in `requirements/normalized/SRC-005-tickets-and-dds-memo.md` (REQ-5226) and
+  `requirements/evidence/tickets-ocr.md`. OSM has «Зверинецкая». It is **not changed** (D-h) and is
+  recorded as an observation for the owner.
+
+---
+
+## 71.13 Defined or discretionary items no slice builds
+
+These come from the analysis tables. Each is either an owner question or is recorded for the manager.
+
+| Item | Source | Why not built | Where |
+|:--|:--|:--|:--|
+| XML configuration / settings / workstations | ¶359, ¶373, ¶364 | contradicts `.env` + YAML (SPEC §26, §36); no workstation entity | Q-E16-1 |
+| «XML для совместимости с legacy-системами» | ¶377 | no legacy system named; «все локалка без интеграции» (REQ-6022) | recorded, no question |
+| PDF certificates / official documents | ¶365, ¶380, ¶386 | not defined anywhere | Q-E16-2 |
+| MP3 recordings | ¶383 vs ¶369, ¶384 | conflict; WAV meets ¶369 | Q-E16-3 |
+| JSON user profiles | ¶363 | conflict with SPEC §30 | Q-E16-4 |
+| «Совместимость с основными СУБД» | ¶389 vs ¶301 | conflict; PostgreSQL 16 + plpgsql triggers | recorded, no build |
+| Scenario parameters: type, location | ¶239 REQ-2199 | scenario authoring (E10) | E10 |
+| «управление ИИ-модулем» | ¶220 REQ-2185 | ML / generation | out of scope |
+| Timer in the ДДС card screen | ¶271 REQ-2225 | the 112 console has the fill timer; the real ДДС interface has none (D3, `dds-header-strip.tsx`), so a ДДС timer contradicts the copied interface (manager, 2026-09-25) | Q-E13-5 |
+| Grammar check after teacher edits of generated scenarios | ¶320 REQ-2263 | E10 generation flow | E10 |
+| Fault tolerance, horizontal scaling, buffering while the DB is down | ¶287, ¶166, ¶305 | single box / E17 load | out of scope |
+| Integration with local access control / monitoring | ¶146–147 REQ-2128/2129 | no system named | Q-E14-4 |
+
+## 71.14 Conflicts between sources (analysis §4)
+
+- ¶245 instructor isolation vs Q&A L786–789 and the E9a shared-groups decision: Q-E9b-4, no change
+  (D-g).
+- ¶369 «MP3 или WAV» vs ¶383 «MP3» vs ¶384 «WAV»: Q-E16-3.
+- ¶389 «основные СУБД» vs ¶301 PostgreSQL and the plpgsql triggers: recorded.
+- ¶363 JSON profiles vs SPEC §30 relational: Q-E16-4.
+- ¶359/¶373 XML config vs SPEC §26/§36 `.env` + YAML: Q-E16-1.
+- ¶151 charts «рекомендуется» vs Q&A L783–785 «в виде графиков, в виде таблиц»: Q-E12-2.
+- ¶140/¶292 «многоуровневая» vs Q&A «двухфакторка» (§8.1, open): Q-E15-1.
+- ¶293 «все передаваемые данные» vs plain SIP from real phones: Q-E15-2.
+- The 2026-09-23 owner rule (both variants) vs the 2026-09-25 I4 rule (do not build discretion):
+  resolved by D29 for I4.
+- Mentor REQ-6017 (grammar at assessment only) vs a "live spell-check" reading of the owner's E11
+  wording «орфография в карточке»: report-only (D35).
+
+## 71.15 What cannot be verified on this machine
+
+- TLS from a second physical device. The same box via the LAN IP is a faithful proxy for the
+  secure-context rule, not for a real classroom network (S3).
+- 6-month retention in real time. Only clock-injected tests are possible (S1).
+- A daily backup over several days. Only a forced run plus a restore walk is possible (S2).
+- Report generation within 30 s at real class volume. Only seeded data is possible (S9).
+- Whether the organizers' 11 open questions (sent 2026-09-25) change the E9b/E12 norms.
+- GPU load as seen from the backend container (S5 returns `null` if the heartbeat does not carry it).
+- The Caddy image pull over the slow proxy. E27's first step, time-boxed (D32).
+
+## 71.16 Names E24 chose, and gaps for the manager
+
+Technical names the analysis did not give. All are in the delta; an implementing epic copies them.
+
+- operationIds and paths:
+  - `createUser`, `updateUser`, `resetUserPassword` (the analysis gave the paths);
+  - `getBackupStatus` `GET /api/v1/admin/backup-status`;
+  - the paths of `listAuditLog`, `getUsageStats`, `getServerLoad`, `getErrorReport` and
+    `listAdminAlerts` under `/api/v1/admin/`;
+  - `listSessionComments`, `createSessionComment`, `listLessonComments`, `createLessonComment`;
+  - `archiveScenario`, `unarchiveScenario`, `getLessonBoard` (`…/lessons/{lesson_id}/board`);
+  - `getTraineeStatisticsCsv`, `getLessonReportCsv`;
+  - `getMyHistory` at `/api/v1/me/history`;
+  - `uploadMaterial`, `listMaterials`, `getMaterialFile`, `archiveMaterial`.
+- Problem codes:
+  - 409: `USERNAME_TAKEN`, `SELF_MODIFICATION_FORBIDDEN`, `LAST_ADMIN_REQUIRED`, `BACKUP_REQUIRED`
+    (named by the analysis);
+  - 422: `MATERIAL_TYPE_NOT_ALLOWED`, `MATERIAL_TOO_LARGE`.
+- The `audit_log` column set and CHECK lists (HLD 20 §20.11.1), and the `result_comments` link
+  column `replaces_comment_id` ("edits as new rows").
+- The `audit_log` table number is the next free §20.1 row when E25 builds it. The analysis said
+  row 32, but row 32 is `dds_calls` today.
+- Recordings live in the named volume `recordings-data`, not in a host `data/recordings`. The backup
+  service mounts the volume.
+
+For the manager (not decided by E24):
+- ¶271 REQ-2225, the ДДС card-screen countdown, is marked "check; small" by the analysis and is in no
+  slice. It needs a slice owner, or a note that E4b's list countdowns satisfy it.
+- The brief's delta scope named E28, E29, E32, E33, E34 (and E25). E24 **also** put E31's contract
+  changes in the delta (`timers` on `createSession`/`PlanEntry`, and `LessonReportI4`), because E31
+  changes three existing operations and the analysis gives the fields.
+- E35's report-section schema is **left out** of the delta: it depends on the open questions Q-E11-2
+  and Q-E23-3/4.
+
+## 71.17 Contract and schemes
+
+- `docs/hld/contracts/i4-openapi-delta.yaml`: OpenAPI 3.1 fragment, same conventions as the I3
+  delta (`x-epic`, `x-change`, `x-action`, `x-emits`).
+- `docs/hld/puml/i4-audit-components.puml`: S1 components.
+- `docs/hld/puml/i4-audit-sequence.puml`: one audited request, a login failure and the S5 read.
+- `docs/hld/puml/i4-tls-edge-topology.puml`: S3, with the Caddy edge and the named fallback.
+- `docs/hld/puml/i4-backup-restore.puml`: S2 backup loop, restore, and the S5 purge guard.

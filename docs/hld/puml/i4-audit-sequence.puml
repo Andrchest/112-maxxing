@@ -1,0 +1,69 @@
+@startuml i4-audit-sequence
+' I4 S1 / E25 (docs/hld/71-i4-wave4.md §71.2, D31) and its read side S5 / E29 (§71.6).
+' Scope: one authenticated command, one failed login, one refused request, the admin reading the log.
+' Bodies (passwords, personal data) never reach the audit entry.
+
+title One audited request, a failed login, a refused request, and the admin read
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "INSTRUCTOR" as I
+actor "someone" as X
+actor "ADMIN" as A
+
+box "backend (FastAPI)" #EFF5FF
+  participant "AuditMiddleware\napi/main.py" as MW
+  participant "Router + use case\n(e.g. rescoreSession)" as R
+  participant "loginUser" as L
+  participant "AuditRecorder\n(port)" as REC
+  participant "admin router\nlistAuditLog (E29)" as ADM
+end box
+
+box "infrastructure" #F3FFF3
+  database "PostgreSQL\naudit_log (0016)" as PG
+end box
+
+== 1. An authenticated command ==
+I -> MW : POST /api/v1/reports/{session_id}/rescore\n{persist: true}
+MW -> R : call_next(request)
+R --> MW : 200
+MW -> REC : record(ts, user_id, role=INSTRUCTOR,\naction=HTTP_REQUEST, operation_id=rescoreSession,\nmethod, path_template, target_ids={session_id},\nstatus=200, client_ip, outcome=OK)
+REC -> PG : INSERT audit_log
+note right of REC
+  The real actor of a persisted rescore
+  (¶246), not SYSTEM (F-17).
+end note
+MW --> I : 200
+
+== 2. A failed login (unauthenticated, recorded by loginUser itself) ==
+X -> MW : POST /api/v1/auth/login
+MW -> L : call_next(request)
+L -> REC : record(action=LOGIN_FAILED, user_id=null,\ntarget_ids={username}, status=401, outcome=DENIED)
+REC -> PG : INSERT audit_log
+L --> X : 401 (no password anywhere in the entry)
+
+== 3. A refused request ==
+X -> MW : GET /api/v1/admin/audit-log (TRAINEE token)
+MW -> ADM : call_next(request)
+ADM --> MW : 403
+MW -> REC : record(action=ACCESS_DENIED, status=403, outcome=DENIED)
+REC -> PG : INSERT audit_log
+MW --> X : 403
+
+== 4. The administrator reads the journal (E29) ==
+A -> MW : GET /api/v1/admin/audit-log?user_id=&from=&to=
+MW -> ADM : call_next(request)
+ADM -> PG : SELECT … ORDER BY ts DESC (ix (ts) / (user_id, ts))
+ADM --> MW : 200 {items, total}
+MW -> REC : record(operation_id=listAuditLog, outcome=OK)
+MW --> A : 200
+
+note over PG
+  UPDATE / DELETE rejected (append-only). Retention >= 183 days
+  (SIM_AUDIT_RETENTION_DAYS, validated at settings load; ¶297).
+end note
+
+@enduml

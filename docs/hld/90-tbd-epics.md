@@ -81,3 +81,315 @@ documents are parsed by tests. "Leaves" lists what the epic explicitly does not 
 - **E9a (instructor).** Distinct tasks per workstation = `PlanEntry.participants`; groups key to lessons;
   difficulty = `ScenarioVersion.difficulty` + `PlanEntry.weight`; AI-suggested weights are proposals an
   instructor accepts — scoring stays deterministic (70 §70.3.7).
+
+## I4 TBD epics
+
+Issued by E24, the I4 wave-4 HLD (`docs/hld/71-i4-wave4.md`, decisions D29–D35), from the accepted
+E22 analysis §3.3. These rows are initiative-I4 epics. Each row lands green on its own (`make gate`,
+run alone between commits).
+
+Every row owes, in the same commit:
+- the HLD 10/20/30/40 and `openapi.yaml` updates for exactly what it implements, copied literally
+  from `71-*.md`, from `docs/hld/contracts/i4-openapi-delta.yaml` (the items tagged with its
+  `x-epic`) and from HLD 20 §20.11;
+- when it creates a table, the move of that table from §20.11 into §20.1 and §20.x. The §20.1
+  inventory is parsed by `test_migration_baseline.py`.
+
+Each row states what it leaves out. Every item it leaves out is an owner question
+(`docs/owner-decisions.md`) or a named out-of-scope item. The I4 rule (D29): nothing ambiguous is
+built.
+
+**Hot shared files rule.** These files are touched by several slices:
+- `backend/app/api/container.py`
+- `docs/hld/openapi.yaml`
+- `frontend/src/shared/i18n/ru.ts`
+- `frontend/src/shared/api/client.ts`
+- `docs/hld/20-db-schema.md`
+
+Each epic **appends its own section** to them and never rewrites or reorders another epic's section.
+The manager regenerates `frontend/src/shared/api/schema.d.ts` **last**, after the wave's contract
+merges, the same as E9a/E6b.
+
+**Migrations are pre-allocated (D30):**
+- `0016_audit_log` (E25);
+- `0017_result_comments_scenario_archive` (E32);
+- `0018_training_materials` (E34).
+
+No other I4 epic adds a migration. The epic that lands a migration sets `down_revision` to the head
+at that moment. The chain at E24 ends at `0015_users_sip_ha1`.
+
+**Waves:**
+- α: E25 ∥ E26 ∥ E32 ∥ E34. E31 starts as soon as E21 is committed (3ee2764).
+- β: E27 (after E26) ∥ E28 (after E25) ∥ E31.
+- γ: E29 (after E25 and E26) ∥ E33 (after E31).
+- δ: E30 ∥ E35.
+
+| # | Slice | Wave | Deps | Tier | Migration |
+|:--|:--|:--|:--|:--|:--|
+| E25 | S1 Audit + JSON logs | α | — | opus | `0016_audit_log` |
+| E26 | S2 Ops hardening + backup/restore | α | — | sonnet | none |
+| E27 | S3 TLS edge | β | E26 | opus | none |
+| E28 | S4 Accounts backend | β | E25 | sonnet | none |
+| E29 | S5 Admin monitoring backend | γ | E25, E26 | sonnet | none |
+| E30 | S6 Admin UI | δ | E28, E29 | sonnet | none |
+| E31 | S7 Instructor core | α → β | E21 committed | opus | none |
+| E32 | S8 Instructor misc | α | — | sonnet | `0017_result_comments_scenario_archive` |
+| E33 | S9 Reports, statistics, CSV, trainee history | γ | E31 | sonnet (opus review of the norms) | none |
+| E34 | S10 Materials | α | — | sonnet | `0018_training_materials` |
+| E35 | S11 Text quality (report-only) | δ | E23 data, E33 | sonnet | none |
+
+### E25 — S1 Audit + JSON logs
+
+- **Kind:** TBD.
+- **Wave:** α.
+- **Deps:** none.
+- **Tier:** opus, because it touches every request path.
+- **Migration:** `0016_audit_log`.
+- **Content** (71 §71.2, D31):
+  - `application/ports/audit_log.py` (`AuditRecorder`, `AuditReader`, `AuditEntry`);
+  - `infrastructure/persistence/audit_log_repository.py`;
+  - the ASGI audit middleware in `api/main.py`, with no bodies and `/health/*` excluded, which also
+    records 401/403 and WebSocket connects;
+  - `loginUser` recording success and failure;
+  - the real actor on `rescoreSession persist=true`;
+  - `infrastructure/logging/json_formatter.py`, wired into uvicorn `log_config`, the backend, the
+    voice agent and the SIP gateway;
+  - `SIM_AUDIT_RETENTION_DAYS` (≥ 183, default 365), `SIM_LOG_FORMAT`, `SIM_LOG_DIR`;
+  - HLD 20 §20.11.1 moved into §20.1 and §20.6.
+- **Areas:** `api/main.py`, `application/ports`, `infrastructure/{persistence,logging}`, `db/*`,
+  the logging lines of the workers.
+- **Tests owed:**
+  - UPDATE/DELETE on `audit_log` rejected;
+  - one entry per contract route except health, parametrised over `openapi.yaml`;
+  - a login failure recorded without a password;
+  - retention < 183 refused.
+- **Leaves:** the semantic before/after journal (Q-E15-3); the read API (E29).
+
+### E26 — S2 Ops hardening + backup/restore
+
+- **Kind:** TBD.
+- **Wave:** α.
+- **Deps:** none.
+- **Tier:** sonnet.
+- **Migration:** none.
+- **Content** (71 §71.3, D33):
+  - redis `requirepass` (`SIM_REDIS_PASSWORD`, `SIM_REDIS_URL`);
+  - postgres and redis ports bound to `127.0.0.1`;
+  - `restart: unless-stopped` on postgres, redis and livekit;
+  - `livekit.yaml` `json: true`;
+  - the compose service `backup` on `postgres:16`: a daily `pg_dump -Fc` plus a `tar.gz` of
+    `recordings-data` into `./backups/`, keeping `SIM_BACKUP_KEEP` (14), and writing `last.json`;
+  - `infra/scripts/restore.sh`;
+  - `make backup-now`, `make restore FILE=…` and `make backup-verify`;
+  - the RUNBOOK sections «Резервное копирование» and «Восстановление», with one recorded restore
+    walk.
+- **Areas:** `infra/**`, `.env.example`, `Makefile`, `docs/RUNBOOK.md`.
+- **Tests owed:** unit tests of `last.json` parsing. There is no gate-side restore test.
+- **Leaves:** service control from the UI (Q-E14-2); an off-box copy.
+
+### E27 — S3 TLS edge
+
+- **Kind:** TBD.
+- **Wave:** β.
+- **Deps:** E26 (same compose and `.env` files).
+- **Tier:** opus, because it changes every client URL and the LiveKit signalling.
+- **Migration:** none.
+- **Content** (71 §71.4, D32):
+  - **step 1: pull the Caddy image, within the time-box the brief sets**;
+  - the `edge` service on 443 (frontend, `/api`, `/api/v1/ws`, `/rtc` → livekit), with gzip/zstd;
+  - `infra/scripts/make-certs.sh` (local CA plus a server certificate with SANs);
+  - `SIM_LIVEKIT_PUBLIC_URL=wss://…`;
+  - CORS and Vite `allowedHosts`;
+  - the RUNBOOK section on installing the CA.
+  - If the pull fails, build the named fallback instead: uvicorn TLS, Vite https, and the backend
+    proxying `/rtc`.
+- **Areas:** `infra/**`, `frontend/vite.config.ts`, `.env.example`, RUNBOOK.
+- **Tests owed:** a Playwright check of `window.isSecureContext` via `https://<LAN-IP>`; the phone
+  widget over `wss://`.
+- **Leaves:** SIP TLS/SRTP (Q-E15-2).
+
+### E28 — S4 Accounts backend
+
+- **Kind:** TBD.
+- **Wave:** β.
+- **Deps:** E25, so that the actions are audited.
+- **Tier:** sonnet.
+- **Migration:** none.
+- **Content** (71 §71.5):
+  - `application/users/{create_user,update_user,set_active,reset_password}.py`;
+  - the guards: no blocking or demoting yourself, and the last active ADMIN kept;
+  - `createUser`, `updateUser`, `resetUserPassword`, and `listUsers` `include_inactive`, plus
+    `UserAccount.is_active` (delta `x-epic: E28`);
+  - `api/routers/{users,admin}.py`.
+- **Tests owed:**
+  - the role gate;
+  - the self and last-admin guards;
+  - a blocked user's live token refused on the next request;
+  - one audit entry per operation.
+- **Leaves:** Q-E14-1, Q-E15-1, Q-E14-4, Q-E16-4; custom rights.
+
+### E29 — S5 Admin monitoring backend
+
+- **Kind:** TBD.
+- **Wave:** γ.
+- **Deps:** E25, E26.
+- **Tier:** sonnet.
+- **Migration:** none.
+- **Content** (71 §71.6):
+  - `listAuditLog`;
+  - `getUsageStats` (per day: logins, sessions, lessons, active users);
+  - `getServerLoad` (`/proc`, `shutil.disk_usage`; GPU from the heartbeat or `null`);
+  - `getErrorReport` (the JSON log at ERROR or above, `MODEL_ERROR`, FATAL transitions);
+  - `listAdminAlerts` (derived: FATAL, a stale or failed backup, login failures);
+  - `getBackupStatus`;
+  - `purgeRecordings` `409 BACKUP_REQUIRED` (delta `x-epic: E29`);
+  - `application/admin/*`, `api/routers/admin.py`, `application/recording/purge_recordings.py`.
+- **Tests owed:**
+  - an API test per operation;
+  - an absent metric is `null`, never 0;
+  - the purge refused and then allowed;
+  - the alerts for a stale backup and for FATAL.
+- **Leaves:** Q-E14-2, Q-E14-4, Q-E14-1. The metric set is to be confirmed (Q-E14-3).
+
+### E30 — S6 Admin UI
+
+- **Kind:** TBD.
+- **Wave:** δ.
+- **Deps:** E28, E29.
+- **Tier:** sonnet.
+- **Migration:** none.
+- **Content** (71 §71.7):
+  - `frontend/src/features/admin/*` at `/admin`, ADMIN only, with `homeRouteForRole` updated;
+  - the tabs Пользователи / Журнал / Статистика / Нагрузка / Ошибки / Оповещения;
+  - the backup status;
+  - the alerts badge in the app shell;
+  - the `ru.ts` strings.
+- **Tests owed:** a vitest per tab; the route refused to non-ADMIN users; «нет данных» for an absent
+  metric.
+- **Leaves:** as E28 and E29.
+
+### E31 — S7 Instructor core
+
+- **Kind:** TBD.
+- **Wave:** α → β. It starts once E21 is committed, because it edits `scenarios/tickets/**`.
+- **Deps:** E21 committed.
+- **Tier:** opus, because it changes scoring and the scenario schema.
+- **Migration:** none.
+- **Content** (71 §71.8, D34):
+  - `PlanEntry.timers` and `SessionCreateRequest.timers`, resolved as scenario ← override and
+    recorded in `SESSION_CREATED.timers`;
+  - `DeadlineConfig.max_offset_timer`, which reads the recorded timer;
+  - scenario rule R43 (HLD 30);
+  - the tickets' `memo_*_in_time` rules switched to `max_offset_timer: accept_within_ms`;
+  - ABORTED cards in `getLessonReport`, with `score: null` and `unscored`;
+  - the lesson form timer fields;
+  - HLD 10/30/70 updates;
+  - delta `x-epic: E31`.
+- **Areas:** `domain/{lesson,scenario,scoring}`, `application/{lessons,sessions}`, the lesson form.
+- **Tests owed:**
+  - INV 9 with an overridden timer;
+  - R43 allow and deny;
+  - a lesson aborted mid-card lists the card unscored with its events, and the weighted sum ignores
+    it;
+  - the ticket fixtures still pass with the default timers.
+- **Leaves:** Q-E9b-2, Q-E9b-6, Q-E9b-3, Q-E9b-5.
+
+### E32 — S8 Instructor misc
+
+- **Kind:** TBD.
+- **Wave:** α.
+- **Deps:** none.
+- **Tier:** sonnet.
+- **Migration:** `0017_result_comments_scenario_archive`.
+- **Content** (71 §71.9):
+  - `result_comments`: append-only, edits as new rows;
+  - `list/createSessionComment` and `list/createLessonComment`, shown under the report visibility
+    gate, and the report section «Комментарии преподавателя»;
+  - `scenarios.archived_at`, `archiveScenario`/`unarchiveScenario`, and `listScenarios`
+    `include_archived`;
+  - the «Сценарии» upload page (`validateScenarioFile` → `importScenarioVersion`);
+  - the `/instructor/board` all-trainees board, built from `getLesson` plus sockets, or from the
+    optional `getLessonBoard`;
+  - delta `x-epic: E32`.
+- **Areas:** the new comments module, `api/routers/{reports,scenarios,lessons}.py`,
+  `features/{instructor,report}`.
+- **Tests owed:**
+  - comment visibility equals report visibility;
+  - an edit is a new row;
+  - an archived scenario is hidden and its running session unaffected;
+  - the upload page shows the issues;
+  - the board lists every card.
+- **Leaves:** instructor isolation, Q-E9b-4 (no change, D-g); the expert grade, Q-E9b-5.
+
+### E33 — S9 Reports, statistics, CSV, trainee history
+
+- **Kind:** TBD.
+- **Wave:** γ.
+- **Deps:** E31, because the norms read the recorded timers and it shares the lesson report shape.
+- **Tier:** sonnet, with an opus review of the norms definitions.
+- **Migration:** none.
+- **Content** (71 §71.10):
+  - the pure `application/reports/norms.py` (accept and fill against the norm, deviation, failed
+    rules, criticals);
+  - `getLessonReport` `norms`;
+  - `getTraineeStatistics`, `getTraineeStatisticsCsv`, `getMyHistory` and `getLessonReportCsv`
+    (UTF-8 BOM, `;`, Russian headers);
+  - the lesson report table with «Скачать CSV», `/instructor/statistics` and the trainee's
+    `/history`;
+  - delta `x-epic: E33`.
+- **Areas:** `application/{reports,statistics}/`, `features/{lesson,report,statistics,history}`.
+- **Tests owed:**
+  - no score is recomputed (D11);
+  - the CSV round-trips to the same numbers;
+  - a TRAINEE gets 403 for someone else;
+  - ¶165: 30 s or less on seeded data (1000 sessions, marked).
+- **Leaves:** Q-E12-1, Q-E12-2, Q-E12-3, Q-E9b-2; charts, heat maps and Excel/PDF (bonus); AI
+  insights.
+
+### E34 — S10 Materials
+
+- **Kind:** TBD.
+- **Wave:** α.
+- **Deps:** none.
+- **Tier:** sonnet.
+- **Migration:** `0018_training_materials`.
+- **Content** (71 §71.11):
+  - `training_materials`, with files at `data_dir/materials/<sha256>`;
+  - the allow-list (pdf, docx, doc, xlsx, txt, md, png, jpg) and `SIM_MATERIAL_MAX_MB`;
+  - `uploadMaterial`, `listMaterials`, `getMaterialFile` and `archiveMaterial`;
+  - the instructor page «Материалы» and the trainee page «Справочная база»;
+  - delta `x-epic: E34`.
+- **Areas:** the new `materials` module, `features/materials`.
+- **Tests owed:** the role gates; the allow-list refusal; the sha dedupe; the download content type.
+- **Leaves:** assignment (Q-E13-1); preloading the organizers' files (Q-E13-2); XML structure
+  (¶368); certificates (Q-E16-2).
+
+### E35 — S11 Text quality (report-only)
+
+- **Kind:** TBD.
+- **Wave:** δ.
+- **Deps:** the E23 data (in `/tmp/teamwork-112-maxxing/data/`); E33, for the lesson and statistics
+  columns.
+- **Tier:** sonnet. It is blocked on Q-E11-1 for any scoring.
+- **Migration:** none.
+- **Content** (71 §71.12, D35):
+  - `application/ports/text_checker.py` (`misspellings`, `street_status`);
+  - the adapters in `infrastructure/reference/`: ru_RU hunspell via `spylls`, and the OSM street
+    names;
+  - **the packaging decision** for `reference/{lexicon,streets}`: sha-pinned, with licence notes
+    (BSD-style LibreOffice dictionary, ODbL), plus the `spylls` dependency;
+  - `application/reports/text_quality.py`, over the trainee-typed texts;
+  - the report section «Грамотность и адреса» and the lesson and statistics column;
+  - the fallback «Проверка недоступна…» (`available: false`);
+  - its own `openapi.yaml` section, which is not in the I4 delta.
+- **Tests owed:**
+  - a seeded misspelling is found;
+  - with the data absent the section says «Проверка недоступна»;
+  - the score and the checksum are identical with and without the checker;
+  - the data sha is recorded.
+- **Leaves:**
+  - any score effect (Q-E11-1);
+  - streets outside Moscow (Q-E11-2);
+  - Q-E23-1…Q-E23-4;
+  - live underlining (contradicts REQ-6017);
+  - changing «ул. Зверенецкая» (organizer-verbatim, D-h).
