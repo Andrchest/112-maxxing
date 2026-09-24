@@ -1,0 +1,108 @@
+@startuml i3-telephony-sequence-service-head-call
+' I3 H2 — ДДС → service head call with a status proposal and the trainee's confirmation
+' (docs/hld/80-telephony.md §80.3.3, §80.4, §80.6; D23, D24; epics E6b + E6c).
+'
+' Scope: memo mode, dds_brigade_call = ON, browser endpoint, the trainee's own leg of service 101
+' (responder TRAINEE). Each `append` is one row in session_events in the same Unit of Work as the
+' state change (D5), published to Redis session:{id}:events after commit (omitted for brevity).
+' The per-turn pipeline events (USER_SPEECH_*, ASR_*, DIALOGUE_INTERPRETED, CALLER_TTS_*) are
+' appended under this call_id as today and are omitted below.
+
+title ДДС → service head (101): call, status proposal, trainee confirmation
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "ДДС trainee\n(plays leg 101)" as T
+
+box "backend (FastAPI)" #EFF5FF
+  participant "API\napi/routers/dds.py" as API
+  participant "Use cases\napplication/dds" as UC
+  participant "Domain\ndds/call.py, dds/personas.py,\ndds/responders.py" as DOM
+  participant "SimulationRunner\n+ stage automation" as RUN
+end box
+
+box "infrastructure" #F3FFF3
+  database "PostgreSQL" as PG
+  queue "Redis" as R
+  participant "LiveKit room\ndds-{session}-{call_id}" as ROOM
+end box
+
+box "voice-agent" #FFF6EF
+  participant "VoiceAgent\n_calls[(session_id, call_id)]" as AG
+  participant "ResponderContextLoader\n(no WorldTruth, no CallerBelief)" as RCL
+  participant "ResponderTemplates\n(or LLM paraphrase)" as TPL
+end box
+
+== 0. Under ON the trainee's own leg is heard, not applied ==
+
+loop every tick
+  RUN -> DOM : due_scripted_steps(leg, script, now)
+  note right of RUN
+    SCRIPTED legs: steps applied (E5b, unchanged).
+    TRAINEE legs under ON: skipped — the steps stay
+    in the script, to be voiced by the head.
+  end note
+end
+
+== 1. Start the call (E6b) ==
+
+T -> API : POST /api/v1/sessions/{id}/dds-calls\n{kind: SERVICE_HEAD, assignment_id}
+API -> UC : StartDdsCall
+UC -> DOM : guard_dds_call_allowed (ON, plays_leg, line free)\nresolve_persona(catalog entry code 101) → BRIGADE_101
+UC -> PG : append **DDS_CALL_STARTED**\n{call_id, kind SERVICE_HEAD, direction OUTBOUND, assignment_id,\nservice_type, dialed "101", endpoint BROWSER, room, persona_id BRIGADE_101,\nselection_reason BROWSER_BUTTON}\n+ dds_calls row (DIALING)
+UC -> DOM : ring [transport_ready] → RINGING
+UC -> PG : dds_calls.state = RINGING
+API --> T : 201 DdsCallView + voice token (room-scoped)
+UC -> R : publish voice:join {session_id, room, call_id,\ncall_kind SERVICE_HEAD, assignment_id, persona_id, endpoint BROWSER}
+R -> AG : voice:join
+AG -> ROOM : join (self-minted token)
+T -> ROOM : join (browser, token)
+
+== 2. The head answers ==
+
+AG -> RCL : load(session_id, assignment_id, now)
+RCL -> PG : snapshot of the leg, leg status, previous DDS_CALL_* of the leg,\nscript via the responder_scripts probe (INV 3)
+RCL --> AG : ResponderKnowledge {persona, snapshot_values,\nsteps_due, steps_pending_count, leg_status_now, call_history}
+AG -> PG : append **DDS_CALL_ANSWERED** {call_id, answered_by AI}\n(after answer_after_ms)
+AG -> ROOM : «Начальник караула, слушаю» (pre-synthesised line)
+
+== 3. First call: the head asks, the trainee's statements are matched by code ==
+
+T -> ROOM : «Пожар, улица Ленина, 5, пострадавших нет»
+AG -> TPL : interpreter → operator_assertions
+AG -> PG : append **DDS_CALL_ASSERTION** per stated fact\n{field_path address.street, value_ru, matches_snapshot true}
+
+== 4. Later call: the head reports what is due (and only that) ==
+
+T -> ROOM : «Вы уже доехали?»
+AG -> TPL : (speech_act QUESTION, slot status, knowledge)
+TPL --> AG : «Прибыли на место в 14:32, наряд 2415»
+AG -> PG : append **DDS_CALL_STATUS_PROPOSED**\n{call_id, assignment_id, service_type, status ARRIVED,\norder_number "2415", script_after_ms, due_offset_ms, at_offset_ms}
+AG -> ROOM : speak the line
+note over AG, TPL
+  A step not yet due is never spoken: «Пока в пути, доложу позже» (INV 2).
+  The proposal changes no leg: the AI proposes, the trainee commits (INV 4).
+  Several due steps ⇒ several proposals in script order (here the leg is
+  already RESPONSE_STARTED); the trainee confirms them one step at a time.
+end note
+
+== 5. Hang up ==
+
+T -> API : POST …/dds-calls/{call_id}/hang-up
+API -> UC : EndDdsCall
+UC -> PG : append **DDS_CALL_ENDED** {call_id, reason HANGUP, duration_ms}\n+ dds_calls row (ENDED)
+UC -> R : publish voice:cancel:{session_id} {call_id, reason HANGUP}
+R -> AG : leave the room
+
+== 6. The trainee confirms the heard status (existing command, additive key) ==
+
+T -> API : POST /api/v1/sessions/{id}/dds/legs/{assignment_id}/status\n{status ARRIVED, order_number "2415", proposed_by_call_id}
+API -> UC : SetServiceStatus
+UC -> DOM : proposed_by_call_id names a DDS_CALL_STATUS_PROPOSED of this leg\n(else 422 PROPOSAL_UNKNOWN);\nSERVICE_RESPONSE_TRANSITIONS one step at a time (409 INVALID_TRANSITION)
+UC -> PG : append **DDS_SERVICE_STATUS_SET**\n{…, source TRAINEE, proposed_by_call_id}\n+ dds_service_status_history row
+API --> T : 200 DdsLegView
+
+@enduml

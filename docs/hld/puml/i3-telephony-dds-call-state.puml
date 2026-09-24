@@ -1,0 +1,50 @@
+@startuml i3-telephony-dds-call-state
+' The DdsCall machine of docs/hld/80-telephony.md §80.3.2 (D23, E6b). One instance per call_id.
+' Labels read: trigger [guard] / who may fire. Every accepted transition except ring appends one
+' event (start → DDS_CALL_STARTED, answer → DDS_CALL_ANSWERED, no_answer | busy | hang_up →
+' DDS_CALL_ENDED). The leg machine (SERVICE_RESPONSE_TRANSITIONS) is untouched.
+
+skinparam state {
+  BackgroundColor<<terminal>> #EEEEEE
+  BackgroundColor<<live>> #FFF6EF
+}
+
+title DdsCall — one call (kind SERVICE_HEAD | CLAIMANT | OPERATOR_112)
+
+state "DIALING" as DIALING
+state "RINGING" as RINGING
+state "CONNECTED" as CONNECTED <<live>>
+state "ENDED" as ENDED <<terminal>>
+
+[*] --> DIALING : start\n[guard_dds_call_allowed: ACTIVE, DDS stage started,\ndds_brigade_call = ON, plays_leg (SERVICE_HEAD),\nno other live call of this user]\n/ TRAINEE (OUTBOUND), SIMULATION (INBOUND CALL_IN step)
+DIALING --> RINGING : ring\n[guard_dds_call_transport_ready:\nLiveKit ∧ agent heartbeat;\nendpoint SIP ⇒ gateway leg UP]\n/ SIMULATION
+RINGING --> CONNECTED : answer\n[actor matches direction]\n/ SIMULATION (AI callee, after answer_after_ms),\nTRAINEE (INBOUND)
+RINGING --> ENDED : no_answer\n[persona / script no_answer;\nINBOUND ring_timeout_ms]\n/ SIMULATION
+RINGING --> ENDED : busy\n[script busy; CLAIMANT while the\n112 call is RINGING / CONNECTED]\n/ SIMULATION
+DIALING --> ENDED : hang_up\n/ TRAINEE (HANGUP), SYSTEM (ABORT | TRANSPORT_LOST)
+RINGING --> ENDED : hang_up\n/ TRAINEE, SYSTEM
+CONNECTED --> ENDED : hang_up\n/ TRAINEE (HANGUP), SYSTEM (ABORT | TRANSPORT_LOST)
+ENDED --> [*]
+
+note right of CONNECTED
+  While CONNECTED the agent runs, per (session_id, call_id):
+  CLAIMANT → the frozen caller chain (speaker label «ДИСПЕТЧЕР»);
+  SERVICE_HEAD / OPERATOR_112 → the responder chain.
+  A SERVICE_HEAD call may append DDS_CALL_STATUS_PROPOSED
+  (due steps only) and DDS_CALL_ASSERTION; the trainee confirms
+  with set_service_status {proposed_by_call_id}.
+end note
+
+note left of ENDED
+  end_reason: HANGUP | NO_ANSWER | BUSY | ABORT | TRANSPORT_LOST.
+  A call still DIALING / RINGING when the DDS stage completes
+  is ended by SYSTEM (ABORT) in the same Unit of Work.
+  Any trigger not drawn ⇒ 409 INVALID_TRANSITION (INV 8).
+end note
+
+note top of DIALING
+  Reserved hook (owner Q1, sub-epic E6g, not in I3):
+  kind OPERATOR_112 with answered_by TRAINEE.
+end note
+
+@enduml

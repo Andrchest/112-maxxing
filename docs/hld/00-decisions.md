@@ -430,3 +430,62 @@ voice_agent    -> application, inference, infrastructure
   (union of candidates until `incident.classifier_code` is set; any holding sub-column; district and
   prefecture from the card) are mirrored there, additive. A-1 is confirmed by the organizer's own
   screenshots («КАРТОЧКА 112.docx» images 19/22/24/39).
+
+## D22. Telephony media: our own Python SIP gateway as a LiveKit room participant (I3 H2, F1/F5 — `80-telephony.md` §80.2, §80.8, §80.11)
+
+- The local SIP server of ТЗ ¶302 is **our own Python SIP/RTP gateway** under
+  `workers/voice_agent/voice_agent/transport/sip/` (registrar with Digest, UAS/UAC for
+  INVITE/ACK/BYE/CANCEL, RTP G.711 A/μ through stdlib `audioop`): it registers softphones and bridges
+  each call into the call's LiveKit room as one more participant. It runs as its own process
+  (`python -m voice_agent.sip_gateway`) and as the compose service `sip-gateway` under
+  `profiles: ["sip"]`. Ports: SIP **5060** udp+tcp, RTP **20000–20199**/udp, health **8114** (loopback).
+  Nothing is downloaded or installed; one deployment SIP password comes from the environment
+  (`SIM_SIP_PASSWORD`, never committed); per-user HA1 is an optional E6e hardening.
+- LiveKit stays the one media plane (SPEC §15); the agent's `LiveKitCallTransport` is unchanged and no
+  LiveKit token crosses Redis. `SipCallTransport` stays the reserved plan B (direct RTP, no SFU hop);
+  Asterisk + AudioSocket behind `bridge.py` is the named interop fallback.
+- **Verification (F5).** The gate proves REGISTER / INVITE / RTP / BYE with a headless Python UA
+  against the in-process gateway and a fake room, and the call use cases on fakes (GPU-free, no
+  network). Manual runs use our own `tools/softphone --headset` (sox); `baresip` only if already present
+  offline, else `NOT_RUN`. `benchmarks/benchmark_voip.py` measures one-way delay (ТЗ ¶161 ≤ 150 ms) and a
+  1/5/10/20/40 concurrent sweep.
+- **Falsification checkpoint after E6a:** `sip-livekit` p95 > 150 ms, or a softphone unable to complete
+  a call, re-issues E6e (plan B or the fallback) before E6b–E6d are staffed.
+
+## D23. ДДС calls are an additive `DdsCall` keyed by `call_id` (I3 H2, F2 — `80-telephony.md` §80.3, §80.6, §80.7)
+
+- `DdsCall {call_id, kind: SERVICE_HEAD | CLAIMANT | OPERATOR_112, direction, assignment_id?, endpoint:
+  BROWSER | SIP, …}` with the table-driven `DDS_CALL_TRANSITIONS` (DIALING → RINGING → CONNECTED →
+  ENDED); read model `dds_calls` (migration `0013`). The 112 call model (`CallStateView`,
+  `session:{id}:call_state`) is not widened. The endpoint is recorded on the event.
+- Events `DDS_CALL_STARTED / ANSWERED / ENDED / STATUS_PROPOSED / ASSERTION` are additive; the existing
+  per-turn pipeline events are reused under the call's `call_id` (no `RESPONDER_*` twins), with
+  call-scoped visibility and fact scoring derived from the log's DDS call ids (§80.6.2).
+- The voice agent keeps `_calls` keyed by `(session_id, call_id)`; `voice:join` gains additive keys. A
+  claimant call reuses the frozen caller pipeline unchanged (speaker label only). ДДС→112 is answered by
+  an AI 112 operator (E6d) until the owner answers Q1; the human-112-trainee variant is the reserved hook
+  `kind = OPERATOR_112`, `answered_by: TRAINEE` (later sub-epic E6g, not in I3).
+
+## D24. The AI voice by category; the trainee's own leg is heard, not applied (I3 H2, F3 — `80-telephony.md` §80.4)
+
+- The persona comes from the sha-pinned `reference/personas/v1.yaml`, resolved by catalog category
+  (`code` over `kind`); a scenario may override per service (R42). Voices are logical ids through
+  `tts.voice_map`; male personas use the Qwen3-TTS voices E6c verifies against the installed package
+  (Piper has no male voice on disk — REQ-4041 partial under that fallback).
+- The service head knows only the script plus the snapshot (`ResponderKnowledge`, built without
+  WorldTruth or CallerBelief repositories; INV 1/2/3/14 held by constructor and signature tests). The
+  deterministic template responder is the default; LLM paraphrase is optional
+  (`Settings.responder_dialogue`).
+- Under `dds_brigade_call: ON` the trainee's own leg's script is voiced (heard), not applied by stage
+  automation; statuses heard in a call are `DDS_CALL_STATUS_PROPOSED` and confirmed by the trainee through
+  `set_service_status {proposed_by_call_id}` — the AI proposes, the trainee commits.
+
+## D25. `dds_brigade_call: ON` means "the ДДС has a phone"; the endpoint is not a switch (I3 H2, F4 — `80-telephony.md` §80.5)
+
+- `ON` enables the call actions (service head, claimant, 112, hang-up; inbound `CALL_IN` calls) and flips
+  the trainee leg's script from applied to heard. It is valid in memo mode only (**R41**; `ON` +
+  `RESOURCE_PICKER` ⇒ `409 VARIANT_NOT_SUPPORTED`); the persona override and `report` script keys are
+  **R42**.
+- Browser vs SIP is the endpoint per call (a live softphone registration wins, else the browser widget),
+  recorded on `DDS_CALL_STARTED.endpoint` — not a variant value and not a `SIM_CALL_TRANSPORT` value.
+- The default stays `OFF` (C7) until the owner answers Q2 (80 §80.10).

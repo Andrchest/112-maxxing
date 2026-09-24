@@ -1,0 +1,95 @@
+@startuml i3-telephony-components
+' I3 H2 — telephony components (docs/hld/80-telephony.md §80.2, D22).
+' The SIP gateway is one more LiveKit room participant; the voice agent's LiveKitCallTransport is
+' unchanged. SipCallTransport stays the reserved plan B (not drawn as built).
+
+title Telephony — softphone ↔ SIP gateway ↔ LiveKit room ↔ voice agent ↔ backend
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowFontSize 11
+
+node "ДДС workstation" as ws {
+  component "softphone (headset)\ntools/softphone --headset (sox)\nor any SIP UA" as softphone
+  component "browser: ДДС console\nphone widget per call_id\n(livekit-client)" as browser
+}
+
+node "sip-gateway process\n(compose profile \"sip\")\nworkers/voice_agent/voice_agent/transport/sip/" as gw {
+  component "message.py\nSIP parse / Digest / SDP" as msg
+  component "registrar.py\nbindings aor → contact" as reg
+  component "dialog.py\nUAS + UAC" as dlg
+  component "rtp.py\nG.711 A/μ, 20 ms, jitter 40 ms\naudioop 8k ↔ 48k" as rtp
+  component "bridge.py\nRoomPort: LiveKitRoomBridge | FakeRoomBridge" as bridge
+  component "gateway.py\nlisteners, dial handling, echo 999,\nhealth 127.0.0.1:8114" as gwmain
+  msg -- reg
+  msg -- dlg
+  dlg -- rtp
+  rtp -- bridge
+  gwmain -- dlg
+}
+
+node "livekit (SFU)" as lk {
+  component "room per call\n112: session room\nДДС: dds-{session}-{call_id}" as room
+}
+
+node "voice-agent process\nworkers/voice_agent" as agent {
+  component "LiveKitCallTransport\n(unchanged)" as lkt
+  component "SipCallTransport\n(stub — plan B)" as sipt
+  component "_calls[(session_id, call_id)]" as calls
+  component "caller chain (frozen)\nclaimant calls" as caller
+  component "responder chain\nResponderContextLoader +\nResponderTemplates | ResponderPromptBuilder" as responder
+  lkt -- calls
+  calls -- caller
+  calls -- responder
+}
+
+node "backend process\nbackend/app" as backend {
+  component "api/routers/dds.py\n/sessions/{id}/dds-calls" as ddsapi
+  component "api/routers/telephony.py\n/telephony/dial, /calls/{id}/leg" as telapi
+  component "application/dds\nstart / answer / end dds call,\ndds_call_flow (ring)" as uc
+  component "domain/dds/call.py\nDdsCall, DDS_CALL_TRANSITIONS\ndomain/routing/dial_plan.py\ndomain/dds/personas.py" as dom
+}
+
+database "postgres" as pg {
+  component "session_events\n(DDS_CALL_* + per-turn events under call_id)" as evt
+  component "dds_calls (0013)" as ddscalls
+}
+
+database "redis" as redis {
+  component "voice:join (+call_kind, persona_id,\nendpoint, sip_user)" as vj
+  component "voice:cancel:{session_id}" as vc
+  component "session:{id}:events" as sev
+  component "sip:binding:{username} (E6e)" as bind
+}
+
+softphone -down-> gwmain : SIP 5060 udp/tcp\nREGISTER / INVITE / BYE
+softphone <-down-> rtp : RTP 20000–20199/udp\nPCMA / PCMU
+bridge <-down-> room : rtc SDK participant\n"sip-{call_id}" (self-minted token)
+browser <-down-> room : WebRTC\n(token from createVoiceToken / startDdsCall)
+lkt <-up-> room : rtc SDK participant\n(self-minted token)
+browser -right-> ddsapi : REST\nPOST dds-calls, hang-up, answer
+gwmain -right-> telapi : REST, service credential\nSIM_SIP_GATEWAY_SECRET
+ddsapi --> uc
+telapi --> uc
+uc --> dom
+uc --> evt : append in one UoW
+uc --> ddscalls
+uc ..> vj : publish after commit
+uc ..> vc : on hang-up
+vj ..> agent : join the room
+vj ..> gwmain : endpoint SIP only
+vc ..> gwmain : BYE
+sev ..> gwmain : DDS_CALL_ANSWERED → 200 OK
+gwmain ..> bind : on REGISTER (TTL = Expires)
+uc ..> bind : endpoint choice
+agent --> evt : per-turn events under call_id
+
+note bottom of sipt
+  Built only if the falsification checkpoint (§80.11) fires on delay:
+  direct RTP into the agent, no SFU hop. The domain picks the transport
+  per DdsCall.endpoint. Named fallback for interop: Asterisk + AudioSocket
+  behind bridge.py.
+end note
+
+@enduml

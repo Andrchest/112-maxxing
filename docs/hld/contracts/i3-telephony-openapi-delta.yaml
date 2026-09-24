@@ -1,0 +1,675 @@
+# HLD — I3 H2 telephony contract delta (docs/hld/80-telephony.md, D22–D25)
+#
+# A standalone OpenAPI 3.1 FRAGMENT. It is not served and not used for type generation: each
+# implementing epic (E6b, E6c, E6d, E6e — see docs/hld/90-tbd-epics.md "I3 TBD epics") merges its
+# part into docs/hld/openapi.yaml in the same commit as the code, copying names literally.
+# E6a (gateway core, echo 999) and E6f (load sweep) add no HTTP surface.
+#
+# Conventions (as in openapi.yaml and contracts/i3-openapi-delta.yaml):
+#   - `x-epic` names the epic that merges the item;
+#   - `x-change: NEW | CHANGED | ADDITIVE` — ADDITIVE only adds optional request properties or new
+#     response properties to an existing operation / schema (`x-additive-to` names it);
+#   - `x-optional: true` — built only if the owner wants it (80 §80.7, migration 0014);
+#   - `x-action` / `x-emits` as in openapi.yaml;
+#   - references to unchanged definitions point into openapi.yaml or contracts/i3-openapi-delta.yaml.
+#
+# No credential appears here: the gateway's service credential is SIM_SIP_GATEWAY_SECRET from the
+# environment ([credential redacted]).
+openapi: 3.1.0
+info:
+  title: System-112 / DDS training simulator — I3 H2 telephony contract delta
+  version: 1.2.0-i3-telephony-delta
+  summary: ДДС calls (service head, claimant, 112), the SIP gateway's backend endpoints and the reference personas.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: dds
+  - name: sessions
+  - name: telephony
+    description: Called only by the SIP gateway process with its service credential (80 §80.2.3).
+  - name: reference
+
+paths:
+
+  # ---------------------------------------------------------------- dds-calls ----
+  /api/v1/sessions/{session_id}/dds-calls:
+    post:
+      tags: [dds]
+      operationId: startDdsCall
+      x-epic: E6b
+      x-change: NEW
+      summary: The ДДС trainee places a call (service head, claimant or 112) — only `dds_brigade_call = ON`.
+      description: |
+        Fires `start` then, when the transport is ready, `ring` of `DDS_CALL_TRANSITIONS`
+        (80 §80.3.2). `SERVICE_HEAD` needs `assignment_id` of a leg the caller plays (`plays_leg`),
+        else `403 FORBIDDEN_FOR_SERVICE`; `CLAIMANT` and `OPERATOR_112` take no `assignment_id`.
+        `dds_brigade_call = OFF`, `dds_mode = RESOURCE_PICKER` or the DDS stage not started ⇒
+        `409 ACTION_NOT_AVAILABLE`; the user already has a live call in the session ⇒
+        `409 DDS_LINE_BUSY`. The endpoint is `SIP` when the user has a live softphone binding and the
+        deployment offers `sip` (80 §80.3.7), else `BROWSER`; `voice` is the room-scoped LiveKit
+        token for the browser endpoint and `null` for `SIP` (the softphone rings instead).
+        `SERVICE_HEAD` kind: E6c; `OPERATOR_112` kind: E6d; `CLAIMANT`: E6b. Until an epic lands its
+        kind, that kind is `409 ACTION_NOT_AVAILABLE`.
+      x-action: [call_service_head, call_claimant, call_112]
+      x-emits: [DDS_CALL_STARTED, DDS_CALL_ENDED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartDdsCallRequest' }
+      responses:
+        '201':
+          description: The call (usually `RINGING`; `ENDED` with `BUSY` for a claimant whose 112 call is live).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StartDdsCallResponse' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'i3-openapi-delta.yaml#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictE6' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [dds]
+      operationId: listDdsCalls
+      x-epic: E6b
+      x-change: NEW
+      summary: Every ДДС call of the session, newest first — restores the phone widget after a refresh (INV 13).
+      description: Read from the `dds_calls` read model (migration 0013). DDS and INSTRUCTOR only.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The calls.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds-calls/{call_id}:
+    get:
+      tags: [dds]
+      operationId: getDdsCall
+      x-epic: E6b
+      x-change: NEW
+      summary: One ДДС call.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/sessions/{session_id}/dds-calls/{call_id}/answer:
+    post:
+      tags: [dds]
+      operationId: answerDdsCall
+      x-epic: E6c
+      x-change: NEW
+      summary: The ДДС trainee answers an INBOUND brigade call (a `report CALL_IN` script step).
+      description: |
+        Fires `answer` (TRAINEE) on an `INBOUND` call in `RINGING`; an `OUTBOUND` call or another
+        state ⇒ `409 INVALID_TRANSITION`. Returns the call and, for the browser endpoint, the
+        room-scoped token.
+      x-action: answer
+      x-emits: [DDS_CALL_ANSWERED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call, `CONNECTED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StartDdsCallResponse' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'i3-openapi-delta.yaml#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictE6' }
+
+  /api/v1/sessions/{session_id}/dds-calls/{call_id}/hang-up:
+    post:
+      tags: [dds]
+      operationId: hangUpDdsCall
+      x-epic: E6b
+      x-change: NEW
+      summary: The ДДС trainee hangs up (from DIALING, RINGING or CONNECTED).
+      description: |
+        Fires `hang_up` (TRAINEE, `end_reason HANGUP`), then publishes
+        `voice:cancel:{session_id} {call_id, reason HANGUP}` after commit (the agent leaves; a SIP
+        endpoint's gateway sends `BYE`). An `ENDED` call ⇒ `409 INVALID_TRANSITION`.
+      x-action: hang_up
+      x-emits: [DDS_CALL_ENDED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call, `ENDED`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictE6' }
+
+  /api/v1/sessions/{session_id}/voice-token:
+    post:
+      tags: [sessions]
+      operationId: createVoiceToken
+      x-epic: E6b
+      x-change: ADDITIVE
+      summary: Mint a LiveKit token — now also for a ДДС call's room.
+      description: |
+        As before (openapi.yaml) when the body is absent: the 112 call's room, OPERATOR_112 stage
+        participant only. With `call_id` of a non-`ENDED` `DdsCall` whose `actor_user_id` is the
+        caller: that call's room (re-join after a refresh, INV 13). `ENDED` ⇒ `409`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoiceTokenRequest' }
+      responses:
+        '200':
+          description: A room-scoped LiveKit token (unchanged shape).
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/VoiceTokenResponse' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '../openapi.yaml#/components/responses/Conflict' }
+
+  /api/v1/sessions/{session_id}/dds/legs/{assignment_id}/status:
+    post:
+      tags: [dds]
+      operationId: setDdsServiceStatus
+      x-epic: E6c
+      x-change: ADDITIVE
+      summary: Set the next response status of a leg — now optionally confirming a status heard on a call.
+      description: |
+        As in contracts/i3-openapi-delta.yaml (E5), plus the optional `proposed_by_call_id`: it must
+        name a `DDS_CALL_STATUS_PROPOSED` of this leg, else `422 PROPOSAL_UNKNOWN`; it is copied into
+        `DDS_SERVICE_STATUS_SET.proposed_by_call_id`. The status written is the request's, never the
+        proposal's (the AI proposes, the trainee commits — INV 4).
+      x-action: set_service_status
+      x-emits: [DDS_CARD_STATUS_CHANGED, DDS_SERVICE_STATUS_SET, DDS_ACKNOWLEDGED, STAGE_STATE_CHANGED]
+      parameters:
+        - $ref: '../openapi.yaml#/components/parameters/SessionIdParam'
+        - $ref: 'i3-openapi-delta.yaml#/components/parameters/AssignmentIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceStatusRequestE6' }
+      responses:
+        '200':
+          description: The leg after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsLegViewE6' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'i3-openapi-delta.yaml#/components/responses/ForbiddenI3' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: 'i3-openapi-delta.yaml#/components/responses/ConflictI3' }
+        '422': { $ref: '#/components/responses/UnprocessableEntityE6' }
+
+  # ---------------------------------------------------------------- reference ----
+  /api/v1/reference/personas:
+    get:
+      tags: [reference]
+      operationId: listReferencePersonas
+      x-epic: E6c
+      x-change: NEW
+      summary: The AI personas of a reference pack (service heads by catalog category, the AI 112 operator).
+      description: |
+        Served from the sha-pinned `reference/personas/v1.yaml` (80 §80.4.1). Used by the ДДС console
+        (the persona title beside «Позвонить старшему»), the report (party labels) and the instructor's
+        scenario view. Voices are logical ids; no TTS internals are exposed.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: 'i3-openapi-delta.yaml#/components/parameters/PackQueryParam'
+      responses:
+        '200':
+          description: The personas, in file order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PersonaView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: 'i3-openapi-delta.yaml#/components/responses/ConflictI3' }
+
+  # ---------------------------------------------------------------- telephony ----
+  /api/v1/telephony/dial:
+    post:
+      tags: [telephony]
+      operationId: dialFromSip
+      x-epic: E6e
+      x-change: NEW
+      summary: The SIP gateway asks the backend to start the call a registered softphone dialled.
+      description: |
+        Resolves `dialed` by the pure dial plan (80 §80.3.5) and the session by the selection rule
+        (the card this user opened last wins, else the oldest ACTIVE session where the user is a ДДС
+        participant), then runs the same `startDdsCall` use case with `endpoint SIP` and records
+        `selection_reason`. `sip_user` is a `users.username`; an unknown user ⇒ `403`. Unknown number,
+        a service with no leg on the selected card, or a leg the user does not play ⇒
+        `404 DIAL_NUMBER_UNKNOWN` (gateway answers SIP 404); no eligible session ⇒
+        `409 NO_ACTIVE_DDS_SESSION` (SIP 480). `999` never reaches this endpoint (gateway echo).
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: [DDS_CALL_STARTED, DDS_CALL_ENDED]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SipDialRequest' }
+      responses:
+        '201':
+          description: The call was started; the gateway joins `room` with a self-minted token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SipDialResponse' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../openapi.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFoundE6' }
+        '409': { $ref: '#/components/responses/ConflictE6' }
+        '422': { $ref: '../openapi.yaml#/components/responses/UnprocessableEntity' }
+
+  /api/v1/telephony/calls/{call_id}:
+    get:
+      tags: [telephony]
+      operationId: getTelephonyCall
+      x-epic: E6e
+      x-change: NEW
+      summary: The gateway re-reads a call it bridges (after a Redis reconnect or its own restart).
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/CallIdParam'
+      responses:
+        '200':
+          description: The call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+  /api/v1/telephony/calls/{call_id}/leg:
+    post:
+      tags: [telephony]
+      operationId: reportSipLeg
+      x-epic: E6e
+      x-change: NEW
+      summary: The gateway reports its softphone leg of a SIP-endpoint call.
+      description: |
+        `UP` — the gateway is in the room with the softphone connected ⇒ fires `ring` (80 §80.3.2,
+        guard `guard_dds_call_transport_ready`); idempotent. `FAILED` — the softphone did not answer a
+        click-to-call or rejected it ⇒ `hang_up` by SYSTEM, `end_reason ABORT`. `DOWN` — `BYE` or
+        `CANCEL` from the softphone ⇒ `hang_up` by TRAINEE, `end_reason HANGUP`. A report on an
+        `ENDED` call is accepted and ignored (200), so a late `BYE` never fails. A `BROWSER` call ⇒
+        `409 INVALID_TRANSITION`.
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: [DDS_CALL_ENDED]
+      parameters:
+        - $ref: '#/components/parameters/CallIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SipLegReport' }
+      responses:
+        '200':
+          description: The call after the report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsCallView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictE6' }
+
+  /api/v1/telephony/sip-credentials/{username}:
+    get:
+      tags: [telephony]
+      operationId: getSipCredential
+      x-epic: E6e
+      x-change: NEW
+      x-optional: true
+      summary: Per-user SIP HA1 for the registrar (only with migration 0014).
+      description: |
+        Returns `users.sip_ha1` for `username`, or `404` when the user has none (the deployment
+        password then applies). Never logged by either side (SPEC §41). Built only if per-user SIP
+        passwords are wanted.
+      security:
+        - sipGatewaySecret: []
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: The HA1 digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SipCredentialView' }
+        '401': { $ref: '../openapi.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../openapi.yaml#/components/responses/NotFound' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    sipGatewaySecret:
+      x-epic: E6e
+      x-change: NEW
+      type: apiKey
+      in: header
+      name: X-Sip-Gateway-Secret
+      description: The SIP gateway's service credential, `SIM_SIP_GATEWAY_SECRET` from the environment; accepted only on `/api/v1/telephony/*`.
+
+  parameters:
+    CallIdParam:
+      name: call_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ConflictE6:
+      description: |
+        Everything of `ConflictI3` (contracts/i3-openapi-delta.yaml), plus `DDS_LINE_BUSY`
+        (the user already has a live ДДС call in the session) and `NO_ACTIVE_DDS_SESSION`
+        (a SIP-dialled number found no ACTIVE session where the user is a ДДС participant).
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+    NotFoundE6:
+      description: openapi.yaml's `NotFound`, plus `DIAL_NUMBER_UNKNOWN`.
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+    UnprocessableEntityE6:
+      description: '`UnprocessableEntityI3`, plus `PROPOSAL_UNKNOWN` (`proposed_by_call_id` names no `DDS_CALL_STATUS_PROPOSED` of this leg).'
+      content:
+        application/problem+json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/Problem' }
+
+  schemas:
+
+    # ------------------------------------------------------------ errors ----
+    ProblemCodeE6Additions:
+      x-epic: [E6b, E6c, E6e]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/ProblemCode'
+      type: string
+      enum:
+        - DDS_LINE_BUSY                # E6b
+        - PROPOSAL_UNKNOWN             # E6c
+        - DIAL_NUMBER_UNKNOWN          # E6e
+        - NO_ACTIVE_DDS_SESSION        # E6e
+
+    # ------------------------------------------------------------- enums ----
+    DdsBrigadeCall:
+      x-epic: E6b
+      x-change: CHANGED
+      description: '`ON` becomes an implemented value (`IMPLEMENTED_VARIANT_VALUES`); R41 ties it to `dds_mode: MEMO_STATUSES`. Default stays `OFF` (C7).'
+      type: string
+      enum: ['OFF', 'ON']
+    DdsCallKind:
+      x-epic: E6b
+      x-change: NEW
+      type: string
+      enum: [SERVICE_HEAD, CLAIMANT, OPERATOR_112]
+    DdsCallDirection:
+      x-epic: E6b
+      x-change: NEW
+      type: string
+      enum: [OUTBOUND, INBOUND]
+    CallEndpoint:
+      x-epic: E6b
+      x-change: NEW
+      description: Where the trainee's side of the call is — the browser widget or a registered softphone. Not a variant switch (D25).
+      type: string
+      enum: [BROWSER, SIP]
+    DdsCallState:
+      x-epic: E6b
+      x-change: NEW
+      type: string
+      enum: [DIALING, RINGING, CONNECTED, ENDED]
+    DdsCallEndReason:
+      x-epic: E6b
+      x-change: NEW
+      type: string
+      enum: [HANGUP, NO_ANSWER, BUSY, ABORT, TRANSPORT_LOST]
+    CallAnsweredBy:
+      x-epic: E6b
+      x-change: NEW
+      description: '`TRAINEE` on an `OPERATOR_112` call is the reserved hook for a human 112 trainee (owner Q1, E6g — not in I3).'
+      type: string
+      enum: [AI, TRAINEE]
+    CallSelectionReason:
+      x-epic: E6b
+      x-change: NEW
+      type: string
+      enum: [BROWSER_BUTTON, LAST_OPENED_CARD, OLDEST_ACTIVE, INBOUND_SCRIPT]
+    EventTypeE6Additions:
+      x-epic: [E6b, E6c]
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/EventType'
+      type: string
+      enum:
+        - DDS_CALL_STARTED             # E6b
+        - DDS_CALL_ANSWERED            # E6b
+        - DDS_CALL_ENDED               # E6b
+        - DDS_CALL_STATUS_PROPOSED     # E6c
+        - DDS_CALL_ASSERTION           # E6c
+    PermissionE6Additions:
+      x-epic: E6b
+      x-change: ADDITIVE
+      x-additive-to: '../openapi.yaml#/components/schemas/Permission'
+      type: string
+      enum: [PLACE_DDS_CALL]
+
+    # --------------------------------------------------------- dds calls ----
+    StartDdsCallRequest:
+      x-epic: E6b
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        assignment_id:
+          type: [string, 'null']
+          format: uuid
+          description: Required for `SERVICE_HEAD` (the leg), absent / null otherwise (422).
+    StartDdsCallResponse:
+      x-epic: E6b
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [call, voice]
+      properties:
+        call: { $ref: '#/components/schemas/DdsCallView' }
+        voice:
+          description: Room-scoped LiveKit token for the browser endpoint; `null` for `SIP` or an `ENDED` call.
+          oneOf:
+            - $ref: '../openapi.yaml#/components/schemas/VoiceTokenResponse'
+            - type: 'null'
+    DdsCallView:
+      x-epic: E6b
+      x-change: NEW
+      description: One row of the `dds_calls` read model (migration 0013), plus the caller's legal actions.
+      type: object
+      additionalProperties: false
+      required: [call_id, session_id, kind, direction, assignment_id, service_type, dialed, endpoint, room_name, persona_id, persona_title_ru, actor_user_id, state, answered_by, started_at_offset_ms, answered_at_offset_ms, ended_at_offset_ms, end_reason, available_actions]
+      properties:
+        call_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        direction: { $ref: '#/components/schemas/DdsCallDirection' }
+        assignment_id: { type: [string, 'null'], format: uuid }
+        service_type: { type: [string, 'null'], description: '`ServiceId` of the leg (SERVICE_HEAD only).' }
+        dialed: { type: string, examples: ['101', '7012', '112', '9161234567'] }
+        endpoint: { $ref: '#/components/schemas/CallEndpoint' }
+        room_name: { type: string }
+        persona_id: { type: [string, 'null'], examples: [BRIGADE_101, OPERATOR_112] }
+        persona_title_ru: { type: [string, 'null'], examples: [Начальник караула ПСЧ, Заявитель] }
+        actor_user_id: { type: [string, 'null'], format: uuid }
+        state: { $ref: '#/components/schemas/DdsCallState' }
+        answered_by:
+          oneOf:
+            - $ref: '#/components/schemas/CallAnsweredBy'
+            - type: 'null'
+        started_at_offset_ms: { type: integer }
+        answered_at_offset_ms: { type: [integer, 'null'] }
+        ended_at_offset_ms: { type: [integer, 'null'] }
+        end_reason:
+          oneOf:
+            - $ref: '#/components/schemas/DdsCallEndReason'
+            - type: 'null'
+        available_actions:
+          type: array
+          description: '`hang_up` «Положить трубку» while live; `answer` «Ответить» on a ringing INBOUND call.'
+          items: { $ref: '../openapi.yaml#/components/schemas/ActionDescriptor' }
+    VoiceTokenRequest:
+      x-epic: E6b
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      properties:
+        call_id:
+          type: [string, 'null']
+          format: uuid
+          description: A non-`ENDED` `DdsCall` of the caller; absent ⇒ the session's 112 call (unchanged behaviour).
+    SetServiceStatusRequestE6:
+      x-epic: E6c
+      x-change: ADDITIVE
+      x-additive-to: 'i3-openapi-delta.yaml#/components/schemas/SetServiceStatusRequest'
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { $ref: 'i3-openapi-delta.yaml#/components/schemas/ServiceResponseStatus' }
+        order_number: { type: [string, 'null'], maxLength: 64 }
+        comment_ru: { type: [string, 'null'], maxLength: 2000 }
+        proposed_by_call_id:
+          type: [string, 'null']
+          format: uuid
+          description: The call on which the status was heard; must name a `DDS_CALL_STATUS_PROPOSED` of this leg (`422 PROPOSAL_UNKNOWN`).
+    DdsLegViewE6:
+      x-epic: [E6b, E6e]
+      x-change: ADDITIVE
+      x-additive-to: 'i3-openapi-delta.yaml#/components/schemas/DdsLegView'
+      description: '`DdsLegView` plus the two keys below; every other property as in i3-openapi-delta.yaml.'
+      allOf:
+        - $ref: 'i3-openapi-delta.yaml#/components/schemas/DdsLegView'
+        - type: object
+          properties:
+            phone_extension:
+              type: [string, 'null']
+              description: '(E6e) The dial-plan number of this service — the catalog `code` (101…104) or `7` + 3 digits (80 §80.3.5); shown «тел. 7012».'
+            live_call_id:
+              type: [string, 'null']
+              format: uuid
+              description: '(E6b) The non-`ENDED` `SERVICE_HEAD` call on this leg, if any.'
+
+    # --------------------------------------------------------- reference ----
+    PersonaView:
+      x-epic: E6c
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [persona_id, applies, title_ru, gender, voice_id]
+      properties:
+        persona_id: { type: string, examples: [BRIGADE_101, DDS_DISTRICT, OPERATOR_112] }
+        applies:
+          type: object
+          additionalProperties: false
+          description: Most specific wins — `code` over `kind` (80 §80.4.1).
+          properties:
+            code: { type: [string, 'null'], examples: ['101'] }
+            kind: { type: [string, 'null'], enum: [CITY, DISTRICT, PREFECTURE, DEPARTMENT, OPERATOR_112, null] }
+        title_ru: { type: string, examples: [Начальник караула ПСЧ] }
+        gender: { type: string, enum: [MALE, FEMALE] }
+        voice_id: { type: string, description: 'Logical voice id resolved through the profile `tts.voice_map`.', examples: [ru_male_adult_01] }
+
+    # --------------------------------------------------------- telephony ----
+    SipDialRequest:
+      x-epic: E6e
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [sip_user, dialed, sip_call_id]
+      properties:
+        sip_user: { type: string, minLength: 1, maxLength: 128, description: 'The registered username (= `users.username`).' }
+        dialed: { type: string, minLength: 1, maxLength: 32, pattern: '^[0-9*#+]+$' }
+        sip_call_id: { type: string, minLength: 1, maxLength: 256, description: 'The SIP `Call-ID`, for correlation in logs only.' }
+    SipDialResponse:
+      x-epic: E6e
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [call_id, session_id, room_name, kind, persona_id]
+      properties:
+        call_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        room_name: { type: string }
+        kind: { $ref: '#/components/schemas/DdsCallKind' }
+        persona_id: { type: [string, 'null'] }
+    SipLegReport:
+      x-epic: E6e
+      x-change: NEW
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { type: string, enum: [UP, FAILED, DOWN] }
+        sip_status: { type: [integer, 'null'], minimum: 100, maximum: 699, description: 'The final SIP response of a FAILED click-to-call (e.g. 486, 408).' }
+    SipCredentialView:
+      x-epic: E6e
+      x-change: NEW
+      x-optional: true
+      type: object
+      additionalProperties: false
+      required: [username, realm, ha1]
+      properties:
+        username: { type: string }
+        realm: { type: string }
+        ha1: { type: string, pattern: '^[0-9a-f]{32}$', description: 'MD5(username:realm:password); never logged.' }

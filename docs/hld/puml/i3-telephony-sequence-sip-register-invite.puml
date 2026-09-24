@@ -1,0 +1,103 @@
+@startuml i3-telephony-sequence-sip-register-invite
+' I3 H2 — SIP register, then a softphone-dialled call joining the call's LiveKit room
+' (docs/hld/80-telephony.md §80.2.3 flows 1, 2 and 4; D22; epics E6a (register, echo) + E6e (dial)).
+'
+' The deployment password comes from SIM_SIP_PASSWORD ([credential redacted]); per-user HA1 is the
+' optional E6e hardening (migration 0014). No LiveKit token crosses Redis or REST towards the
+' gateway: it mints its own room token like the voice agent (build_agent_token pattern).
+
+title Softphone REGISTER + INVITE 101 → DdsCall → room join → BYE
+
+skinparam maxMessageSize 220
+skinparam sequenceMessageAlign left
+skinparam ParticipantPadding 6
+skinparam BoxPadding 8
+
+actor "ДДС trainee" as T
+participant "Softphone\n(tools/softphone --headset\nor any SIP UA)" as SP
+
+box "sip-gateway (profile sip)" #FFF6EF
+  participant "gateway.py +\nregistrar.py + dialog.py" as GW
+  participant "rtp.py + bridge.py\n(LiveKitRoomBridge)" as BR
+end box
+
+box "backend" #EFF5FF
+  participant "API\napi/routers/telephony.py" as API
+  participant "Use cases\nStartDdsCall, dds_call_flow" as UC
+end box
+
+box "infrastructure" #F3FFF3
+  queue "Redis" as R
+  database "PostgreSQL" as PG
+  participant "LiveKit room\ndds-{session}-{call_id}" as ROOM
+end box
+
+participant "voice-agent" as AG
+
+== 1. Register (E6a; Redis mirror E6e) ==
+
+SP -> GW : REGISTER sip:<realm> (From: sip:<username>@<realm>, Expires 3600)
+GW --> SP : 401 Unauthorized\nWWW-Authenticate: Digest realm, nonce, qop=auth
+SP -> GW : REGISTER + Authorization: Digest (MD5)
+GW -> GW : verify against SIM_SIP_PASSWORD (or users.sip_ha1, 0014)
+GW -> R : SET sip:binding:{username} {contact, expires_at} EX 3600
+GW --> SP : 200 OK (Contact, Expires)
+note right of GW
+  Wrong password ⇒ 403. Expires: 0 ⇒ unbind + DEL.
+  Loss of the Redis key only makes the next click-to-call
+  use the browser endpoint.
+end note
+
+== 2. The softphone dials 101 (E6e) ==
+
+T -> SP : dial 101
+SP -> GW : INVITE sip:101@<realm> + SDP offer (PCMA, PCMU, telephone-event)
+GW --> SP : 100 Trying
+GW -> API : POST /api/v1/telephony/dial\n{sip_user, dialed "101", sip_call_id}\n(service credential SIM_SIP_GATEWAY_SECRET)
+API -> UC : dial_plan.resolve("101") → SERVICE_HEAD\nsession selection: last DDS_CARD_OPENED by this user, else oldest ACTIVE
+UC -> PG : append **DDS_CALL_STARTED** {…, endpoint SIP, dialed "101",\nselection_reason LAST_OPENED_CARD}\n+ dds_calls row (DIALING)
+API --> GW : 201 {call_id, session_id, room}
+alt unknown number / no eligible session
+  API --> GW : 404 DIAL_NUMBER_UNKNOWN / 409 NO_ACTIVE_DDS_SESSION
+  GW --> SP : SIP 404 Not Found / 480 Temporarily Unavailable
+end
+GW --> SP : 180 Ringing
+GW -> BR : allocate RTP pair (20000–20199)
+BR -> ROOM : join as "sip-{call_id}" (self-minted token)
+GW -> API : POST /api/v1/telephony/calls/{call_id}/leg {state UP}
+API -> UC : ring [transport_ready ∧ gateway leg UP] → RINGING
+UC -> R : publish voice:join {session_id, room, call_id,\ncall_kind SERVICE_HEAD, assignment_id, persona_id, endpoint SIP}
+R -> AG : voice:join
+AG -> ROOM : join (self-minted token)
+AG -> PG : append **DDS_CALL_ANSWERED** {answered_by AI}
+AG -> R : publish on session:{session_id}:events (after commit)
+R -> GW : DDS_CALL_ANSWERED (gateway subscribes for bridged calls)
+GW --> SP : 200 OK + SDP answer (PCMA, ptime 20)
+SP -> GW : ACK
+
+== 3. Media ==
+
+SP <-> BR : RTP G.711 8 kHz, 20 ms frames
+BR <-> ROOM : audioop ratecv 8k ↔ 48k; publish mic track / play the agent's track
+ROOM <-> AG : LiveKitCallTransport (unchanged): first remote audio track = the gateway's
+
+== 4. Hang-up from the softphone ==
+
+T -> SP : hang up
+SP -> GW : BYE
+GW --> SP : 200 OK
+GW -> API : POST /api/v1/telephony/calls/{call_id}/leg {state DOWN}
+API -> UC : hang_up / TRAINEE
+UC -> PG : append **DDS_CALL_ENDED** {reason HANGUP, duration_ms}
+UC -> R : publish voice:cancel:{session_id} {call_id, reason HANGUP}
+R -> AG : leave the room
+BR -> ROOM : leave
+
+note over GW, ROOM
+  Echo extension 999 (E6a) never reaches the backend or a room: rtp.py sends the
+  payload back — the interop and latency probe (benchmark_voip.py --path sip-loopback).
+  A hang-up from the browser or the backend arrives as voice:cancel:{session_id};
+  the gateway then sends BYE to the softphone.
+end note
+
+@enduml
