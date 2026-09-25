@@ -46,13 +46,30 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
+from app.application.admin.backup_status import read_backup_status
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.ports.clock import Clock
 from app.application.ports.recording_purge_repository import PurgeCandidateSegment
 from app.application.ports.unit_of_work import UnitOfWorkFactory
+from app.domain.common.errors import DomainError
 from app.domain.common.ids import SessionId
 
-__all__ = ["PurgeRecordings", "PurgeRecordingsRequest", "PurgeRecordingsResult"]
+__all__ = [
+    "BackupRequiredError",
+    "PurgeRecordings",
+    "PurgeRecordingsRequest",
+    "PurgeRecordingsResult",
+]
+
+
+class BackupRequiredError(DomainError):
+    """A non-dry-run purge with no fresh, successful backup (I4 E29, ТЗ ¶216) — `409
+    BACKUP_REQUIRED`."""
+
+    code = "BACKUP_REQUIRED"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 def _reason_for(request: PurgeRecordingsRequest) -> str:
@@ -92,7 +109,17 @@ class PurgeRecordingsResult:
 
 
 class PurgeRecordings:
-    """Retention purge (§9.2). `older_than_days` overrides `RECORDING_RETENTION_DAYS`."""
+    """Retention purge (§9.2). `older_than_days` overrides `RECORDING_RETENTION_DAYS`.
+
+    **I4 E29 (§71.6, ТЗ ¶216).** When `backup_status_path` is given, a non-dry-run purge is
+    refused (`BackupRequiredError`, `409 BACKUP_REQUIRED`) unless E26's `backups/last.json`
+    reports a successful backup finished *after* every candidate's own `retention_reference_at` —
+    `dry_run: true` is never refused, and an empty candidate set is vacuously fine (nothing to
+    protect). `backup_status_path=None` (the default, and what `python -m app.cli
+    purge_recordings` passes) skips the guard entirely: the delta names only the HTTP operation
+    `purgeRecordings` as `CHANGED`, so the CLI keeps its pre-E29 behaviour (Awaiting owner: CLI
+    parity for ТЗ ¶216 was not asked).
+    """
 
     def __init__(
         self,
@@ -101,6 +128,7 @@ class PurgeRecordings:
         *,
         recordings_dir: Path,
         default_retention_days: int,
+        backup_status_path: Path | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
@@ -108,6 +136,7 @@ class PurgeRecordings:
         #: every served path inside of (SPEC §41: nothing outside it is ever touched).
         self._recordings_dir = recordings_dir
         self._default_retention_days = default_retention_days
+        self._backup_status_path = backup_status_path
 
     async def __call__(
         self, request: PurgeRecordingsRequest, *, actor: AuthenticatedUser | None = None
@@ -150,6 +179,8 @@ class PurgeRecordings:
                     reason=reason,
                 )
 
+            self._require_fresh_backup(candidates)
+
             actor_type = actor.user_role.value if actor is not None else "SYSTEM"
             actor_user_id = UUID(str(actor.user_id)) if actor is not None else None
             bytes_freed = 0
@@ -179,6 +210,25 @@ class PurgeRecordings:
             purged_at=now,
             reason=reason,
         )
+
+    # -- I4 E29: the backup guard (§71.6, ТЗ ¶216) ----------------------------------------------
+
+    def _require_fresh_backup(self, candidates: list[PurgeCandidateSegment]) -> None:
+        """`BackupRequiredError` unless `backup_status_path` reports a successful backup finished
+        after every candidate's own retention reference — see the class docstring."""
+        if self._backup_status_path is None or not candidates:
+            return
+        status = read_backup_status(self._backup_status_path)
+        newest_reference = max(candidate.retention_reference_at for candidate in candidates)
+        if not status.available or status.status != "OK" or status.finished_at is None:
+            raise BackupRequiredError(
+                "no successful backup is recorded; run a backup before purging recordings"
+            )
+        if status.finished_at <= newest_reference:
+            raise BackupRequiredError(
+                f"the last backup ({status.finished_at.isoformat()}) is not newer than every "
+                f"row being purged (newest: {newest_reference.isoformat()})"
+            )
 
     # -- the filesystem half -------------------------------------------------------------------
     # SPEC §41: the only input to a path is the row's own *relative* `file_path`, joined onto

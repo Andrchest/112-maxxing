@@ -31,6 +31,11 @@ from types import TracebackType
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.application.admin.backup_status import GetBackupStatus
+from app.application.admin.get_error_report import GetErrorReport
+from app.application.admin.get_server_load import GetServerLoad
+from app.application.admin.get_usage_stats import GetUsageStats
+from app.application.admin.list_admin_alerts import ListAdminAlerts
 from app.application.auth.list_users import ListUsers
 from app.application.auth.login import Login
 from app.application.dds.acknowledge import AcknowledgeDdsAssignment
@@ -104,6 +109,7 @@ from app.application.operator.get_card import GetOperatorCard
 from app.application.operator.list_card_revisions import ListCardRevisions
 from app.application.operator.select_service import SelectRecipientService
 from app.application.operator.set_card_field import SetCardField
+from app.application.ports.admin_monitoring import AdminMonitoringReader, ServerHeartbeatReader
 from app.application.ports.audit_log import AuditReader, AuditRecorder
 from app.application.ports.call_state_cache import CallStateCache
 from app.application.ports.call_transport_status import CallTransportStatus
@@ -187,8 +193,10 @@ from app.infrastructure.health import (
     VoiceHealthProbe,
     VoiceHealthSubscriber,
 )
+from app.infrastructure.health.server_load import RedisServerHeartbeat
 from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.logging import configure_logging
+from app.infrastructure.persistence.admin_monitoring_repository import SqlAlchemyAdminMonitoring
 from app.infrastructure.persistence.audit_log_repository import SqlAlchemyAuditLog
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
@@ -427,6 +435,18 @@ class Container:
         self.audit_reader: AuditReader = audit_log
         # --- end I4 E25 -----------------------------------------------------------------------
 
+        # --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) ----------------------------------
+        #
+        # Two more own-session readers beside E25's audit log: `AdminMonitoringReader` covers
+        # per-day usage, cross-session MODEL_ERROR/FATAL events and login-failure bursts;
+        # `ServerHeartbeatReader` is the `voice:health:*` half `getServerLoad`'s GPU pair and
+        # `listAdminAlerts`' `INFERENCE_FATAL` both need. A test may replace either attribute.
+        self.admin_monitoring: AdminMonitoringReader = SqlAlchemyAdminMonitoring(
+            self.session_factory
+        )
+        self.server_heartbeat: ServerHeartbeatReader = RedisServerHeartbeat(self.redis)
+        # --- end I4 E29 -----------------------------------------------------------------------
+
     # -- use-case factories --------------------------------------------------------------------
     #
     # One method per use case. Routers call these; they never call a use-case constructor, so a
@@ -640,12 +660,18 @@ class Container:
     # -- E18-D: retention purge (§9.2, D9, R8) ---------------------------------------------------
 
     def purge_recordings(self) -> PurgeRecordings:
-        """`purgeRecordings` — the same use case `python -m app.cli purge_recordings` calls."""
+        """`purgeRecordings` — the same use case `python -m app.cli purge_recordings` calls.
+
+        I4 E29 (§71.6, ТЗ ¶216): the HTTP surface passes `backup_status_path`, so a non-dry-run
+        purge is refused without a fresh, successful backup; `PurgeRecordings`' own docstring
+        explains why the CLI (`app.cli.purge_recordings.purge_recordings`) does not.
+        """
         return PurgeRecordings(
             self.unit_of_work,
             self.clock,
             recordings_dir=self.recordings_dir,
             default_retention_days=self.settings.recording_retention_days,
+            backup_status_path=Path(self.settings.backup_status_path),
         )
 
     # -- E7-C: the realtime read path (§40.1-§40.6) ---------------------------------------------
@@ -1117,6 +1143,40 @@ class Container:
     def archive_material(self) -> ArchiveMaterial:
         """`archiveMaterial` (§71.11)."""
         return ArchiveMaterial(self.unit_of_work, self.clock)
+
+    # --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) ---------------------------------------
+    #
+    # `listAuditLog` needs no factory of its own: the router reads `self.audit_reader.page(...)`
+    # directly (E25's own port, no new use case to wrap it).
+
+    def get_usage_stats(self) -> GetUsageStats:
+        """`getUsageStats` (ADMIN) — the proposed metric set, Q-E14-3."""
+        return GetUsageStats(self.admin_monitoring, self.clock)
+
+    def get_server_load(self) -> GetServerLoad:
+        """`getServerLoad` (ADMIN) — `/proc`, `shutil.disk_usage`, the voice-agent heartbeat."""
+        return GetServerLoad(
+            self.server_heartbeat, self.clock, disk_path=Path(self.settings.data_dir)
+        )
+
+    def get_error_report(self) -> GetErrorReport:
+        """`getErrorReport` (ADMIN) — the JSON log plus MODEL_ERROR / FATAL session events."""
+        return GetErrorReport(self.admin_monitoring, self.clock, log_dir=self.settings.log_dir)
+
+    def get_backup_status(self) -> GetBackupStatus:
+        """`getBackupStatus` (ADMIN) — `backups/last.json`, as E26's backup service writes it."""
+        return GetBackupStatus(status_path=Path(self.settings.backup_status_path))
+
+    def list_admin_alerts(self) -> ListAdminAlerts:
+        """`listAdminAlerts` (ADMIN) — derived, not stored."""
+        return ListAdminAlerts(
+            self.admin_monitoring,
+            self.server_heartbeat,
+            self.clock,
+            backup_status_path=Path(self.settings.backup_status_path),
+        )
+
+    # --- end I4 E29 -----------------------------------------------------------------------------
 
     # -- lifecycle -----------------------------------------------------------------------------
 

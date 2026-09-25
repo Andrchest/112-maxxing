@@ -446,6 +446,13 @@ class Settings(BaseSettings):
     #: error report reads. Empty (the default) writes no file — console only.
     log_dir: str = ""
 
+    # --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6, D33) ----------------------------------
+    #: `SIM_BACKUP_STATUS_PATH`: where `getBackupStatus`/`listAdminAlerts`/`purgeRecordings`'s
+    #: guard read E26's backup status file. Compose mounts the backup service's own volume
+    #: read-only at `/backups` for the backend (`infra/docker-compose.yml`); a bare `uv run` on
+    #: the host reads the repository's own `backups/last.json` (`make backup-now`'s own default).
+    backup_status_path: str = "backups/last.json"
+
     @field_validator("audit_retention_days")
     @classmethod
     def _audit_retention_floor(cls, value: int) -> int:

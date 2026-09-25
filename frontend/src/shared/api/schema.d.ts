@@ -129,6 +129,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/audit-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page the audit log written by E25 (ADMIN) — ТЗ ¶205, ¶296.
+         * @description (I4 E29) Filters by user, action and period; paged, newest first.
+         */
+        get: operations["listAuditLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/usage-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-day usage counts (ADMIN) — ТЗ ¶206; metric set to be confirmed (Q-E14-3).
+         * @description (I4 E29) Per-day counts of logins, sessions, lessons and active users, from `audit_log`,
+         *     `simulation_sessions` and `lessons`. An absent `from`/`to` defaults to a 30-day window
+         *     ending now (a technical choice; Q-E14-3 confirms only the metric set).
+         */
+        get: operations["getUsageStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/server-load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * CPU / memory / disk (+ GPU when visible) of the server (ADMIN) — ТЗ ¶208, ¶289.
+         * @description (I4 E29) Read from `/proc/stat`, `/proc/meminfo`, `shutil.disk_usage`; GPU from the
+         *     voice-agent heartbeat if it carries it, else `null`. An absent metric is `null`, never
+         *     `0` (SPEC §27 rule).
+         */
+        get: operations["getServerLoad"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Errors and failures over a period (ADMIN) — ТЗ ¶207.
+         * @description (I4 E29) Merges backend JSON-log records with level >= ERROR (`SIM_LOG_DIR`, E25),
+         *     `MODEL_ERROR` session events and `INFERENCE_HEALTH_CHANGED` transitions to FATAL, newest
+         *     first.
+         */
+        get: operations["getErrorReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current administrator alerts, derived not stored (ADMIN) — ТЗ ¶308.
+         * @description (I4 E29) Covers FATAL latches, a stale or failed backup, and repeated login failures.
+         */
+        get: operations["listAdminAlerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/backup-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The last backup as recorded by E26's `backups/last.json` (ADMIN) — ТЗ ¶143, ¶216.
+         * @description (I4 E29) `available: false` when no `last.json` is readable.
+         */
+        get: operations["getBackupStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scenarios": {
         parameters: {
             query?: never;
@@ -1667,6 +1793,10 @@ export interface paths {
          *     §41, D9). `dry_run: true` reports what would be purged and deletes nothing.
          *
          *     No session event is appended: a completed session's log is closed (D9).
+         *
+         *     (I4 E29, ТЗ ¶216) A non-dry-run purge is `409 BACKUP_REQUIRED` unless
+         *     `backups/last.json` (E26) reports a successful backup newer than every row being purged;
+         *     `dry_run: true` is never refused.
          */
         post: operations["purgeRecordings"];
         delete?: never;
@@ -2152,7 +2282,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE" | "BACKUP_REQUIRED";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -2384,6 +2514,87 @@ export interface components {
         /** @description (I4 E28) `resetUserPassword`'s body. */
         PasswordResetRequest: {
             password: string;
+        };
+        /**
+         * @description The `audit_log.action` CHECK list (HLD 20 §20.11.1), written by E25, read by E29.
+         * @enum {string}
+         */
+        AuditAction: "HTTP_REQUEST" | "LOGIN_SUCCEEDED" | "LOGIN_FAILED" | "ACCESS_DENIED" | "WS_CONNECTED";
+        /** @enum {string} */
+        AuditOutcome: "OK" | "DENIED" | "ERROR";
+        /** @description (I4 E29) One `audit_log` row. Never carries request or response bodies. */
+        AuditEntryView: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            ts: string;
+            /** Format: uuid */
+            user_id: string | null;
+            role: string | null;
+            action: components["schemas"]["AuditAction"];
+            operation_id: string | null;
+            method: string;
+            path_template: string;
+            /** @description Path parameters of the request (e.g. `session_id`); for LOGIN_* the attempted `username`. */
+            target_ids: {
+                [key: string]: string;
+            };
+            status: number;
+            client_ip: string | null;
+            outcome: components["schemas"]["AuditOutcome"];
+        };
+        /** @description (I4 E29) `getUsageStats`'s response. */
+        UsageStats: {
+            days: {
+                /** Format: date */
+                date: string;
+                logins: number;
+                sessions: number;
+                lessons: number;
+                active_users: number;
+            }[];
+        };
+        /** @description (I4 E29) Every metric is `null` when it cannot be read — never `0`. */
+        ServerLoad: {
+            /** Format: date-time */
+            sampled_at: string;
+            cpu_percent: number | null;
+            memory_used_mb: number | null;
+            memory_total_mb: number | null;
+            disk_used_gb: number | null;
+            disk_total_gb: number | null;
+            gpu_memory_used_mb: number | null;
+            gpu_memory_total_mb: number | null;
+        };
+        /** @description (I4 E29) One merged error record (`getErrorReport`). */
+        ErrorRecordView: {
+            /** Format: date-time */
+            ts: string;
+            /** @enum {string} */
+            source: "BACKEND_LOG" | "MODEL_ERROR" | "INFERENCE_FATAL";
+            message: string;
+            /** Format: uuid */
+            session_id: string | null;
+        };
+        /** @description (I4 E29) One derived alert (`listAdminAlerts`). */
+        AdminAlertView: {
+            /** @enum {string} */
+            kind: "INFERENCE_FATAL" | "BACKUP_STALE" | "BACKUP_FAILED" | "LOGIN_FAILURES";
+            /** Format: date-time */
+            since: string;
+            detail_ru: string;
+        };
+        /** @description (I4 E29) `backups/last.json` written by E26's backup service; `available: false` when absent or unreadable. */
+        BackupStatus: {
+            available: boolean;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** @enum {string|null} */
+            status: "OK" | "FAILED" | null;
+            database_bytes: number | null;
+            recordings_bytes: number | null;
+            database_sha256: string | null;
+            recordings_sha256: string | null;
         };
         /** @description `Scenario` — identity only (D4): slug and title, never content. */
         ScenarioSummary: {
@@ -4181,7 +4392,8 @@ export interface components {
          *     session where they are a ДДС participant with a phone; (additive, I4 E28) `USERNAME_TAKEN`
          *     — `createUser` names an existing username; `SELF_MODIFICATION_FORBIDDEN` — an ADMIN tried
          *     to block or demote its own account; `LAST_ADMIN_REQUIRED` — the last active ADMIN account
-         *     cannot be blocked or demoted.
+         *     cannot be blocked or demoted; (additive, I4 E29) `BACKUP_REQUIRED` — `purgeRecordings`
+         *     refused a non-dry-run purge because no fresh, successful backup is recorded.
          */
         Conflict: {
             headers: {
@@ -4407,6 +4619,165 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    listAuditLog: {
+        parameters: {
+            query?: {
+                user_id?: string;
+                action?: components["schemas"]["AuditAction"];
+                /** @description Inclusive lower bound (UTC). */
+                from?: string;
+                /** @description Exclusive upper bound (UTC). */
+                to?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit entries, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AuditEntryView"][];
+                        total: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getUsageStats: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound (UTC). */
+                from?: string;
+                /** @description Exclusive upper bound (UTC). */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per calendar day in the period. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageStats"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getServerLoad: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A point-in-time load sample. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerLoad"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getErrorReport: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound (UTC). */
+                from?: string;
+                /** @description Exclusive upper bound (UTC). */
+                to?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Error records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ErrorRecordView"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminAlerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active alerts (empty list = nothing to report). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminAlertView"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getBackupStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup status, or `available = false` when no `last.json` is readable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listScenarios: {
@@ -6313,6 +6684,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     clearInferenceFatal: {

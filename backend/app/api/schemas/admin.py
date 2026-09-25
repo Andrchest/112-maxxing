@@ -1,26 +1,50 @@
-"""`admin` schemas — `PurgeRecordingsRequest`, `PurgeRecordingsResult` (`openapi.yaml`, §9.2, R8).
+"""`admin` schemas — `PurgeRecordingsRequest`, `PurgeRecordingsResult` (`openapi.yaml`, §9.2, R8);
+plus S5's monitoring reads (I4 E29, `71-i4-wave4.md` §71.6, appended at the end of this module).
 
 `clearInferenceFatal` needs no schema of its own beyond `HealthReadyResponseSchema` (already
-`app.api.schemas.health`); this module is `purgeRecordings`'s half only.
+`app.api.schemas.health`); this module is `purgeRecordings`'s half only, plus E29's below.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
 
 from app.api.schemas.common import ApiModel
+from app.application.admin.backup_status import BackupStatusResult
+from app.application.admin.get_error_report import ErrorReportItem
+from app.application.admin.get_server_load import ServerLoadResult
+from app.application.admin.get_usage_stats import UsageStatsResult
+from app.application.admin.list_admin_alerts import AdminAlert
+from app.application.ports.admin_monitoring import DailyUsage
+from app.application.ports.audit_log import AuditAction, AuditOutcome, StoredAuditEntry
+from app.application.ports.user_repository import UserRole
 from app.application.recording import PurgeRecordingsRequest, PurgeRecordingsResult
 from app.domain.common.ids import SessionId
 
 __all__ = [
+    "AdminAlertViewSchema",
+    "AdminAlertsSchema",
+    "AuditEntryViewSchema",
+    "BackupStatusSchema",
+    "ErrorRecordViewSchema",
+    "ErrorReportSchema",
     "PurgeRecordingsRequestSchema",
     "PurgeRecordingsResultSchema",
+    "ServerLoadSchema",
+    "UsageDaySchema",
+    "UsageStatsSchema",
+    "admin_alerts_schema",
+    "audit_entry_view_schema",
+    "backup_status_schema",
+    "error_report_schema",
     "purge_recordings_request",
     "purge_recordings_result_schema",
+    "server_load_schema",
+    "usage_stats_schema",
 ]
 
 
@@ -68,3 +92,181 @@ def purge_recordings_result_schema(result: PurgeRecordingsResult) -> PurgeRecord
         purged_at=result.purged_at,
         reason=result.reason,  # type: ignore[arg-type]  # the use case only ever writes these three
     )
+
+
+# --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) -------------------------------------------
+#
+# `listAuditLog`, `getUsageStats`, `getServerLoad`, `getErrorReport`, `listAdminAlerts`,
+# `getBackupStatus` — ADMIN only, ТЗ ¶205-¶209, ¶216, ¶289, ¶308.
+
+
+class AuditEntryViewSchema(ApiModel):
+    """`openapi.yaml`'s `AuditEntryView` — one `audit_log` row, never a request/response body."""
+
+    id: UUID
+    ts: datetime
+    user_id: UUID | None
+    role: UserRole | None
+    action: AuditAction
+    operation_id: str | None
+    method: str
+    path_template: str
+    target_ids: dict[str, str]
+    status: int
+    client_ip: str | None
+    outcome: AuditOutcome
+
+
+def audit_entry_view_schema(stored: StoredAuditEntry) -> AuditEntryViewSchema:
+    """`StoredAuditEntry` (E25's `AuditReader.page`) -> `AuditEntryView`."""
+    entry = stored.entry
+    return AuditEntryViewSchema(
+        id=stored.id,
+        ts=entry.ts,
+        user_id=UUID(str(entry.user_id)) if entry.user_id is not None else None,
+        role=entry.role,
+        action=entry.action,
+        operation_id=entry.operation_id,
+        method=entry.method,
+        path_template=entry.path_template,
+        target_ids=dict(entry.target_ids),
+        status=entry.status,
+        client_ip=entry.client_ip,
+        outcome=entry.outcome,
+    )
+
+
+class UsageDaySchema(ApiModel):
+    """`openapi.yaml`'s `UsageStats.days` item."""
+
+    date: date
+    logins: int = Field(ge=0)
+    sessions: int = Field(ge=0)
+    lessons: int = Field(ge=0)
+    active_users: int = Field(ge=0)
+
+
+class UsageStatsSchema(ApiModel):
+    """`openapi.yaml`'s `UsageStats`."""
+
+    days: list[UsageDaySchema]
+
+
+def _usage_day_schema(day: DailyUsage) -> UsageDaySchema:
+    return UsageDaySchema(
+        date=day.day,
+        logins=day.logins,
+        sessions=day.sessions,
+        lessons=day.lessons,
+        active_users=day.active_users,
+    )
+
+
+def usage_stats_schema(result: UsageStatsResult) -> UsageStatsSchema:
+    """The application `UsageStatsResult` -> `UsageStatsSchema`."""
+    return UsageStatsSchema(days=[_usage_day_schema(day) for day in result.days])
+
+
+class ServerLoadSchema(ApiModel):
+    """`openapi.yaml`'s `ServerLoad`. Every metric is `null`, never `0`, when it cannot be read."""
+
+    sampled_at: datetime
+    cpu_percent: float | None = Field(default=None, ge=0, le=100)
+    memory_used_mb: float | None = Field(default=None, ge=0)
+    memory_total_mb: float | None = Field(default=None, ge=0)
+    disk_used_gb: float | None = Field(default=None, ge=0)
+    disk_total_gb: float | None = Field(default=None, ge=0)
+    gpu_memory_used_mb: float | None = Field(default=None, ge=0)
+    gpu_memory_total_mb: float | None = Field(default=None, ge=0)
+
+
+def server_load_schema(result: ServerLoadResult) -> ServerLoadSchema:
+    """The application `ServerLoadResult` -> `ServerLoadSchema`."""
+    return ServerLoadSchema(
+        sampled_at=result.sampled_at,
+        cpu_percent=result.cpu_percent,
+        memory_used_mb=result.memory_used_mb,
+        memory_total_mb=result.memory_total_mb,
+        disk_used_gb=result.disk_used_gb,
+        disk_total_gb=result.disk_total_gb,
+        gpu_memory_used_mb=result.gpu_memory_used_mb,
+        gpu_memory_total_mb=result.gpu_memory_total_mb,
+    )
+
+
+class ErrorRecordViewSchema(ApiModel):
+    """`openapi.yaml`'s `ErrorRecordView`."""
+
+    ts: datetime
+    source: Literal["BACKEND_LOG", "MODEL_ERROR", "INFERENCE_FATAL"]
+    message: str
+    session_id: UUID | None
+
+
+class ErrorReportSchema(ApiModel):
+    """`openapi.yaml`'s `getErrorReport` response — `{items}`, no `total` (the contract's own
+    inline object has none)."""
+
+    items: list[ErrorRecordViewSchema]
+
+
+def _error_record_view_schema(item: ErrorReportItem) -> ErrorRecordViewSchema:
+    return ErrorRecordViewSchema(
+        ts=item.ts, source=item.source, message=item.message, session_id=item.session_id
+    )
+
+
+def error_report_schema(items: tuple[ErrorReportItem, ...]) -> ErrorReportSchema:
+    """The application `GetErrorReport` result -> `ErrorReportSchema`."""
+    return ErrorReportSchema(items=[_error_record_view_schema(item) for item in items])
+
+
+class AdminAlertViewSchema(ApiModel):
+    """`openapi.yaml`'s `AdminAlertView`."""
+
+    kind: Literal["INFERENCE_FATAL", "BACKUP_STALE", "BACKUP_FAILED", "LOGIN_FAILURES"]
+    since: datetime
+    detail_ru: str
+
+
+class AdminAlertsSchema(ApiModel):
+    """`openapi.yaml`'s `listAdminAlerts` response — `{items}`, no `total`."""
+
+    items: list[AdminAlertViewSchema]
+
+
+def _admin_alert_view_schema(alert: AdminAlert) -> AdminAlertViewSchema:
+    return AdminAlertViewSchema(kind=alert.kind, since=alert.since, detail_ru=alert.detail_ru)
+
+
+def admin_alerts_schema(alerts: tuple[AdminAlert, ...]) -> AdminAlertsSchema:
+    """The application `ListAdminAlerts` result -> `AdminAlertsSchema`."""
+    return AdminAlertsSchema(items=[_admin_alert_view_schema(alert) for alert in alerts])
+
+
+class BackupStatusSchema(ApiModel):
+    """`openapi.yaml`'s `BackupStatus`."""
+
+    available: bool
+    finished_at: datetime | None
+    status: Literal["OK", "FAILED"] | None
+    database_bytes: int | None = Field(default=None, ge=0)
+    recordings_bytes: int | None = Field(default=None, ge=0)
+    database_sha256: str | None
+    recordings_sha256: str | None
+
+
+def backup_status_schema(result: BackupStatusResult) -> BackupStatusSchema:
+    """The application `BackupStatusResult` -> `BackupStatusSchema`."""
+    return BackupStatusSchema(
+        available=result.available,
+        finished_at=result.finished_at,
+        status=result.status,
+        database_bytes=result.database_bytes,
+        recordings_bytes=result.recordings_bytes,
+        database_sha256=result.database_sha256,
+        recordings_sha256=result.recordings_sha256,
+    )
+
+
+# --- end I4 E29 -----------------------------------------------------------------------------

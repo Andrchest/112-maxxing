@@ -944,6 +944,8 @@ export const ru = {
   problemUsernameTaken: 'Пользователь с таким логином уже существует.',
   problemSelfModificationForbidden: 'Нельзя изменить роль или заблокировать собственную учётную запись.',
   problemLastAdminRequired: 'В системе должен остаться хотя бы один активный администратор.',
+  // -- I4 E29: admin monitoring backend (HLD 71 §71.6) --------------------------------------------
+  problemBackupRequired: 'Очистка записей невозможна: нет свежей резервной копии.',
   // -- I4 E31: per-card timers and unfinished cards in the lesson report (HLD 71 §71.8) ----------
   lessonFormEntryTimersLabel: 'Временные рамки карточки',
   lessonFormEntryTimersHint: 'Пустое поле — значение из сценария.',

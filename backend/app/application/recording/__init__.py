@@ -10,9 +10,15 @@ this package is the read/delete half of the same story, one layer up.
 from __future__ import annotations
 
 from app.application.recording.purge_recordings import (
+    BackupRequiredError,
     PurgeRecordings,
     PurgeRecordingsRequest,
     PurgeRecordingsResult,
 )
 
-__all__ = ["PurgeRecordings", "PurgeRecordingsRequest", "PurgeRecordingsResult"]
+__all__ = [
+    "BackupRequiredError",
+    "PurgeRecordings",
+    "PurgeRecordingsRequest",
+    "PurgeRecordingsResult",
+]

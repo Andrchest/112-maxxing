@@ -856,6 +856,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   LAST_ADMIN_REQUIRED: 'problemLastAdminRequired', // additive, I4 E28
   MATERIAL_TYPE_NOT_ALLOWED: 'problemMaterialTypeNotAllowed', // additive, I4 E34
   MATERIAL_TOO_LARGE: 'problemMaterialTooLarge', // additive, I4 E34
+  BACKUP_REQUIRED: 'problemBackupRequired', // additive, I4 E29
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

@@ -29,18 +29,31 @@ task report's "HLD gaps".
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import ContainerDep
 from app.api.routers.health import readiness_snapshot
 from app.api.schemas.admin import (
+    AdminAlertsSchema,
+    AuditEntryViewSchema,
+    BackupStatusSchema,
+    ErrorReportSchema,
     PurgeRecordingsRequestSchema,
     PurgeRecordingsResultSchema,
+    ServerLoadSchema,
+    UsageStatsSchema,
+    admin_alerts_schema,
+    audit_entry_view_schema,
+    backup_status_schema,
+    error_report_schema,
     purge_recordings_request,
     purge_recordings_result_schema,
+    server_load_schema,
+    usage_stats_schema,
 )
 from app.api.schemas.auth import (
     PasswordResetRequestSchema,
@@ -49,9 +62,11 @@ from app.api.schemas.auth import (
     UserUpdateRequestSchema,
     user_account_i4_schema,
 )
+from app.api.schemas.common import PageSchema
 from app.api.schemas.health import HealthReadyResponseSchema
 from app.api.security import require_roles
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.ports.audit_log import AuditAction, AuditFilter
 from app.application.ports.user_repository import UserRole
 from app.domain.common.ids import UserId
 
@@ -104,6 +119,11 @@ async def purge_recordings(
     """`python -m app.cli purge_recordings`'s other front door — same use case, same rule
     (`app.application.recording.PurgeRecordings`, this task's ruling R8). A bare `POST` with no
     body is the default `dry_run=True` sweep over `Settings.recording_retention_days`.
+
+    I4 E29 (§71.6, ТЗ ¶216): a non-dry-run purge raises `BackupRequiredError` — rendered as
+    `409 BACKUP_REQUIRED` by `app.api.errors.install_exception_handlers` like any other
+    `DomainError` — unless E26's `backups/last.json` reports a successful backup newer than every
+    row about to be purged; `dry_run: true` is never refused.
     """
     request = purge_recordings_request(body or PurgeRecordingsRequestSchema())
     result = await container.purge_recordings()(request, actor=user)
@@ -190,3 +210,127 @@ async def reset_user_password(
     the body)."""
     await container.reset_password()(UserId(user_id), password=body.password)
     return Response(status_code=204)
+
+
+# --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) --------------------------------------------
+#
+# `listAuditLog`, `getUsageStats`, `getServerLoad`, `getErrorReport`, `listAdminAlerts`,
+# `getBackupStatus` — ADMIN only, sharing `AdminDep`. ТЗ ¶205-¶209, ¶216, ¶289, ¶308.
+
+AuditLogPageSchema = PageSchema[AuditEntryViewSchema]
+
+
+@router.get(
+    "/audit-log",
+    operation_id="listAuditLog",
+    summary="Page the audit log written by E25 (ADMIN) — ТЗ ¶205, ¶296.",
+    response_model=AuditLogPageSchema,
+    status_code=200,
+)
+async def list_audit_log(
+    container: ContainerDep,
+    _user: AdminDep,
+    user_id: Annotated[UUID | None, Query()] = None,
+    action: Annotated[AuditAction | None, Query()] = None,
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> AuditLogPageSchema:
+    """No bound left unset here: an absent `user_id`/`action`/`from`/`to` leaves that filter off
+    (`AuditFilter`'s own defaults, `app.application.ports.audit_log`)."""
+    page = await container.audit_reader.page(
+        AuditFilter(
+            user_id=UserId(user_id) if user_id is not None else None,
+            action=action,
+            from_ts=from_,
+            to_ts=to,
+            limit=limit,
+            offset=offset,
+        )
+    )
+    return AuditLogPageSchema(
+        items=[audit_entry_view_schema(item) for item in page.items], total=page.total
+    )
+
+
+@router.get(
+    "/usage-stats",
+    operation_id="getUsageStats",
+    summary="Per-day usage counts (ADMIN) — ТЗ ¶206; metric set to be confirmed (Q-E14-3).",
+    response_model=UsageStatsSchema,
+    status_code=200,
+)
+async def get_usage_stats(
+    container: ContainerDep,
+    _user: AdminDep,
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+) -> UsageStatsSchema:
+    """An absent `from`/`to` defaults to `GetUsageStats.DEFAULT_WINDOW_DAYS` ending now (a
+    technical choice — see that module; Q-E14-3 confirms only the metric set)."""
+    result = await container.get_usage_stats()(from_ts=from_, to_ts=to)
+    return usage_stats_schema(result)
+
+
+@router.get(
+    "/server-load",
+    operation_id="getServerLoad",
+    summary="CPU / memory / disk (+ GPU when visible) of the server (ADMIN) — ТЗ ¶208, ¶289.",
+    response_model=ServerLoadSchema,
+    status_code=200,
+)
+async def get_server_load(container: ContainerDep, _user: AdminDep) -> ServerLoadSchema:
+    """A point-in-time sample; nothing here is stored. Every metric is `null`, never `0`, when it
+    cannot be read (SPEC §27's rule, reused)."""
+    result = await container.get_server_load()()
+    return server_load_schema(result)
+
+
+@router.get(
+    "/errors",
+    operation_id="getErrorReport",
+    summary="Errors and failures over a period (ADMIN) — ТЗ ¶207.",
+    response_model=ErrorReportSchema,
+    status_code=200,
+)
+async def get_error_report(
+    container: ContainerDep,
+    _user: AdminDep,
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> ErrorReportSchema:
+    """Merges the backend JSON log (level >= ERROR) with `MODEL_ERROR` and FATAL
+    `INFERENCE_HEALTH_CHANGED` session events, newest first."""
+    items = await container.get_error_report()(from_ts=from_, to_ts=to, limit=limit)
+    return error_report_schema(items)
+
+
+@router.get(
+    "/alerts",
+    operation_id="listAdminAlerts",
+    summary="Current administrator alerts, derived not stored (ADMIN) — ТЗ ¶308.",
+    response_model=AdminAlertsSchema,
+    status_code=200,
+)
+async def list_admin_alerts(container: ContainerDep, _user: AdminDep) -> AdminAlertsSchema:
+    """An empty `items` means nothing to report."""
+    alerts = await container.list_admin_alerts()()
+    return admin_alerts_schema(alerts)
+
+
+@router.get(
+    "/backup-status",
+    operation_id="getBackupStatus",
+    summary="The last backup as recorded by E26's `backups/last.json` (ADMIN) — ТЗ ¶143, ¶216.",
+    response_model=BackupStatusSchema,
+    status_code=200,
+)
+async def get_backup_status(container: ContainerDep, _user: AdminDep) -> BackupStatusSchema:
+    """`available: false` when `backups/last.json` is missing or unreadable."""
+    result = await container.get_backup_status()()
+    return backup_status_schema(result)
+
+
+# --- end I4 E29 -----------------------------------------------------------------------------------

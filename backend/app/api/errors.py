@@ -98,6 +98,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "USERNAME_TAKEN": 409,
     "SELF_MODIFICATION_FORBIDDEN": 409,
     "LAST_ADMIN_REQUIRED": 409,
+    # 409 — I4 E29 addition to Conflict (`docs/hld/contracts/i4-openapi-delta.yaml` `ConflictI4`)
+    "BACKUP_REQUIRED": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,

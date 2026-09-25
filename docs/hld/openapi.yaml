@@ -242,6 +242,193 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
 
+  # ------------------------------------------------- admin monitoring (I4 E29) ----
+  /api/v1/admin/audit-log:
+    get:
+      tags: [admin]
+      operationId: listAuditLog
+      summary: Page the audit log written by E25 (ADMIN) — ТЗ ¶205, ¶296.
+      description: (I4 E29) Filters by user, action and period; paged, newest first.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/AuditAction' }
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound (UTC).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Exclusive upper bound (UTC).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Audit entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEntryView' }
+                  total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/usage-stats:
+    get:
+      tags: [admin]
+      operationId: getUsageStats
+      summary: Per-day usage counts (ADMIN) — ТЗ ¶206; metric set to be confirmed (Q-E14-3).
+      description: |
+        (I4 E29) Per-day counts of logins, sessions, lessons and active users, from `audit_log`,
+        `simulation_sessions` and `lessons`. An absent `from`/`to` defaults to a 30-day window
+        ending now (a technical choice; Q-E14-3 confirms only the metric set).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound (UTC).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Exclusive upper bound (UTC).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: One row per calendar day in the period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/server-load:
+    get:
+      tags: [admin]
+      operationId: getServerLoad
+      summary: CPU / memory / disk (+ GPU when visible) of the server (ADMIN) — ТЗ ¶208, ¶289.
+      description: |
+        (I4 E29) Read from `/proc/stat`, `/proc/meminfo`, `shutil.disk_usage`; GPU from the
+        voice-agent heartbeat if it carries it, else `null`. An absent metric is `null`, never
+        `0` (SPEC §27 rule).
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: A point-in-time load sample.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerLoad' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/errors:
+    get:
+      tags: [admin]
+      operationId: getErrorReport
+      summary: Errors and failures over a period (ADMIN) — ТЗ ¶207.
+      description: |
+        (I4 E29) Merges backend JSON-log records with level >= ERROR (`SIM_LOG_DIR`, E25),
+        `MODEL_ERROR` session events and `INFERENCE_HEALTH_CHANGED` transitions to FATAL, newest
+        first.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound (UTC).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Exclusive upper bound (UTC).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Error records.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ErrorRecordView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/alerts:
+    get:
+      tags: [admin]
+      operationId: listAdminAlerts
+      summary: Current administrator alerts, derived not stored (ADMIN) — ТЗ ¶308.
+      description: (I4 E29) Covers FATAL latches, a stale or failed backup, and repeated login failures.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Active alerts (empty list = nothing to report).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminAlertView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/backup-status:
+    get:
+      tags: [admin]
+      operationId: getBackupStatus
+      summary: The last backup as recorded by E26's `backups/last.json` (ADMIN) — ТЗ ¶143, ¶216.
+      description: '(I4 E29) `available: false` when no `last.json` is readable.'
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: The backup status, or `available = false` when no `last.json` is readable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   # ----------------------------------------------------------- scenarios ----
   /api/v1/scenarios:
     get:
@@ -2262,6 +2449,10 @@ paths:
         §41, D9). `dry_run: true` reports what would be purged and deletes nothing.
 
         No session event is appended: a completed session's log is closed (D9).
+
+        (I4 E29, ТЗ ¶216) A non-dry-run purge is `409 BACKUP_REQUIRED` unless
+        `backups/last.json` (E26) reports a successful backup newer than every row being purged;
+        `dry_run: true` is never refused.
       x-action: '-'
       x-emits: []
       requestBody:
@@ -2277,6 +2468,7 @@ paths:
               schema: { $ref: '#/components/schemas/PurgeRecordingsResult' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /api/v1/admin/inference/clear-fatal:
     post:
@@ -3132,7 +3324,8 @@ components:
         session where they are a ДДС participant with a phone; (additive, I4 E28) `USERNAME_TAKEN`
         — `createUser` names an existing username; `SELF_MODIFICATION_FORBIDDEN` — an ADMIN tried
         to block or demote its own account; `LAST_ADMIN_REQUIRED` — the last active ADMIN account
-        cannot be blocked or demoted.
+        cannot be blocked or demoted; (additive, I4 E29) `BACKUP_REQUIRED` — `purgeRecordings`
+        refused a non-dry-run purge because no fresh, successful backup is recorded.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -3208,6 +3401,7 @@ components:
         - LAST_ADMIN_REQUIRED          # additive, I4 E28
         - MATERIAL_TYPE_NOT_ALLOWED    # additive, I4 E34
         - MATERIAL_TOO_LARGE           # additive, I4 E34
+        - BACKUP_REQUIRED              # additive, I4 E29
 
     Problem:
       type: object
@@ -3634,6 +3828,100 @@ components:
       required: [password]
       properties:
         password: { type: string, writeOnly: true }
+
+    # ------------------------------------------------ admin monitoring (I4 E29) ----
+    AuditAction:
+      description: The `audit_log.action` CHECK list (HLD 20 §20.11.1), written by E25, read by E29.
+      type: string
+      enum: [HTTP_REQUEST, LOGIN_SUCCEEDED, LOGIN_FAILED, ACCESS_DENIED, WS_CONNECTED]
+    AuditOutcome:
+      type: string
+      enum: [OK, DENIED, ERROR]
+    AuditEntryView:
+      description: (I4 E29) One `audit_log` row. Never carries request or response bodies.
+      type: object
+      additionalProperties: false
+      required: [id, ts, user_id, role, action, operation_id, method, path_template, target_ids, status, client_ip, outcome]
+      properties:
+        id: { type: string, format: uuid }
+        ts: { type: string, format: date-time }
+        user_id: { type: [string, 'null'], format: uuid }
+        role: { type: [string, 'null'] }
+        action: { $ref: '#/components/schemas/AuditAction' }
+        operation_id: { type: [string, 'null'] }
+        method: { type: string }
+        path_template: { type: string }
+        target_ids:
+          type: object
+          description: Path parameters of the request (e.g. `session_id`); for LOGIN_* the attempted `username`.
+          additionalProperties: { type: string }
+        status: { type: integer }
+        client_ip: { type: [string, 'null'] }
+        outcome: { $ref: '#/components/schemas/AuditOutcome' }
+    UsageStats:
+      description: (I4 E29) `getUsageStats`'s response.
+      type: object
+      additionalProperties: false
+      required: [days]
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [date, logins, sessions, lessons, active_users]
+            properties:
+              date: { type: string, format: date }
+              logins: { type: integer, minimum: 0 }
+              sessions: { type: integer, minimum: 0 }
+              lessons: { type: integer, minimum: 0 }
+              active_users: { type: integer, minimum: 0 }
+    ServerLoad:
+      description: (I4 E29) Every metric is `null` when it cannot be read — never `0`.
+      type: object
+      additionalProperties: false
+      required: [sampled_at, cpu_percent, memory_used_mb, memory_total_mb, disk_used_gb, disk_total_gb, gpu_memory_used_mb, gpu_memory_total_mb]
+      properties:
+        sampled_at: { type: string, format: date-time }
+        cpu_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        memory_used_mb: { type: [number, 'null'], minimum: 0 }
+        memory_total_mb: { type: [number, 'null'], minimum: 0 }
+        disk_used_gb: { type: [number, 'null'], minimum: 0 }
+        disk_total_gb: { type: [number, 'null'], minimum: 0 }
+        gpu_memory_used_mb: { type: [number, 'null'], minimum: 0 }
+        gpu_memory_total_mb: { type: [number, 'null'], minimum: 0 }
+    ErrorRecordView:
+      description: (I4 E29) One merged error record (`getErrorReport`).
+      type: object
+      additionalProperties: false
+      required: [ts, source, message, session_id]
+      properties:
+        ts: { type: string, format: date-time }
+        source: { type: string, enum: [BACKEND_LOG, MODEL_ERROR, INFERENCE_FATAL] }
+        message: { type: string }
+        session_id: { type: [string, 'null'], format: uuid }
+    AdminAlertView:
+      description: (I4 E29) One derived alert (`listAdminAlerts`).
+      type: object
+      additionalProperties: false
+      required: [kind, since, detail_ru]
+      properties:
+        kind: { type: string, enum: [INFERENCE_FATAL, BACKUP_STALE, BACKUP_FAILED, LOGIN_FAILURES] }
+        since: { type: string, format: date-time }
+        detail_ru: { type: string }
+    BackupStatus:
+      description: '(I4 E29) `backups/last.json` written by E26''s backup service; `available: false` when absent or unreadable.'
+      type: object
+      additionalProperties: false
+      required: [available, finished_at, status, database_bytes, recordings_bytes, database_sha256, recordings_sha256]
+      properties:
+        available: { type: boolean }
+        finished_at: { type: [string, 'null'], format: date-time }
+        status: { type: [string, 'null'], enum: [OK, FAILED, null] }
+        database_bytes: { type: [integer, 'null'], minimum: 0 }
+        recordings_bytes: { type: [integer, 'null'], minimum: 0 }
+        database_sha256: { type: [string, 'null'] }
+        recordings_sha256: { type: [string, 'null'] }
 
     # --------------------------------------------------------- scenarios ----
     ScenarioSummary:
