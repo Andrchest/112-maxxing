@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.config.settings import read_env_value
+from app.infrastructure.logging import configure_logging
 
 from voice_agent.transport.sip.bridge import room_factory_for
 from voice_agent.transport.sip.gateway import RoomFactory, SipGateway, SipGatewayConfig
@@ -104,9 +105,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m voice_agent.sip_gateway", description=__doc__)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(list(argv) if argv is not None else None)
-    logging.basicConfig(
-        level=args.log_level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    # I4 E25 (D31): one JSON object per log line under `SIM_LOG_FORMAT=json` (the default);
+    # `text` keeps the former `%(asctime)s %(levelname)s %(name)s: %(message)s` line.
+    configure_logging(
+        read_env_value("SIM_LOG_FORMAT") or "json",
+        service="sip-gateway",
+        level=args.log_level,
     )
     config = SipGatewayConfig.from_env()
     if not config.password:

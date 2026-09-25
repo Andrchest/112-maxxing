@@ -56,11 +56,12 @@ from app.application.ports.tts import TTSProvider, TtsVoiceSpec
 from app.application.ports.vad import VADProvider
 from app.application.voice.config import BYTES_PER_SAMPLE, MS_PER_S
 from app.application.voice.events import VoiceEventAppender, call_ended_event
-from app.config.settings import Settings, get_settings
+from app.config.settings import Settings, get_settings, read_env_value
 from app.domain.common.ids import SessionId
 from app.domain.dds.call import DdsCallKind
 from app.inference.errors import InferenceOutOfMemoryError, ModelNotAvailableError
 from app.infrastructure.clock import SystemClock
+from app.infrastructure.logging import configure_logging
 from app.infrastructure.transport.redis_voice_signals import JOIN_CHANNEL, cancel_channel
 
 from voice_agent.health import (
@@ -1111,8 +1112,12 @@ async def run(settings: Settings | None = None) -> None:
 
 
 def main() -> None:
-    """`python -m voice_agent.main`."""
-    logging.basicConfig(level=logging.INFO)
+    """`python -m voice_agent.main`.
+
+    I4 E25 (D31): one JSON object per log line under `SIM_LOG_FORMAT=json` (the default), in place
+    of the former `logging.basicConfig`.
+    """
+    configure_logging(read_env_value("SIM_LOG_FORMAT") or "json", service="voice-agent")
     asyncio.run(run())
 
 

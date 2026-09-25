@@ -22,6 +22,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: (e.g. the pre-E18 `test-only-secret`) is refused at load rather than accepted as "a secret".
 _JWT_SECRET_MIN_BYTES = 32
 
+#: I4 E25: ТЗ ¶297's «не менее 6 месяцев», in days (six months rounded up).
+AUDIT_RETENTION_MIN_DAYS = 183
+
 _PROCESS_INSTANCE_ID: str = secrets.token_hex(8)
 """This process's identity, drawn once at import.
 
@@ -423,6 +426,32 @@ class Settings(BaseSettings):
     def livekit_browser_url(self) -> str:
         """`SIM_LIVEKIT_PUBLIC_URL` when it is set, else `SIM_LIVEKIT_URL` (see that field)."""
         return self.livekit_public_url or self.livekit_url
+
+    # --- I4 E25 audit + JSON logs (`71-i4-wave4.md` §71.2, D31) ---------------------------------
+    #: `SIM_AUDIT_RETENTION_DAYS`: how long `audit_log` rows are kept. ТЗ ¶297 «Хранение журналов
+    #: безопасности не менее 6 месяцев»: a value below `AUDIT_RETENTION_MIN_DAYS` is refused at
+    #: settings load. Nothing in the application removes a row (the table is append-only, HLD 20
+    #: §20.9); a removal of older rows is a maintenance command's, never younger than this.
+    audit_retention_days: int = 365
+    #: `SIM_LOG_FORMAT`: the console log format of the backend, voice agent and SIP gateway —
+    #: `json` (one object per line, the default) or `text`.
+    log_format: Literal["json", "text"] = "json"
+    #: `SIM_LOG_DIR`: where the backend writes its rotated JSON log (`backend.log`), which E29's
+    #: error report reads. Empty (the default) writes no file — console only.
+    log_dir: str = ""
+
+    @field_validator("audit_retention_days")
+    @classmethod
+    def _audit_retention_floor(cls, value: int) -> int:
+        """ТЗ ¶297: security journals are kept at least six months (183 days)."""
+        if value < AUDIT_RETENTION_MIN_DAYS:
+            raise ValueError(
+                f"SIM_AUDIT_RETENTION_DAYS must be at least {AUDIT_RETENTION_MIN_DAYS} "
+                f"(got {value}); security journals are kept at least six months (ТЗ ¶297)"
+            )
+        return value
+
+    # --- end I4 E25 -------------------------------------------------------------------------------
 
 
 @lru_cache

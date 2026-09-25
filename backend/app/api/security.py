@@ -27,9 +27,10 @@ import hmac
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.audit import remember_user
 from app.api.deps import ContainerDep
 from app.application.auth.get_current_user import AuthenticatedUser, authenticate_token
 from app.application.ports.token_service import InvalidTokenError
@@ -56,16 +57,21 @@ bearer_scheme = HTTPBearer(auto_error=False, description="HS256 JWT minted by `l
 
 async def get_current_user(
     container: ContainerDep,
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> AuthenticatedUser:
-    """The authenticated caller; raises `InvalidTokenError` (`401`) for every rejection."""
+    """The authenticated caller; raises `InvalidTokenError` (`401`) for every rejection.
+
+    I4 E25: the caller is also left on the request for the audit middleware (`remember_user`)."""
     if credentials is None or not credentials.credentials:
         raise InvalidTokenError("no bearer token")
-    return await authenticate_token(
+    user = await authenticate_token(
         credentials.credentials,
         tokens=container.tokens,
         unit_of_work=container.unit_of_work,
     )
+    remember_user(request, user)
+    return user
 
 
 CurrentUserDep = Annotated[AuthenticatedUser, Depends(get_current_user)]

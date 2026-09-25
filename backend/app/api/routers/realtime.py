@@ -39,6 +39,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from app.api.audit import mark_ws_refused, remember_user
 from app.api.container import Container
 from app.api.deps import ContainerDep
 from app.api.schemas.realtime import SessionEventPageSchema, session_event_page_schema
@@ -142,12 +143,14 @@ async def _authenticate(websocket: WebSocket, container: Container) -> Authentic
     try:
         if not token:
             raise InvalidTokenError("no token query parameter")
-        return await authenticate_token(
+        user = await authenticate_token(
             token, tokens=container.tokens, unit_of_work=container.unit_of_work
         )
     except InvalidTokenError:
         await _reject(websocket, CLOSE_UNAUTHENTICATED)
         return None
+    remember_user(websocket, user)  # I4 E25: the audit entry of this connect names the caller
+    return user
 
 
 async def _authorise(
@@ -176,6 +179,7 @@ async def _reject(websocket: WebSocket, code: int) -> None:
     handshake — a browser would see an opaque HTTP failure and none of §40.1's vocabulary. See
     this task's report, "HLD gaps".
     """
+    mark_ws_refused(websocket, code)  # I4 E25: audited as a refusal, not a connect
     with suppress(Exception):
         await websocket.accept()
         await websocket.close(code=code)

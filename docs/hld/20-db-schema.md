@@ -52,6 +52,7 @@ Conventions used throughout:
 | 30 | `trainee_groups` | additive (I3 E9a; `70-i3-alignment.md` §70.3.7) | reference data: named trainee groups an instructor builds lessons for |
 | 31 | `trainee_group_members` | additive (I3 E9a; `70-i3-alignment.md` §70.3.7) | reference data: one row per (group, trainee) |
 | 32 | `dds_calls` | additive (I3 E6b; D23, `80-telephony.md` §80.3.1, §80.7, migration `0014_dds_calls`) | the ДДС phone line's read model, materialized from `DDS_CALL_*` and rebuildable from them (INV 13) |
+| 33 | `audit_log` | additive (I4 E25; D31, `71-i4-wave4.md` §71.2, migration `0016_audit_log`) | append-only audit of user actions outside a session's event log (§20.6) |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -883,6 +884,54 @@ Index `ix_inference_metrics_session_component (session_id, component, started_at
 `CHECK (component IN ('ASR','LLM_INTERPRETER','LLM_GENERATOR','TTS','VAD'))`.
 Telemetry, never read by scoring.
 
+### `audit_log` (additive, I4 E25; D31, migration `0016_audit_log`)
+| Column | PG type | Null | Default |
+|:--|:--|:--|:--|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `ts` | `timestamptz` | no | `now()` |
+| `user_id` | `uuid` | yes | |
+| `role` | `text` | yes | |
+| `action` | `text` | no | |
+| `operation_id` | `text` | yes | |
+| `method` | `text` | no | |
+| `path_template` | `text` | no | |
+| `target_ids` | `jsonb` | no | `'{}'::jsonb` |
+| `status` | `integer` | no | |
+| `client_ip` | `text` | yes | |
+| `outcome` | `text` | no | |
+
+PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts (ts)`,
+`ix_audit_log_user_ts (user_id, ts)`.
+`CHECK (role IS NULL OR role IN ('TRAINEE','INSTRUCTOR','ADMIN'))`;
+`CHECK (action IN ('HTTP_REQUEST','LOGIN_SUCCEEDED','LOGIN_FAILED','ACCESS_DENIED','WS_CONNECTED'))`;
+`CHECK (outcome IN ('OK','DENIED','ERROR'))`.
+
+- Written only by E25's ASGI middleware (after the response) and by `loginUser` (success and failure,
+  which are unauthenticated). `user_id`/`role` are `NULL` for an unauthenticated request; for
+  `LOGIN_*` the attempted username is `target_ids.username`. `target_ids` holds the request's path
+  parameters. **No request or response body is ever stored** (passwords, personal data).
+- How E25 fills a row (`app.api.main.AuditMiddleware`): HTTP `401`/`403` → `ACCESS_DENIED`/`DENIED`;
+  any other status → `HTTP_REQUEST`, `OK` below 400 and `ERROR` from 400 up (an escaped exception is
+  `500`/`ERROR`). A WebSocket is recorded at its accept: `WS_CONNECTED`/`101`/`OK`; a socket
+  accepted only to deliver a §40.1 close code is `ACCESS_DENIED` with `status` = `4401`/`4403`, or
+  `WS_CONNECTED`/`ERROR` with `4404`; a socket closed before any accept is `ACCESS_DENIED`/`403`.
+  `method` of a WebSocket is the handshake's `GET`; `operation_id` is `NULL` for it (the socket has
+  none in `openapi.yaml`). An unmatched path is stored as sent (≤ 512 chars) with a `NULL`
+  `operation_id`. `ts` is the backend's `Clock`. Only `/api/*` is audited, and never an `OPTIONS`
+  preflight.
+- `/health/*` is not recorded (the instructor page polls readiness).
+- **Append-only:** `CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log FOR EACH
+  ROW EXECUTE FUNCTION trg_reject_mutation();` (§20.9 function, one more attachment).
+- **Retention:** ТЗ ¶297 «не менее 6 месяцев». `SIM_AUDIT_RETENTION_DAYS` (default 365) is refused
+  below 183 at settings load; no row younger than the setting is ever removed. Any removal of older
+  rows goes through a maintenance command, as §20.9 describes for cascades (the trigger blocks the
+  application path).
+- Volume: roughly ≤ 50k rows/day for a 30-seat class (analysis §3.2); read by E29 `listAuditLog` and
+  `getUsageStats`.
+- `session_events` stay the in-session audit source (§20.6, D5); this table covers everything else
+  (login, user admin, scenario import, report release, groups, lessons, weight acceptance, rescore
+  with its real actor).
+
 ## 20.7 Scoring output
 
 ### `score_results`
@@ -1017,6 +1066,11 @@ CREATE TRIGGER incident_card_revisions_append_only
 CREATE TRIGGER dds_service_status_history_append_only
   BEFORE UPDATE OR DELETE ON dds_service_status_history
   FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
+
+-- additive, I4 E25 (migration 0016_audit_log)
+CREATE TRIGGER audit_log_append_only
+  BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
 ```
 
 `scenario_versions` has its own conditional trigger (§20.2) because ordinary metadata updates and the
@@ -1080,43 +1134,8 @@ collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
 | `0018_training_materials` | E34 (S10) | new table `training_materials` | reference data (files on disk by sha256) |
 
 ### 20.11.1 `audit_log` (E25, `0016_audit_log`; D31)
-| Column | PG type | Null | Default |
-|:--|:--|:--|:--|
-| `id` | `uuid` | no | `gen_random_uuid()` |
-| `ts` | `timestamptz` | no | `now()` |
-| `user_id` | `uuid` | yes | |
-| `role` | `text` | yes | |
-| `action` | `text` | no | |
-| `operation_id` | `text` | yes | |
-| `method` | `text` | no | |
-| `path_template` | `text` | no | |
-| `target_ids` | `jsonb` | no | `'{}'::jsonb` |
-| `status` | `integer` | no | |
-| `client_ip` | `text` | yes | |
-| `outcome` | `text` | no | |
 
-PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts (ts)`,
-`ix_audit_log_user_ts (user_id, ts)`.
-`CHECK (role IS NULL OR role IN ('TRAINEE','INSTRUCTOR','ADMIN'))`;
-`CHECK (action IN ('HTTP_REQUEST','LOGIN_SUCCEEDED','LOGIN_FAILED','ACCESS_DENIED','WS_CONNECTED'))`;
-`CHECK (outcome IN ('OK','DENIED','ERROR'))`.
-
-- Written only by E25's ASGI middleware (after the response) and by `loginUser` (success and failure,
-  which are unauthenticated). `user_id`/`role` are `NULL` for an unauthenticated request; for
-  `LOGIN_*` the attempted username is `target_ids.username`. `target_ids` holds the request's path
-  parameters. **No request or response body is ever stored** (passwords, personal data).
-- `/health/*` is not recorded (the instructor page polls readiness).
-- **Append-only:** `CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log FOR EACH
-  ROW EXECUTE FUNCTION trg_reject_mutation();` (§20.9 function, one more attachment).
-- **Retention:** ТЗ ¶297 «не менее 6 месяцев». `SIM_AUDIT_RETENTION_DAYS` (default 365) is refused
-  below 183 at settings load; no row younger than the setting is ever removed. Any removal of older
-  rows goes through a maintenance command, as §20.9 describes for cascades (the trigger blocks the
-  application path).
-- Volume: roughly ≤ 50k rows/day for a 30-seat class (analysis §3.2); read by E29 `listAuditLog` and
-  `getUsageStats`.
-- `session_events` stay the in-session audit source (§20.6, D5); this table covers everything else
-  (login, user admin, scenario import, report release, groups, lessons, weight acceptance, rescore
-  with its real actor).
+**Built by E25.** Moved to §20.1 (row 33), §20.6 (`audit_log`) and §20.9 (its trigger).
 
 ### 20.11.2 `result_comments` (E32, `0017_result_comments_scenario_archive`)
 | Column | PG type | Null | Default |

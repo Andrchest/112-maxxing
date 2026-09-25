@@ -94,6 +94,7 @@ from app.application.operator.get_card import GetOperatorCard
 from app.application.operator.list_card_revisions import ListCardRevisions
 from app.application.operator.select_service import SelectRecipientService
 from app.application.operator.set_card_field import SetCardField
+from app.application.ports.audit_log import AuditReader, AuditRecorder
 from app.application.ports.call_state_cache import CallStateCache
 from app.application.ports.call_transport_status import CallTransportStatus
 from app.application.ports.clock import Clock
@@ -172,6 +173,8 @@ from app.infrastructure.health import (
     VoiceHealthSubscriber,
 )
 from app.infrastructure.ids import Uuid4Generator
+from app.infrastructure.logging import configure_logging
+from app.infrastructure.persistence.audit_log_repository import SqlAlchemyAuditLog
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
 from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCache
@@ -188,7 +191,7 @@ from app.infrastructure.transport.redis_voice_signals import RedisVoiceSignals
 from app.infrastructure.weights.heuristic_proposer import HeuristicWeightProposer
 from app.infrastructure.weights.llm_proposer import LlmWeightProposer
 
-__all__ = ["Container", "build_container"]
+__all__ = ["Container", "build_container", "configure_process_logging"]
 
 #: `openapi.yaml`'s `ComponentHealth.component` enum, in the order `/health/ready` reports them.
 HEALTH_COMPONENTS: tuple[str, ...] = ("postgres", "redis", "livekit", "llm", "asr", "tts", "vad")
@@ -398,6 +401,16 @@ class Container:
             lock_refresh_s=settings.sim_runner_lock_refresh_s,
             on_session_started=self._adopt_started_card,
         )
+        # --- I4 E25 audit (`71-i4-wave4.md` §71.2, D31) -------------------------------------------
+        #
+        # One adapter, two ports: `AuditMiddleware` and `loginUser` write through the recorder,
+        # E29's `listAuditLog` reads through the reader. Its own session per call, never the Unit
+        # of Work (an audit row publishes nothing). A test may replace either attribute. Appended at
+        # the end of `__init__` so nothing above it moves.
+        audit_log = SqlAlchemyAuditLog(self.session_factory)
+        self.audit_recorder: AuditRecorder = audit_log
+        self.audit_reader: AuditReader = audit_log
+        # --- end I4 E25 -----------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -1101,3 +1114,17 @@ def build_container(settings: Settings | None = None) -> Container:
 
 #: Kept so `Callable[[], Container]` reads as a named thing where a factory is passed around.
 ContainerFactory = Callable[[], Container]
+
+
+# --- I4 E25 JSON logs (`71-i4-wave4.md` §71.2, D31) ---------------------------------------------
+
+
+def configure_process_logging(settings: Settings) -> None:
+    """The backend's logging: `SIM_LOG_FORMAT` on the console, plus the rotated JSON file under
+    `SIM_LOG_DIR` when it is set. `create_app()` calls it for the production wiring, after uvicorn
+    has applied its own default `log_config`, and re-points uvicorn's loggers at the same handlers.
+    Here because `app.api.main` imports no adapter (D2)."""
+    configure_logging(settings.log_format, service="backend", log_dir=settings.log_dir or None)
+
+
+# --- end I4 E25 ---------------------------------------------------------------------------------

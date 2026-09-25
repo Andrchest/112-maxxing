@@ -258,3 +258,46 @@ class InferenceMetric(Base):
         sa.CheckConstraint(enum_check("component", INFERENCE_COMPONENTS), name="component"),
         sa.CheckConstraint(enum_check("status", METRIC_STATUSES), name="status"),
     )
+
+
+# --- I4 E25 audit (HLD §20.6 `audit_log`, `71-i4-wave4.md` §71.2, D31, migration `0016`) -------
+
+#: `audit_log.role` — `users.role`'s three account roles (§20.2), literal in the HLD.
+AUDIT_ROLES: tuple[str, ...] = ("TRAINEE", "INSTRUCTOR", "ADMIN")
+#: `audit_log.action`, literal in the HLD (`app.application.ports.audit_log.AuditAction`).
+AUDIT_ACTIONS: tuple[str, ...] = (
+    "HTTP_REQUEST",
+    "LOGIN_SUCCEEDED",
+    "LOGIN_FAILED",
+    "ACCESS_DENIED",
+    "WS_CONNECTED",
+)
+#: `audit_log.outcome`, literal in the HLD (`app.application.ports.audit_log.AuditOutcome`).
+AUDIT_OUTCOMES: tuple[str, ...] = ("OK", "DENIED", "ERROR")
+
+
+class AuditLog(Base):
+    """`audit_log` — every user action outside a session's own event log; append-only (§20.9)."""
+
+    __tablename__ = "audit_log"
+
+    id = sa.Column(UUID_T, primary_key=True, server_default=GEN_RANDOM_UUID)
+    ts = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    user_id = sa.Column(UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    role = sa.Column(sa.Text(), nullable=True)
+    action = sa.Column(sa.Text(), nullable=False)
+    operation_id = sa.Column(sa.Text(), nullable=True)
+    method = sa.Column(sa.Text(), nullable=False)
+    path_template = sa.Column(sa.Text(), nullable=False)
+    target_ids = sa.Column(JSONB_T, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    status = sa.Column(sa.Integer(), nullable=False)
+    client_ip = sa.Column(sa.Text(), nullable=True)
+    outcome = sa.Column(sa.Text(), nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_audit_log_ts", "ts"),
+        sa.Index("ix_audit_log_user_ts", "user_id", "ts"),
+        sa.CheckConstraint(enum_check("role", AUDIT_ROLES, nullable=True), name="role"),
+        sa.CheckConstraint(enum_check("action", AUDIT_ACTIONS), name="action"),
+        sa.CheckConstraint(enum_check("outcome", AUDIT_OUTCOMES), name="outcome"),
+    )
