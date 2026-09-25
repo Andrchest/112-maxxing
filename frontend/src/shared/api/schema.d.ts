@@ -2080,6 +2080,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/materials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The reference base «Справочная база» (every authenticated role) — ТЗ ¶256.
+         * @description Unarchived materials for everyone; `include_archived` only for INSTRUCTOR / ADMIN. No
+         *     per-trainee assignment (Q-E13-1 open).
+         */
+        get: operations["listMaterials"];
+        put?: never;
+        /**
+         * Upload a methodical material (INSTRUCTOR / ADMIN) — ТЗ ¶227, ¶387, ¶370.
+         * @description Allow-list pdf, docx, doc, xlsx, txt, md, png, jpg (else `422 MATERIAL_TYPE_NOT_ALLOWED`);
+         *     larger than `SIM_MATERIAL_MAX_MB` is `422 MATERIAL_TOO_LARGE`. Stored under
+         *     `data_dir/materials/<sha256>` (identical bytes stored once).
+         */
+        post: operations["uploadMaterial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/materials/{material_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download or open a material (every authenticated role).
+         * @description The stored content type; a PDF is sent inline (Content-Disposition inline), other types as an attachment.
+         */
+        get: operations["getMaterialFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/materials/{material_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive a material — hidden from trainees, file kept (INSTRUCTOR / ADMIN). */
+        post: operations["archiveMaterial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2088,7 +2152,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -4053,6 +4117,22 @@ export interface components {
         ResultCommentList: {
             items: components["schemas"]["ResultCommentView"][];
         };
+        /** @description (additive, I4 E34) One `training_materials` row (71 §71.11). */
+        TrainingMaterialView: {
+            /** Format: uuid */
+            material_id: string;
+            title_ru: string;
+            file_name: string;
+            content_type: string;
+            size_bytes: number;
+            sha256: string;
+            /** Format: uuid */
+            uploaded_by_user_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            archived_at: string | null;
+        };
     };
     responses: {
         /** @description `UNAUTHENTICATED` — missing, malformed or expired bearer token. */
@@ -4118,7 +4198,9 @@ export interface components {
          *     I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes;
          *     (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment;
          *     (additive, I3 E6c) `PROPOSAL_UNKNOWN` — `proposed_by_call_id` names no
-         *     `DDS_CALL_STATUS_PROPOSED` of the leg.
+         *     `DDS_CALL_STATUS_PROPOSED` of the leg; (additive, I4 E34) `MATERIAL_TYPE_NOT_ALLOWED` —
+         *     `uploadMaterial`'s file extension is not on the allow-list; `MATERIAL_TOO_LARGE` — the
+         *     body exceeds `SIM_MATERIAL_MAX_MB`.
          */
         UnprocessableEntity: {
             headers: {
@@ -4153,6 +4235,8 @@ export interface components {
         LessonIdParam: string;
         /** @description (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest. */
         PackQueryParam: string;
+        /** @description (additive, I4 E34) A `training_materials` row (71 §71.11). */
+        MaterialIdParam: string;
     };
     requestBodies: never;
     headers: never;
@@ -6897,6 +6981,114 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listMaterials: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Materials, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["TrainingMaterialView"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    uploadMaterial: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    title_ru: string;
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The stored material. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingMaterialView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getMaterialFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description (additive, I4 E34) A `training_materials` row (71 §71.11). */
+                material_id: components["parameters"]["MaterialIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    archiveMaterial: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description (additive, I4 E34) A `training_materials` row (71 §71.11). */
+                material_id: components["parameters"]["MaterialIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The material after archiving (idempotent). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingMaterialView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

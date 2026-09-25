@@ -422,6 +422,12 @@ class Settings(BaseSettings):
     weight_proposal_temperature: float = 0.2
     weight_proposal_timeout_ms: int = 20000
 
+    # -- I4 E34: the methodical-materials reference base (HLD 71 §71.11) -----------------------
+    #: `SIM_MATERIAL_MAX_MB`: `uploadMaterial`'s size limit (`422 MATERIAL_TOO_LARGE` above it).
+    #: 20 MB comfortably fits the allow-listed document/image types; this task's own default,
+    #: since §71.11 names the allow-list and the variable but not a number.
+    material_max_mb: int = 20
+
     @property
     def livekit_browser_url(self) -> str:
         """`SIM_LIVEKIT_PUBLIC_URL` when it is set, else `SIM_LIVEKIT_URL` (see that field)."""

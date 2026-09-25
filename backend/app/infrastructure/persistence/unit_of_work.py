@@ -29,6 +29,7 @@ from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.lesson_repository import LessonRepository
+from app.application.ports.material_repository import MaterialRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
@@ -64,6 +65,7 @@ from app.infrastructure.persistence.inference_metric_repository import (
     SqlAlchemyInferenceMetricRepository,
 )
 from app.infrastructure.persistence.lesson_repository import SqlAlchemyLessonRepository
+from app.infrastructure.persistence.material_repository import SqlAlchemyMaterialRepository
 from app.infrastructure.persistence.notification_repository import (
     SqlAlchemyNotificationRepository,
 )
@@ -139,6 +141,7 @@ class SqlAlchemyUnitOfWork:
         self._recording_purge: SqlAlchemyRecordingPurgeRepository | None = None
         self._trainee_groups: SqlAlchemyTraineeGroupRepository | None = None
         self._result_comments: SqlAlchemyResultCommentRepository | None = None
+        self._materials: SqlAlchemyMaterialRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -170,6 +173,7 @@ class SqlAlchemyUnitOfWork:
         self._recording_purge = SqlAlchemyRecordingPurgeRepository(session)
         self._trainee_groups = SqlAlchemyTraineeGroupRepository(session)
         self._result_comments = SqlAlchemyResultCommentRepository(session)
+        self._materials = SqlAlchemyMaterialRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -209,6 +213,7 @@ class SqlAlchemyUnitOfWork:
             self._recording_purge = None
             self._trainee_groups = None
             self._result_comments = None
+            self._materials = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -358,6 +363,12 @@ class SqlAlchemyUnitOfWork:
         if self._result_comments is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._result_comments
+
+    @property
+    def materials(self) -> MaterialRepository:
+        if self._materials is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._materials
 
     # -- transaction --------------------------------------------------------------------------
 

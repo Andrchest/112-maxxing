@@ -36,6 +36,7 @@ from app.db.models.layers import (
     IncidentCardRevision,
     IncidentWorldState,
 )
+from app.db.models.materials import TrainingMaterial
 from app.db.models.reference import (
     Scenario,
     ScenarioVersion,
@@ -88,6 +89,7 @@ __all__ = [
     "SimulationSession",
     "TraineeGroup",
     "TraineeGroupMember",
+    "TrainingMaterial",
     "TranscriptSegment",
     "User",
     "WorldEngineState",

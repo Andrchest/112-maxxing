@@ -112,6 +112,10 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "CARD_OPTION_UNKNOWN": 422,
     "COMMENT_REQUIRED": 422,
     "PROPOSAL_UNKNOWN": 422,  # I3 E6c (HLD 80 §80.3.3)
+    # 422 — I4 E34 additions to UnprocessableEntity (`i4-openapi-delta.yaml`
+    # `UnprocessableEntityI4`)
+    "MATERIAL_TYPE_NOT_ALLOWED": 422,
+    "MATERIAL_TOO_LARGE": 422,
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,

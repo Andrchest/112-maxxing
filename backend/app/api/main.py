@@ -58,6 +58,7 @@ from app.api.routers import (
     incidents,
     instructor,
     lessons,
+    materials,
     operator,
     realtime,
     reference,
@@ -142,6 +143,7 @@ def create_app(
     app.include_router(incidents.router)
     app.include_router(groups.router)
     app.include_router(telephony.router)
+    app.include_router(materials.router)
 
     return app
 

@@ -20,6 +20,9 @@ dependencies = [
     # hand-rolled loop over `array`. Not an optional extra — `app.application.voice` is imported
     # by the backend itself and numpy is pure-CPU, ~15 MB, and already a `sim-voice-agent` dep.
     "numpy",
+    # I4 E34 (HLD 71 §71.11): `uploadMaterial` is `multipart/form-data`; Starlette's form/file
+    # parsing needs `python-multipart` installed or it raises at request time, not at import time.
+    "python-multipart",
 ]
 
 # Heavy ML dependencies are optional extras (D1); adapters import them lazily (E12: warm_up()/

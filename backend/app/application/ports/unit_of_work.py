@@ -28,6 +28,7 @@ from app.application.ports.event_store import EventStore
 from app.application.ports.handoff_repository import HandoffRepository
 from app.application.ports.inference_metric_repository import InferenceMetricRepository
 from app.application.ports.lesson_repository import LessonRepository
+from app.application.ports.material_repository import MaterialRepository
 from app.application.ports.notification_repository import NotificationRepository
 from app.application.ports.operator_card_repository import OperatorCardRepository
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
@@ -201,6 +202,11 @@ class UnitOfWork(Protocol):
         Never read by `score()` itself (D5, R1): only the persistence and re-score use cases
         (`app.application.scoring`) touch this property.
         """
+        ...
+
+    @property
+    def materials(self) -> MaterialRepository:
+        """The `training_materials` repository bound to this transaction (§20.12, I4 E34)."""
         ...
 
     @property

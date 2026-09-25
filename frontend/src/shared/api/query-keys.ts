@@ -73,4 +73,8 @@ export const queryKeys = {
   scenarioPicker: {
     list: () => ['scenarios', 'picker'] as const,
   },
+  // -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) ------------------------
+  materials: {
+    list: (includeArchived: boolean) => ['materials', 'list', includeArchived] as const,
+  },
 } as const;

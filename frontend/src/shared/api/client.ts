@@ -746,6 +746,65 @@ export function listReferencePersonas(pack?: string): Promise<PersonaView[]> {
   return apiFetch(`/reference/personas${qs}`);
 }
 
+// -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) ---------------------------
+// The instructor's «Материалы» page (upload, list, archive) and the trainee's «Справочная база»
+// (list, open or download) share these four calls.
+export type TrainingMaterialView = components['schemas']['TrainingMaterialView'];
+
+export function listMaterials(params: { includeArchived?: boolean } = {}): Promise<{ items: TrainingMaterialView[] }> {
+  const qs = params.includeArchived ? '?include_archived=true' : '';
+  return apiFetch(`/materials${qs}`);
+}
+
+/** `multipart/form-data` (`422 MATERIAL_TYPE_NOT_ALLOWED` off the allow-list, `422
+ * MATERIAL_TOO_LARGE` over `SIM_MATERIAL_MAX_MB`) — bypasses {@link apiFetch}'s
+ * `Content-Type: application/json` so the browser sets the multipart boundary itself, the same
+ * reason {@link getAudioSegment} bypasses its JSON-only response assumption. */
+export async function uploadMaterial(titleRu: string, file: File): Promise<TrainingMaterialView> {
+  const body = new FormData();
+  body.set('title_ru', titleRu);
+  body.set('file', file);
+
+  const headers: Record<string, string> = { Accept: 'application/json, application/problem+json' };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${API_BASE_PATH}/materials`, { method: 'POST', headers, body });
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as TrainingMaterialView;
+}
+
+export function archiveMaterial(materialId: string): Promise<TrainingMaterialView> {
+  return apiFetch(`/materials/${encodeURIComponent(materialId)}/archive`, { method: 'POST' });
+}
+
+/** Fetches the file with the bearer token attached and returns it as a `Blob` the caller can hand
+ * to `URL.createObjectURL` — the same `getAudioSegment` pattern (a plain `<a href>`/`<iframe src>`
+ * cannot carry the `Authorization` header). `content-type` on the response says inline vs. attachment. */
+export async function getMaterialFile(materialId: string): Promise<Blob> {
+  const headers: Record<string, string> = { Accept: '*/*, application/problem+json' };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${API_BASE_PATH}/materials/${encodeURIComponent(materialId)}/file`, { headers });
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return await response.blob();
+}
+
 /**
  * Exhaustive `ProblemCode -> ru.ts key` table (D12 design decision #5). `Record<ProblemCode, …>`
  * means adding a member to the generated `ProblemCode` union without adding a row here fails
@@ -795,6 +854,8 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   USERNAME_TAKEN: 'problemUsernameTaken', // additive, I4 E28
   SELF_MODIFICATION_FORBIDDEN: 'problemSelfModificationForbidden', // additive, I4 E28
   LAST_ADMIN_REQUIRED: 'problemLastAdminRequired', // additive, I4 E28
+  MATERIAL_TYPE_NOT_ALLOWED: 'problemMaterialTypeNotAllowed', // additive, I4 E34
+  MATERIAL_TOO_LARGE: 'problemMaterialTooLarge', // additive, I4 E34
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

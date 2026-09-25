@@ -62,6 +62,8 @@ tags:
     description: (additive, I3 E4a) The caller's cross-session incident list (70 §70.3.6).
   - name: telephony
     description: (additive, I3 E6e) The SIP gateway's endpoints — softphone dial, leg reports, call read, per-user HA1 (80 §80.2.3). Service credential only.
+  - name: materials
+    description: (additive, I4 E34) Methodical materials — the reference base (71 §71.11).
 
 paths:
 
@@ -2935,6 +2937,106 @@ paths:
                   total: { type: integer, minimum: 0 }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  # -------------------------------------------------------- materials ---- (additive, I4 E34)
+  /api/v1/materials:
+    post:
+      tags: [materials]
+      operationId: uploadMaterial
+      summary: Upload a methodical material (INSTRUCTOR / ADMIN) — ТЗ ¶227, ¶387, ¶370.
+      description: |
+        Allow-list pdf, docx, doc, xlsx, txt, md, png, jpg (else `422 MATERIAL_TYPE_NOT_ALLOWED`);
+        larger than `SIM_MATERIAL_MAX_MB` is `422 MATERIAL_TOO_LARGE`. Stored under
+        `data_dir/materials/<sha256>` (identical bytes stored once).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title_ru, file]
+              properties:
+                title_ru: { type: string, minLength: 1 }
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: The stored material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    get:
+      tags: [materials]
+      operationId: listMaterials
+      summary: The reference base «Справочная база» (every authenticated role) — ТЗ ¶256.
+      description: |
+        Unarchived materials for everyone; `include_archived` only for INSTRUCTOR / ADMIN. No
+        per-trainee assignment (Q-E13-1 open).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: include_archived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Materials, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/materials/{material_id}/file:
+    get:
+      tags: [materials]
+      operationId: getMaterialFile
+      summary: Download or open a material (every authenticated role).
+      description: The stored content type; a PDF is sent inline (Content-Disposition inline), other types as an attachment.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '200':
+          description: The file bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/materials/{material_id}/archive:
+    post:
+      tags: [materials]
+      operationId: archiveMaterial
+      summary: Archive a material — hidden from trainees, file kept (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '200':
+          description: The material after archiving (idempotent).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainingMaterialView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -2988,6 +3090,12 @@ components:
       required: false
       description: (additive, I3 E2a) Reference pack id; default = the newest pack in the manifest.
       schema: { type: string, examples: [v046_24-r1, legacy-r1] }
+    MaterialIdParam:
+      description: (additive, I4 E34) A `training_materials` row (71 §71.11).
+      name: material_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
 
   responses:
     Unauthorized:
@@ -3036,7 +3144,9 @@ components:
         I3 E3a) `CARD_OPTION_UNKNOWN` — a card value that is not one of the field's option codes;
         (additive, I3 E5a) `COMMENT_REQUIRED` — «Не принята» / «Отказ» without a comment;
         (additive, I3 E6c) `PROPOSAL_UNKNOWN` — `proposed_by_call_id` names no
-        `DDS_CALL_STATUS_PROPOSED` of the leg.
+        `DDS_CALL_STATUS_PROPOSED` of the leg; (additive, I4 E34) `MATERIAL_TYPE_NOT_ALLOWED` —
+        `uploadMaterial`'s file extension is not on the allow-list; `MATERIAL_TOO_LARGE` — the
+        body exceeds `SIM_MATERIAL_MAX_MB`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -3096,6 +3206,8 @@ components:
         - USERNAME_TAKEN               # additive, I4 E28
         - SELF_MODIFICATION_FORBIDDEN  # additive, I4 E28
         - LAST_ADMIN_REQUIRED          # additive, I4 E28
+        - MATERIAL_TYPE_NOT_ALLOWED    # additive, I4 E34
+        - MATERIAL_TOO_LARGE           # additive, I4 E34
 
     Problem:
       type: object
@@ -6016,3 +6128,20 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/ResultCommentView' }
+
+    # ------------------------------------------------------------ materials ---- (additive, I4 E34)
+    TrainingMaterialView:
+      description: (additive, I4 E34) One `training_materials` row (71 §71.11).
+      type: object
+      additionalProperties: false
+      required: [material_id, title_ru, file_name, content_type, size_bytes, sha256, uploaded_by_user_id, created_at, archived_at]
+      properties:
+        material_id: { type: string, format: uuid }
+        title_ru: { type: string }
+        file_name: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        uploaded_by_user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        archived_at: { type: [string, 'null'], format: date-time }

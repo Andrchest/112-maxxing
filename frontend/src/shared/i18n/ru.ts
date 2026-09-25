@@ -989,4 +989,20 @@ export const ru = {
   instructorBoardColumnCardStatus: 'Статус карточки',
   instructorBoardColumnScore: 'Оценка',
   instructorBoardScorePending: '—',
+
+  // -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) -------------------------
+  navMaterialsLink: 'Материалы',
+  materialsInstructorTitle: 'Материалы',
+  materialsTraineeTitle: 'Справочная база',
+  materialsUploadTitleLabel: 'Название',
+  materialsUploadFileLabel: 'Файл',
+  materialsUploadButton: 'Загрузить',
+  materialsEmpty: 'Материалов пока нет.',
+  materialsArchiveButton: 'Архивировать',
+  materialsArchivedBadge: 'В архиве',
+  materialsShowArchived: 'Показывать архивные',
+  materialsOpenButton: 'Открыть',
+  materialsDownloadButton: 'Скачать',
+  problemMaterialTypeNotAllowed: 'Этот тип файла не поддерживается.',
+  problemMaterialTooLarge: 'Файл превышает допустимый размер.',
 } as const;

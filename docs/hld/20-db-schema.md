@@ -54,6 +54,7 @@ Conventions used throughout:
 | 32 | `dds_calls` | additive (I3 E6b; D23, `80-telephony.md` §80.3.1, §80.7, migration `0014_dds_calls`) | the ДДС phone line's read model, materialized from `DDS_CALL_*` and rebuildable from them (INV 13) |
 | 33 | `audit_log` | additive (I4 E25; D31, `71-i4-wave4.md` §71.2, migration `0016_audit_log`) | append-only audit of user actions outside a session's event log (§20.6) |
 | 34 | `result_comments` | additive (I4 E32; `71-i4-wave4.md` §71.9, migration `0017_result_comments_scenario_archive`) | append-only instructor feedback on a session or a lesson result |
+| 35 | `training_materials` | additive (I4 E34; `71-i4-wave4.md` §71.11, migration `0018_training_materials`) | reference data: metadata only, files on disk by sha256 |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -1156,13 +1157,11 @@ report's own visibility gate (`listSessionComments`) or the lesson report's rele
 `result_comments_append_only` on the shared `trg_reject_mutation()` (§20.9). Retention: kept with
 the session / lesson (`CASCADE`).
 
-## 20.11 I4 — planned tables of migration 0018 (TBD; `71-i4-wave4.md`)
+## 20.11 I4 — migrations 0016–0018, pre-allocated by D30 (all three built; `71-i4-wave4.md`)
 
-**Planned, not built.** Nothing in this section is in §20.1 yet: a §20.1 row without its table fails
-`test_migrated_tables_equal_the_hld_inventory`. Each implementing epic moves its table here into §20.1
-(next free row number — 33 onward; `dds_calls` is row 32) and into the matching §20.x in the same
-commit as its migration. Numbers are pre-allocated by the manager (D30) so parallel slices never
-collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
+**All three built.** This section is now historical: every row below is in §20.1 and every table
+in its own §20.x (each subsection says where). Numbers were pre-allocated by the manager (D30) so
+parallel slices never collided on `down_revision`; the chain at E24 ended at `0015_users_sip_ha1`.
 
 | Migration | Epic | Change | Kind |
 |:--|:--|:--|:--|
@@ -1183,6 +1182,12 @@ collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
 **Built by E32.** Moved to §20.2 (`scenarios`).
 
 ### 20.11.4 `training_materials` (E34, `0018_training_materials`)
+
+**Built by E34.** Moved to §20.1 (row 35) and §20.12 (`training_materials`).
+
+## 20.12 Methodical materials (additive, I4 E34; `71-i4-wave4.md` §71.11)
+
+### `training_materials` (built, `0018_training_materials`)
 | Column | PG type | Null | Default |
 |:--|:--|:--|:--|
 | `id` | `uuid` | no | `gen_random_uuid()` |

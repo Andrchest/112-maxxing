@@ -89,6 +89,10 @@ from app.application.lessons.weight_proposals import (
     GetWeightProposals,
     RequestWeightProposals,
 )
+from app.application.materials.archive_material import ArchiveMaterial
+from app.application.materials.get_material_file import GetMaterialFile
+from app.application.materials.list_materials import ListMaterials
+from app.application.materials.upload_material import UploadMaterial
 from app.application.operator.answer_call import AnswerCall
 from app.application.operator.back_to_interview import BackToInterview
 from app.application.operator.begin_handoff_preparation import BeginHandoffPreparation
@@ -1084,6 +1088,35 @@ class Container:
         )
 
     # --- end I4 E28 -----------------------------------------------------------------------------
+
+    # -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) ------------------------
+
+    @property
+    def materials_dir(self) -> Path:
+        """`DATA_DIR/materials` (§71.11) — the one directory `getMaterialFile` may read from."""
+        return Path(self.settings.data_dir) / "materials"
+
+    def upload_material(self) -> UploadMaterial:
+        """`uploadMaterial` — allow-list, size limit, sha256 dedupe (§71.11)."""
+        return UploadMaterial(
+            self.unit_of_work,
+            self.ids,
+            self.clock,
+            materials_dir=self.materials_dir,
+            max_size_bytes=self.settings.material_max_mb * 1024 * 1024,
+        )
+
+    def list_materials(self) -> ListMaterials:
+        """`listMaterials` — «Справочная база» (§71.11)."""
+        return ListMaterials(self.unit_of_work)
+
+    def get_material_file(self) -> GetMaterialFile:
+        """`getMaterialFile` (§71.11)."""
+        return GetMaterialFile(self.unit_of_work, materials_dir=self.materials_dir)
+
+    def archive_material(self) -> ArchiveMaterial:
+        """`archiveMaterial` (§71.11)."""
+        return ArchiveMaterial(self.unit_of_work, self.clock)
 
     # -- lifecycle -----------------------------------------------------------------------------
 

@@ -16,6 +16,8 @@ CardRevisionId = NewType("CardRevisionId", UUID)
 EventId = NewType("EventId", UUID)
 IncidentId = NewType("IncidentId", UUID)
 LessonId = NewType("LessonId", UUID)
+#: `training_materials.id` (I4 E34, HLD 20 §20.12).
+MaterialId = NewType("MaterialId", UUID)
 ResourceId = NewType("ResourceId", UUID)
 RoleStageId = NewType("RoleStageId", UUID)
 ScenarioId = NewType("ScenarioId", UUID)
