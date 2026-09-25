@@ -34,7 +34,9 @@ services:
       POSTGRES_PASSWORD: ${SIM_POSTGRES_PASSWORD:-sim}
       POSTGRES_DB: ${SIM_POSTGRES_DB:-sim}
     ports:
-      - "15432:5432"
+      # I4 E26 (¶295 REQ-2243, D33): loopback only. A classroom box has no reason to expose the
+      # database off-host, and the old bare "15432:5432" bound every interface.
+      - "127.0.0.1:15432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -42,18 +44,29 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+    # I4 E26 (¶288 REQ-2237, D33): the classroom box restarts itself; this container was missing
+    # a restart policy while every app-process service already had one.
+    restart: unless-stopped
 
   redis:
     image: redis:7
+    # I4 E26 (¶295 REQ-2243, D33): redis had no `requirepass` at all — any host on this network
+    # could read/write session state. SIM_REDIS_PASSWORD is the same value backend/voice-agent/
+    # sip-gateway embed in their SIM_REDIS_URL below; a dev placeholder ships so `make up` needs no
+    # `.env` edit, same posture as SIM_POSTGRES_PASSWORD's `sim` default.
+    command: ["redis-server", "--requirepass", "${SIM_REDIS_PASSWORD:-dev-redis-password-change-me}"]
     ports:
-      - "16379:6379"
+      # I4 E26 (¶295 REQ-2243, D33): loopback only, same reasoning as postgres above.
+      - "127.0.0.1:16379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${SIM_REDIS_PASSWORD:-dev-redis-password-change-me}", "--no-auth-warning", "ping"]
       interval: 2s
       timeout: 2s
       retries: 30
+    # I4 E26 (¶288 REQ-2237, D33): see postgres above.
+    restart: unless-stopped
 
   livekit:
     # Pinned, never `:latest`: an SFU that changes under a running demo is a demo that fails for
@@ -79,6 +92,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    # I4 E26 (¶288 REQ-2237, D33): see postgres above.
+    restart: unless-stopped
 
   llama-server:
     # Pinned ggml-org/llama.cpp CUDA server tag — never `:latest` (HLD 60 §8/§9: a flag change
@@ -146,7 +161,8 @@ services:
       # Container mount point for the models volume; overrides a host `.env` value such as
       # `SIM_MODELS_ROOT=./models` (E20 R15 — `environment:` wins over `env_file`).
       SIM_MODELS_ROOT: /models
-      SIM_REDIS_URL: redis://redis:6379/0
+      # I4 E26 (D33): matches the redis service's `--requirepass` above.
+      SIM_REDIS_URL: redis://:${SIM_REDIS_PASSWORD:-dev-redis-password-change-me}@redis:6379/0
       SIM_LIVEKIT_URL: ws://livekit:7880
       SIM_LIVEKIT_PUBLIC_URL: ${SIM_LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       SIM_API_HOST: 0.0.0.0
@@ -219,7 +235,8 @@ services:
         required: false
     environment:
       SIM_DATABASE_URL: postgresql+asyncpg://${SIM_POSTGRES_USER:-sim}:${SIM_POSTGRES_PASSWORD:-sim}@postgres:5432/${SIM_POSTGRES_DB:-sim}
-      SIM_REDIS_URL: redis://redis:6379/0
+      # I4 E26 (D33): matches the redis service's `--requirepass` above.
+      SIM_REDIS_URL: redis://:${SIM_REDIS_PASSWORD:-dev-redis-password-change-me}@redis:6379/0
       SIM_LIVEKIT_URL: ws://livekit:7880
       # Container mount point for the models volume; overrides a host `.env` value such as
       # `SIM_MODELS_ROOT=./models` (E20 R15 — `environment:` wins over `env_file`).
@@ -294,7 +311,8 @@ services:
       - path: ../.env
         required: false
     environment:
-      SIM_REDIS_URL: redis://redis:6379/0
+      # I4 E26 (D33): matches the redis service's `--requirepass` above.
+      SIM_REDIS_URL: redis://:${SIM_REDIS_PASSWORD:-dev-redis-password-change-me}@redis:6379/0
       SIM_LIVEKIT_URL: ws://livekit:7880
       SIM_SIP_BIND_HOST: 0.0.0.0
       SIM_SIP_PORT: "5060"
@@ -380,6 +398,46 @@ services:
       timeout: 5s
       start_period: 90s
       retries: 5
+    restart: unless-stopped
+
+  backup:
+    # I4 E26 (¶143 REQ-2126, ¶286 REQ-2235, ¶193 REQ-2164, ¶390 REQ-2321, D33; scheme
+    # puml/i4-backup-restore.puml). `postgres:16` is already local (the `postgres` service above
+    # pulls it), so this adds no new image. Unprofiled: a plain `make up` runs it, same as the
+    # SPEC §36 seven — it is not one of them, but nothing gates it behind a profile either.
+    image: postgres:16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${SIM_POSTGRES_USER:-sim}
+      PGPASSWORD: ${SIM_POSTGRES_PASSWORD:-sim}
+      PGDATABASE: ${SIM_POSTGRES_DB:-sim}
+      SIM_BACKUP_KEEP: ${SIM_BACKUP_KEEP:-14}
+      SIM_BACKUP_INTERVAL_SECONDS: ${SIM_BACKUP_INTERVAL_SECONDS:-86400}
+      SIM_BACKUP_DIR: /backups
+      SIM_RECORDINGS_DIR: /recordings
+    volumes:
+      - ./scripts/backup-once.sh:/scripts/backup-once.sh:ro
+      - ./scripts/backup-loop.sh:/scripts/backup-loop.sh:ro
+      - ./scripts/backup_status.py:/scripts/backup_status.py:ro
+      # `recordings-data` read-only: this service only ever reads it to archive it (D33).
+      - recordings-data:/recordings:ro
+      # A host bind, not a named volume: `make restore FILE=…`/`make backup-verify` and a human
+      # operator both need to reach these files directly from the repo checkout (D33, RUNBOOK).
+      - ../backups:/backups
+    entrypoint: ["/bin/bash", "/scripts/backup-loop.sh"]
+    # No model, no GPU, no LiveKit dependency: a heartbeat file is the only liveness signal there
+    # is between two daily runs, so the healthcheck accepts anything younger than 26h — the same
+    # staleness threshold S5/E29's `listAdminAlerts` BACKUP_STALE reads from `last.json` (§71.3
+    # puml note); `backup-loop.sh` touches it at start-up and after every attempt.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/backup-heartbeat && [ $(( $(date +%s) - $(stat -c %Y /tmp/backup-heartbeat) )) -lt 93600 ]"]
+      interval: 1h
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
 
 volumes:

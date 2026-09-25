@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify
 # `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
 # environment down to the base dependency set, silently uninstalling the ML extras a previous
 # `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
@@ -437,3 +437,23 @@ demo-init: demo-db migrate seed-users
 #   make demo-inject ARGS='--session <id> --wav a.wav --wav b.wav --wait-caller'
 demo-inject:
 	$(UV) run python -m voice_agent.tools.inject $(ARGS)
+
+# --- I4 E26: ops hardening — backup / restore (docs/hld/71-i4-wave4.md §71.3, D33) ----------------
+# Forces one backup run right now, via the running (or a freshly started) compose `backup` service
+# — never waits for its daily loop. Needs `.env` (COMPOSE_FULL reads it); `docker compose run`
+# starts `postgres` first if it is not already up (same `depends_on` the `backup` service declares).
+backup-now:
+	$(COMPOSE_FULL) run --rm backup /scripts/backup-once.sh
+# Restores a dump (and, optionally, a recordings archive) produced by backup-now/the daily loop.
+# Stops the backend, `pg_restore --clean`s the dump, restores the recordings, restarts the backend
+# (infra/scripts/restore.sh). Example: `make restore FILE=./backups/sim-20260925T120000Z.dump
+# RECORDINGS=./backups/recordings-20260925T120000Z.tar.gz`.
+restore:
+	PGUSER=$${SIM_POSTGRES_USER:-sim} PGDATABASE=$${SIM_POSTGRES_DB:-sim} \
+		infra/scripts/restore.sh "$(FILE)" "$(RECORDINGS)"
+# Reads backups/last.json (written by the last backup-now/loop run) and exits non-zero if it is
+# missing, malformed, records a failed backup, or is older than 26h. No `.env`/compose needed — it
+# only reads a file. `uv run` so it uses the repo's own Python (the `backup` container's
+# `postgres:16` image has none — see backup-once.sh's header comment).
+backup-verify:
+	$(UV) run python infra/scripts/backup_status.py --path backups/last.json

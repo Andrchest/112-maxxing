@@ -28,4 +28,6 @@ room:
 
 logging:
   level: info
-  json: false
+  # I4 E26 (¶372 REQ-2308 "JSON для логов и журналов", docs/hld/71-i4-wave4.md §71.3, D33): every
+  # process's logs are JSON, and LiveKit's own logger is no exception.
+  json: true

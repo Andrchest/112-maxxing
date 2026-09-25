@@ -275,3 +275,65 @@ added) — `~/.cache/ms-playwright` must show no new directory after `npm instal
 
 The full SPEC §46 Definition-of-Done walk (16 items, exercised for real against the stack) is
 `docs/DOD_WALK.md` (E20-C) — this runbook only gets the stack ready for it.
+
+## Резервное копирование (I4 E26 — `docs/hld/71-i4-wave4.md` §71.3, D33)
+
+A daily `pg_dump -Fc` of the database plus a `tar.gz` of the recordings volume, written into
+`./backups/` by the compose `backup` service (`postgres:16`, no extra image to pull). Every backup
+is rotated to `SIM_BACKUP_KEEP` (default 14) and recorded in `backups/last.json` (timestamp, file
+names, sizes, sha256, `status: "ok"|"failed"`).
+
+```
+make up                 # the backup service starts with the rest of the stack, no extra flag
+make backup-now         # forces one run right now (does not wait for the daily loop)
+make backup-verify      # reads backups/last.json; fails if missing, failed, or older than 26h
+```
+
+`make backup-now` runs `infra/scripts/backup-once.sh` inside the `backup` service (`docker compose
+run --rm backup …`), so it also works before the service has been up for a full day. There is
+**no gate-side restore test** (§3.1: too slow) — `make backup-verify` plus the recorded walk below
+stand in for it, same as SPEC §46's other manually-walked items.
+
+**What it does not cover** (Q-E14-2, not built): starting/stopping/backing-up from the admin UI, or
+an off-box copy — this repo runs in a closed contour with no such destination.
+
+## Восстановление (I4 E26 — `docs/hld/71-i4-wave4.md` §71.3, D33)
+
+```
+make restore FILE=./backups/sim-<ts>.dump RECORDINGS=./backups/recordings-<ts>.tar.gz
+```
+
+`infra/scripts/restore.sh` stops the `backend` service, copies the dump into the `postgres`
+container and runs `pg_restore --clean --if-exists --no-owner` there, restores the recordings
+archive into the `recordings-data` named volume via a throwaway container, then starts `backend`
+again. `RECORDINGS=` is optional — omit it to restore only the database.
+
+### Recorded restore walk (2026-09-25, scratch database — never a real one)
+
+Proved end to end against a scratch database on the **test** Postgres (`:55432`, container
+`sim112test-postgres-1`), per this epic's own rule never to touch a real database:
+
+1. Created `sim_e26_backup_src` with one marker row (`marker(id, note)` = `(42,
+   'e26-restore-proof')`) and a throwaway `fake-call.wav` standing in for a recording.
+2. Ran `infra/scripts/backup-once.sh` for real (`docker run --network host … postgres:16 bash
+   /scripts/backup-once.sh`, `PGHOST=127.0.0.1 PGPORT=55432 PGDATABASE=sim_e26_backup_src`):
+   produced `sim-20260924T235958Z.dump` (1357 B), `recordings-20260924T235958Z.tar.gz` (169 B) and
+   a `last.json` with `"status": "ok"` and both sha256 hashes.
+3. `python infra/scripts/backup_status.py --path <scratch>/backups/last.json` → `OK: … 0.0h ago`,
+   exit 0.
+4. Ran three more backups with `SIM_BACKUP_KEEP=2`: rotation correctly dropped every dump/archive
+   pair past the newest two.
+5. Created an empty `sim_e26_backup_dst`. Ran `infra/scripts/restore.sh <dump> <recordings-archive>`
+   with `SIM_RESTORE_SKIP_SERVICE_CONTROL=1` (no compose stack involved — this scratch walk never
+   touches `backend`/any running container besides an `exec` into the already-running test
+   Postgres) and `SIM_RESTORE_PG_CONTAINER=sim112test-postgres-1`, `PGDATABASE=sim_e26_backup_dst`,
+   `SIM_RESTORE_RECORDINGS_DIR=<scratch>/restored-recordings`.
+6. Verified: `SELECT * FROM marker` on `sim_e26_backup_dst` returned `(42, 'e26-restore-proof')` —
+   the restored row, byte-identical to the source — and `restored-recordings/fake-call.wav`
+   contained the original bytes.
+7. Cleanup: dropped both scratch databases, removed the scratch directory. No project or owner
+   container was started, stopped or restarted by this walk.
+
+A real (compose-stack) walk follows the same `make restore FILE=…` command; the mechanism proved
+above (steps 2, 5, 6) is identical, the only difference being which Postgres/container the dump
+targets.
