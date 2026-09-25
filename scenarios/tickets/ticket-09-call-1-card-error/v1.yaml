@@ -146,7 +146,7 @@ scoring_rules:
     min_evidence: 1
     config: { from_event_type: HANDOFF_RECEIVED, to_event_type: DDS_SERVICE_STATUS_SET,
               to_payload_match: { service_type: FIRE_RESCUE, new_status: [ACCEPTED, NOT_ACCEPTED] },
-              max_offset_ms: 30000, points: 4, penalty_if_late: -2, scale: STEP,
+              max_offset_timer: accept_within_ms, points: 4, penalty_if_late: -2, scale: STEP,
               linear_zero_ms: null }
 
   - rule_id: memo_main_service_completed

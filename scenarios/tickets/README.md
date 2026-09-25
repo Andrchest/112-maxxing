@@ -12,7 +12,10 @@ plan of three entries); this directory holds no lesson files.
 Every scenario: `variants` `card_source` [GENERATED_CARD (default), CALLER_VOICE (frozen, playable
 from the facts)], `dds_mode` [MEMO_STATUSES] only — the tickets name no resources, so no resource
 board is authored —, `dds_card_check` [OFF (default), ON], `dds_brigade_call` [OFF, ON (default —
-the ДДС phone, owner decision 2026-09-25, D28)], `responders: DEFAULT`, default timers.
+the ДДС phone, owner decision 2026-09-25, D28)], `responders: DEFAULT`, default timers. The
+`memo_main_service_decision_in_time` rule reads its 30 s norm from the session's accept timer
+(`max_offset_timer: accept_within_ms`, I4 E31, HLD 71 §71.8), so an instructor's timer override
+moves it; with the default timers it scores exactly as the literal `30000` did.
 The prefab card is written in card-schema v2 paths and codes; fields a ticket does not state are
 left out, and addresses outside Moscow keep their text with no okrug/district.
 

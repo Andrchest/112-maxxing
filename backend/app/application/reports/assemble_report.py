@@ -21,12 +21,20 @@ the shape of the document does not depend on who reads it, only its content does
 events)` — one `EventStore.read` serves the timeline, the DDS decisions, the resource timeline,
 the barge-in metric and the handoff's `snapshot_id`, because §20.8 orders the log and every one of
 those projections is a fold over it (D5).
+
+**An ABORTED card of a lesson (I4 E31, HLD 71 §71.8, D34).** `unscored` is the one read of an
+aborted session: its state, its timeline and its times, for `getLessonReport` (ТЗ ¶342–343 — a
+lesson ended early still reports the actions of its unfinished cards). No score is read or
+computed (an ABORTED session is never scored, SPEC §28, Q-E9b-6). The timeline is the same
+`timeline_entry` projection through the same `report_visibility` as the report's own, so a viewer
+sees exactly the events they would see in a finished card's timeline.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from app.application.auth.get_current_user import AuthenticatedUser
@@ -75,7 +83,12 @@ from app.domain.scoring.results import ScoreCategoryTotal, ScoreReport, ScoreRes
 from app.domain.scoring.rules import ScoringRule
 from app.domain.session.session import SimulationSession
 
-__all__ = ["GetSessionReport", "ScenarioVersionMissingError", "SessionReportView"]
+__all__ = [
+    "GetSessionReport",
+    "ScenarioVersionMissingError",
+    "SessionReportView",
+    "UnscoredSessionView",
+]
 
 
 class ScenarioVersionMissingError(RuntimeError):
@@ -116,6 +129,21 @@ class SessionReportView:
     dds_participant_totals: tuple[DdsParticipantTotals, ...] = ()
     """ADDITIVE (I3 E5b): per ДДС participant — legs played, statuses set, decisions, flags.
     Empty when the viewer may not see the DDS sections."""
+
+
+@dataclass(frozen=True, slots=True)
+class UnscoredSessionView:
+    """(I4 E31) `UnscoredCardView` as application data: an ABORTED session's actions and times.
+
+    `started_at` / `aborted_at` are the `SESSION_STARTED` / `SESSION_ABORTED` wall stamps and
+    `elapsed_ms` the session offset of the abort — `None` for a card aborted before it started."""
+
+    session_id: SessionId
+    state: SessionState
+    timeline: tuple[TimelineEntry, ...]
+    started_at: datetime | None
+    aborted_at: datetime | None
+    elapsed_ms: int | None
 
 
 class GetSessionReport:
@@ -186,7 +214,6 @@ class GetSessionReport:
             explanations = await uow.report_explanations.list_for_session(session_id)
             await uow.commit()
 
-        actor_ids = {event.seq_no: _actor_id(event) for event in events}
         display_names = {
             UUID(str(participant.user_id)): participant.display_name_ru
             for participant in detail.participants
@@ -198,25 +225,8 @@ class GetSessionReport:
         # I3 E6c (HLD 80 §80.6.1, §80.6.2): every call of the session with its party label, the
         # ДДС call ids the timeline is call-scoped by, and each transcript row's call.
         dds_ids = dds_call_ids(events)
-        personas = reference_catalog(self._reference).personas(scenario_version.reference_pack_id)
-        parties = call_parties(
-            events,
-            {} if personas is None else {p.id: p.title_ru for p in personas.personas},
-        )
-        timeline = tuple(
-            timeline_entry(
-                envelope,
-                actor_id=actor_ids.get(envelope.seq_no),
-                scenario_title=scenario_version.title,
-                parties=parties,
-                dds_call_ids=dds_ids,
-            )
-            for envelope in (
-                visibility.timeline_entry(source_of_row(event), dds_call_ids=dds_ids)
-                for event in events
-            )
-            if envelope is not None
-        )
+        parties = self._parties(events, scenario_version)
+        timeline = _timeline(events, visibility, scenario_version, parties, dds_ids)
         calls_by_turn = turn_calls(events)
         visible_transcript = [
             segment
@@ -256,6 +266,82 @@ class GetSessionReport:
                 else ()
             ),
         )
+
+    async def unscored(
+        self, session_id: SessionId, user: AuthenticatedUser, *, released: bool
+    ) -> UnscoredSessionView:
+        """(I4 E31) An ABORTED session's state, timeline and times — no score (HLD 71 §71.8).
+
+        The same gates as `__call__`: a trainee reads only a session they took part in (`403
+        PARTICIPANT_NOT_ASSIGNED`) and only once `released` or their mode shows reports before a
+        release (`403 REPORT_NOT_RELEASED`). `released` is the caller's: a lesson's release covers
+        its aborted cards, which have no per-session release (`releaseLessonReport`). A session
+        that is not `ABORTED` is `409 REPORT_NOT_READY` here — a finished card has its report.
+        """
+        async with self._unit_of_work() as uow:
+            session = await uow.sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            if not user.is_instructor_or_admin:
+                resolve_participant(session, user)
+            if session.state is not SessionState.ABORTED:
+                raise ReportNotReadyError(session_id, session.state)
+            session_released = await uow.sessions.get_report_release(session_id) is not None
+            visibility = report_visibility(session, user, released=released or session_released)
+            events = tuple(await uow.events.read(session_id))
+            scenario_version = await _scenario_version(uow, session.scenario_version_id)
+            await uow.commit()
+
+        dds_ids = dds_call_ids(events)
+        parties = self._parties(events, scenario_version)
+        started = next((e for e in events if e.event_type is EventType.SESSION_STARTED), None)
+        aborted = next((e for e in events if e.event_type is EventType.SESSION_ABORTED), None)
+        return UnscoredSessionView(
+            session_id=session_id,
+            state=session.state,
+            timeline=_timeline(events, visibility, scenario_version, parties, dds_ids),
+            started_at=None if started is None else started.timestamp_utc,
+            aborted_at=None if aborted is None else aborted.timestamp_utc,
+            elapsed_ms=(
+                None if started is None or aborted is None else aborted.monotonic_offset_ms
+            ),
+        )
+
+    def _parties(
+        self, events: Sequence[SessionEvent], scenario_version: ScenarioVersion
+    ) -> Mapping[str, str]:
+        """Every call's party label (I3 E6c, HLD 80 §80.6.1), persona titles from the pack."""
+        personas = reference_catalog(self._reference).personas(scenario_version.reference_pack_id)
+        return call_parties(
+            events,
+            {} if personas is None else {p.id: p.title_ru for p in personas.personas},
+        )
+
+
+def _timeline(
+    events: Sequence[SessionEvent],
+    visibility: ReportVisibility,
+    scenario_version: ScenarioVersion,
+    parties: Mapping[str, str],
+    dds_ids: frozenset[str],
+) -> tuple[TimelineEntry, ...]:
+    """The report timeline: every event as this viewer may see it (R3), call-scoped by the
+    session's ДДС call ids (I3 E6c, HLD 80 §80.6.2), with the row's own `actor_id`."""
+    actor_ids = {event.seq_no: _actor_id(event) for event in events}
+    return tuple(
+        timeline_entry(
+            envelope,
+            actor_id=actor_ids.get(envelope.seq_no),
+            scenario_title=scenario_version.title,
+            parties=parties,
+            dds_call_ids=dds_ids,
+        )
+        for envelope in (
+            visibility.timeline_entry(source_of_row(event), dds_call_ids=dds_ids)
+            for event in events
+        )
+        if envelope is not None
+    )
 
 
 def _transcript_visible(

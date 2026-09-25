@@ -4,7 +4,8 @@
 Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
-  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41-R42, HLD 80 §80.5, and R43)
+  the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41-R42, HLD 80 §80.5, R43,
+  and I4's R44, HLD 71 §71.8)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -60,6 +61,7 @@ from app.domain.scenario.sections import (
     WorldFactSpec,
 )
 from app.domain.scenario.version import SUPPORTED_SCHEMA_VERSIONS, ScenarioVersion
+from app.domain.scoring.evaluators.deadline import DEADLINE_TIMER_KEYS, DeadlineConfig
 from app.domain.scoring.evaluators.registry import parse_rule_config
 from app.domain.scoring.evaluators.resource_selection import ResourceSelectionConfig
 from app.domain.scoring.evaluators.service_selection import ServiceSelectionConfig
@@ -916,6 +918,26 @@ def _check_provenance(version: ScenarioVersion, out: list[str]) -> None:
         )
 
 
+def _check_deadline_timers(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R44 (I4 E31, HLD 71 §71.8, D34): a `DEADLINE` rule's `max_offset_timer` names a
+    per-card timer — `accept_within_ms` or `fill_within_ms` (HLD 30 §30.12). The evaluator reads
+    that key from the session's recorded `SESSION_CREATED.timers`. (The design's text calls this
+    rule "R43"; R43 was already I3 E8's provenance rule, so it is numbered 44.)"""
+    for rule in version.scoring_rules:
+        try:
+            config = parse_rule_config(rule)
+        except ValidationError:
+            continue  # rule 20's to report
+        if not isinstance(config, DeadlineConfig) or config.max_offset_timer is None:
+            continue
+        if config.max_offset_timer not in DEADLINE_TIMER_KEYS:
+            out.append(
+                f"R44: scoring_rules['{rule.rule_id}'].config.max_offset_timer names "
+                f"'{config.max_offset_timer}', which is not a card timer "
+                f"({', '.join(DEADLINE_TIMER_KEYS)})"
+            )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -974,6 +996,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
     ((41,), lambda version, _modules, _reference, out: _check_brigade_call(version, out)),
     ((42,), lambda version, _modules, reference, out: _check_personas(version, reference, out)),
     ((43,), lambda version, _modules, _reference, out: _check_provenance(version, out)),
+    ((44,), lambda version, _modules, _reference, out: _check_deadline_timers(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
 it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_NUMBERS` — hence
@@ -983,7 +1006,7 @@ VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
 """Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, R43 after I3 E8, R41
-after I3 E6b, R42 after I3 E6c — `80-telephony.md` §80.5)."""
+after I3 E6b, R42 after I3 E6c — `80-telephony.md` §80.5 —, R44 after I4 E31, HLD 71 §71.8)."""
 
 
 def scenario_version_violations(

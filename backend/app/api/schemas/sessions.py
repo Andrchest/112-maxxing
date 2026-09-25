@@ -27,6 +27,7 @@ from app.domain.enums import (
     SessionMode,
     SessionState,
 )
+from app.domain.scenario.timers import CardTimersOverride
 from app.domain.session.session import RoleStage
 from app.domain.session.variants import (
     CardSource,
@@ -39,6 +40,7 @@ from app.domain.session.variants import (
 
 __all__ = [
     "AbortSessionRequestSchema",
+    "CardTimersRequestSchema",
     "ParticipantAssignmentSchema",
     "RoleStageViewSchema",
     "SessionCreateRequestSchema",
@@ -105,6 +107,30 @@ class SessionVariantsSchema(ApiModel):
         )
 
 
+class CardTimersRequestSchema(ApiModel):
+    """`openapi.yaml`'s `CardTimersRequest` (I4 E31, HLD 71 §71.8): a per-key override of the
+    scenario's `timers`, session ms; an absent key keeps the scenario value."""
+
+    accept_within_ms: int | None = Field(default=None, gt=0)
+    fill_within_ms: int | None = Field(default=None, gt=0)
+    not_completed_after_ms: int | None = Field(default=None, gt=0)
+
+    def to_domain(self) -> CardTimersOverride:
+        return CardTimersOverride(
+            accept_within_ms=self.accept_within_ms,
+            fill_within_ms=self.fill_within_ms,
+            not_completed_after_ms=self.not_completed_after_ms,
+        )
+
+    @classmethod
+    def of(cls, timers: CardTimersOverride) -> CardTimersRequestSchema:
+        return cls(
+            accept_within_ms=timers.accept_within_ms,
+            fill_within_ms=timers.fill_within_ms,
+            not_completed_after_ms=timers.not_completed_after_ms,
+        )
+
+
 class SessionCreateRequestSchema(ApiModel):
     """`openapi.yaml`'s `SessionCreateRequest`."""
 
@@ -114,6 +140,8 @@ class SessionCreateRequestSchema(ApiModel):
     session_seed: str | None = None
     time_scale: float = Field(default=1.0, ge=0.1, le=10)
     variants: VariantsRequestSchema | None = None
+    timers: CardTimersRequestSchema | None = None
+    """(additive, I4 E31) Override of the scenario timers, recorded in `SESSION_CREATED.timers`."""
 
 
 class AbortSessionRequestSchema(ApiModel):

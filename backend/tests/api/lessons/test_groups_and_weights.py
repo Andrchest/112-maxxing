@@ -283,7 +283,9 @@ async def test_accept_writes_the_chosen_weights_and_the_report_uses_them_only(
     assert (await lessons.tick(lesson_id)).completed
     report_url = f"/api/v1/lessons/{lesson_id}/report"
     original = (await lessons.client.get(report_url, headers=lessons.instructor)).json()
-    [card] = original["cards"]
+    # I4 E31: the two aborted cards are listed unscored and stay out of the weighted sum.
+    [card] = [item for item in original["cards"] if item["score"] is not None]
+    assert [item["position"] for item in original["cards"] if item["score"] is None] == [2, 3]
     assert card["weight"] == 1.0
 
     base = f"/api/v1/lessons/{lesson_id}/weight-proposals"
@@ -304,7 +306,7 @@ async def test_accept_writes_the_chosen_weights_and_the_report_uses_them_only(
     assert [entry["weight"] for entry in plan] == [weights[1], 1.0, weights[3]]
 
     report = (await lessons.client.get(report_url, headers=lessons.instructor)).json()
-    [reweighted] = report["cards"]
+    [reweighted] = [item for item in report["cards"] if item["score"] is not None]
     assert reweighted["score"] == card["score"], "the card's own score is untouched"
     assert reweighted["weight"] == weights[1]
     assert report["weighted_total"] == pytest.approx(weights[1] * card["score"]["total_points"])

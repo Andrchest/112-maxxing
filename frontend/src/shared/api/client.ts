@@ -796,3 +796,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
 export function problemMessageRu(code: ProblemCode): string {
   return ru[PROBLEM_MESSAGE_KEYS[code]];
 }
+
+// --- I4 E31: per-card timers and unfinished lesson cards (71 §71.8, D34) ---------------------------
+export type CardTimersRequest = components['schemas']['CardTimersRequest'];
+export type UnscoredCardView = components['schemas']['UnscoredCardView'];

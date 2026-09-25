@@ -403,6 +403,9 @@ One example per evaluator type (config keys are the exhaustive list from
     config: { from_event_type: CALL_ANSWERED, to_event_type: HANDOFF_CREATED,
               to_payload_match: null, max_offset_ms: 240000, points: 10,
               penalty_if_late: -5, scale: LINEAR, linear_zero_ms: 360000 }
+    # I4 E31: instead of the literal `max_offset_ms`, a norm may name a per-card timer —
+    # `max_offset_timer: accept_within_ms | fill_within_ms` (R44) — read from the session's
+    # recorded `SESSION_CREATED.timers` (§30.12). The tickets' memo decision rules do.
 
   # 7
   - rule_id: workflow_answered_call
@@ -580,6 +583,14 @@ by I3 E6c (`80-telephony.md` §80.4.1, §80.5): the persona override and a scrip
     (integer), `call` (integer) and `generation_candidate` (boolean), strictly typed; a malformed key
     is reported as rule 43, not rule 1 — and names a call that exists: for `source: TICKET`,
     `1 ≤ ticket ≤ 32` and `1 ≤ call ≤ 3` (the organizer's 32 tickets × 3 calls, REQ-5203/REQ-5206).
+
+Rule 44 is added by I4 E31 (`71-i4-wave4.md` §71.8, D34). The design text names it "R43"; that
+number was already rule 43 above (I3 E8), so the timer rule is numbered 44.
+
+44. A `DEADLINE` rule's `config.max_offset_timer`, when present, names a per-card timer the
+    evaluator can read from `SESSION_CREATED.timers`: `accept_within_ms` or `fill_within_ms`
+    (§30.12). A config with both `max_offset_ms` and `max_offset_timer`, or neither, does not
+    validate against `DEADLINE` and is rule 20's.
 
 ## 30.9 Demo scenario sketch — "Пожар в квартире"
 
@@ -887,12 +898,15 @@ timers:                         # all in SESSION (running) milliseconds; default
 The per-card timers of HLD 70 §70.3.4 (D15). Every absent key — and an absent `timers` — takes its
 default, which is also what every schema-1 document gets (`ScenarioVersion.card_timers`). They are
 **session** milliseconds, not wall milliseconds, so the deadline consequences are deterministic and
-independent of `time_scale`. `createSession` records the resolved timers in `SESSION_CREATED.timers`;
+independent of `time_scale`. `createSession` records the resolved timers in `SESSION_CREATED.timers`
+— since I4 E31 the scenario's timers with the instructor's per-key override applied
+(`SessionCreateRequest.timers`, `PlanEntry.timers`; scenario ← override, R39 on the result);
 the card-status projection (HLD 70 §70.4.6) reads them from there: a leg without a primary decision
 at `received + accept_within_ms` turns the card `NOT_NOTIFIED`, a leg not completed at
 `handoff + not_completed_after_ms` turns it `NOT_COMPLETED` — each a SIMULATION
 `DDS_CARD_STATUS_CHANGED` stamped with the deadline offset. The *scoring* of a late action stays an
-ordinary `DEADLINE` rule in `scoring_rules`. Rule 39 checks the key; a dump omits an absent key, so a
+ordinary `DEADLINE` rule in `scoring_rules`; with `max_offset_timer` (I4 E31, rule 44) its norm is
+the recorded timer, so an overridden timer moves the score and the card status together. Rule 39 checks the key; a dump omits an absent key, so a
 schema-1 document's `content_sha256` is unchanged (P5).
 
 ## 30.13 `provenance` — schema 2 (additive, I3 E8)

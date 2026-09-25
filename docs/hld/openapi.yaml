@@ -323,6 +323,11 @@ paths:
         the scenario's `supported` set is `409 VARIANT_NOT_SUPPORTED`. The resolved variants are
         recorded in `SESSION_CREATED.variants` and returned in `SessionDetail.variants`. Under
         `card_source: GENERATED_CARD` the effective role chain is the suffix starting at DDS.
+
+        (additive, I4 E31) `timers` (`CardTimersRequest`, every key optional) overrides the
+        scenario `timers` per key: scenario ← request. The resolved timers are recorded in
+        `SESSION_CREATED.timers`; a `DEADLINE` rule with `max_offset_timer` reads the recorded
+        value (71 §71.8, D34). A result that breaks R39 is `422 VALIDATION_ERROR`.
       x-action: '-'
       x-emits: [SESSION_CREATED, ROLE_STAGE_STARTED]
       requestBody:
@@ -2402,6 +2407,10 @@ paths:
         Composes the existing per-session `ScoreReportView`s; no new evaluator. Trainee access
         follows the per-session release rule (a lesson release releases every card, `x-emits: []`).
         `409 REPORT_NOT_READY` until the lesson is `COMPLETED` or `ABORTED`.
+
+        (CHANGED, I4 E31) A card whose session was aborted (early lesson end, ТЗ ¶342–343) is listed
+        with `score: null` and `unscored` (state, timeline, times — the same timeline projection
+        and visibility as a card report; a lesson release covers it). The weighted sum ignores it.
       x-action: '-'
       x-emits: []
       parameters:
@@ -3479,6 +3488,11 @@ components:
             Multiplier applied to simulated time only. It scales world-event scheduling and ETA
             countdowns; it never scales the audio path, which is realtime by nature.
         variants: { $ref: '#/components/schemas/VariantsRequest' }
+        timers:
+          description: (additive, I4 E31) Override of the scenario timers, recorded in `SESSION_CREATED.timers`.
+          oneOf:
+            - $ref: '#/components/schemas/CardTimersRequest'
+            - type: 'null'
 
     SessionParticipantView:
       type: object
@@ -5425,6 +5439,11 @@ components:
           type: number
           exclusiveMinimum: 0
           default: 1
+        timers:
+          description: (additive, I4 E31) Per-card timer override, resolved as scenario ← this entry.
+          oneOf:
+            - $ref: '#/components/schemas/CardTimersRequest'
+            - type: 'null'
     LessonCreateRequest:
       type: object
       additionalProperties: false
@@ -5509,13 +5528,22 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [position, session_id, weight, score]
+            required: [position, session_id, weight, score, unscored]
             properties:
               position: { type: integer, minimum: 1 }
               session_id: { type: string, format: uuid }
               weight: { type: number }
-              score: { $ref: '#/components/schemas/ScoreReportView' }
-        weighted_total: { type: number }
+              score:
+                description: (CHANGED, I4 E31) `null` for an ABORTED card.
+                oneOf:
+                  - $ref: '#/components/schemas/ScoreReportView'
+                  - type: 'null'
+              unscored:
+                description: (additive, I4 E31) Present exactly when `score` is `null`.
+                oneOf:
+                  - $ref: '#/components/schemas/UnscoredCardView'
+                  - type: 'null'
+        weighted_total: { type: number, description: Scored cards only (unchanged). }
         weighted_max: { type: number }
     # ------------------------------------------- I3 E9a: weights & groups ----
     ProposalSource:
@@ -5628,3 +5656,32 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RoleType'
             - type: 'null'
+    # ----------------------------------------------- I4 E31: instructor core ----
+    CardTimersRequest:
+      description: |
+        (I4 E31) A per-key override of the scenario's `timers` (HLD 30 §30.12), session ms; an
+        absent key keeps the scenario value. R39 applies to the resolved result.
+      type: object
+      additionalProperties: false
+      properties:
+        accept_within_ms: { type: integer, exclusiveMinimum: 0 }
+        fill_within_ms: { type: integer, exclusiveMinimum: 0 }
+        not_completed_after_ms: { type: integer, exclusiveMinimum: 0 }
+    UnscoredCardView:
+      description: (I4 E31) An ABORTED card of the lesson (early end, ТЗ ¶342–343) — actions and times, no points (Q-E9b-6 open).
+      type: object
+      additionalProperties: false
+      required: [state, timeline, times]
+      properties:
+        state: { $ref: '#/components/schemas/SessionState' }
+        timeline:
+          type: array
+          items: { $ref: '#/components/schemas/TimelineEntryView' }
+        times:
+          type: object
+          additionalProperties: false
+          required: [started_at, aborted_at, elapsed_ms]
+          properties:
+            started_at: { type: [string, 'null'], format: date-time }
+            aborted_at: { type: [string, 'null'], format: date-time }
+            elapsed_ms: { type: [integer, 'null'], minimum: 0 }

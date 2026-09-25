@@ -1167,6 +1167,16 @@ adapter (`infrastructure/weights/llm_proposer.py`, one JSON-schema-constrained c
 deterministic heuristic on any failure. The lesson report reads only `PlanEntry.weight`, so
 scoring stays deterministic (SPEC §2, D11); the lesson state machine and the runner are unchanged.
 
+**Per-card timers and unfinished cards (I4 E31, HLD 71 §71.8, D34).** `PlanEntry.timers:
+CardTimersOverride | None` (`domain/scenario/timers.py`; every key optional, positive) overrides the
+scenario's `timers` per key; `resolve_card_timers(scenario, override)` is scenario ← override and
+raises `TimersOverrideError` (`422 VALIDATION_ERROR`) when the result breaks R39. `createSession`
+takes the same override (`SessionCreateRequest.timers`) and records the resolved timers in
+`SESSION_CREATED.timers`. The lesson report lists an `ABORTED` card with `score: null` and
+`unscored` (state, timeline, times) — its session's events through the report's own timeline
+projection and visibility; the weighted sum still counts scored cards only. SPEC §28 and the session
+transitions are unchanged; scoring an unfinished card is not built (Q-E9b-6).
+
 ### Card status — `backend/app/domain/dds/card_status.py` (additive, I3 E4a)
 
 `CardStatus`: `REGISTERED` (Зарегистрирована), `WORKED` (Отработана), `CHECKED` (Проверена),
@@ -1750,11 +1760,19 @@ card-value timeline reconstructed from `CARD_FIELD_CHANGED`, and the handoff pay
 
 #### 6. `DEADLINE` — `deadline.py`
 - Config keys: `from_event_type: EventType | "SESSION_START"`, `to_event_type: EventType`,
-  `to_payload_match: object | null`, `max_offset_ms: int`, `points: float`,
+  `to_payload_match: object | null`, `max_offset_ms: int | null`,
+  `max_offset_timer: "accept_within_ms" | "fill_within_ms" | null` (I4 E31), `points: float`,
   `penalty_if_late: float = 0.0`, `scale: "STEP" | "LINEAR"`, `linear_zero_ms: int | null`.
-- Reads: the two named event types.
-- Points: `STEP` → `points` if `Δ ≤ max_offset_ms`, else `penalty_if_late`. `LINEAR` → `points`
-  at `Δ ≤ max_offset_ms`, falling linearly to `0` at `linear_zero_ms`, then `penalty_if_late`.
+  Exactly one of `max_offset_ms` / `max_offset_timer` is set (rule 20); the timer name is rule
+  R44's (HLD 30 §30.8).
+- Reads: the two named event types; with `max_offset_timer`, also `SESSION_CREATED.timers`.
+- The norm (I4 E31, HLD 71 §71.8, D34): the literal `max_offset_ms`, or the named per-card timer as
+  the log records it in `SESSION_CREATED.timers` — the scenario's timers with the instructor's
+  override (`SessionCreateRequest.timers`, `PlanEntry.timers`) applied. A log that records no
+  timers takes the scenario's own (`ScenarioVersion.card_timers`). The value comes from the log, so
+  INV 9 holds; a rule without the key parses and scores exactly as before.
+- Points: `STEP` → `points` if `Δ ≤ norm`, else `penalty_if_late`. `LINEAR` → `points`
+  at `Δ ≤ norm`, falling linearly to `0` at `linear_zero_ms`, then `penalty_if_late`.
   If `to_event_type` never occurs: `penalty_if_late`.
 - Evidence: both bounding events (or `from`-event plus `SESSION_COMPLETED` when `to` never occurred).
 

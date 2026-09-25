@@ -10,6 +10,9 @@
   re-adopted from PostgreSQL after a restart;
 * the lesson report lists the N card reports and sums them by weight; the release marks the cards
   `CHECKED` where the projection allows it;
+* (I4 E31, HLD 71 §71.8) an ABORTED card is listed unscored — `score: null`, `unscored` with its
+  state, timeline and times — and the weighted sum ignores it; a plan entry's `timers` override is
+  recorded in its card's `SESSION_CREATED.timers`;
 * `listMyIncidents` carries the materialised status and the deadlines, and a trainee sees a card
   only once it has arrived.
 """
@@ -481,11 +484,21 @@ async def test_the_lesson_report_lists_the_card_reports_and_sums_them_by_weight(
     )
     assert response.status_code == 200, response.text
     report = response.json()
-    [reported] = report["cards"]
+    reported, aborted = report["cards"]
     assert reported["position"] == 1 and reported["weight"] == 2.5
+    assert reported["unscored"] is None
     score = reported["score"]
     assert report["weighted_total"] == pytest.approx(2.5 * score["total_points"])
     assert report["weighted_max"] == pytest.approx(2.5 * score["total_max_points"])
+    # I4 E31: the aborted card (it never arrived) is listed unscored, outside the sum.
+    assert aborted["position"] == 2 and aborted["score"] is None
+    assert aborted["unscored"]["state"] == "ABORTED"
+    assert aborted["unscored"]["times"] == {
+        "started_at": None,
+        "aborted_at": aborted["unscored"]["times"]["aborted_at"],
+        "elapsed_ms": None,
+    }
+    assert aborted["unscored"]["times"]["aborted_at"] is not None
 
     released = await lessons.client.post(
         f"/api/v1/instructor/lessons/{lesson_id}/report/release", headers=lessons.instructor
@@ -615,3 +628,129 @@ async def test_lesson_participants_bind_dds_trainees_to_services_on_every_card(
     assert legs["TSODD"]["is_mine"] is True and legs["FIRE_RESCUE"]["is_mine"] is False
     others = set(legs) - {"FIRE_RESCUE", "TSODD"}
     assert others and {legs[service]["responder"] for service in others} == {"SCRIPTED"}
+
+
+# ---------------------------------------------------------------------------------------------
+# I4 E31 — per-card timers and ABORTED cards in the lesson report (HLD 71 §71.8, D34)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_lesson_aborted_mid_card_lists_the_card_unscored_with_its_events(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    """ТЗ ¶342–343: the instructor ends the lesson at any moment and still gets the actions and
+    the times of the card in progress — unscored (Q-E9b-6), outside the weighted sum."""
+    detail = await lessons.created(
+        [plan_entry(1, demo_version_id), plan_entry(2, demo_version_id, offset_ms=10**9)]
+    )
+    lesson_id = detail["lesson_id"]
+    await lessons.start(lesson_id)
+    await lessons.tick(lesson_id)
+    first = detail["sessions"][0]["session_id"]
+    acknowledged = await lessons.client.post(
+        f"/api/v1/sessions/{first}/dds/acknowledge", headers=auth(lessons.tokens["trainee2"])
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    lessons.clock.advance_ms(20_000)
+    await lessons.tick_session(first)
+
+    aborted = await lessons.client.post(
+        f"/api/v1/lessons/{lesson_id}/abort", headers=lessons.instructor, json={"reason": "конец"}
+    )
+    assert aborted.status_code == 200, aborted.text
+
+    response = await lessons.client.get(
+        f"/api/v1/lessons/{lesson_id}/report", headers=lessons.instructor
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()
+    in_progress, queued = report["cards"]
+    assert [in_progress["position"], queued["position"]] == [1, 2]
+    assert in_progress["score"] is None and queued["score"] is None
+    assert report["weighted_total"] == 0 and report["weighted_max"] == 0
+
+    unscored = in_progress["unscored"]
+    assert unscored["state"] == "ABORTED"
+    types = [entry["event_type"] for entry in unscored["timeline"]]
+    assert types[0] == "SESSION_CREATED"
+    assert {"SESSION_STARTED", "DDS_ACKNOWLEDGED", "SESSION_ABORTED"} <= set(types)
+    assert types == [e["event_type"] for e in await lessons.events(first)], (
+        "the instructor's timeline is the whole log, the same projection as a card report"
+    )
+    times = unscored["times"]
+    assert times["started_at"] is not None and times["aborted_at"] is not None
+    assert times["elapsed_ms"] == 20_000
+    assert queued["unscored"]["times"]["started_at"] is None
+    assert queued["unscored"]["times"]["elapsed_ms"] is None
+
+    trainee = await lessons.client.get(
+        f"/api/v1/lessons/{lesson_id}/report", headers=auth(lessons.tokens["trainee2"])
+    )
+    assert trainee.status_code == 200, trainee.text
+    trainee_card = trainee.json()["cards"][0]["unscored"]
+    assert "DDS_ACKNOWLEDGED" in [entry["event_type"] for entry in trainee_card["timeline"]]
+
+
+async def test_a_plan_entry_timer_override_is_recorded_and_drives_its_card(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    """`PlanEntry.timers` resolves as scenario ← entry; `SESSION_CREATED.timers` records it, and
+    the card's accept deadline runs out at the overridden 45 s, not at the scenario's 30 s."""
+    overridden = plan_entry(1, demo_version_id)
+    overridden["timers"] = {"accept_within_ms": 45_000}
+    detail = await lessons.created([overridden, plan_entry(2, demo_version_id, offset_ms=10**9)])
+    lesson_id = detail["lesson_id"]
+    plan = (await lessons.get(lesson_id))["scenario_plan"]
+    assert plan[0]["timers"] == {
+        "accept_within_ms": 45_000,
+        "fill_within_ms": None,
+        "not_completed_after_ms": None,
+    }
+    assert plan[1]["timers"] is None
+
+    first, second = (card["session_id"] for card in detail["sessions"])
+    recorded = []
+    for session in (first, second):
+        created = next(
+            e for e in await lessons.events(session) if e["event_type"] == "SESSION_CREATED"
+        )
+        recorded.append(created["payload"]["timers"])
+    default = {"fill_within_ms": 180_000, "not_completed_after_ms": 172_800_000}
+    assert recorded == [
+        {"accept_within_ms": 45_000, **default},
+        {"accept_within_ms": 30_000, **default},
+    ]
+
+    await lessons.start(lesson_id)
+    await lessons.tick(lesson_id)
+    lessons.clock.advance_ms(30_000)
+    await lessons.tick_session(first)
+    assert (await lessons.get(lesson_id))["sessions"][0]["card_status"] == "WORKED"
+    lessons.clock.advance_ms(15_000)
+    await lessons.tick_session(first)
+    assert (await lessons.get(lesson_id))["sessions"][0]["card_status"] == "NOT_NOTIFIED"
+    [missed] = [
+        e
+        for e in await lessons.events(first)
+        if e["event_type"] == "DDS_CARD_STATUS_CHANGED"
+        and e["payload"]["new_status"] == "NOT_NOTIFIED"
+    ]
+    assert missed["payload"]["deadline_offset_ms"] == 45_000
+
+
+async def test_a_timer_override_that_breaks_r39_refuses_the_lesson_naming_its_position(
+    lessons: Lessons, demo_version_id: ScenarioVersionId, unit_of_work: Any
+) -> None:
+    before = await _count(unit_of_work, "simulation_sessions")
+    broken = plan_entry(2, demo_version_id)
+    broken["timers"] = {"not_completed_after_ms": 10_000}  # below the 30 s accept timer (R39)
+    response = await lessons.create([plan_entry(1, demo_version_id), broken])
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "position 2" in response.json()["detail"]
+    assert await _count(unit_of_work, "simulation_sessions") == before
+
+    zero = plan_entry(1, demo_version_id)
+    zero["timers"] = {"accept_within_ms": 0}
+    refused = await lessons.create([zero])
+    assert refused.status_code == 422, refused.text

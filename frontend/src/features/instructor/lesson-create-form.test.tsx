@@ -150,6 +150,53 @@ describe('LessonCreateForm — the instructor plan editor (70 §70.3.1-§70.3.3)
     });
   });
 
+  it('sends a per-card timer override in session ms, only for the fields filled (I4 E31)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios?limit=200' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/trainee-groups?limit=200' && method === 'GET') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/lessons' && method === 'POST') return jsonResponse(makeLesson(), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+
+    await user.type(screen.getByLabelText(ru.lessonFormTitleFieldLabel), 'Timers');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryScenarioLabel), 's1');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryVersionLabel), 'v1');
+    const participantSelect = await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`);
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(participantSelect, 'trainee-1');
+
+    const accept = screen.getByLabelText(ru.lessonFormEntryAcceptTimerLabel);
+    const fill = screen.getByLabelText(ru.lessonFormEntryFillTimerLabel);
+    expect(accept).toHaveValue(null);
+    expect(accept).toHaveAttribute('placeholder', ru.lessonFormEntryTimerPlaceholder);
+    await user.type(accept, '45');
+    await user.type(fill, '0');
+    expect(screen.getByRole('button', { name: ru.lessonFormCreateButton })).toBeDisabled();
+    await user.clear(fill);
+
+    await user.click(screen.getByRole('button', { name: ru.lessonFormCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/lessons' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    const body = JSON.parse(createCall[1].body as string);
+    expect(body.scenario_plan[0].timers).toEqual({ accept_within_ms: 45_000 });
+  });
+
   it('an entry switched to the picker has no phone: ON becomes OFF, is disabled, and is sent OFF (R41, D28)', async () => {
     // `street-rubbish-fire`'s shape since I4 E21: a memo scenario whose phone is ON by default.
     const phoneDefault = {

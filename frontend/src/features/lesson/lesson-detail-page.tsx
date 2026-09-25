@@ -6,6 +6,9 @@
 // I3 E9a (70 §70.3.7): each plan entry shows its scenario's «Сложность», its weight and whose
 // workstation it is; the lesson's group is named; `WeightProposalsCard` asks for AI weight
 // proposals and accepts the chosen ones (the only way a proposal becomes a weight).
+//
+// I4 E31 (71 §71.8, D34): a card aborted by an early end is listed unscored, with its time at work
+// and its actions (`LessonReport.cards[].unscored`).
 import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,6 +33,7 @@ import {
   type LessonDetail,
   type ProblemCode,
   type SessionState,
+  type UnscoredCardView,
   type UserRole,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
@@ -80,6 +84,46 @@ function ScenarioDifficulty({ scenarioVersionId }: { scenarioVersionId: string }
   );
 }
 
+/** I4 E31 (71 §71.8, D34; ТЗ ¶342–343): a card of a lesson ended early — no points (Q-E9b-6), but
+ * its time at work and its actions (`UnscoredCardView.timeline`, the same projection a card report
+ * shows), each with its session offset. Outside the weighted total, as the server computes it. */
+function UnscoredReportCard({ position, unscored }: { position: number; unscored: UnscoredCardView | null }) {
+  const elapsedMs = unscored?.times.elapsed_ms ?? null;
+  const timeline = unscored?.timeline ?? [];
+  return (
+    <li className="flex flex-col gap-1 rounded-md border border-border p-2 text-sm" data-slot="report-card-unscored">
+      <div className="flex items-center justify-between gap-2">
+        <span>
+          {t('lessonDetailColumnPosition')} {position}
+        </span>
+        <span className="flex items-center gap-2">
+          <Badge variant="outline">{t('lessonReportCardUnscored')}</Badge>
+          <span className="text-xs text-muted-foreground" data-slot="report-card-elapsed">
+            {elapsedMs === null
+              ? t('lessonReportCardNotStarted')
+              : `${t('lessonReportCardElapsedLabel')} ${formatCallDurationMs(elapsedMs)}`}
+          </span>
+        </span>
+      </div>
+      {timeline.length > 0 ? (
+        <details>
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            {t('lessonReportCardActionsLabel')} ({timeline.length})
+          </summary>
+          <ol className="mt-1 flex flex-col gap-0.5 text-xs" data-slot="report-card-actions">
+            {timeline.map((entry) => (
+              <li key={entry.seq_no}>
+                <span className="tabular-nums text-muted-foreground">{formatCallDurationMs(entry.monotonic_offset_ms)}</span>{' '}
+                {entry.summary_ru}
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </li>
+  );
+}
+
 function LessonReportSection({ lessonId }: { lessonId: string }) {
   const reportQuery = useQuery({
     queryKey: queryKeys.lessons.report(lessonId),
@@ -103,7 +147,10 @@ function LessonReportSection({ lessonId }: { lessonId: string }) {
   return (
     <div className="flex flex-col gap-2" data-slot="lesson-report">
       <ul className="flex flex-col gap-1">
-        {reportQuery.data.cards.map((card) => (
+        {reportQuery.data.cards.map((card) =>
+          card.score === null ? (
+            <UnscoredReportCard key={card.session_id} position={card.position} unscored={card.unscored} />
+          ) : (
           <li key={card.session_id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
             <span>
               {t('lessonDetailColumnPosition')} {card.position}
@@ -117,7 +164,8 @@ function LessonReportSection({ lessonId }: { lessonId: string }) {
               </span>
             </span>
           </li>
-        ))}
+          ),
+        )}
       </ul>
       <p className="text-sm font-medium" data-slot="weighted-total">
         {t('lessonDetailWeightedTotalLabel')}: {reportQuery.data.weighted_total} / {reportQuery.data.weighted_max}

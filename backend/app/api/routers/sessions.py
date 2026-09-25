@@ -101,6 +101,7 @@ async def create_session(
                 for assignment in body.participants
                 if assignment.assigned_service_id is not None
             },
+            timers=None if body.timers is None else body.timers.to_domain(),
         )
     )
     return await _detail(container, session, user)

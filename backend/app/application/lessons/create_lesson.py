@@ -7,6 +7,8 @@
    - the lesson's participants, or the entry's subset (`PlanEntry.participants`, E9a's hook),
      each with its ДДС service binding (`assigned_service_id`, HLD 70 §70.4.5, I3 E5b),
    - the lesson-wide variants request overridden switch by switch by the entry's,
+   - the entry's timer override (`PlanEntry.timers`, I4 E31, HLD 71 §71.8), resolved against the
+     scenario's timers by `createSession` and recorded in `SESSION_CREATED.timers`,
    - `lesson_id` / `lesson_position` set,
    so each card is validated exactly as a single session would be (version valid, variants
    implemented and supported, participants assignable under `session_mode`) and ends `READY`;
@@ -143,6 +145,7 @@ class CreateLesson:
                     },
                     time_scale=command.time_scale,
                     variants=merge_variants(lesson.variants, entry.variants),
+                    timers=entry.timers,
                     lesson_id=lesson.lesson_id,
                     lesson_position=entry.position,
                 )

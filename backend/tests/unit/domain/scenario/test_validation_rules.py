@@ -1,6 +1,7 @@
 """One failing fixture per §30.8 rule R01-R31 and I3's R32-R40, R43
 (`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3; R43 is I3 E8's,
-HLD 30 §30.13 — R41/R42 are reserved by the telephony HLD).
+HLD 30 §30.13 — R41/R42 are reserved by the telephony HLD), and I4's R44 (E31, HLD 71 §71.8:
+a `DEADLINE` rule's `max_offset_timer` names a card timer).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
 document (`scenarios/examples/apartment-fire/v1.yaml`). The test asserts that the resulting
@@ -325,6 +326,13 @@ def _r43_provenance_names_a_ticket_that_does_not_exist(document: Document) -> No
     document["provenance"] = {**PROVENANCE, "ticket": 33}
 
 
+def _r44_deadline_names_an_unknown_timer(document: Document) -> None:
+    # I4 E31: the norm read from a timer the card does not have.
+    config = _rule(document, "deadline_handoff")["config"]
+    del config["max_offset_ms"]
+    config["max_offset_timer"] = "handoff_within_ms"
+
+
 MUTATIONS: dict[int, Mutation] = {
     1: _r01_unknown_top_level_key,
     2: _r02_caller_fact_without_world_fact,
@@ -369,6 +377,7 @@ MUTATIONS: dict[int, Mutation] = {
     41: _r41_brigade_call_on_without_memo_mode,
     42: _r42_persona_override_without_the_phone,
     43: _r43_provenance_names_a_ticket_that_does_not_exist,
+    44: _r44_deadline_names_an_unknown_timer,
 }
 
 # Rule numbers a fixture may additionally report because the second rule is logically implied by
@@ -411,9 +420,43 @@ def test_mutation_table_covers_exactly_the_rule_registry() -> None:
     assert sorted(MUTATIONS) == list(VALIDATION_RULE_NUMBERS)
 
 
-def test_the_rule_registry_after_e6c() -> None:
-    """R01-R43: R41 from I3 E6b, R42 from I3 E6c, R43 from I3 E8."""
-    assert list(VALIDATION_RULE_NUMBERS) == list(range(1, 44))
+def test_the_rule_registry_after_e31() -> None:
+    """R01-R44: R41 from I3 E6b, R42 from I3 E6c, R43 from I3 E8, R44 from I4 E31."""
+    assert list(VALIDATION_RULE_NUMBERS) == list(range(1, 45))
+
+
+@pytest.mark.parametrize("timer", ["accept_within_ms", "fill_within_ms"])
+def test_r44_allows_a_deadline_that_reads_a_card_timer(timer: str) -> None:
+    """R44's allow half (I4 E31): the norm named by a timer instead of a literal."""
+    document = demo_document()
+    config = _rule(document, "deadline_handoff")["config"]
+    del config["max_offset_ms"]
+    config["max_offset_timer"] = timer
+    assert validate_scenario_document(document) == []
+
+
+@pytest.mark.parametrize("timer", ["not_completed_after_ms", "ACCEPT_WITHIN_MS", ""])
+def test_r44_refuses_a_timer_a_deadline_may_not_read(timer: str) -> None:
+    document = demo_document()
+    config = _rule(document, "deadline_handoff")["config"]
+    del config["max_offset_ms"]
+    config["max_offset_timer"] = timer
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {44}, violations
+    assert "deadline_handoff" in violations[0]
+
+
+@pytest.mark.parametrize("both", [True, False])
+def test_a_deadline_needs_exactly_one_norm(both: bool) -> None:
+    """Both a literal and a timer — or neither — is not a valid `DEADLINE` config (rule 20)."""
+    document = demo_document()
+    config = _rule(document, "deadline_handoff")["config"]
+    if both:
+        config["max_offset_timer"] = "accept_within_ms"
+    else:
+        del config["max_offset_ms"]
+    violations = validate_scenario_document(document)
+    assert _rule_numbers(violations) == {20}, violations
 
 
 def _phone_reference() -> ReferenceCatalog:

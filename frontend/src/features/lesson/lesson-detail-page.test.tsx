@@ -151,6 +151,7 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
             computed_from_event_count: 12,
             checksum: 'abc',
           },
+          unscored: null,
         },
       ],
       weighted_total: 8,
@@ -174,6 +175,78 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
     expect(await screen.findByText('8 / 10')).toBeInTheDocument();
     expect(screen.getByText(`${ru.lessonDetailWeightedTotalLabel}: 8 / 10`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: ru.lessonDetailReleaseButton })).toBeInTheDocument();
+  });
+
+  it('lists a card aborted by an early end unscored, with its time at work and its actions (I4 E31)', async () => {
+    const user = userEvent.setup();
+    const lesson = makeLesson({ state: 'ABORTED', completed_at: '2026-09-24T01:00:00Z' });
+    const report: LessonReport = {
+      lesson_id: 'lesson-1',
+      cards: [
+        {
+          position: 1,
+          session_id: 'sess-1',
+          weight: 2,
+          score: null,
+          unscored: {
+            state: 'ABORTED',
+            timeline: [
+              {
+                seq_no: 1,
+                event_type: 'SESSION_STARTED',
+                monotonic_offset_ms: 0,
+                timestamp_utc: '2026-09-24T00:00:00Z',
+                actor_type: 'INSTRUCTOR',
+                actor_id: null,
+                summary_ru: 'Session started',
+                payload: {},
+              },
+              {
+                seq_no: 2,
+                event_type: 'SESSION_ABORTED',
+                monotonic_offset_ms: 75_000,
+                timestamp_utc: '2026-09-24T00:01:15Z',
+                actor_type: 'INSTRUCTOR',
+                actor_id: null,
+                summary_ru: 'Session aborted',
+                payload: {},
+              },
+            ],
+            times: { started_at: '2026-09-24T00:00:00Z', aborted_at: '2026-09-24T00:01:15Z', elapsed_ms: 75_000 },
+          },
+        },
+        {
+          position: 2,
+          session_id: 'sess-2',
+          weight: 1,
+          score: null,
+          unscored: { state: 'ABORTED', timeline: [], times: { started_at: null, aborted_at: '2026-09-24T00:01:15Z', elapsed_ms: null } },
+        },
+      ],
+      weighted_total: 0,
+      weighted_max: 0,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/lessons/lesson-1') return jsonResponse(lesson);
+        if (url === '/api/v1/lessons/lesson-1/report') return jsonResponse(report);
+        if (url === '/api/v1/scenarios/versions/v1/summary') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+        if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
+        if (url === '/api/v1/lessons/lesson-1/weight-proposals') return notFound();
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findAllByText(ru.lessonReportCardUnscored)).toHaveLength(2);
+    expect(screen.getByText(`${ru.lessonReportCardElapsedLabel} 01:15`)).toBeInTheDocument();
+    expect(screen.getByText(ru.lessonReportCardNotStarted)).toBeInTheDocument();
+    expect(screen.getByText(`${ru.lessonDetailWeightedTotalLabel}: 0 / 0`)).toBeInTheDocument();
+    await user.click(screen.getByText(`${ru.lessonReportCardActionsLabel} (2)`));
+    expect(screen.getByText('Session aborted')).toBeInTheDocument();
   });
   it('asks for AI weight proposals, changes nothing until the instructor accepts the ticked ones', async () => {
     const user = userEvent.setup();

@@ -210,6 +210,11 @@ export interface paths {
          *     the scenario's `supported` set is `409 VARIANT_NOT_SUPPORTED`. The resolved variants are
          *     recorded in `SESSION_CREATED.variants` and returned in `SessionDetail.variants`. Under
          *     `card_source: GENERATED_CARD` the effective role chain is the suffix starting at DDS.
+         *
+         *     (additive, I4 E31) `timers` (`CardTimersRequest`, every key optional) overrides the
+         *     scenario `timers` per key: scenario ← request. The resolved timers are recorded in
+         *     `SESSION_CREATED.timers`; a `DEADLINE` rule with `max_offset_timer` reads the recorded
+         *     value (71 §71.8, D34). A result that breaks R39 is `422 VALIDATION_ERROR`.
          */
         post: operations["createSession"];
         delete?: never;
@@ -1764,6 +1769,10 @@ export interface paths {
          * @description Composes the existing per-session `ScoreReportView`s; no new evaluator. Trainee access
          *     follows the per-session release rule (a lesson release releases every card, `x-emits: []`).
          *     `409 REPORT_NOT_READY` until the lesson is `COMPLETED` or `ABORTED`.
+         *
+         *     (CHANGED, I4 E31) A card whose session was aborted (early lesson end, ТЗ ¶342–343) is listed
+         *     with `score: null` and `unscored` (state, timeline, times — the same timeline projection
+         *     and visibility as a card report; a lesson release covers it). The weighted sum ignores it.
          */
         get: operations["getLessonReport"];
         put?: never;
@@ -2289,6 +2298,8 @@ export interface components {
              */
             time_scale: number;
             variants?: components["schemas"]["VariantsRequest"];
+            /** @description (additive, I4 E31) Override of the scenario timers, recorded in `SESSION_CREATED.timers`. */
+            timers?: components["schemas"]["CardTimersRequest"] | null;
         };
         SessionParticipantView: {
             /** Format: uuid */
@@ -3644,6 +3655,8 @@ export interface components {
              * @default 1
              */
             weight: number;
+            /** @description (additive, I4 E31) Per-card timer override, resolved as scenario ← this entry. */
+            timers?: components["schemas"]["CardTimersRequest"] | null;
         };
         LessonCreateRequest: {
             title_ru: string;
@@ -3715,8 +3728,12 @@ export interface components {
                 /** Format: uuid */
                 session_id: string;
                 weight: number;
-                score: components["schemas"]["ScoreReportView"];
+                /** @description (CHANGED, I4 E31) `null` for an ABORTED card. */
+                score: components["schemas"]["ScoreReportView"] | null;
+                /** @description (additive, I4 E31) Present exactly when `score` is `null`. */
+                unscored: components["schemas"]["UnscoredCardView"] | null;
             }[];
+            /** @description Scored cards only (unchanged). */
             weighted_total: number;
             weighted_max: number;
         };
@@ -3791,6 +3808,27 @@ export interface components {
             /** @description From the snapshot for a ДДС row, from the live card for a 112 row (never WorldTruth). */
             address_line_ru: string | null;
             my_role_type: components["schemas"]["RoleType"] | null;
+        };
+        /**
+         * @description (I4 E31) A per-key override of the scenario's `timers` (HLD 30 §30.12), session ms; an
+         *     absent key keeps the scenario value. R39 applies to the resolved result.
+         */
+        CardTimersRequest: {
+            accept_within_ms?: number;
+            fill_within_ms?: number;
+            not_completed_after_ms?: number;
+        };
+        /** @description (I4 E31) An ABORTED card of the lesson (early end, ТЗ ¶342–343) — actions and times, no points (Q-E9b-6 open). */
+        UnscoredCardView: {
+            state: components["schemas"]["SessionState"];
+            timeline: components["schemas"]["TimelineEntryView"][];
+            times: {
+                /** Format: date-time */
+                started_at: string | null;
+                /** Format: date-time */
+                aborted_at: string | null;
+                elapsed_ms: number | null;
+            };
         };
     };
     responses: {

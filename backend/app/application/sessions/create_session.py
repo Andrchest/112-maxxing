@@ -38,6 +38,11 @@ step 7 rather than locking the version up front.
 created with all its sessions or not at all (HLD 70 §70.3.2). A lesson card carries `lesson_id` /
 `lesson_position`, recorded in `SESSION_CREATED` and on the session row; `SESSION_CREATED.timers`
 records the version's resolved per-card timers (§70.3.4) for every session.
+
+I4 E31 (HLD 71 §71.8, D34): `timers` — `SessionCreateRequest.timers` or a lesson card's
+`PlanEntry.timers` — overrides the version's timers key by key (scenario ← override,
+`resolve_card_timers`), and `SESSION_CREATED.timers` records the result. A result that breaks R39
+is `422 VALIDATION_ERROR`.
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ from app.domain.events.session_event import DomainEvent
 from app.domain.layers.copies import instantiate_caller_belief, instantiate_world_truth
 from app.domain.layers.operator_card import OperatorCard
 from app.domain.routing.catalog import ReferenceCatalog
+from app.domain.scenario.timers import CardTimersOverride, resolve_card_timers
 from app.domain.scenario.validation import validate_scenario_version
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.session import SimulationSession, create_session
@@ -148,6 +154,9 @@ class CreateSessionCommand:
     """`ParticipantAssignment.assigned_service_id` per user (HLD 70 §70.4.5, I3 E5b): the ДДС
     participant → service binding. Each id must be in the pack's service catalog
     (`422 SERVICE_UNKNOWN`); `validate` checks the rest (distinct, ДДС participants only)."""
+    timers: CardTimersOverride | None = None
+    """(I4 E31) `SessionCreateRequest.timers` / `PlanEntry.timers`: the per-key override of the
+    version's timers; `None` keeps them (HLD 71 §71.8)."""
 
 
 class CreateSession:
@@ -192,6 +201,7 @@ class CreateSession:
         _check_bound_services(reference, version.reference_pack_id, command.assigned_services)
         variants = resolve_variants(command.variants, version.scenario_variants)
         chain = effective_role_chain(version.role_chain, variants.card_source)
+        timers = resolve_card_timers(version.card_timers, command.timers)
 
         participants = tuple(command.participants)
         created, events = create_session(
@@ -210,6 +220,7 @@ class CreateSession:
             time_scale=command.time_scale,
             variants=variants,
             reference_pack=reference_pack,
+            timers=timers,
             lesson_id=command.lesson_id,
             lesson_position=command.lesson_position,
         )

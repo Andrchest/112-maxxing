@@ -940,4 +940,15 @@ export const ru = {
   ddsPhoneOnSoftphone: 'Разговор идёт на SIP-телефоне.',
   problemDialNumberUnknown: 'Набранный номер не найден в карточке.',
   problemNoActiveDdsSession: 'Нет активного занятия ДДС с телефоном.',
+  // -- I4 E31: per-card timers and unfinished cards in the lesson report (HLD 71 §71.8) ----------
+  lessonFormEntryTimersLabel: 'Временные рамки карточки',
+  lessonFormEntryTimersHint: 'Пустое поле — значение из сценария.',
+  lessonFormEntryAcceptTimerLabel: 'Решение «Принята» / «Не принята», с',
+  lessonFormEntryFillTimerLabel: 'Заполнение карточки, с',
+  lessonFormEntryNotCompletedTimerLabel: '«Не завершено» через, с',
+  lessonFormEntryTimerPlaceholder: 'по сценарию',
+  lessonReportCardUnscored: 'Без оценки: карточка не завершена',
+  lessonReportCardNotStarted: 'карточка не поступила',
+  lessonReportCardElapsedLabel: 'время работы',
+  lessonReportCardActionsLabel: 'Действия',
 } as const;

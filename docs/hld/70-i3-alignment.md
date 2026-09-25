@@ -190,6 +190,7 @@ class PlanEntry(BaseModel):
     variants: PartialVariants | None = None           # per-card override within the version's support
     participants: tuple[UserId, ...] | None = None    # E9a hook: per-workstation tasks; None = all
     weight: float = 1.0                               # E9a hook: difficulty weight in the lesson report
+    timers: CardTimersOverride | None = None          # I4 E31 (71 §71.8): per-key timer override, scenario ← entry
 
 class Lesson(BaseModel):
     lesson_id: LessonId
@@ -248,7 +249,10 @@ timers:                         # all in SESSION (running) milliseconds; default
 Session ms, not wall ms, so `DEADLINE` rules and deadline events are deterministic and independent of
 `time_scale`. The countdown **start** of each timer: `accept_within_ms` — the leg's `HANDOFF_RECEIVED`;
 `fill_within_ms` — `CALL_ANSWERED` (CALLER_VOICE) — not used under GENERATED_CARD, where no 112 stage
-runs; `not_completed_after_ms` — `HANDOFF_CREATED`. A queued card is timing: in a lesson a card
+runs; `not_completed_after_ms` — `HANDOFF_CREATED`. **I4 E31 (71 §71.8, D34):** the instructor
+overrides them per key at `createSession` (`timers`) or per lesson card (`PlanEntry.timers`) —
+scenario ← override, R39 on the result, recorded in `SESSION_CREATED.timers` — and a `DEADLINE`
+rule with `max_offset_timer` reads the recorded value. A queued card is timing: in a lesson a card
 *arrives* when its session starts, its legs are created at that moment (GENERATED_CARD) and its accept
 timer runs whether or not a ДДС trainee has opened it (chat 23.09 14:31, REQ-5909/5910).
 
@@ -275,7 +279,9 @@ stream is identical at any tick rate (INV 7). The scoring of the *late action it
   (ui-check D-8) and the 112 «реестр» (D-2). Rows carry the deadline offsets and the session's current
   offset; the client renders countdowns and never decides a status.
 - Lesson report: the N `ScoreReport`s plus a weighted sum (`PlanEntry.weight`, 1.0 until E9a). No new
-  evaluator: each card's own `DEADLINE` rules already penalise the card left waiting.
+  evaluator: each card's own `DEADLINE` rules already penalise the card left waiting. I4 E31 (71
+  §71.8): an `ABORTED` card (a lesson ended early) is listed with `score: null` and `unscored`
+  (state, timeline, times); the weighted sum ignores it.
 - Realtime: the list page opens one existing `/ws/sessions/{id}` per active card; a lesson-level feed is
   a later addition, not a prerequisite. `incidents.display_number` (a sequence) is the «Происшествие
   NNNNNNNN» number.

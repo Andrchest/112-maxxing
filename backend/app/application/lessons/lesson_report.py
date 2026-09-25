@@ -10,6 +10,13 @@ weighted by `PlanEntry.weight` (1.0 until E9a): `weighted_total = Σ weight · t
 card is never scored (SPEC §28) and so is listed nowhere in the sum. A trainee's report lists only
 the cards they took part in.
 
+**ABORTED cards are listed unscored (I4 E31, HLD 71 §71.8, D34; ТЗ ¶342–343).** A lesson ended
+early keeps its unfinished cards in the report: each ABORTED card is listed with `score: None` and
+`unscored` — its state, its timeline and its times (`GetSessionReport.unscored`: the same timeline
+projection and visibility as a report). A lesson release covers them (they have no per-session
+release). The weighted sum is unchanged: it counts scored cards only. Scoring an unfinished card is
+not built (Q-E9b-6). Only terminal cards are listed: `abortLesson` aborts every other card.
+
 The lesson must have ended (`COMPLETED` or `ABORTED`), else `409 REPORT_NOT_READY`.
 """
 
@@ -24,7 +31,11 @@ from app.application.lessons.errors import (
     NotALessonParticipantError,
 )
 from app.application.ports.unit_of_work import UnitOfWorkFactory
-from app.application.reports.assemble_report import GetSessionReport, SessionReportView
+from app.application.reports.assemble_report import (
+    GetSessionReport,
+    SessionReportView,
+    UnscoredSessionView,
+)
 from app.application.sessions.authorisation import ParticipantNotAssignedError
 from app.domain.common.ids import LessonId, SessionId
 from app.domain.enums import SessionState
@@ -34,10 +45,14 @@ __all__ = ["GetLessonReport", "LessonReportCard", "LessonReportView"]
 
 @dataclass(frozen=True)
 class LessonReportCard:
+    """One card: `report` for a COMPLETED card, `unscored` for an ABORTED one (I4 E31) —
+    exactly one of the two is set."""
+
     position: int
     session_id: SessionId
     weight: float
-    report: SessionReportView
+    report: SessionReportView | None
+    unscored: UnscoredSessionView | None = None
 
 
 @dataclass(frozen=True)
@@ -71,29 +86,37 @@ class GetLessonReport:
             cards = await uow.lessons.list_cards(lesson_id)
             await uow.commit()
 
-        reported: list[LessonReportCard] = []
+        lesson_released = lesson.report_released_at is not None
+        listed: list[LessonReportCard] = []
         for card in cards:
-            if card.state is not SessionState.COMPLETED:
+            if card.state not in (SessionState.COMPLETED, SessionState.ABORTED):
                 continue
+            weight = lesson.entry(card.position).weight
             try:
-                report = await self._get_session_report(card.session_id, user)
+                if card.state is SessionState.COMPLETED:
+                    report = await self._get_session_report(card.session_id, user)
+                    listed.append(
+                        LessonReportCard(card.position, card.session_id, weight, report=report)
+                    )
+                else:
+                    unscored = await self._get_session_report.unscored(
+                        card.session_id, user, released=lesson_released
+                    )
+                    listed.append(
+                        LessonReportCard(
+                            card.position, card.session_id, weight, report=None, unscored=unscored
+                        )
+                    )
             except ParticipantNotAssignedError:
                 continue  # a trainee's report lists only the cards they took part in
-            reported.append(
-                LessonReportCard(
-                    position=card.position,
-                    session_id=card.session_id,
-                    weight=lesson.entry(card.position).weight,
-                    report=report,
-                )
-            )
+        scored = [(card.weight, card.report) for card in listed if card.report is not None]
         return LessonReportView(
             lesson_id=lesson_id,
-            cards=tuple(reported),
+            cards=tuple(listed),
             weighted_total=sum(
-                card.weight * card.report.score_report.total_points for card in reported
+                weight * report.score_report.total_points for weight, report in scored
             ),
             weighted_max=sum(
-                card.weight * card.report.score_report.total_max_points for card in reported
+                weight * report.score_report.total_max_points for weight, report in scored
             ),
         )

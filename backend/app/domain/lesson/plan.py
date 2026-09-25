@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import ScenarioVersionId, UserId
 from app.domain.enums import RoleType, ServiceId
+from app.domain.scenario.timers import CardTimersOverride
 from app.domain.session.variants import PartialVariants
 
 __all__ = [
@@ -101,6 +102,9 @@ class PlanEntry(BaseModel):
     """E9a hook — per-workstation tasks; `None` = every lesson participant."""
     weight: float = Field(default=1.0, gt=0)
     """E9a hook — the card's weight in the lesson report."""
+    timers: CardTimersOverride | None = None
+    """(I4 E31, HLD 71 §71.8, D34) The card's timer override, resolved as scenario ← this entry
+    and recorded in its session's `SESSION_CREATED.timers`; `None` keeps the scenario's timers."""
 
 
 def validate_plan(entries: tuple[PlanEntry, ...]) -> tuple[PlanEntry, ...]:

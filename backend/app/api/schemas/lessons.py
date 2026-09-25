@@ -15,8 +15,14 @@ from uuid import UUID
 from pydantic import Field, model_validator
 
 from app.api.schemas.common import ApiModel
-from app.api.schemas.reports import ScoreReportViewSchema, score_report_view_schema
+from app.api.schemas.reports import (
+    ScoreReportViewSchema,
+    TimelineEntryViewSchema,
+    score_report_view_schema,
+    timeline_entry_schema,
+)
 from app.api.schemas.sessions import (
+    CardTimersRequestSchema,
     ParticipantAssignmentSchema,
     SessionVariantsSchema,
     VariantsRequestSchema,
@@ -25,6 +31,7 @@ from app.application.lessons.lesson_report import LessonReportView
 from app.application.lessons.queries import IncidentListItemView, LessonDetailView
 from app.application.lessons.weight_proposals import WeightProposalsView
 from app.application.ports.lesson_repository import StoredLessonListing
+from app.application.reports.assemble_report import UnscoredSessionView
 from app.domain.common.ids import ScenarioVersionId, TraineeGroupId, UserId
 from app.domain.dds.card_status import CardStatus
 from app.domain.enums import RoleType, ServiceId, SessionMode, SessionState
@@ -42,6 +49,8 @@ __all__ = [
     "LessonReportSchema",
     "LessonSessionViewSchema",
     "PlanEntrySchema",
+    "UnscoredCardTimesSchema",
+    "UnscoredCardViewSchema",
     "WeightProposalAcceptRequestSchema",
     "WeightProposalLineSchema",
     "WeightProposalSetSchema",
@@ -84,6 +93,8 @@ class PlanEntrySchema(ApiModel):
     variants: VariantsRequestSchema | None = None
     participants: list[UUID] | None = None
     weight: float = Field(default=1.0, gt=0)
+    timers: CardTimersRequestSchema | None = None
+    """(additive, I4 E31) Per-card timer override, resolved as scenario ← this entry."""
 
     def to_domain(self) -> PlanEntry:
         return PlanEntry(
@@ -97,6 +108,7 @@ class PlanEntrySchema(ApiModel):
                 else tuple(UserId(user_id) for user_id in self.participants)
             ),
             weight=self.weight,
+            timers=None if self.timers is None else self.timers.to_domain(),
         )
 
     @classmethod
@@ -122,6 +134,7 @@ class PlanEntrySchema(ApiModel):
                 else [UUID(str(user_id)) for user_id in entry.participants]
             ),
             weight=entry.weight,
+            timers=None if entry.timers is None else CardTimersRequestSchema.of(entry.timers),
         )
 
 
@@ -198,13 +211,32 @@ class LessonDetailSchema(ApiModel):
     group_id: UUID | None
 
 
+class UnscoredCardTimesSchema(ApiModel):
+    """`UnscoredCardView.times` (I4 E31)."""
+
+    started_at: datetime | None
+    aborted_at: datetime | None
+    elapsed_ms: int | None = Field(ge=0)
+
+
+class UnscoredCardViewSchema(ApiModel):
+    """`UnscoredCardView` (I4 E31, HLD 71 §71.8): an ABORTED card of the lesson — actions and
+    times, no points (Q-E9b-6)."""
+
+    state: SessionState
+    timeline: list[TimelineEntryViewSchema]
+    times: UnscoredCardTimesSchema
+
+
 class LessonReportCardSchema(ApiModel):
-    """One card of `LessonReport.cards`."""
+    """One card of `LessonReport.cards` — `score` for a scored card, `unscored` (I4 E31) for an
+    ABORTED one; exactly one of the two is non-null."""
 
     position: int = Field(ge=1)
     session_id: UUID
     weight: float
-    score: ScoreReportViewSchema
+    score: ScoreReportViewSchema | None
+    unscored: UnscoredCardViewSchema | None
 
 
 class LessonReportSchema(ApiModel):
@@ -343,15 +375,21 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
     cards: list[LessonReportCardSchema] = []
     for card in view.cards:
         report = card.report
-        rules_by_id = {rule.rule_id: rule for rule in report.scoring_rules}
         cards.append(
             LessonReportCardSchema(
                 position=card.position,
                 session_id=UUID(str(card.session_id)),
                 weight=card.weight,
-                score=score_report_view_schema(
-                    report.score_report, rules_by_id, checksum=report.checksum
+                score=(
+                    None
+                    if report is None
+                    else score_report_view_schema(
+                        report.score_report,
+                        {rule.rule_id: rule for rule in report.scoring_rules},
+                        checksum=report.checksum,
+                    )
                 ),
+                unscored=None if card.unscored is None else unscored_card_schema(card.unscored),
             )
         )
     return LessonReportSchema(
@@ -359,6 +397,16 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
         cards=cards,
         weighted_total=view.weighted_total,
         weighted_max=view.weighted_max,
+    )
+
+
+def unscored_card_schema(view: UnscoredSessionView) -> UnscoredCardViewSchema:
+    return UnscoredCardViewSchema(
+        state=view.state,
+        timeline=[timeline_entry_schema(entry) for entry in view.timeline],
+        times=UnscoredCardTimesSchema(
+            started_at=view.started_at, aborted_at=view.aborted_at, elapsed_ms=view.elapsed_ms
+        ),
     )
 
 

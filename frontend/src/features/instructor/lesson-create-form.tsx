@@ -12,6 +12,10 @@
 // scenario and version option shows its «Сложность» and the scenario list filters by it. The
 // per-entry weight is a plain number, default 1 — the difficulty is shown beside it, never
 // turned into a weight here (AI proposals are reviewed on the lesson page).
+//
+// I4 E31 (71 §71.8, D34; ТЗ ¶240): each entry may override the scenario's per-card timers
+// (`PlanEntry.timers`, entered in seconds, sent in session ms). An empty field keeps the scenario's
+// value — the backend resolves scenario ← entry and refuses a result that breaks R39.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
@@ -32,6 +36,7 @@ import {
   queryKeys,
   type ArrivalKind,
   type CardSource,
+  type CardTimersRequest,
   type DdsBrigadeCall,
   type DdsCardCheck,
   type DdsMode,
@@ -161,6 +166,38 @@ function buildGroupRows(
   });
 }
 
+/** The three per-card timers of `CardTimersRequest`, in the order the form shows them. */
+type TimerKey = keyof CardTimersRequest;
+
+const TIMER_KEYS: readonly TimerKey[] = ['accept_within_ms', 'fill_within_ms', 'not_completed_after_ms'];
+
+const TIMER_LABEL_KEY: Record<TimerKey, keyof typeof ru> = {
+  accept_within_ms: 'lessonFormEntryAcceptTimerLabel',
+  fill_within_ms: 'lessonFormEntryFillTimerLabel',
+  not_completed_after_ms: 'lessonFormEntryNotCompletedTimerLabel',
+};
+
+type TimerSeconds = Record<TimerKey, string>;
+
+const NO_TIMER_OVERRIDE: TimerSeconds = { accept_within_ms: '', fill_within_ms: '', not_completed_after_ms: '' };
+
+/** A typed value is a positive number of seconds; an empty one keeps the scenario's timer. */
+function timerSecondsValid(value: string): boolean {
+  if (value.trim() === '') return true;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0;
+}
+
+/** `{ timers }` in session ms, or `{}` when every field is empty (the entry sends no `timers`). */
+function timersField(timerSeconds: TimerSeconds): { timers?: CardTimersRequest } {
+  const timers: CardTimersRequest = {};
+  for (const key of TIMER_KEYS) {
+    const value = timerSeconds[key].trim();
+    if (value !== '') timers[key] = Math.round(Number(value) * 1000);
+  }
+  return Object.keys(timers).length > 0 ? { timers } : {};
+}
+
 interface PlanEntryRow {
   key: number;
   scenarioId: string;
@@ -173,6 +210,8 @@ interface PlanEntryRow {
   weight: number;
   /** I3 E9a: the ticked participants' user ids, or `null` for every lesson participant. */
   participantUserIds: string[] | null;
+  /** I4 E31: the timer override as typed, in seconds; `''` keeps the scenario's value. */
+  timerSeconds: TimerSeconds;
 }
 
 function makeEntry(key: number, defaultOffsetMs: number): PlanEntryRow {
@@ -187,6 +226,7 @@ function makeEntry(key: number, defaultOffsetMs: number): PlanEntryRow {
     variants: null,
     weight: 1,
     participantUserIds: null,
+    timerSeconds: NO_TIMER_OVERRIDE,
   };
 }
 
@@ -207,10 +247,21 @@ interface PlanEntryFieldsProps {
   canRemove: boolean;
   difficultyFilter: number | null;
   onChange: (patch: Partial<PlanEntryRow>) => void;
+  /** I4 E31: a timer edit changes nothing the participants derive from (no refresh). */
+  onTimersChange: (timerSeconds: TimerSeconds) => void;
   onRemove: () => void;
 }
 
-function PlanEntryFields({ row, index, isFirst, canRemove, difficultyFilter, onChange, onRemove }: PlanEntryFieldsProps) {
+function PlanEntryFields({
+  row,
+  index,
+  isFirst,
+  canRemove,
+  difficultyFilter,
+  onChange,
+  onTimersChange,
+  onRemove,
+}: PlanEntryFieldsProps) {
   const scenariosQuery = useQuery({
     queryKey: queryKeys.scenarioPicker.list(),
     queryFn: () => listScenarioPage({ limit: 200 }),
@@ -374,6 +425,25 @@ function PlanEntryFields({ row, index, isFirst, canRemove, difficultyFilter, onC
         <p className="text-xs text-muted-foreground">{t('lessonFormEntryWeightHint')}</p>
       </div>
 
+      <fieldset className="flex flex-col gap-2" data-slot="entry-timers">
+        <legend className="text-xs font-medium text-muted-foreground">{t('lessonFormEntryTimersLabel')}</legend>
+        {TIMER_KEYS.map((timerKey) => (
+          <div key={timerKey} className="flex flex-col gap-1.5">
+            <Label htmlFor={`lesson-entry-${row.key}-timer-${timerKey}`}>{t(TIMER_LABEL_KEY[timerKey])}</Label>
+            <Input
+              id={`lesson-entry-${row.key}-timer-${timerKey}`}
+              type="number"
+              min={1}
+              placeholder={t('lessonFormEntryTimerPlaceholder')}
+              value={row.timerSeconds[timerKey]}
+              aria-invalid={!timerSecondsValid(row.timerSeconds[timerKey])}
+              onChange={(event) => onTimersChange({ ...row.timerSeconds, [timerKey]: event.target.value })}
+            />
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground">{t('lessonFormEntryTimersHint')}</p>
+      </fieldset>
+
       {canRemove ? (
         <Button type="button" variant="outline" size="sm" onClick={onRemove}>
           {t('lessonFormEntryRemoveButton')}
@@ -501,6 +571,10 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     });
   }
 
+  function updateEntryTimers(index: number, timerSeconds: TimerSeconds) {
+    setEntries((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, timerSeconds } : row)));
+  }
+
   function addEntry() {
     setEntries((rows) => {
       const maxOffset = rows.reduce((max, row) => (row.arrivalKind === 'AT_OFFSET' ? Math.max(max, row.offsetMs) : max), 0);
@@ -544,6 +618,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
   const entriesValid =
     entries.length > 0 &&
     entries.every((row) => row.versionId !== '') &&
+    entries.every((row) => TIMER_KEYS.every((key) => timerSecondsValid(row.timerSeconds[key]))) &&
     entries[0]?.arrivalKind === 'AT_OFFSET' &&
     everyEntryHasAParticipant;
   const canCreate =
@@ -582,6 +657,8 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
         weight: row.weight,
         // I3 E9a: an entry ticked for everyone sends no subset (every lesson participant).
         ...(row.participantUserIds === null ? {} : { participants: effectiveTicks(row) }),
+        // I4 E31: no key at all when nothing is overridden — the request is unchanged from before.
+        ...timersField(row.timerSeconds),
       })),
       ...(groupId !== '' ? { group_id: groupId } : {}),
     };
@@ -667,6 +744,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
               canRemove={entries.length > 1}
               difficultyFilter={difficultyFilter}
               onChange={(patch) => updateEntry(index, patch)}
+              onTimersChange={(timerSeconds) => updateEntryTimers(index, timerSeconds)}
               onRemove={() => removeEntry(index)}
             />
           ))}
