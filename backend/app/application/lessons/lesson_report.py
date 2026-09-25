@@ -17,6 +17,13 @@ projection and visibility as a report). A lesson release covers them (they have 
 release). The weighted sum is unchanged: it counts scored cards only. Scoring an unfinished card is
 not built (Q-E9b-6). Only terminal cards are listed: `abortLesson` aborts every other card.
 
+**Norms and counters (I4 E33, HLD 71 §71.10).** A scored card's `norms` (its times against the
+session's recorded timers), `failed_rule_count` and `critical_error_count` come with its
+`getSessionReport` view (`SessionReportView.norms` …) — read, never re-scored (D11). An unscored
+card has none of them. `getLessonReportCsv` renders this same view
+(`app.application.reports.csv_export.lesson_report_csv`), so the file and the JSON carry the
+same numbers.
+
 The lesson must have ended (`COMPLETED` or `ABORTED`), else `409 REPORT_NOT_READY`.
 """
 

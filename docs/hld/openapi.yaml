@@ -64,6 +64,8 @@ tags:
     description: (additive, I3 E6e) The SIP gateway's endpoints — softphone dial, leg reports, call read, per-user HA1 (80 §80.2.3). Service credential only.
   - name: materials
     description: (additive, I4 E34) Methodical materials — the reference base (71 §71.11).
+  - name: statistics
+    description: (additive, I4 E33) Per-trainee statistics and own history (71 §71.10).
 
 paths:
 
@@ -2799,6 +2801,11 @@ paths:
         (CHANGED, I4 E31) A card whose session was aborted (early lesson end, ТЗ ¶342–343) is listed
         with `score: null` and `unscored` (state, timeline, times — the same timeline projection
         and visibility as a card report; a lesson release covers it). The weighted sum ignores it.
+
+        (ADDITIVE, I4 E33) Every scored card carries `norms` (measured vs the system's norm — the
+        session's recorded timers), `failed_rule_count` and `critical_error_count` (the whole
+        session's stored results). Nothing is re-scored (D11). An unscored card has `norms: []`
+        and `null` counters. `getLessonReportCsv` is the same view as a file.
       x-action: '-'
       x-emits: []
       parameters:
@@ -3225,9 +3232,95 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TrainingMaterialView' }
+  # ------------------------------------ I4 E33: reports, statistics, CSV ----
+  /api/v1/lessons/{lesson_id}/report.csv:
+    get:
+      tags: [lessons]
+      operationId: getLessonReportCsv
+      summary: (additive, I4 E33) The lesson report as CSV — ТЗ ¶360, ¶379.
+      description: |
+        Same access and numbers as `getLessonReport`. UTF-8 with BOM, `;` separator, Russian
+        column headers, decimal comma; one row per card and norm (a card without a norm gets one
+        row), then the weighted total.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: The CSV file.
+          content:
+            text/csv:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/statistics:
+    get:
+      tags: [statistics]
+      operationId: getTraineeStatistics
+      summary: (additive, I4 E33) Per-trainee statistics across sessions and lessons — ТЗ ¶101, ¶138, ¶225, ¶232.
+      description: |
+        INSTRUCTOR / ADMIN: every trainee (optionally one, or one group). TRAINEE: self only —
+        asking for another `trainee_id` is `403 FORBIDDEN_FOR_ROLE` — over the sessions whose
+        report is visible to them. Read from stored scores; nothing is re-scored (D11). The window
+        is on `completed_at`. An unknown `trainee_id` / `group_id` is `404`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: One row per trainee.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraineeStatistics' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/statistics.csv:
+    get:
+      tags: [statistics]
+      operationId: getTraineeStatisticsCsv
+      summary: (additive, I4 E33) getTraineeStatistics as CSV (same access, same numbers) — ТЗ ¶360, ¶379.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma).
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/me/history:
+    get:
+      tags: [statistics]
+      operationId: getMyHistory
+      summary: (additive, I4 E33) The caller's own statistics plus their completed sessions with score and date — ТЗ ¶252, ¶265, ¶266.
+      description: A session appears with its score only once its report is visible to the caller (the existing release rule).
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Own history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyHistory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
 
@@ -3287,6 +3380,30 @@ components:
       name: material_id
       in: path
       required: true
+    # ---------------------------------------------- I4 E33: statistics ----
+    FromParam:
+      name: from
+      in: query
+      required: false
+      description: (additive, I4 E33) Inclusive lower bound (UTC).
+      schema: { type: string, format: date-time }
+    ToParam:
+      name: to
+      in: query
+      required: false
+      description: (additive, I4 E33) Exclusive upper bound (UTC).
+      schema: { type: string, format: date-time }
+    TraineeIdQueryParam:
+      name: trainee_id
+      in: query
+      required: false
+      description: (additive, I4 E33)
+      schema: { type: string, format: uuid }
+    GroupIdQueryParam:
+      name: group_id
+      in: query
+      required: false
+      description: (additive, I4 E33)
       schema: { type: string, format: uuid }
 
   responses:
@@ -6236,6 +6353,12 @@ components:
                 oneOf:
                   - $ref: '#/components/schemas/UnscoredCardView'
                   - type: 'null'
+              norms:
+                description: (additive, I4 E33) Per card and per leg; `[]` for an unscored card.
+                type: array
+                items: { $ref: '#/components/schemas/NormView' }
+              failed_rule_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
+              critical_error_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
         weighted_total: { type: number, description: Scored cards only (unchanged). }
         weighted_max: { type: number }
     # ------------------------------------------- I3 E9a: weights & groups ----
@@ -6433,3 +6556,67 @@ components:
         uploaded_by_user_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         archived_at: { type: [string, 'null'], format: date-time }
+    # ------------------------------------ I4 E33: reports, statistics, CSV ----
+    NormView:
+      description: (I4 E33) One measured interval against the norm the system holds (the session's recorded timers).
+      type: object
+      additionalProperties: false
+      required: [kind, service_id, measured_ms, norm_ms, deviation_ms]
+      properties:
+        kind: { type: string, enum: [ACCEPT, FILL] }
+        service_id:
+          type: [string, 'null']
+          description: The leg's service for ACCEPT; `null` for the 112 FILL interval.
+        measured_ms: { type: [integer, 'null'], minimum: 0 }
+        norm_ms: { type: integer, minimum: 0 }
+        deviation_ms:
+          type: [integer, 'null']
+          description: measured − norm (positive = late); `null` when not measured.
+    TraineeStatisticsRow:
+      description: (I4 E33) One trainee's aggregates over their completed, scored sessions.
+      type: object
+      additionalProperties: false
+      required: [trainee_user_id, display_name_ru, session_count, lesson_count, average_percent, failed_rules_by_category, accept_deviation_ms_avg, fill_deviation_ms_avg]
+      properties:
+        trainee_user_id: { type: string, format: uuid }
+        display_name_ru: { type: string }
+        session_count: { type: integer, minimum: 0 }
+        lesson_count: { type: integer, minimum: 0 }
+        average_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        failed_rules_by_category:
+          type: object
+          description: '`ScoringCategory` → count of failed rules.'
+          additionalProperties: { type: integer, minimum: 0 }
+        accept_deviation_ms_avg: { type: [number, 'null'] }
+        fill_deviation_ms_avg: { type: [number, 'null'] }
+    TraineeStatistics:
+      description: (I4 E33) `getTraineeStatistics`.
+      type: object
+      additionalProperties: false
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/TraineeStatisticsRow' }
+    MyHistorySession:
+      description: (I4 E33) One of the caller's completed sessions; `score_percent` / `failed_rule_count` are `null` until its report is visible to them.
+      type: object
+      additionalProperties: false
+      required: [session_id, lesson_id, scenario_title_ru, completed_at, score_percent, failed_rule_count]
+      properties:
+        session_id: { type: string, format: uuid }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        scenario_title_ru: { type: string }
+        completed_at: { type: string, format: date-time }
+        score_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        failed_rule_count: { type: [integer, 'null'], minimum: 0 }
+    MyHistory:
+      description: (I4 E33) `getMyHistory`.
+      type: object
+      additionalProperties: false
+      required: [statistics, sessions]
+      properties:
+        statistics: { $ref: '#/components/schemas/TraineeStatisticsRow' }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/MyHistorySession' }

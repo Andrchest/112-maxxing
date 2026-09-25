@@ -1,0 +1,100 @@
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HistoryPage } from './history-page';
+import { ru } from '@/shared/i18n/ru';
+import { useAuthStore } from '@/entities/session';
+import type { MyHistory } from '@/shared/api';
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+function renderPage() {
+  useAuthStore.setState({
+    token: 'jwt-token',
+    isAuthenticated: true,
+    user: { id: 'trainee-1', username: 'trainee1', display_name_ru: 'Trainee One', user_role: 'TRAINEE', created_at: '2026-09-21T00:00:00Z' },
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/history']}>
+        <HistoryPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const HISTORY: MyHistory = {
+  statistics: {
+    trainee_user_id: 'trainee-1',
+    display_name_ru: 'Trainee One',
+    session_count: 1,
+    lesson_count: 1,
+    average_percent: 80,
+    failed_rules_by_category: { CARD_QUALITY: 2 },
+    accept_deviation_ms_avg: 5_000,
+    fill_deviation_ms_avg: null,
+  },
+  sessions: [
+    {
+      session_id: 'sess-2',
+      lesson_id: null,
+      scenario_title_ru: 'Gas leak',
+      completed_at: '2026-09-25T10:00:00Z',
+      score_percent: null,
+      failed_rule_count: null,
+    },
+    {
+      session_id: 'sess-1',
+      lesson_id: 'lesson-1',
+      scenario_title_ru: 'Apartment fire',
+      completed_at: '2026-09-24T10:00:00Z',
+      score_percent: 80,
+      failed_rule_count: 2,
+    },
+  ],
+};
+
+// I4 E33 (71 §71.10): the trainee's /history — own summary and completed sessions.
+describe('HistoryPage', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useAuthStore.setState({ token: null, isAuthenticated: false, user: null });
+  });
+
+  it('shows the own summary and each completed session, an unreleased one without its score', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/me/history') return jsonResponse(HISTORY);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Apartment fire')).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="history-average"]')).toHaveTextContent('80%');
+    expect(screen.getByText(`${ru.scoringCategoryCardQuality}: 2`)).toBeInTheDocument();
+    expect(screen.getByText('+00:05')).toBeInTheDocument();
+
+    const [unreleased, released] = screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'history-row');
+    expect(unreleased).toHaveTextContent('Gas leak');
+    expect(unreleased).toHaveTextContent(ru.historyScoreNotReleased);
+    expect(released).toHaveTextContent('80%');
+    const links = screen.getAllByRole('link', { name: ru.historyOpenReport });
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(['/report/sess-2', '/report/sess-1']);
+  });
+
+  it('says so when there is no completed session yet', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ ...HISTORY, sessions: [], statistics: { ...HISTORY.statistics, session_count: 0 } })),
+    );
+    renderPage();
+    expect(await screen.findByText(ru.historyEmpty)).toBeInTheDocument();
+  });
+});

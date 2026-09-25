@@ -20,6 +20,8 @@ import { ScenariosPage } from '@/features/instructor/scenarios-page';
 import { LessonBoardPage } from '@/features/instructor/lesson-board-page';
 import { MaterialsPage } from '@/features/instructor/materials-page';
 import { MaterialsReferencePage } from '@/features/materials/materials-reference-page';
+import { StatisticsPage } from '@/features/statistics/statistics-page';
+import { HistoryPage } from '@/features/history/history-page';
 import { NotFoundPage } from '@/app/not-found-page';
 import { useAuthStore, homeRouteForRole } from '@/entities/session';
 
@@ -72,6 +74,8 @@ export function AppRoutes() {
           <Route path="/dds/*" element={<DdsPage />} />
           {/* I4 E34 (71 §71.11, ТЗ ¶256): «Справочная база» — read-only for a trainee. */}
           <Route path="/materials" element={<MaterialsReferencePage />} />
+          {/* I4 E33 (71 §71.10): the trainee's own results and history. */}
+          <Route path="/history" element={<HistoryPage />} />
         </Route>
         <Route element={<RequireRole roles={['INSTRUCTOR', 'ADMIN']} />}>
           {/* E17-C: more specific than /instructor/*, so react-router ranks it first regardless
@@ -88,6 +92,8 @@ export function AppRoutes() {
           <Route path="/instructor/board/:lessonId" element={<LessonBoardPage />} />
           {/* I4 E34 (71 §71.11, ТЗ ¶227, ¶387, ¶370): upload, list and archive materials. */}
           <Route path="/instructor/materials" element={<MaterialsPage />} />
+          {/* I4 E33 (71 §71.10): per-trainee statistics, ranked ahead of /instructor/* the same way. */}
+          <Route path="/instructor/statistics" element={<StatisticsPage />} />
           <Route path="/instructor/*" element={<InstructorPage />} />
         </Route>
         {/* E16: the report is trainee-visible too (SPEC §29, D12 design decision #4) — the

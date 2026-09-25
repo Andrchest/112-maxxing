@@ -66,6 +66,7 @@ from app.api.routers import (
     scenarios,
     sessions,
     snapshot,
+    statistics,
     telephony,
     users,
 )
@@ -144,6 +145,8 @@ def create_app(
     app.include_router(groups.router)
     app.include_router(telephony.router)
     app.include_router(materials.router)
+    # I4 E33: per-trainee statistics, own history and their CSV (`71-i4-wave4.md` §71.10).
+    app.include_router(statistics.router)
 
     return app
 

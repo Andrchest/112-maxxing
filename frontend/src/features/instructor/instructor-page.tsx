@@ -49,6 +49,10 @@ export function InstructorPage() {
           <Button asChild variant="ghost" size="sm">
             <Link to="/instructor/materials">{t('navMaterialsLink')}</Link>
           </Button>
+          {/* I4 E33 (71 §71.10): per-trainee statistics and their CSV. */}
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/instructor/statistics">{t('navStatisticsLink')}</Link>
+          </Button>
           <LogoutButton />
         </nav>
       </div>

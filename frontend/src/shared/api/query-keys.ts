@@ -77,4 +77,10 @@ export const queryKeys = {
   materials: {
     list: (includeArchived: boolean) => ['materials', 'list', includeArchived] as const,
   },
+  // -- I4 E33: per-trainee statistics and the trainee's own history (71 §71.10) ---------------
+  statistics: {
+    list: (groupId?: string, from?: string, to?: string) =>
+      ['statistics', 'list', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
+    myHistory: () => ['statistics', 'my-history'] as const,
+  },
 } as const;

@@ -166,6 +166,8 @@ from app.application.sessions.start_session import StartSession
 from app.application.simulation.responder_scripts import ScenarioResponderScripts
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
+from app.application.statistics.ports import StatisticsReader
+from app.application.statistics.trainee_statistics import GetMyHistory, GetTraineeStatistics
 from app.application.telephony.dial_from_sip import DialFromSip
 from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
 from app.application.telephony.report_sip_leg import ReportSipLeg
@@ -198,6 +200,7 @@ from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.persistence.admin_monitoring_repository import SqlAlchemyAdminMonitoring
 from app.infrastructure.persistence.audit_log_repository import SqlAlchemyAuditLog
+from app.infrastructure.persistence.statistics_reader import SqlAlchemyStatisticsReader
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
 from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCache
@@ -434,6 +437,12 @@ class Container:
         self.audit_recorder: AuditRecorder = audit_log
         self.audit_reader: AuditReader = audit_log
         # --- end I4 E25 -----------------------------------------------------------------------
+        # --- I4 E33 statistics (`71-i4-wave4.md` §71.10) --------------------------------------
+        #
+        # The statistics' read model: stored scores, participants and the norms' few events, in
+        # set-based reads of its own (never the Unit of Work). A test may replace it.
+        self.statistics_reader: StatisticsReader = SqlAlchemyStatisticsReader(self.session_factory)
+        # --- end I4 E33 -----------------------------------------------------------------------
 
         # --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) ----------------------------------
         #
@@ -1177,6 +1186,18 @@ class Container:
         )
 
     # --- end I4 E29 -----------------------------------------------------------------------------
+
+    # --- I4 E33 reports, statistics, CSV (`71-i4-wave4.md` §71.10) ------------------------------
+
+    def get_trainee_statistics(self) -> GetTraineeStatistics:
+        """`getTraineeStatistics` / `getTraineeStatisticsCsv` — stored rows only (D11)."""
+        return GetTraineeStatistics(self.statistics_reader)
+
+    def get_my_history(self) -> GetMyHistory:
+        """`getMyHistory`."""
+        return GetMyHistory(self.statistics_reader)
+
+    # --- end I4 E33 -----------------------------------------------------------------------------
 
     # -- lifecycle -----------------------------------------------------------------------------
 

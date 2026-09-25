@@ -9,6 +9,10 @@
 //
 // I4 E31 (71 §71.8, D34): a card aborted by an early end is listed unscored, with its time at work
 // and its actions (`LessonReport.cards[].unscored`).
+//
+// I4 E33 (71 §71.10): the scored cards are a table with each card's failed rules, critical errors
+// and times against the system's norms, and «Скачать CSV» downloads the same report as a file
+// (`lesson-report-table.tsx`).
 import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -40,6 +44,7 @@ import { ProblemError } from '@/shared/lib/api';
 import { arrivalKindLabelRu, cardStatusLabelRu, isRedFlagCardStatus, lessonStateLabelRu } from './lesson-labels';
 import { AbortLessonButton } from './abort-lesson-button';
 import { WeightProposalsCard } from './weight-proposals-card';
+import { DownloadLessonReportCsvButton, LessonReportTable } from './lesson-report-table';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -144,29 +149,18 @@ function LessonReportSection({ lessonId }: { lessonId: string }) {
   }
   if (!reportQuery.data) return null;
 
+  const unscoredCards = reportQuery.data.cards.filter((card) => card.score === null);
   return (
     <div className="flex flex-col gap-2" data-slot="lesson-report">
-      <ul className="flex flex-col gap-1">
-        {reportQuery.data.cards.map((card) =>
-          card.score === null ? (
+      <DownloadLessonReportCsvButton lessonId={lessonId} />
+      <LessonReportTable cards={reportQuery.data.cards} />
+      {unscoredCards.length > 0 ? (
+        <ul className="flex flex-col gap-1">
+          {unscoredCards.map((card) => (
             <UnscoredReportCard key={card.session_id} position={card.position} unscored={card.unscored} />
-          ) : (
-          <li key={card.session_id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
-            <span>
-              {t('lessonDetailColumnPosition')} {card.position}
-            </span>
-            <span className="flex items-center gap-2">
-              <span>
-                {card.score.total_points} / {card.score.total_max_points}
-              </span>
-              <span className="text-xs text-muted-foreground" data-slot="report-card-weight">
-                × {t('lessonReportCardWeightLabel')} {card.weight}
-              </span>
-            </span>
-          </li>
-          ),
-        )}
-      </ul>
+          ))}
+        </ul>
+      ) : null}
       <p className="text-sm font-medium" data-slot="weighted-total">
         {t('lessonDetailWeightedTotalLabel')}: {reportQuery.data.weighted_total} / {reportQuery.data.weighted_max}
       </p>

@@ -28,6 +28,13 @@ lesson ended early still reports the actions of its unfinished cards). No score 
 computed (an ABORTED session is never scored, SPEC §28, Q-E9b-6). The timeline is the same
 `timeline_entry` projection through the same `report_visibility` as the report's own, so a viewer
 sees exactly the events they would see in a finished card's timeline.
+
+**The card's norms and counters (I4 E33, HLD 71 §71.10).** `norms`, `failed_rule_count` and
+`critical_error_count` ride on the view for `getLessonReport` (and its CSV); `getSessionReport`'s
+own schema does not carry them. The norms are `norms.card_norms` over the events already read,
+against the session's recorded timers, gated like the sections they describe: an `ACCEPT` leg
+with the ДДС sections, the 112 `FILL` with the operator's. The counters are over the **whole**
+stored report, never the viewer's filtered rule list — numbers are one per session (R3, D11).
 """
 
 from __future__ import annotations
@@ -50,6 +57,13 @@ from app.application.reports.dds_decisions import (
     DdsParticipantTotals,
     dds_decisions,
     dds_participant_totals,
+)
+from app.application.reports.norms import (
+    CardNorm,
+    NormKind,
+    card_norms,
+    critical_error_count,
+    failed_rule_count,
 )
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
 from app.application.reports.timeline import TimelineEntry, call_parties, timeline_entry
@@ -129,6 +143,14 @@ class SessionReportView:
     dds_participant_totals: tuple[DdsParticipantTotals, ...] = ()
     """ADDITIVE (I3 E5b): per ДДС participant — legs played, statuses set, decisions, flags.
     Empty when the viewer may not see the DDS sections."""
+    norms: tuple[CardNorm, ...] = ()
+    """(I4 E33) The card's times against its recorded timers, gated per section (module doc)."""
+    service_names_ru: Mapping[str, str] | None = None
+    """(I4 E33) The reference pack's service names, for the lesson report's CSV."""
+    failed_rule_count: int = 0
+    """(I4 E33) Stored results that did not pass — the whole session's."""
+    critical_error_count: int = 0
+    """(I4 E33) Stored critical failures — the whole session's."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +287,10 @@ class GetSessionReport:
                 if visibility.shows_dds_sections
                 else ()
             ),
+            norms=_visible_norms(card_norms(events, scenario_version.card_timers), visibility),
+            service_names_ru=service_names,
+            failed_rule_count=failed_rule_count(score_report.results),
+            critical_error_count=critical_error_count(score_report.results),
         )
 
     async def unscored(
@@ -341,6 +367,19 @@ def _timeline(
             for event in events
         )
         if envelope is not None
+    )
+
+
+def _visible_norms(norms: Sequence[CardNorm], visibility: ReportVisibility) -> tuple[CardNorm, ...]:
+    """(I4 E33) A leg's `ACCEPT` with the ДДС sections, the 112 `FILL` with the operator's."""
+    return tuple(
+        norm
+        for norm in norms
+        if (
+            visibility.shows_dds_sections
+            if norm.kind is NormKind.ACCEPT
+            else visibility.shows_operator_sections
+        )
     )
 
 

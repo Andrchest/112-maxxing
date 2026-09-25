@@ -27,6 +27,7 @@ from app.api.schemas.sessions import (
     SessionVariantsSchema,
     VariantsRequestSchema,
 )
+from app.api.schemas.statistics import NormViewSchema, norm_view_schema
 from app.application.lessons.lesson_report import LessonReportView
 from app.application.lessons.queries import IncidentListItemView, LessonDetailView
 from app.application.lessons.weight_proposals import WeightProposalsView
@@ -237,6 +238,11 @@ class LessonReportCardSchema(ApiModel):
     weight: float
     score: ScoreReportViewSchema | None
     unscored: UnscoredCardViewSchema | None
+    # (I4 E33, HLD 71 §71.10) a scored card's times against its recorded timers and its stored
+    # counters; `[]` / `null` for an unscored card.
+    norms: list[NormViewSchema]
+    failed_rule_count: int | None = Field(ge=0)
+    critical_error_count: int | None = Field(ge=0)
 
 
 class LessonReportSchema(ApiModel):
@@ -390,6 +396,9 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
                     )
                 ),
                 unscored=None if card.unscored is None else unscored_card_schema(card.unscored),
+                norms=[] if report is None else [norm_view_schema(n) for n in report.norms],
+                failed_rule_count=None if report is None else report.failed_rule_count,
+                critical_error_count=None if report is None else report.critical_error_count,
             )
         )
     return LessonReportSchema(

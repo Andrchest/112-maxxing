@@ -176,4 +176,25 @@ describe('AppRoutes', () => {
       expect(screen.getByRole('heading', { name: ru.reportTitle })).toBeInTheDocument();
     });
   });
+
+  // -- I4 E33 (71 §71.10): the statistics are the instructor's, the history the trainee's --------
+  describe('I4 E33 — /instructor/statistics and /history', () => {
+    it('renders the statistics for a signed-in INSTRUCTOR', () => {
+      signIn('INSTRUCTOR');
+      renderAt('/instructor/statistics');
+      expect(screen.getByRole('heading', { name: ru.statisticsPageTitle })).toBeInTheDocument();
+    });
+
+    it('sends a TRAINEE away from /instructor/statistics', () => {
+      signIn('TRAINEE');
+      renderAt('/instructor/statistics');
+      expect(screen.getByRole('heading', { name: ru.sessionsTitle })).toBeInTheDocument();
+    });
+
+    it('renders the own history for a signed-in TRAINEE at /history', () => {
+      signIn('TRAINEE');
+      renderAt('/history');
+      expect(screen.getByRole('heading', { name: ru.historyPageTitle })).toBeInTheDocument();
+    });
+  });
 });

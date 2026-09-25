@@ -41,6 +41,7 @@ from app.api.routers import (
     scenarios,
     sessions,
     snapshot,
+    statistics,
     telephony,
     users,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "scenarios",
     "sessions",
     "snapshot",
+    "statistics",
     "telephony",
     "users",
 ]

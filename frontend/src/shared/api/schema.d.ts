@@ -2038,6 +2038,11 @@ export interface paths {
          *     (CHANGED, I4 E31) A card whose session was aborted (early lesson end, ТЗ ¶342–343) is listed
          *     with `score: null` and `unscored` (state, timeline, times — the same timeline projection
          *     and visibility as a card report; a lesson release covers it). The weighted sum ignores it.
+         *
+         *     (ADDITIVE, I4 E33) Every scored card carries `norms` (measured vs the system's norm — the
+         *     session's recorded timers), `failed_rule_count` and `critical_error_count` (the whole
+         *     session's stored results). Nothing is re-scored (D11). An unscored card has `norms: []`
+         *     and `null` counters. `getLessonReportCsv` is the same view as a file.
          */
         get: operations["getLessonReport"];
         put?: never;
@@ -2268,6 +2273,88 @@ export interface paths {
         put?: never;
         /** Archive a material — hidden from trainees, file kept (INSTRUCTOR / ADMIN). */
         post: operations["archiveMaterial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/report.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I4 E33) The lesson report as CSV — ТЗ ¶360, ¶379.
+         * @description Same access and numbers as `getLessonReport`. UTF-8 with BOM, `;` separator, Russian
+         *     column headers, decimal comma; one row per card and norm (a card without a norm gets one
+         *     row), then the weighted total.
+         */
+        get: operations["getLessonReportCsv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statistics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I4 E33) Per-trainee statistics across sessions and lessons — ТЗ ¶101, ¶138, ¶225, ¶232.
+         * @description INSTRUCTOR / ADMIN: every trainee (optionally one, or one group). TRAINEE: self only —
+         *     asking for another `trainee_id` is `403 FORBIDDEN_FOR_ROLE` — over the sessions whose
+         *     report is visible to them. Read from stored scores; nothing is re-scored (D11). The window
+         *     is on `completed_at`. An unknown `trainee_id` / `group_id` is `404`.
+         */
+        get: operations["getTraineeStatistics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statistics.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** (additive, I4 E33) getTraineeStatistics as CSV (same access, same numbers) — ТЗ ¶360, ¶379. */
+        get: operations["getTraineeStatisticsCsv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I4 E33) The caller's own statistics plus their completed sessions with score and date — ТЗ ¶252, ¶265, ¶266.
+         * @description A session appears with its score only once its report is visible to the caller (the existing release rule).
+         */
+        get: operations["getMyHistory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4198,6 +4285,12 @@ export interface components {
                 score: components["schemas"]["ScoreReportView"] | null;
                 /** @description (additive, I4 E31) Present exactly when `score` is `null`. */
                 unscored: components["schemas"]["UnscoredCardView"] | null;
+                /** @description (additive, I4 E33) Per card and per leg; `[]` for an unscored card. */
+                norms?: components["schemas"]["NormView"][];
+                /** @description (additive */
+                failed_rule_count?: number | null;
+                /** @description (additive */
+                critical_error_count?: number | null;
             }[];
             /** @description Scored cards only (unchanged). */
             weighted_total: number;
@@ -4344,6 +4437,53 @@ export interface components {
             /** Format: date-time */
             archived_at: string | null;
         };
+        /** @description (I4 E33) One measured interval against the norm the system holds (the session's recorded timers). */
+        NormView: {
+            /** @enum {string} */
+            kind: "ACCEPT" | "FILL";
+            /** @description The leg's service for ACCEPT; `null` for the 112 FILL interval. */
+            service_id: string | null;
+            measured_ms: number | null;
+            norm_ms: number;
+            /** @description measured − norm (positive = late); `null` when not measured. */
+            deviation_ms: number | null;
+        };
+        /** @description (I4 E33) One trainee's aggregates over their completed, scored sessions. */
+        TraineeStatisticsRow: {
+            /** Format: uuid */
+            trainee_user_id: string;
+            display_name_ru: string;
+            session_count: number;
+            lesson_count: number;
+            average_percent: number | null;
+            /** @description `ScoringCategory` → count of failed rules. */
+            failed_rules_by_category: {
+                [key: string]: number;
+            };
+            accept_deviation_ms_avg: number | null;
+            fill_deviation_ms_avg: number | null;
+        };
+        /** @description (I4 E33) `getTraineeStatistics`. */
+        TraineeStatistics: {
+            rows: components["schemas"]["TraineeStatisticsRow"][];
+        };
+        /** @description (I4 E33) One of the caller's completed sessions; `score_percent` / `failed_rule_count` are `null` until its report is visible to them. */
+        MyHistorySession: {
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            lesson_id: string | null;
+            scenario_title_ru: string;
+            /** Format: date-time */
+            completed_at: string;
+            score_percent: number | null;
+            failed_rule_count: number | null;
+        };
+        /** @description (I4 E33) `getMyHistory`. */
+        MyHistory: {
+            statistics: components["schemas"]["TraineeStatisticsRow"];
+            sessions: components["schemas"]["MyHistorySession"][];
+        };
     };
     responses: {
         /** @description `UNAUTHENTICATED` — missing, malformed or expired bearer token. */
@@ -4449,6 +4589,14 @@ export interface components {
         PackQueryParam: string;
         /** @description (additive, I4 E34) A `training_materials` row (71 §71.11). */
         MaterialIdParam: string;
+        /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+        FromParam: string;
+        /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+        ToParam: string;
+        /** @description (additive, I4 E33) */
+        TraineeIdQueryParam: string;
+        /** @description (additive, I4 E33) */
+        GroupIdQueryParam: string;
     };
     requestBodies: never;
     headers: never;
@@ -7458,9 +7606,117 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingMaterialView"];
                 };
             };
+        };
+    };
+    getLessonReportCsv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getTraineeStatistics: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per trainee. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraineeStatistics"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getTraineeStatisticsCsv: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getMyHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyHistory"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
 }

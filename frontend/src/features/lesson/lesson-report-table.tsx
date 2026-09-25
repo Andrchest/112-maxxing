@@ -1,0 +1,136 @@
+// I4 E33 (71 §71.10; ТЗ ¶329 REQ-2271–2275, ¶360, ¶379): the lesson report as a table — per
+// scored card its points, weight, failed rules, critical errors and its times against the system's
+// norms (`LessonReport.cards[].norms`, measured against the session's recorded timers) — plus
+// «Скачать CSV» (`getLessonReportCsv`, the same numbers as a file). Every number is shown exactly
+// as the server sent it (D11); a norm that was not measured says so rather than showing zero.
+// Neither interval is called «время реакции» (Q-E12-1 is open).
+import { useState } from 'react';
+import { Button } from '@/shared/ui/button';
+import { t } from '@/shared/i18n';
+import { formatCallDurationMs } from '@/entities/call';
+import { serviceLabelRu } from '@/entities/service-catalog';
+import { formatDeviationMs } from '@/entities/statistics';
+import {
+  getLessonReportCsv,
+  problemMessageRu,
+  type LessonReport,
+  type NormView,
+  type ProblemCode,
+} from '@/shared/api';
+import { ProblemError } from '@/shared/lib/api';
+import { saveBlob } from '@/shared/lib/download';
+
+function normLabel(norm: NormView): string {
+  if (norm.kind === 'FILL') return t('lessonReportNormFill');
+  return norm.service_id ? `${t('lessonReportNormAccept')}: ${serviceLabelRu(norm.service_id)}` : t('lessonReportNormAccept');
+}
+
+function NormLine({ norm }: { norm: NormView }) {
+  const against = `${t('lessonReportNormAgainst')} ${formatCallDurationMs(norm.norm_ms)}`;
+  return (
+    <li data-slot="report-norm" data-kind={norm.kind}>
+      <span>{normLabel(norm)}</span>{' '}
+      {norm.measured_ms === null ? (
+        <span className="text-muted-foreground">
+          {t('lessonReportNormNotMeasured')} ({against})
+        </span>
+      ) : (
+        <span className="tabular-nums">
+          {formatCallDurationMs(norm.measured_ms)} {against}
+          {norm.deviation_ms === null ? null : (
+            <span
+              className={norm.deviation_ms > 0 ? 'text-destructive' : 'text-muted-foreground'}
+              data-slot="report-norm-deviation"
+            >
+              {' '}
+              ({formatDeviationMs(norm.deviation_ms)})
+            </span>
+          )}
+        </span>
+      )}
+    </li>
+  );
+}
+
+export function DownloadLessonReportCsvButton({ lessonId }: { lessonId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function handleDownload() {
+    setBusy(true);
+    setError(null);
+    try {
+      saveBlob(await getLessonReportCsv(lessonId), `lesson-${lessonId}-report.csv`);
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button type="button" variant="outline" size="sm" onClick={() => void handleDownload()} disabled={busy}>
+        {busy ? t('lessonReportDownloadingCsv') : t('lessonReportDownloadCsv')}
+      </Button>
+      {error ? (
+        <span role="alert" className="text-sm text-destructive">
+          {error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown')}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** The scored cards of the report (an unscored card is listed by the page, I4 E31). */
+export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
+  const scored = cards.filter((card) => card.score !== null);
+  if (scored.length === 0) return null;
+  return (
+    <table className="w-full border-collapse text-sm" data-slot="lesson-report-table">
+      <thead>
+        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+          <th className="p-2 font-medium">{t('lessonReportTableColumnPosition')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnScore')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnWeight')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnFailedRules')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnCriticalErrors')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnNorms')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {scored.map((card) => {
+          const norms = card.norms ?? [];
+          return (
+            <tr key={card.session_id} className="border-b border-border/60 align-top" data-slot="lesson-report-row">
+              <td className="p-2">{card.position}</td>
+              <td className="p-2 tabular-nums">
+                {card.score?.total_points} / {card.score?.total_max_points}
+              </td>
+              <td className="p-2 tabular-nums" data-slot="report-card-weight">
+                {card.weight}
+              </td>
+              <td className="p-2 tabular-nums" data-slot="report-card-failed-rules">
+                {card.failed_rule_count ?? t('lessonReportNormNone')}
+              </td>
+              <td className="p-2 tabular-nums" data-slot="report-card-critical-errors">
+                {card.critical_error_count ?? t('lessonReportNormNone')}
+              </td>
+              <td className="p-2">
+                {norms.length === 0 ? (
+                  t('lessonReportNormNone')
+                ) : (
+                  <ul className="flex flex-col gap-0.5 text-xs">
+                    {norms.map((norm, index) => (
+                      <NormLine key={`${norm.kind}-${norm.service_id ?? ''}-${index}`} norm={norm} />
+                    ))}
+                  </ul>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}

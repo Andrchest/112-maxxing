@@ -934,3 +934,66 @@ export function validateScenarioFile(body: ScenarioImportRequest): Promise<Scena
 export function importScenarioVersion(body: ScenarioImportRequest): Promise<ScenarioVersionListItem> {
   return apiFetch('/scenarios/import', { method: 'POST', body: JSON.stringify(body) });
 }
+
+// --- I4 E33: reports, statistics, CSV, trainee history (71 §71.10) ------------------------------
+export type NormView = components['schemas']['NormView'];
+export type TraineeStatistics = components['schemas']['TraineeStatistics'];
+export type TraineeStatisticsRow = components['schemas']['TraineeStatisticsRow'];
+export type MyHistory = components['schemas']['MyHistory'];
+export type MyHistorySession = components['schemas']['MyHistorySession'];
+
+/** `getTraineeStatistics` / `getTraineeStatisticsCsv`'s filter: one trainee, one group's
+ * members, and a `completed_at` window (`from` inclusive, `to` exclusive, ISO date-times). */
+export type TraineeStatisticsQuery = NonNullable<operations['getTraineeStatistics']['parameters']['query']>;
+
+function statisticsQueryString(params: TraineeStatisticsQuery): string {
+  const query = new URLSearchParams();
+  if (params.trainee_id) query.set('trainee_id', params.trainee_id);
+  if (params.group_id) query.set('group_id', params.group_id);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  const qs = query.toString();
+  return qs ? `?${qs}` : '';
+}
+
+/** `getTraineeStatistics` — one row per trainee, read from stored scores (D11). A TRAINEE gets
+ * their own row only; asking for another `trainee_id` is `403 FORBIDDEN_FOR_ROLE`. */
+export function getTraineeStatistics(params: TraineeStatisticsQuery = {}): Promise<TraineeStatistics> {
+  return apiFetch(`/statistics${statisticsQueryString(params)}`);
+}
+
+/** `getMyHistory` — the caller's own row plus their completed sessions, newest first; a session
+ * whose report is not visible yet has `score_percent: null`. */
+export function getMyHistory(): Promise<MyHistory> {
+  return apiFetch('/me/history');
+}
+
+/** A CSV download (`text/csv`, UTF-8 with BOM, `;`) as a `Blob` — like {@link getAudioSegment},
+ * fetched directly because {@link apiFetch} assumes JSON. Throws {@link ProblemError} on a
+ * problem+json answer. */
+async function fetchCsv(path: string): Promise<Blob> {
+  const headers: Record<string, string> = { Accept: 'text/csv, application/problem+json' };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE_PATH}${path}`, { headers });
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return await response.blob();
+}
+
+/** `getLessonReportCsv` — the lesson report as a file (same access and numbers as
+ * {@link getLessonReport}). */
+export function getLessonReportCsv(lessonId: string): Promise<Blob> {
+  return fetchCsv(`/lessons/${encodeURIComponent(lessonId)}/report.csv`);
+}
+
+/** `getTraineeStatisticsCsv` — {@link getTraineeStatistics} as a file. */
+export function getTraineeStatisticsCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
+  return fetchCsv(`/statistics.csv${statisticsQueryString(params)}`);
+}
