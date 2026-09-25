@@ -86,6 +86,10 @@ class Scenario(Base):
     slug = sa.Column(sa.Text(), nullable=False)
     title_ru = sa.Column(sa.Text(), nullable=False)
     created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+    #: I4 E32 (`71-i4-wave4.md` §71.9, §20.11.3, migration `0017_…`): `NULL` = active; set by
+    #: `archiveScenario`, cleared by `unarchiveScenario`. `scenario_versions` and sessions keep
+    #: their `RESTRICT` FK to `scenarios`, so archiving never deletes a row (ТЗ ¶229).
+    archived_at = sa.Column(TIMESTAMPTZ_T, nullable=True)
 
     __table_args__ = (sa.UniqueConstraint("slug", name="uq_scenarios_slug"),)
 

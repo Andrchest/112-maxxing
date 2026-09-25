@@ -70,6 +70,12 @@ from app.application.handoff.continue_to_next_stage import ContinueToNextStage
 from app.application.handoff.create_handoff import CreateHandoff
 from app.application.inference_health.health_changed import AppendInferenceHealthChanged
 from app.application.inference_health.ports import InferenceFatalLatch
+from app.application.instructor.comments import (
+    CreateLessonComment,
+    CreateSessionComment,
+    ListLessonComments,
+    ListSessionComments,
+)
 from app.application.instructor.get_overview import GetInstructorSessionOverview
 from app.application.lessons.abort_lesson import AbortLesson
 from app.application.lessons.create_lesson import CreateLesson
@@ -132,6 +138,7 @@ from app.application.reports.explanation.ports import ScoreReportReader
 from app.application.reports.list_inference_metrics import ListInferenceMetrics
 from app.application.reports.release_report import ReleaseReportToTrainee
 from app.application.reports.serve_audio_segment import ServeAudioSegment
+from app.application.scenarios.archive import ArchiveScenario, UnarchiveScenario
 from app.application.scenarios.import_scenario_version import ImportScenarioVersion
 from app.application.scenarios.queries import (
     GetScenarioValidationReport,
@@ -449,6 +456,14 @@ class Container:
         """`validateScenarioFile`."""
         return ValidateScenarioDocument(self.reference)
 
+    def archive_scenario(self) -> ArchiveScenario:
+        """`archiveScenario` (I4 E32)."""
+        return ArchiveScenario(self.unit_of_work)
+
+    def unarchive_scenario(self) -> UnarchiveScenario:
+        """`unarchiveScenario` (I4 E32)."""
+        return UnarchiveScenario(self.unit_of_work)
+
     def create_session(self) -> CreateSession:
         """`createSession`; records `SESSION_CREATED.reference_pack` (HLD 70 §70.6.1)."""
         return CreateSession(self.unit_of_work, self.ids, self.reference)
@@ -497,6 +512,24 @@ class Container:
     def release_lesson_report(self) -> ReleaseLessonReport:
         """`releaseLessonReport` — `releaseReportToTrainee` for every completed card."""
         return ReleaseLessonReport(self.unit_of_work, self.clock, self.release_report_to_trainee())
+
+    # -- I4 E32: instructor misc — comments (`71-i4-wave4.md` §71.9) ---------------------------
+
+    def list_session_comments(self) -> ListSessionComments:
+        """`listSessionComments`."""
+        return ListSessionComments(self.unit_of_work)
+
+    def create_session_comment(self) -> CreateSessionComment:
+        """`createSessionComment`."""
+        return CreateSessionComment(self.unit_of_work, self.clock, self.ids)
+
+    def list_lesson_comments(self) -> ListLessonComments:
+        """`listLessonComments`."""
+        return ListLessonComments(self.unit_of_work)
+
+    def create_lesson_comment(self) -> CreateLessonComment:
+        """`createLessonComment`."""
+        return CreateLessonComment(self.unit_of_work, self.clock, self.ids)
 
     def list_my_incidents(self) -> ListMyIncidents:
         """`listMyIncidents`."""

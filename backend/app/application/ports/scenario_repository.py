@@ -36,6 +36,8 @@ class StoredScenario(BaseModel):
     scenario_id: ScenarioId
     slug: str
     title_ru: str
+    archived_at: datetime | None = None
+    """I4 E32 (§20.11.3): `None` = active; set by `archiveScenario`."""
 
 
 class StoredScenarioVersion(BaseModel):
@@ -70,6 +72,8 @@ class StoredScenarioListing(BaseModel):
     latest_version: int | None = None
     latest_difficulty: int | None = None
     """I3 E9a: the latest version's `difficulty` (1–5), so a picker can show and filter it."""
+    archived_at: datetime | None = None
+    """I4 E32 (§20.11.3): `None` = active; hidden from `listScenarios` unless `include_archived`."""
 
 
 class StoredScenarioVersionDetail(BaseModel):
@@ -139,12 +143,14 @@ class ScenarioRepository(Protocol):
         ...
 
     async def list_scenarios(
-        self, *, limit: int, offset: int
+        self, *, limit: int, offset: int, include_archived: bool = False
     ) -> tuple[list[StoredScenarioListing], int]:
         """One page of `scenarios`, ordered by `slug`, plus the unpaged total (`listScenarios`).
 
         The total is what `openapi.yaml`'s response object calls `total`: how many scenarios exist,
-        not how many this page holds.
+        not how many this page holds. `include_archived=False` (the default, I4 E32) hides every
+        row with `archived_at IS NOT NULL` from both the page and the total, so a picker never
+        needs to filter the response itself.
         """
         ...
 
@@ -196,5 +202,18 @@ class ScenarioRepository(Protocol):
         Returns `True` when this call set it and `False` when it was already locked. Called by
         session creation in the same transaction (D4); after it, the DB trigger of §20.2 rejects
         every `content` / `content_sha256` update (SPEC §42 invariant 6).
+        """
+        ...
+
+    async def set_archived(
+        self, scenario_id: ScenarioId, *, archived: bool
+    ) -> StoredScenarioListing | None:
+        """`archiveScenario` / `unarchiveScenario` (I4 E32, ТЗ ¶229): idempotent either way.
+
+        Archiving sets `archived_at` only if it is still null (leaves the original timestamp
+        alone on a repeated call); unarchiving always clears it. Returns the scenario's listing
+        row after the change (so the endpoint can answer with the full `ScenarioSummary`), or
+        `None` when no such scenario exists. Existing `scenario_versions` and sessions are
+        untouched: their FK to `scenarios` stays `RESTRICT`.
         """
         ...

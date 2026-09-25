@@ -45,6 +45,8 @@ export const queryKeys = {
     detail: (sessionId: string) => ['reports', sessionId] as const,
     explanation: (sessionId: string) => ['reports', sessionId, 'explanation'] as const,
     inferenceMetrics: (sessionId: string) => ['reports', sessionId, 'inference-metrics'] as const,
+    // I4 E32: instructor comments on a session result (71 §71.9).
+    comments: (sessionId: string) => ['reports', sessionId, 'comments'] as const,
   },
   // -- E17-C: instructor live overview (openapi `instructor` tag, R4) ------------------------
   instructor: {
@@ -55,6 +57,8 @@ export const queryKeys = {
     list: (scope: 'MINE' | 'ALL' = 'ALL') => ['lessons', 'list', scope] as const,
     detail: (lessonId: string) => ['lessons', lessonId] as const,
     report: (lessonId: string) => ['lessons', lessonId, 'report'] as const,
+    // I4 E32: instructor comments on a lesson result (71 §71.9).
+    comments: (lessonId: string) => ['lessons', lessonId, 'comments'] as const,
   },
   incidents: {
     list: (roleType?: string, q?: string) => ['incidents', 'list', roleType ?? 'ANY', q ?? ''] as const,

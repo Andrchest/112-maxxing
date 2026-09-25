@@ -43,3 +43,54 @@ class ReportExplanation(Base):
         ),
         sa.CheckConstraint(enum_check("audience", EXPLANATION_AUDIENCES), name="audience"),
     )
+
+
+# --- I4 E32 instructor misc (`71-i4-wave4.md` §71.9, HLD 20 §20.11.2, `0017_…`) -----------------
+
+
+class ResultComment(Base):
+    """`result_comments` — instructor feedback on a session or a lesson result, append-only.
+
+    Exactly one of `session_id` / `lesson_id` is set (the migration's `exactly_one_target`
+    `CHECK`). An edit is a new row whose `replaces_comment_id` points at the row it supersedes;
+    nothing here is ever `UPDATE`d — the table is guarded by the same `trg_reject_mutation()`
+    trigger as `audit_log` (§20.9).
+    """
+
+    __tablename__ = "result_comments"
+
+    id = sa.Column(UUID_T, primary_key=True, server_default=GEN_RANDOM_UUID)
+    session_id = sa.Column(
+        UUID_T, sa.ForeignKey("simulation_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    lesson_id = sa.Column(UUID_T, sa.ForeignKey("lessons.id", ondelete="CASCADE"), nullable=True)
+    author_user_id = sa.Column(
+        UUID_T, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    text = sa.Column(sa.Text(), nullable=False)
+    replaces_comment_id = sa.Column(
+        UUID_T, sa.ForeignKey("result_comments.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at = sa.Column(TIMESTAMPTZ_T, nullable=False, server_default=NOW)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "(session_id IS NULL) <> (lesson_id IS NULL)", name="exactly_one_target"
+        ),
+        sa.CheckConstraint("length(text) > 0", name="text_not_empty"),
+        sa.Index(
+            "ix_result_comments_session",
+            "session_id",
+            "created_at",
+            postgresql_where=sa.text("session_id IS NOT NULL"),
+        ),
+        sa.Index(
+            "ix_result_comments_lesson",
+            "lesson_id",
+            "created_at",
+            postgresql_where=sa.text("lesson_id IS NOT NULL"),
+        ),
+    )
+
+
+# --- end I4 E32 -----------------------------------------------------------------------------

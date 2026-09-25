@@ -34,6 +34,7 @@ from app.application.ports.operator_card_repository import OperatorCardRepositor
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
 from app.application.ports.report_explanation_repository import ReportExplanationRepository
 from app.application.ports.resource_repository import ResourceRepository
+from app.application.ports.result_comment_repository import ResultCommentRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import SessionRepository
@@ -76,6 +77,9 @@ from app.infrastructure.persistence.report_explanation_repository import (
     SqlAlchemyReportExplanationRepository,
 )
 from app.infrastructure.persistence.resource_repository import SqlAlchemyResourceRepository
+from app.infrastructure.persistence.result_comment_repository import (
+    SqlAlchemyResultCommentRepository,
+)
 from app.infrastructure.persistence.scenario_repository import SqlAlchemyScenarioRepository
 from app.infrastructure.persistence.score_repository import SqlAlchemyScoreRepository
 from app.infrastructure.persistence.session_repository import SqlAlchemySessionRepository
@@ -134,6 +138,7 @@ class SqlAlchemyUnitOfWork:
         self._report_explanations: SqlAlchemyReportExplanationRepository | None = None
         self._recording_purge: SqlAlchemyRecordingPurgeRepository | None = None
         self._trainee_groups: SqlAlchemyTraineeGroupRepository | None = None
+        self._result_comments: SqlAlchemyResultCommentRepository | None = None
         self._pending: list[tuple[SessionId, list[SessionEvent]]] = []
         self._committed = False
 
@@ -164,6 +169,7 @@ class SqlAlchemyUnitOfWork:
         self._report_explanations = SqlAlchemyReportExplanationRepository(session)
         self._recording_purge = SqlAlchemyRecordingPurgeRepository(session)
         self._trainee_groups = SqlAlchemyTraineeGroupRepository(session)
+        self._result_comments = SqlAlchemyResultCommentRepository(session)
         self._pending = []
         self._committed = False
         return self
@@ -202,6 +208,7 @@ class SqlAlchemyUnitOfWork:
             self._report_explanations = None
             self._recording_purge = None
             self._trainee_groups = None
+            self._result_comments = None
             if session is not None and self._close_session:
                 await session.close()
 
@@ -345,6 +352,12 @@ class SqlAlchemyUnitOfWork:
         if self._recording_purge is None:
             raise RuntimeError("the Unit of Work is not active; use `async with`")
         return self._recording_purge
+
+    @property
+    def result_comments(self) -> ResultCommentRepository:
+        if self._result_comments is None:
+            raise RuntimeError("the Unit of Work is not active; use `async with`")
+        return self._result_comments
 
     # -- transaction --------------------------------------------------------------------------
 

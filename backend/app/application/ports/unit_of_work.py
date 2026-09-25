@@ -33,6 +33,7 @@ from app.application.ports.operator_card_repository import OperatorCardRepositor
 from app.application.ports.recording_purge_repository import RecordingPurgeRepository
 from app.application.ports.report_explanation_repository import ReportExplanationRepository
 from app.application.ports.resource_repository import ResourceRepository
+from app.application.ports.result_comment_repository import ResultCommentRepository
 from app.application.ports.scenario_repository import ScenarioRepository
 from app.application.ports.score_repository import ScoreRepository
 from app.application.ports.session_repository import SessionRepository
@@ -182,6 +183,14 @@ class UnitOfWork(Protocol):
 
         The optional LLM prose about an already-persisted `ScoreReport`, stored separately from
         the numbers it explains and holding no path back to them (SPEC §2, §29).
+        """
+        ...
+
+    @property
+    def result_comments(self) -> ResultCommentRepository:
+        """The `result_comments` repository bound to this transaction (§20.11.2, I4 E32).
+
+        Append-only: instructor feedback on a session or a lesson result, an edit is a new row.
         """
         ...
 

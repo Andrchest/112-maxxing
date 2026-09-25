@@ -44,7 +44,7 @@ from app.db.models.reference import (
     TraineeGroupMember,
     User,
 )
-from app.db.models.reports import ReportExplanation
+from app.db.models.reports import ReportExplanation, ResultComment
 from app.db.models.scoring import ScoreEvidence, ScoreResult
 from app.db.models.session import (
     Incident,
@@ -76,6 +76,7 @@ __all__ = [
     "RecordingPurgeAudit",
     "ReportExplanation",
     "ResourceStateChange",
+    "ResultComment",
     "RoleStage",
     "Scenario",
     "ScenarioVersion",

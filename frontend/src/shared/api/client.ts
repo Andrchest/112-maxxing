@@ -485,6 +485,9 @@ export async function getHealthReady(): Promise<HealthReadyResponse> {
   return (await response.json()) as HealthReadyResponse;
 }
 
+/** Every picker's default read: `include_archived` is not passed, so an archived scenario is
+ * never offered here (I4 E32, ТЗ ¶229). {@link listScenarioPage} takes `includeArchived` for the
+ * instructor's own scenario management view. */
 export function listScenarios(): Promise<{ items: ScenarioSummary[]; total: number }> {
   return apiFetch('/scenarios');
 }
@@ -634,11 +637,12 @@ export type WeightProposalLine = components['schemas']['WeightProposalLine'];
 /** `listScenarios` with an explicit page size — the lesson plan's picker lists every ticket
  * scenario (the catalog is larger than the default page of 50). */
 export function listScenarioPage(
-  params: { limit?: number; offset?: number } = {},
+  params: { limit?: number; offset?: number; includeArchived?: boolean } = {},
 ): Promise<{ items: ScenarioSummary[]; total: number }> {
   const query = new URLSearchParams();
   if (params.limit !== undefined) query.set('limit', String(params.limit));
   if (params.offset !== undefined) query.set('offset', String(params.offset));
+  if (params.includeArchived) query.set('include_archived', 'true');
   const qs = query.toString();
   return apiFetch(`/scenarios${qs ? `?${qs}` : ''}`);
 }
@@ -800,3 +804,68 @@ export function problemMessageRu(code: ProblemCode): string {
 // --- I4 E31: per-card timers and unfinished lesson cards (71 §71.8, D34) ---------------------------
 export type CardTimersRequest = components['schemas']['CardTimersRequest'];
 export type UnscoredCardView = components['schemas']['UnscoredCardView'];
+
+// --- I4 E32: instructor misc — comments, scenario upload/archive (71 §71.9) -------------------
+export type ResultCommentView = components['schemas']['ResultCommentView'];
+export type ResultCommentRequest = components['schemas']['ResultCommentRequest'];
+export type ScenarioImportRequest = components['schemas']['ScenarioImportRequest'];
+export type ScenarioValidationReport = components['schemas']['ScenarioValidationReport'];
+
+/** `listSessionComments` — instructor feedback on a session result, oldest first. The trainee
+ * sees them exactly when {@link getSessionReport} is visible to them (`403 REPORT_NOT_RELEASED`
+ * otherwise). */
+export function listSessionComments(sessionId: string): Promise<{ items: ResultCommentView[] }> {
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}/comments`);
+}
+
+/** `createSessionComment` (INSTRUCTOR / ADMIN). An edit is a new row: pass the id it supersedes
+ * as `replaces_comment_id` (append-only — nothing is ever updated in place). */
+export function createSessionComment(
+  sessionId: string,
+  body: ResultCommentRequest,
+): Promise<ResultCommentView> {
+  return apiFetch(`/reports/${encodeURIComponent(sessionId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `listLessonComments` — the lesson equivalent; trainee access follows the lesson report's
+ * release (every card released), not a per-session one. */
+export function listLessonComments(lessonId: string): Promise<{ items: ResultCommentView[] }> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/comments`);
+}
+
+/** `createLessonComment` (INSTRUCTOR / ADMIN). */
+export function createLessonComment(
+  lessonId: string,
+  body: ResultCommentRequest,
+): Promise<ResultCommentView> {
+  return apiFetch(`/lessons/${encodeURIComponent(lessonId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** `archiveScenario` (INSTRUCTOR / ADMIN) — «удалить неактуальный» (ТЗ ¶229). Idempotent; existing
+ * sessions and versions are untouched (FK `RESTRICT` stays). */
+export function archiveScenario(scenarioId: string): Promise<ScenarioSummary> {
+  return apiFetch(`/scenarios/${encodeURIComponent(scenarioId)}/archive`, { method: 'POST' });
+}
+
+/** `unarchiveScenario` (INSTRUCTOR / ADMIN) — returns the scenario to the pickers. */
+export function unarchiveScenario(scenarioId: string): Promise<ScenarioSummary> {
+  return apiFetch(`/scenarios/${encodeURIComponent(scenarioId)}/unarchive`, { method: 'POST' });
+}
+
+/** `validateScenarioFile` (INSTRUCTOR / ADMIN) — a dry run that writes nothing and always answers
+ * `200`; an invalid document is reported as `valid: false` plus issues, not as an error status. */
+export function validateScenarioFile(body: ScenarioImportRequest): Promise<ScenarioValidationReport> {
+  return apiFetch('/scenarios/validate', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** `importScenarioVersion` (INSTRUCTOR / ADMIN) — validates then stores; re-importing identical
+ * content under the same version is a no-op `201` (idempotent). */
+export function importScenarioVersion(body: ScenarioImportRequest): Promise<ScenarioVersionListItem> {
+  return apiFetch('/scenarios/import', { method: 'POST', body: JSON.stringify(body) });
+}

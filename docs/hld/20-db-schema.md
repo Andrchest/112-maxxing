@@ -53,6 +53,7 @@ Conventions used throughout:
 | 31 | `trainee_group_members` | additive (I3 E9a; `70-i3-alignment.md` §70.3.7) | reference data: one row per (group, trainee) |
 | 32 | `dds_calls` | additive (I3 E6b; D23, `80-telephony.md` §80.3.1, §80.7, migration `0014_dds_calls`) | the ДДС phone line's read model, materialized from `DDS_CALL_*` and rebuildable from them (INV 13) |
 | 33 | `audit_log` | additive (I4 E25; D31, `71-i4-wave4.md` §71.2, migration `0016_audit_log`) | append-only audit of user actions outside a session's event log (§20.6) |
+| 34 | `result_comments` | additive (I4 E32; `71-i4-wave4.md` §71.9, migration `0017_result_comments_scenario_archive`) | append-only instructor feedback on a session or a lesson result |
 
 Materialized tables exist for efficient reads only. `session_events` is authoritative; scoring reads
 `(scenario_versions.content, ordered session_events)` and nothing else (D5, SPEC §28, §42 tests 9–11).
@@ -114,8 +115,13 @@ group changes no lesson.
 | `slug` | `text` | no | |
 | `title_ru` | `text` | no | |
 | `created_at` | `timestamptz` | no | `now()` |
+| `archived_at` *(additive, I4 E32, migration `0017_result_comments_scenario_archive`)* | `timestamptz` | yes | |
 
 PK `(id)`. Unique `uq_scenarios_slug (slug)`.
+*(additive, I4 E32)* `NULL` = active; set by `archiveScenario`, cleared by `unarchiveScenario`
+(`71-i4-wave4.md` §71.9, ТЗ ¶229 — "удалять неактуальные сценарии" is this archive, because
+`scenario_versions` and sessions keep their `RESTRICT` FK to `scenarios`, so no scenario row is ever
+deleted). `listScenarios` hides an archived row unless `include_archived=true`.
 
 ### `scenario_versions`
 | Column | PG type | Null | Default |
@@ -1071,6 +1077,11 @@ CREATE TRIGGER dds_service_status_history_append_only
 CREATE TRIGGER audit_log_append_only
   BEFORE UPDATE OR DELETE ON audit_log
   FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
+
+-- additive, I4 E32 (migration 0017_result_comments_scenario_archive)
+CREATE TRIGGER result_comments_append_only
+  BEFORE UPDATE OR DELETE ON result_comments
+  FOR EACH ROW EXECUTE FUNCTION trg_reject_mutation();
 ```
 
 `scenario_versions` has its own conditional trigger (§20.2) because ordinary metadata updates and the
@@ -1119,25 +1130,7 @@ Three properties this schema is shaped to give:
 - **Disposable.** The row is derived, cheap to regenerate, and carries nothing the simulation
   depends on; deleting a session takes it along (`CASCADE`).
 
-## 20.11 I4 — planned tables of migrations 0016–0018 (TBD; `71-i4-wave4.md`)
-
-**Planned, not built.** Nothing in this section is in §20.1 yet: a §20.1 row without its table fails
-`test_migrated_tables_equal_the_hld_inventory`. Each implementing epic moves its table here into §20.1
-(next free row number — 33 onward; `dds_calls` is row 32) and into the matching §20.x in the same
-commit as its migration. Numbers are pre-allocated by the manager (D30) so parallel slices never
-collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
-
-| Migration | Epic | Change | Kind |
-|:--|:--|:--|:--|
-| `0016_audit_log` | E25 (S1) | new table `audit_log` + append-only trigger | append-only audit (outside sessions) |
-| `0017_result_comments_scenario_archive` | E32 (S8) | new table `result_comments` + append-only trigger; column `scenarios.archived_at` | append-only; additive column |
-| `0018_training_materials` | E34 (S10) | new table `training_materials` | reference data (files on disk by sha256) |
-
-### 20.11.1 `audit_log` (E25, `0016_audit_log`; D31)
-
-**Built by E25.** Moved to §20.1 (row 33), §20.6 (`audit_log`) and §20.9 (its trigger).
-
-### 20.11.2 `result_comments` (E32, `0017_result_comments_scenario_archive`)
+### `result_comments` (additive, I4 E32; `71-i4-wave4.md` §71.9, migration `0017_result_comments_scenario_archive`)
 | Column | PG type | Null | Default |
 |:--|:--|:--|:--|
 | `id` | `uuid` | no | `gen_random_uuid()` |
@@ -1156,20 +1149,38 @@ FK `replaces_comment_id → result_comments(id) ON DELETE RESTRICT`.
 Index `ix_result_comments_session (session_id, created_at) WHERE session_id IS NOT NULL`,
 `ix_result_comments_lesson (lesson_id, created_at) WHERE lesson_id IS NOT NULL`.
 
-- Instructor feedback on a result (ТЗ ¶236, ¶237). An edit is a new row pointing at the one it
-  replaces; nothing is updated. The trainee reads them under the report's own visibility gate.
-- **Append-only:** `result_comments_append_only` on `trg_reject_mutation()` (§20.9). A session delete
-  is the §20.9 maintenance operation.
-- Retention: kept with the session / lesson.
+Instructor feedback on a result (ТЗ ¶236, ¶237). An edit is a new row pointing at the one it
+replaces (`replaces_comment_id`); nothing is ever `UPDATE`d. The trainee reads them under the
+report's own visibility gate (`listSessionComments`) or the lesson report's release
+(`listLessonComments`) — never scored, never reaching a score table (D11). **Append-only:**
+`result_comments_append_only` on the shared `trg_reject_mutation()` (§20.9). Retention: kept with
+the session / lesson (`CASCADE`).
+
+## 20.11 I4 — planned tables of migration 0018 (TBD; `71-i4-wave4.md`)
+
+**Planned, not built.** Nothing in this section is in §20.1 yet: a §20.1 row without its table fails
+`test_migrated_tables_equal_the_hld_inventory`. Each implementing epic moves its table here into §20.1
+(next free row number — 33 onward; `dds_calls` is row 32) and into the matching §20.x in the same
+commit as its migration. Numbers are pre-allocated by the manager (D30) so parallel slices never
+collide on `down_revision`; the chain at E24 ends at `0015_users_sip_ha1`.
+
+| Migration | Epic | Change | Kind |
+|:--|:--|:--|:--|
+| `0016_audit_log` | E25 (S1) | new table `audit_log` + append-only trigger | append-only audit (outside sessions) |
+| `0017_result_comments_scenario_archive` | E32 (S8) | new table `result_comments` + append-only trigger; column `scenarios.archived_at` | append-only; additive column |
+| `0018_training_materials` | E34 (S10) | new table `training_materials` | reference data (files on disk by sha256) |
+
+### 20.11.1 `audit_log` (E25, `0016_audit_log`; D31)
+
+**Built by E25.** Moved to §20.1 (row 33), §20.6 (`audit_log`) and §20.9 (its trigger).
+
+### 20.11.2 `result_comments` (E32, `0017_result_comments_scenario_archive`)
+
+**Built by E32.** Moved to §20.1 (row 34), §20.10 (`result_comments`) and §20.9 (its trigger).
 
 ### 20.11.3 `scenarios.archived_at` (E32, same migration)
-| Column | PG type | Null | Default |
-|:--|:--|:--|:--|
-| `archived_at` | `timestamptz` | yes | |
 
-`NULL` = active. Set by `archiveScenario`, cleared by `unarchiveScenario`; `listScenarios` hides
-archived rows unless `include_archived=true`. «Удалять неактуальные сценарии» (ТЗ ¶229) is this
-archive: FKs from `scenario_versions` and sessions stay `RESTRICT`, so no scenario row is deleted.
+**Built by E32.** Moved to §20.2 (`scenarios`).
 
 ### 20.11.4 `training_materials` (E34, `0018_training_materials`)
 | Column | PG type | Null | Default |

@@ -55,9 +55,16 @@ async def list_scenarios(
     _user: CurrentUserDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    include_archived: Annotated[bool, Query()] = False,
 ) -> ScenarioPage:
-    """One page of scenario identities. Never content (D4)."""
-    listings, total = await container.list_scenarios()(limit=limit, offset=offset)
+    """One page of scenario identities. Never content (D4).
+
+    `include_archived` (additive, I4 E32): `false` (the default) hides every archived scenario —
+    every picker therefore sees only active scenarios unless it asks for archived ones too.
+    """
+    listings, total = await container.list_scenarios()(
+        limit=limit, offset=offset, include_archived=include_archived
+    )
     return ScenarioPage(
         items=[scenario_summary_schema(listing) for listing in listings], total=total
     )
@@ -158,3 +165,38 @@ async def validate_scenario_file(
     document = parse_scenario_document(body.content, body.format)
     report = container.validate_scenario_document()(document)
     return validation_report_schema(report)
+
+
+# --- I4 E32 instructor misc: archive (`71-i4-wave4.md` §71.9, ТЗ ¶229) ---------------------------
+
+
+@router.post(
+    "/{scenario_id}/archive",
+    operation_id="archiveScenario",
+    summary="Archive (= «удалить неактуальный») a scenario (INSTRUCTOR / ADMIN).",
+    response_model=ScenarioSummarySchema,
+    status_code=200,
+)
+async def archive_scenario(
+    scenario_id: UUID, container: ContainerDep, _user: AdminOrInstructorDep
+) -> ScenarioSummarySchema:
+    """Sets `scenarios.archived_at` (idempotent). Existing sessions and versions are untouched."""
+    listing = await container.archive_scenario()(ScenarioId(scenario_id))
+    return scenario_summary_schema(listing)
+
+
+@router.post(
+    "/{scenario_id}/unarchive",
+    operation_id="unarchiveScenario",
+    summary="Return an archived scenario to the pickers (INSTRUCTOR / ADMIN).",
+    response_model=ScenarioSummarySchema,
+    status_code=200,
+)
+async def unarchive_scenario(
+    scenario_id: UUID, container: ContainerDep, _user: AdminOrInstructorDep
+) -> ScenarioSummarySchema:
+    listing = await container.unarchive_scenario()(ScenarioId(scenario_id))
+    return scenario_summary_schema(listing)
+
+
+# --- end I4 E32 -----------------------------------------------------------------------------

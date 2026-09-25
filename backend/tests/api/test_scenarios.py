@@ -10,7 +10,7 @@ import yaml
 from app.domain.common.ids import ScenarioVersionId, UserId
 from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS
 
-from tests.api.conftest import auth
+from tests.api.conftest import auth, create_demo_session, participant
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +43,9 @@ async def test_list_scenarios_returns_identity_only(
         "version_count",
         "latest_version",
         "latest_difficulty",
+        "archived_at",  # additive, I4 E32
     }
+    assert item["archived_at"] is None
 
 
 async def test_list_scenario_versions(
@@ -319,3 +321,147 @@ def _json(document: Any) -> str:
     import json
 
     return json.dumps(document, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------------------------
+# I4 E32: archiveScenario / unarchiveScenario (`71-i4-wave4.md` §71.9, ТЗ ¶229)
+# ---------------------------------------------------------------------------------------------
+
+
+async def _scenario_id_of(
+    client: httpx.AsyncClient, tokens: dict[str, str], scenario_version_id: ScenarioVersionId
+) -> str:
+    response = await client.get(
+        f"/api/v1/scenarios/versions/{scenario_version_id}/summary",
+        headers=auth(tokens["trainee1"]),
+    )
+    assert response.status_code == 200, response.text
+    scenario_id: str = response.json()["scenario_id"]
+    return scenario_id
+
+
+async def test_archive_hides_scenario_from_listing_by_default(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
+) -> None:
+    """Archived is hidden from `listScenarios` unless `include_archived=true` (ТЗ ¶229)."""
+    scenario_id = await _scenario_id_of(client, tokens, demo_version_id)
+
+    before = await client.get("/api/v1/scenarios", headers=auth(tokens["trainee1"]))
+    total_before = before.json()["total"]
+
+    archived = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/archive", headers=auth(tokens["instructor1"])
+    )
+    assert archived.status_code == 200, archived.text
+    body = archived.json()
+    assert body["scenario_id"] == scenario_id
+    assert body["archived_at"] is not None
+
+    default_listing = await client.get("/api/v1/scenarios", headers=auth(tokens["trainee1"]))
+    assert default_listing.json()["total"] == total_before - 1
+    assert not any(item["scenario_id"] == scenario_id for item in default_listing.json()["items"])
+
+    with_archived = await client.get(
+        "/api/v1/scenarios", params={"include_archived": "true"}, headers=auth(tokens["trainee1"])
+    )
+    assert with_archived.json()["total"] == total_before
+    item = next(i for i in with_archived.json()["items"] if i["scenario_id"] == scenario_id)
+    assert item["archived_at"] is not None
+
+    unarchived = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/unarchive", headers=auth(tokens["instructor1"])
+    )
+    assert unarchived.status_code == 200, unarchived.text
+    assert unarchived.json()["archived_at"] is None
+
+    restored_listing = await client.get("/api/v1/scenarios", headers=auth(tokens["trainee1"]))
+    assert restored_listing.json()["total"] == total_before
+
+
+async def test_archive_is_idempotent(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
+) -> None:
+    """A second `archiveScenario` call leaves the scenario archived (no error, no change)."""
+    scenario_id = await _scenario_id_of(client, tokens, demo_version_id)
+
+    first = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/archive", headers=auth(tokens["instructor1"])
+    )
+    assert first.status_code == 200
+    first_archived_at = first.json()["archived_at"]
+
+    second = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/archive", headers=auth(tokens["instructor1"])
+    )
+    assert second.status_code == 200
+    assert second.json()["archived_at"] == first_archived_at
+
+
+async def test_archive_is_instructor_only(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
+) -> None:
+    scenario_id = await _scenario_id_of(client, tokens, demo_version_id)
+
+    refused = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/archive", headers=auth(tokens["trainee1"])
+    )
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "FORBIDDEN_FOR_ROLE"
+
+
+async def test_archive_of_an_unknown_scenario_is_404(
+    client: httpx.AsyncClient, tokens: dict[str, str]
+) -> None:
+    response = await client.post(
+        "/api/v1/scenarios/00000000-0000-4000-8000-000000000000/archive",
+        headers=auth(tokens["instructor1"]),
+    )
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+
+
+async def test_a_running_session_is_unaffected_by_archiving_its_scenario(
+    client: httpx.AsyncClient,
+    tokens: dict[str, str],
+    users: dict[str, UserId],
+    isolated_scenario_catalog: None,
+    demo_version_id: ScenarioVersionId,
+) -> None:
+    """Archiving a scenario touches no `scenario_versions` row and no session (D4, ТЗ ¶229): a
+    session already running on one of its versions keeps working exactly as before."""
+    scenario_id = await _scenario_id_of(client, tokens, demo_version_id)
+    session = await create_demo_session(
+        client,
+        tokens["instructor1"],
+        demo_version_id,
+        [
+            participant(users["trainee1"], "OPERATOR_112"),
+            participant(users["trainee2"], "DDS"),
+        ],
+    )
+    session_id = session["id"]
+
+    archived = await client.post(
+        f"/api/v1/scenarios/{scenario_id}/archive", headers=auth(tokens["instructor1"])
+    )
+    assert archived.status_code == 200, archived.text
+
+    still_readable = await client.get(
+        f"/api/v1/sessions/{session_id}", headers=auth(tokens["instructor1"])
+    )
+    assert still_readable.status_code == 200, still_readable.text
+    assert still_readable.json()["id"] == session_id
+
+    still_startable = await client.post(
+        f"/api/v1/sessions/{session_id}/start", headers=auth(tokens["instructor1"])
+    )
+    assert still_startable.status_code == 200, still_startable.text

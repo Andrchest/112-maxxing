@@ -65,7 +65,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List scenarios (identity only — slug and title). */
+        /**
+         * List scenarios (identity only — slug and title).
+         * @description (additive, I4 E32) `include_archived` (default `false`) — every picker hides archived
+         *     scenarios unless it asks for them; `ScenarioSummary` gains `archived_at`.
+         */
         get: operations["listScenarios"];
         put?: never;
         post?: never;
@@ -175,6 +179,43 @@ export interface paths {
         get: operations["getScenarioValidationReport"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scenarios/{scenario_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive (= «удалить неактуальный») a scenario (INSTRUCTOR / ADMIN) — ТЗ ¶229.
+         * @description Sets `scenarios.archived_at` (idempotent). Existing sessions and versions are untouched (FK RESTRICT stays).
+         */
+        post: operations["archiveScenario"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scenarios/{scenario_id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Return an archived scenario to the pickers (INSTRUCTOR / ADMIN). */
+        post: operations["unarchiveScenario"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1469,6 +1510,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/{session_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Instructor comments on a session result — ТЗ ¶236, ¶237, ¶267.
+         * @description INSTRUCTOR / ADMIN always; the session's TRAINEE exactly when the report is visible to them
+         *     (the same `report_visibility` gate, else `403 REPORT_NOT_RELEASED`). Superseded rows are
+         *     returned with `superseded: true`.
+         */
+        get: operations["listSessionComments"];
+        put?: never;
+        /** Add a comment (or an edit, as a new row) to a session result (INSTRUCTOR / ADMIN). */
+        post: operations["createSessionComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -1798,6 +1862,27 @@ export interface paths {
          *     `CHECKED` where the projection allows it (70 §70.4.6). Emits no event (HLD 20 §20.3).
          */
         post: operations["releaseLessonReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lessons/{lesson_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Instructor comments on a lesson result — the lesson equivalent of listSessionComments.
+         * @description Trainee access follows the lesson report's release (every card released).
+         */
+        get: operations["listLessonComments"];
+        put?: never;
+        /** Add a comment (or an edit, as a new row) to a lesson result (INSTRUCTOR / ADMIN). */
+        post: operations["createLessonComment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2145,6 +2230,11 @@ export interface components {
             latest_version: number | null;
             /** @description (additive, I3 E9a) The latest version's difficulty («Сложность», 1–5). */
             latest_difficulty: number | null;
+            /**
+             * Format: date-time
+             * @description (additive, I4 E32) `null` = active; set = hidden from pickers.
+             */
+            archived_at: string | null;
         };
         ScenarioVersionListItem: {
             /** Format: uuid */
@@ -3830,6 +3920,38 @@ export interface components {
                 elapsed_ms: number | null;
             };
         };
+        /** @description (I4 E32) `createSessionComment` / `createLessonComment`. */
+        ResultCommentRequest: {
+            text: string;
+            /**
+             * Format: uuid
+             * @description An edit is a new row that supersedes this one (append-only).
+             */
+            replaces_comment_id?: string | null;
+        };
+        /** @description (I4 E32) One `result_comments` row, oldest first in a list. */
+        ResultCommentView: {
+            /** Format: uuid */
+            comment_id: string;
+            /** Format: uuid */
+            session_id: string | null;
+            /** Format: uuid */
+            lesson_id: string | null;
+            /** Format: uuid */
+            author_user_id: string;
+            author_display_name_ru: string;
+            text: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            replaces_comment_id: string | null;
+            /** @description `true` when a later row's `replaces_comment_id` points at this one. */
+            superseded: boolean;
+        };
+        /** @description (I4 E32) `listSessionComments` / `listLessonComments`. */
+        ResultCommentList: {
+            items: components["schemas"]["ResultCommentView"][];
+        };
     };
     responses: {
         /** @description `UNAUTHENTICATED` — missing, malformed or expired bearer token. */
@@ -4015,6 +4137,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description (additive, I4 E32) */
+                include_archived?: boolean;
             };
             header?: never;
             path?: never;
@@ -4171,6 +4295,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioValidationReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    archiveScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: components["parameters"]["ScenarioIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The scenario after archiving. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    unarchiveScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: components["parameters"]["ScenarioIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The scenario after unarchiving. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioSummary"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -5734,6 +5908,61 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listSessionComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Comments, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultCommentList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createSessionComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResultCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored comment. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultCommentView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
     getHealthLive: {
         parameters: {
             query?: never;
@@ -6177,6 +6406,61 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listLessonComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Comments, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultCommentList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createLessonComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: components["parameters"]["LessonIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResultCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored comment. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultCommentView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     getWeightProposals: {

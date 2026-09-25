@@ -16,6 +16,8 @@ import { RegisterPage } from '@/features/operator/register-page';
 import { DdsIncidentListPage } from '@/features/dds/incident-list-page';
 import { LessonsPage } from '@/features/lesson/lessons-page';
 import { LessonDetailPage } from '@/features/lesson/lesson-detail-page';
+import { ScenariosPage } from '@/features/instructor/scenarios-page';
+import { LessonBoardPage } from '@/features/instructor/lesson-board-page';
 import { NotFoundPage } from '@/app/not-found-page';
 import { useAuthStore, homeRouteForRole } from '@/entities/session';
 
@@ -76,6 +78,10 @@ export function AppRoutes() {
               card reports. More specific than /instructor/*, ranked first the same way. */}
           <Route path="/instructor/lessons/:lessonId" element={<LessonDetailPage />} />
           <Route path="/instructor/lessons" element={<LessonsPage />} />
+          {/* I4 E32 (71 §71.9): the «Сценарии» upload/archive page and the all-trainees board,
+              same "more specific, ranked first" pattern as the routes above. */}
+          <Route path="/instructor/scenarios" element={<ScenariosPage />} />
+          <Route path="/instructor/board/:lessonId" element={<LessonBoardPage />} />
           <Route path="/instructor/*" element={<InstructorPage />} />
         </Route>
         {/* E16: the report is trainee-visible too (SPEC §29, D12 design decision #4) — the

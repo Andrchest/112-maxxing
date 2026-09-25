@@ -43,6 +43,9 @@ export function InstructorPage() {
           <Button asChild variant="ghost" size="sm">
             <Link to="/instructor/lessons">{t('navLessonsLink')}</Link>
           </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/instructor/scenarios">{t('navScenariosLink')}</Link>
+          </Button>
           <LogoutButton />
         </nav>
       </div>

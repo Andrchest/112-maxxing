@@ -49,28 +49,34 @@ class SqlAlchemyScenarioRepository:
 
     async def find_scenario_by_slug(self, slug: str) -> StoredScenario | None:
         result = await self._session.execute(
-            sa.select(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru).where(
-                _SCENARIOS.c.slug == slug
-            )
+            sa.select(
+                _SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru, _SCENARIOS.c.archived_at
+            ).where(_SCENARIOS.c.slug == slug)
         )
         row = result.one_or_none()
         if row is None:
             return None
         return StoredScenario(
-            scenario_id=ScenarioId(UUID(str(row.id))), slug=row.slug, title_ru=row.title_ru
+            scenario_id=ScenarioId(UUID(str(row.id))),
+            slug=row.slug,
+            title_ru=row.title_ru,
+            archived_at=row.archived_at,
         )
 
     async def get_scenario(self, scenario_id: ScenarioId) -> StoredScenario | None:
         result = await self._session.execute(
-            sa.select(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru).where(
-                _SCENARIOS.c.id == UUID(str(scenario_id))
-            )
+            sa.select(
+                _SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru, _SCENARIOS.c.archived_at
+            ).where(_SCENARIOS.c.id == UUID(str(scenario_id)))
         )
         row = result.one_or_none()
         if row is None:
             return None
         return StoredScenario(
-            scenario_id=ScenarioId(UUID(str(row.id))), slug=row.slug, title_ru=row.title_ru
+            scenario_id=ScenarioId(UUID(str(row.id))),
+            slug=row.slug,
+            title_ru=row.title_ru,
+            archived_at=row.archived_at,
         )
 
     async def get_version(
@@ -111,16 +117,21 @@ class SqlAlchemyScenarioRepository:
     # -- read paths for `listScenarios` / `listScenarioVersions` (E7) --------------------------
 
     async def list_scenarios(
-        self, *, limit: int, offset: int
+        self, *, limit: int, offset: int, include_archived: bool = False
     ) -> tuple[list[StoredScenarioListing], int]:
         """One page of scenarios with their version aggregates, plus the unpaged total.
 
         `version_count` and `latest_version` come from a `LEFT JOIN … GROUP BY`, so a scenario
         with no versions yet still appears — with `0` and `null`, which is what
         `ScenarioSummary.latest_version` being nullable means.
+
+        `include_archived=False` (I4 E32, the default) excludes every row with `archived_at IS
+        NOT NULL` from both the page and the total.
         """
+        archived_filter = () if include_archived else (_SCENARIOS.c.archived_at.is_(None),)
+
         total_result = await self._session.execute(
-            sa.select(sa.func.count()).select_from(_SCENARIOS)
+            sa.select(sa.func.count()).select_from(_SCENARIOS).where(*archived_filter)
         )
         total = int(total_result.scalar_one())
 
@@ -138,6 +149,7 @@ class SqlAlchemyScenarioRepository:
                 _SCENARIOS.c.id,
                 _SCENARIOS.c.slug,
                 _SCENARIOS.c.title_ru,
+                _SCENARIOS.c.archived_at,
                 sa.func.count(_VERSIONS.c.id).label("version_count"),
                 sa.func.max(_VERSIONS.c.version).label("latest_version"),
                 latest_difficulty.label("latest_difficulty"),
@@ -145,6 +157,7 @@ class SqlAlchemyScenarioRepository:
             .select_from(
                 _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
             )
+            .where(*archived_filter)
             .group_by(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru)
             .order_by(_SCENARIOS.c.slug)
             .limit(limit)
@@ -155,6 +168,7 @@ class SqlAlchemyScenarioRepository:
                 scenario_id=ScenarioId(UUID(str(row.id))),
                 slug=row.slug,
                 title_ru=row.title_ru,
+                archived_at=row.archived_at,
                 version_count=int(row.version_count),
                 latest_version=None if row.latest_version is None else int(row.latest_version),
                 latest_difficulty=(
@@ -275,6 +289,67 @@ class SqlAlchemyScenarioRepository:
             .returning(_VERSIONS.c.id)
         )
         return result.one_or_none() is not None
+
+    # -- I4 E32: archive / unarchive (§20.11.3) ------------------------------------------------
+
+    async def set_archived(
+        self, scenario_id: ScenarioId, *, archived: bool
+    ) -> StoredScenarioListing | None:
+        """Idempotent: archiving only sets `archived_at` if it is still null; unarchiving always
+        clears it. Returns the listing row after the change, or `None` if the scenario is
+        unknown."""
+        scenario_uuid = UUID(str(scenario_id))
+        exists = await self._session.execute(
+            sa.select(_SCENARIOS.c.id).where(_SCENARIOS.c.id == scenario_uuid)
+        )
+        if exists.one_or_none() is None:
+            return None
+        if archived:
+            await self._session.execute(
+                sa.update(_SCENARIOS)
+                .where(_SCENARIOS.c.id == scenario_uuid, _SCENARIOS.c.archived_at.is_(None))
+                .values(archived_at=sa.func.now())
+            )
+        else:
+            await self._session.execute(
+                sa.update(_SCENARIOS)
+                .where(_SCENARIOS.c.id == scenario_uuid)
+                .values(archived_at=None)
+            )
+        # A targeted re-read (not the paged helper): exactly one scenario matches this id.
+        result = await self._session.execute(
+            sa.select(
+                _SCENARIOS.c.id,
+                _SCENARIOS.c.slug,
+                _SCENARIOS.c.title_ru,
+                _SCENARIOS.c.archived_at,
+                sa.func.count(_VERSIONS.c.id).label("version_count"),
+                sa.func.max(_VERSIONS.c.version).label("latest_version"),
+            )
+            .select_from(
+                _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
+            )
+            .where(_SCENARIOS.c.id == scenario_uuid)
+            .group_by(_SCENARIOS.c.id, _SCENARIOS.c.slug, _SCENARIOS.c.title_ru)
+        )
+        row = result.one()
+        latest = _VERSIONS.alias("latest")
+        difficulty_result = await self._session.execute(
+            sa.select(latest.c.difficulty)
+            .where(latest.c.scenario_id == scenario_uuid)
+            .order_by(latest.c.version.desc())
+            .limit(1)
+        )
+        latest_difficulty = difficulty_result.scalar_one_or_none()
+        return StoredScenarioListing(
+            scenario_id=ScenarioId(UUID(str(row.id))),
+            slug=row.slug,
+            title_ru=row.title_ru,
+            archived_at=row.archived_at,
+            version_count=int(row.version_count),
+            latest_version=None if row.latest_version is None else int(row.latest_version),
+            latest_difficulty=None if latest_difficulty is None else int(latest_difficulty),
+        )
 
 
 def _version_detail(row: sa.Row[tuple[Any, ...]]) -> StoredScenarioVersionDetail:

@@ -31,6 +31,7 @@ import { ResourceTimelineSection } from './resource-timeline-section';
 import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
 import { ExplanationPanel } from './explanation-panel';
+import { CommentsSection } from './comments-section';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -185,6 +186,9 @@ export function ReportPage() {
           currentScoreChecksum={report.score_report.checksum}
           canManage={canManage}
         />
+      </div>
+      <div className="mt-4">
+        <CommentsSection sessionId={sessionId} canManage={canManage} />
       </div>
     </AppShell>
   );

@@ -94,3 +94,21 @@ def require_creator_or_admin(lesson: Lesson, user: AuthenticatedUser) -> None:
 TERMINAL_SESSION_STATES: frozenset[SessionState] = frozenset(
     {SessionState.COMPLETED, SessionState.ABORTED}
 )
+
+
+# --- I4 E32 instructor misc (`71-i4-wave4.md` §71.9) ---------------------------------------------
+
+
+class LessonReportNotReleasedError(DomainError):
+    """A TRAINEE reading `listLessonComments` before the lesson report is released to them
+    (`403 REPORT_NOT_RELEASED`) — "the lesson equivalent of listSessionComments" (openapi.yaml),
+    gated on `Lesson.report_released_at` rather than on a per-session release."""
+
+    code = "REPORT_NOT_RELEASED"
+
+    def __init__(self, lesson_id: LessonId) -> None:
+        self.lesson_id = lesson_id
+        super().__init__(f"the report of lesson {lesson_id} is not released to trainees yet")
+
+
+# --- end I4 E32 -----------------------------------------------------------------------------

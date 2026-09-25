@@ -26,6 +26,12 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, Response
 
 from app.api.deps import ContainerDep
+from app.api.schemas.comments import (
+    ResultCommentListSchema,
+    ResultCommentRequestSchema,
+    ResultCommentViewSchema,
+    result_comment_schema,
+)
 from app.api.schemas.reports import (
     GenerateExplanationRequestSchema,
     InferenceMetricsPageSchema,
@@ -38,7 +44,7 @@ from app.api.schemas.reports import (
     rescore_result_schema,
     session_report_schema,
 )
-from app.api.security import CurrentUserDep
+from app.api.security import AdminOrInstructorDep, CurrentUserDep
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.ports.report_explanation_repository import ExplanationAudience
 from app.application.reports.list_inference_metrics import DEFAULT_LIMIT, MAX_LIMIT
@@ -204,3 +210,45 @@ async def generate_report_explanation(
         SessionId(session_id), user, audience=audience, regenerate=regenerate
     )
     return report_explanation_schema(explanation)
+
+
+# --- I4 E32 instructor misc: session comments (`71-i4-wave4.md` §71.9, ТЗ ¶236, ¶237) ------------
+
+
+@router.get(
+    "/{session_id}/comments",
+    operation_id="listSessionComments",
+    summary="Instructor comments on a session result — ТЗ ¶236, ¶237, ¶267.",
+    response_model=ResultCommentListSchema,
+    status_code=200,
+)
+async def list_session_comments(
+    session_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> ResultCommentListSchema:
+    """INSTRUCTOR / ADMIN always; the trainee exactly when the report is visible to them (the
+    same `report_visibility` gate, else `403 REPORT_NOT_RELEASED`). Superseded rows are returned
+    with `superseded: true`."""
+    comments = await container.list_session_comments()(SessionId(session_id), user)
+    return ResultCommentListSchema(items=[result_comment_schema(c) for c in comments])
+
+
+@router.post(
+    "/{session_id}/comments",
+    operation_id="createSessionComment",
+    summary="Add a comment (or an edit, as a new row) to a session result (INSTRUCTOR / ADMIN).",
+    response_model=ResultCommentViewSchema,
+    status_code=201,
+)
+async def create_session_comment(
+    session_id: UUID,
+    body: ResultCommentRequestSchema,
+    container: ContainerDep,
+    user: AdminOrInstructorDep,
+) -> ResultCommentViewSchema:
+    comment = await container.create_session_comment()(
+        SessionId(session_id), user, body.to_command()
+    )
+    return result_comment_schema(comment)
+
+
+# --- end I4 E32 -----------------------------------------------------------------------------

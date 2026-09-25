@@ -147,6 +147,9 @@ paths:
       tags: [scenarios]
       operationId: listScenarios
       summary: List scenarios (identity only — slug and title).
+      description: |
+        (additive, I4 E32) `include_archived` (default `false`) — every picker hides archived
+        scenarios unless it asks for them; `ScenarioSummary` gains `archived_at`.
       x-action: '-'
       x-emits: []
       parameters:
@@ -158,6 +161,11 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 0, default: 0 }
+        - name: include_archived
+          in: query
+          required: false
+          description: (additive, I4 E32)
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Scenarios.
@@ -300,6 +308,46 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ScenarioValidationReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------ I4 E32: scenario archive ----
+  /api/v1/scenarios/{scenario_id}/archive:
+    post:
+      tags: [scenarios]
+      operationId: archiveScenario
+      summary: Archive (= «удалить неактуальный») a scenario (INSTRUCTOR / ADMIN) — ТЗ ¶229.
+      description: Sets `scenarios.archived_at` (idempotent). Existing sessions and versions are untouched (FK RESTRICT stays).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioIdParam'
+      responses:
+        '200':
+          description: The scenario after archiving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/scenarios/{scenario_id}/unarchive:
+    post:
+      tags: [scenarios]
+      operationId: unarchiveScenario
+      summary: Return an archived scenario to the pickers (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioIdParam'
+      responses:
+        '200':
+          description: The scenario after unarchiving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSummary' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2008,6 +2056,53 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ------------------------------------------- I4 E32: session comments ----
+  /api/v1/reports/{session_id}/comments:
+    get:
+      tags: [reports]
+      operationId: listSessionComments
+      summary: Instructor comments on a session result — ТЗ ¶236, ¶237, ¶267.
+      description: |
+        INSTRUCTOR / ADMIN always; the session's TRAINEE exactly when the report is visible to them
+        (the same `report_visibility` gate, else `403 REPORT_NOT_RELEASED`). Superseded rows are
+        returned with `superseded: true`.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: Comments, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [reports]
+      operationId: createSessionComment
+      summary: Add a comment (or an edit, as a new row) to a session result (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResultCommentRequest' }
+      responses:
+        '201':
+          description: The stored comment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
   # -------------------------------------------------------------- health ----
   /api/v1/health/live:
     get:
@@ -2448,6 +2543,50 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  # --------------------------------------------- I4 E32: lesson comments ----
+  /api/v1/lessons/{lesson_id}/comments:
+    get:
+      tags: [lessons]
+      operationId: listLessonComments
+      summary: Instructor comments on a lesson result — the lesson equivalent of listSessionComments.
+      description: Trainee access follows the lesson report's release (every card released).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      responses:
+        '200':
+          description: Comments, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [lessons]
+      operationId: createLessonComment
+      summary: Add a comment (or an edit, as a new row) to a lesson result (INSTRUCTOR / ADMIN).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/LessonIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResultCommentRequest' }
+      responses:
+        '201':
+          description: The stored comment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultCommentView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
 
   # ------------------------------------------- weight proposals & groups ----
   # Additive, I3 E9a (70 §70.3.7): AI-suggested difficulty weights are stored as proposals and
@@ -3239,7 +3378,7 @@ components:
       type: object
       description: '`Scenario` — identity only (D4): slug and title, never content.'
       additionalProperties: false
-      required: [scenario_id, slug, title_ru, version_count, latest_version, latest_difficulty]
+      required: [scenario_id, slug, title_ru, version_count, latest_version, latest_difficulty, archived_at]
       properties:
         scenario_id: { type: string, format: uuid }
         slug: { type: string }
@@ -3251,6 +3390,10 @@ components:
           type: [integer, 'null']
           minimum: 1
           maximum: 5
+        archived_at:
+          description: (additive, I4 E32) `null` = active; set = hidden from pickers.
+          type: [string, 'null']
+          format: date-time
 
     ScenarioVersionListItem:
       type: object
@@ -5685,3 +5828,41 @@ components:
             started_at: { type: [string, 'null'], format: date-time }
             aborted_at: { type: [string, 'null'], format: date-time }
             elapsed_ms: { type: [integer, 'null'], minimum: 0 }
+    # ----------------------------------------------- I4 E32: instructor misc ----
+    ResultCommentRequest:
+      description: (I4 E32) `createSessionComment` / `createLessonComment`.
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1 }
+        replaces_comment_id:
+          description: An edit is a new row that supersedes this one (append-only).
+          type: [string, 'null']
+          format: uuid
+    ResultCommentView:
+      description: (I4 E32) One `result_comments` row, oldest first in a list.
+      type: object
+      additionalProperties: false
+      required: [comment_id, session_id, lesson_id, author_user_id, author_display_name_ru, text, created_at, replaces_comment_id, superseded]
+      properties:
+        comment_id: { type: string, format: uuid }
+        session_id: { type: [string, 'null'], format: uuid }
+        lesson_id: { type: [string, 'null'], format: uuid }
+        author_user_id: { type: string, format: uuid }
+        author_display_name_ru: { type: string }
+        text: { type: string }
+        created_at: { type: string, format: date-time }
+        replaces_comment_id: { type: [string, 'null'], format: uuid }
+        superseded:
+          description: '`true` when a later row''s `replaces_comment_id` points at this one.'
+          type: boolean
+    ResultCommentList:
+      description: (I4 E32) `listSessionComments` / `listLessonComments`.
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ResultCommentView' }

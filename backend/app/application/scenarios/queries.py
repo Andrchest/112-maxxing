@@ -321,10 +321,18 @@ class ListScenarios:
     def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
         self._unit_of_work = unit_of_work
 
-    async def __call__(self, *, limit: int, offset: int) -> tuple[list[StoredScenarioListing], int]:
-        """The page and the unpaged total."""
+    async def __call__(
+        self, *, limit: int, offset: int, include_archived: bool = False
+    ) -> tuple[list[StoredScenarioListing], int]:
+        """The page and the unpaged total.
+
+        `include_archived` (I4 E32, default `False`): every picker hides archived scenarios
+        unless it asks for them explicitly.
+        """
         async with self._unit_of_work() as uow:
-            page = await uow.scenarios.list_scenarios(limit=limit, offset=offset)
+            page = await uow.scenarios.list_scenarios(
+                limit=limit, offset=offset, include_archived=include_archived
+            )
             await uow.commit()
         return page
 

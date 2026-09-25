@@ -22,6 +22,12 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from app.api.deps import ContainerDep
+from app.api.schemas.comments import (
+    ResultCommentListSchema,
+    ResultCommentRequestSchema,
+    ResultCommentViewSchema,
+    result_comment_schema,
+)
 from app.api.schemas.common import PageSchema
 from app.api.schemas.lessons import (
     LessonCreateRequestSchema,
@@ -178,6 +184,44 @@ async def release_lesson_report(
 ) -> LessonDetailSchema:
     released = await container.release_lesson_report()(LessonId(lesson_id), user)
     return await _detail(container, released)
+
+
+# --- I4 E32 instructor misc: lesson comments (`71-i4-wave4.md` §71.9) ----------------------------
+
+
+@router.get(
+    "/{lesson_id}/comments",
+    operation_id="listLessonComments",
+    summary="Instructor comments on a lesson result (listSessionComments' lesson equivalent).",
+    response_model=ResultCommentListSchema,
+    status_code=200,
+)
+async def list_lesson_comments(
+    lesson_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> ResultCommentListSchema:
+    """Trainee access follows the lesson report's release (every card released)."""
+    comments = await container.list_lesson_comments()(LessonId(lesson_id), user)
+    return ResultCommentListSchema(items=[result_comment_schema(c) for c in comments])
+
+
+@router.post(
+    "/{lesson_id}/comments",
+    operation_id="createLessonComment",
+    summary="Add a comment (or an edit, as a new row) to a lesson result (INSTRUCTOR / ADMIN).",
+    response_model=ResultCommentViewSchema,
+    status_code=201,
+)
+async def create_lesson_comment(
+    lesson_id: UUID,
+    body: ResultCommentRequestSchema,
+    container: ContainerDep,
+    user: AdminOrInstructorDep,
+) -> ResultCommentViewSchema:
+    comment = await container.create_lesson_comment()(LessonId(lesson_id), user, body.to_command())
+    return result_comment_schema(comment)
+
+
+# --- end I4 E32 -----------------------------------------------------------------------------
 
 
 @router.post(
