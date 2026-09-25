@@ -61,3 +61,25 @@ describe('AppShell — connection indicator (I3 E4b manager follow-up)', () => {
     expect(document.querySelector('[data-slot="connection-indicator"]')).not.toBeInTheDocument();
   });
 });
+
+// I4 E30 (71 §71.7): "the app shell shows an alerts badge for ADMIN" — a caller-supplied slot,
+// omitted by every route but /admin (this component stays presentational, see its own doc comment).
+describe('AppShell — adminAlertsBadge slot (I4 E30)', () => {
+  it('renders nothing extra when the caller passes no badge (every non-admin route today)', () => {
+    render(
+      <AppShell title="Тренажёр 112">
+        <div />
+      </AppShell>,
+    );
+    expect(screen.queryByText('Оповещения')).not.toBeInTheDocument();
+  });
+
+  it('renders the caller-supplied badge when one is passed', () => {
+    render(
+      <AppShell title="Администрирование" adminAlertsBadge={<span>Оповещения: 2</span>}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getByText('Оповещения: 2')).toBeInTheDocument();
+  });
+});

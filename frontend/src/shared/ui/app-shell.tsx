@@ -73,6 +73,13 @@ interface AppShellProps {
    * Default `false`: `main` scrolls and pads itself, unchanged for every other route.
    */
   fillHeight?: boolean;
+  /**
+   * I4 E30 (71 §71.7: "the app shell shows an alerts badge for ADMIN"): an optional slot the
+   * caller renders its own already-fetched content into — this component stays presentational
+   * and never fetches anything itself (see the class doc). Only `AdminPage` (`/admin`) passes one
+   * today; every other route omits it, unchanged.
+   */
+  adminAlertsBadge?: ReactNode;
   children: ReactNode;
 }
 
@@ -93,6 +100,7 @@ export function AppShell({
   connectionIndicatorHidden = false,
   referenceTheme = false,
   fillHeight = false,
+  adminAlertsBadge,
   children,
 }: AppShellProps) {
   return (
@@ -120,6 +128,7 @@ export function AppShell({
               {role}
             </Badge>
           ) : null}
+          {adminAlertsBadge}
           {readiness ? (
             <Badge
               variant={READINESS_BADGE_VARIANT[readiness]}

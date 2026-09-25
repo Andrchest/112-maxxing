@@ -86,13 +86,19 @@ setUnauthorizedHandler(() => {
 /** Where an authenticated user's own role lands them after login (D12 design decision #4). A
  * TRAINEE has no account-level RoleType — that is assigned per session, not per user — so they
  * land on "my sessions" (`features/sessions`, E8-B) and pick a session from there; its console
- * routes (`/operator/:sessionId`, `/dds/:sessionId`) resolve the per-session role. */
+ * routes (`/operator/:sessionId`, `/dds/:sessionId`) resolve the per-session role.
+ *
+ * I4 E30 (71 §71.7): ADMIN now lands on `/admin` instead of `/instructor` — its own screens over
+ * E28/E29. Whether ADMIN also keeps INSTRUCTOR's own powers is Q-E14-1, undecided by the owner
+ * (71 §71.5); `/instructor/*`'s own `RequireRole` guard is unchanged by this epic, so an ADMIN
+ * that navigates there directly still gets in. */
 export function homeRouteForRole(role: UserAccount['user_role']): string {
   switch (role) {
     case 'TRAINEE':
       return '/sessions';
     case 'INSTRUCTOR':
-    case 'ADMIN':
       return '/instructor';
+    case 'ADMIN':
+      return '/admin';
   }
 }

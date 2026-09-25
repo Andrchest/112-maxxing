@@ -83,4 +83,16 @@ export const queryKeys = {
       ['statistics', 'list', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
     myHistory: () => ['statistics', 'my-history'] as const,
   },
+  // -- I4 E30: Admin UI (71 §71.7) — E28's accounts and E29's monitoring reads ----------------
+  admin: {
+    users: (role?: string, includeInactive?: boolean) =>
+      ['admin', 'users', role ?? 'ALL', includeInactive ?? false] as const,
+    auditLog: (userId?: string, action?: string, from?: string, to?: string, offset = 0) =>
+      ['admin', 'audit-log', userId ?? '', action ?? '', from ?? '', to ?? '', offset] as const,
+    usageStats: (from?: string, to?: string) => ['admin', 'usage-stats', from ?? '', to ?? ''] as const,
+    serverLoad: () => ['admin', 'server-load'] as const,
+    errors: (from?: string, to?: string) => ['admin', 'errors', from ?? '', to ?? ''] as const,
+    alerts: () => ['admin', 'alerts'] as const,
+    backupStatus: () => ['admin', 'backup-status'] as const,
+  },
 } as const;

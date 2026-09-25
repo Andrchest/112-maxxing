@@ -197,4 +197,31 @@ describe('AppRoutes', () => {
       expect(screen.getByRole('heading', { name: ru.historyPageTitle })).toBeInTheDocument();
     });
   });
+
+  // -- I4 E30 (71 §71.7): /admin is ADMIN only, unlike /instructor above -----------------------
+  describe('RequireRole — /admin (ADMIN only)', () => {
+    it('renders the admin page for a signed-in ADMIN', () => {
+      signIn('ADMIN');
+      renderAt('/admin');
+      expect(screen.getByRole('heading', { name: ru.adminPageTitle })).toBeInTheDocument();
+    });
+
+    it('redirects an INSTRUCTOR away from /admin to their own home route', () => {
+      signIn('INSTRUCTOR');
+      renderAt('/admin');
+      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+    });
+
+    it('redirects a TRAINEE away from /admin to their own home route', () => {
+      signIn('TRAINEE');
+      renderAt('/admin');
+      expect(screen.getByRole('heading', { name: ru.sessionsTitle })).toBeInTheDocument();
+    });
+
+    it('redirects / to /admin for a signed-in ADMIN (homeRouteForRole)', () => {
+      signIn('ADMIN');
+      renderAt('/');
+      expect(screen.getByRole('heading', { name: ru.adminPageTitle })).toBeInTheDocument();
+    });
+  });
 });

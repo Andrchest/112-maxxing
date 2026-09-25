@@ -463,11 +463,19 @@ export function getCurrentUser(): Promise<UserAccount> {
   return apiFetch<UserAccount>('/auth/me');
 }
 
-/** `GET /users` (additive, E7) — INSTRUCTOR/ADMIN only. `role` narrows to one `UserRole` (used
- * by E8-B's trainee picker to list only `TRAINEE` accounts). */
-export function listUsers(params: { role?: UserRole } = {}): Promise<{ items: UserAccount[]; total: number }> {
+/** `GET /users` (additive, E7; CHANGED I4 E28) — INSTRUCTOR/ADMIN only. `role` narrows to one
+ * `UserRole` (used by E8-B's trainee picker to list only `TRAINEE` accounts). `includeInactive`
+ * is ADMIN only (`403` for an INSTRUCTOR that passes it, openapi.yaml) — added for the admin
+ * «Пользователи» tab (I4 E30, 71 §71.7); every existing caller keeps working unchanged since the
+ * param is optional and defaults to omitted (server default `false`). Items are `UserAccountI4`
+ * (adds `is_active`) since E28 landed — the wider type is additive over the plain `UserAccount`
+ * every pre-I4 caller already reads. */
+export function listUsers(
+  params: { role?: UserRole; includeInactive?: boolean } = {},
+): Promise<{ items: UserAccountI4[]; total: number }> {
   const query = new URLSearchParams();
   if (params.role) query.set('role', params.role);
+  if (params.includeInactive) query.set('include_inactive', 'true');
   const qs = query.toString();
   return apiFetch(`/users${qs ? `?${qs}` : ''}`);
 }
@@ -996,4 +1004,93 @@ export function getLessonReportCsv(lessonId: string): Promise<Blob> {
 /** `getTraineeStatisticsCsv` — {@link getTraineeStatistics} as a file. */
 export function getTraineeStatisticsCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
   return fetchCsv(`/statistics.csv${statisticsQueryString(params)}`);
+}
+
+// --- I4 E30: Admin UI (71 §71.7) — typed wrappers over E28's accounts and E29's monitoring
+// operations; the contract itself is unchanged by this epic ("API. None new; it consumes the S4
+// and S5 operations."), so this section only adds the client-side calls the admin screens need. ---
+export type UserAccountI4 = components['schemas']['UserAccountI4'];
+export type UserCreateRequest = operations['createUser']['requestBody']['content']['application/json'];
+export type UserUpdateRequest = operations['updateUser']['requestBody']['content']['application/json'];
+export type PasswordResetRequest = operations['resetUserPassword']['requestBody']['content']['application/json'];
+export type AuditAction = components['schemas']['AuditAction'];
+export type AuditOutcome = components['schemas']['AuditOutcome'];
+export type AuditEntryView = components['schemas']['AuditEntryView'];
+export type UsageStats = components['schemas']['UsageStats'];
+export type ServerLoad = components['schemas']['ServerLoad'];
+export type ErrorRecordView = components['schemas']['ErrorRecordView'];
+export type AdminAlertView = components['schemas']['AdminAlertView'];
+export type BackupStatus = components['schemas']['BackupStatus'];
+
+/** `createUser` (ADMIN) — ТЗ ¶195. `409 USERNAME_TAKEN`, `422 VALIDATION_ERROR` on a short
+ * password. */
+export function createUser(body: UserCreateRequest): Promise<UserAccountI4> {
+  return apiFetch('/admin/users', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** `updateUser` (ADMIN) — role, display name, block/unblock (ТЗ ¶196, ¶197). Every field
+ * optional. `409 SELF_MODIFICATION_FORBIDDEN`/`LAST_ADMIN_REQUIRED` guard self and the last
+ * active admin. */
+export function updateUser(userId: string, body: UserUpdateRequest): Promise<UserAccountI4> {
+  return apiFetch(`/admin/users/${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+/** `resetUserPassword` (ADMIN) — `204`, never echoes the new password back. */
+export function resetUserPassword(userId: string, body: PasswordResetRequest): Promise<void> {
+  return apiFetch(`/admin/users/${encodeURIComponent(userId)}/password`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** `listAuditLog` (ADMIN) — ТЗ ¶205, ¶296. Filters by user, action and period; paged, newest
+ * first. */
+export function listAuditLog(
+  params: { userId?: string; action?: AuditAction; from?: string; to?: string; limit?: number; offset?: number } = {},
+): Promise<{ items: AuditEntryView[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.userId) query.set('user_id', params.userId);
+  if (params.action) query.set('action', params.action);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.offset !== undefined) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiFetch(`/admin/audit-log${qs ? `?${qs}` : ''}`);
+}
+
+/** `getUsageStats` (ADMIN) — ТЗ ¶206; per-day counts over an optional period (defaults to the
+ * server's own 30-day window). */
+export function getUsageStats(params: { from?: string; to?: string } = {}): Promise<UsageStats> {
+  const query = new URLSearchParams();
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  const qs = query.toString();
+  return apiFetch(`/admin/usage-stats${qs ? `?${qs}` : ''}`);
+}
+
+/** `getServerLoad` (ADMIN) — ТЗ ¶208, ¶289. Every metric is `null`, never `0`, when it cannot be
+ * read (SPEC §27 rule) — the caller renders «нет данных» for a `null`, never a bare `0`. */
+export function getServerLoad(): Promise<ServerLoad> {
+  return apiFetch('/admin/server-load');
+}
+
+/** `getErrorReport` (ADMIN) — ТЗ ¶207; merges backend error logs, `MODEL_ERROR` events and FATAL
+ * transitions over an optional period, newest first. */
+export function getErrorReport(params: { from?: string; to?: string; limit?: number } = {}): Promise<{ items: ErrorRecordView[] }> {
+  const query = new URLSearchParams();
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return apiFetch(`/admin/errors${qs ? `?${qs}` : ''}`);
+}
+
+/** `listAdminAlerts` (ADMIN) — ТЗ ¶308; derived, not stored (a stale/failed backup, an
+ * `INFERENCE_FATAL` latch, repeated login failures). An empty list means nothing to report. */
+export function listAdminAlerts(): Promise<{ items: AdminAlertView[] }> {
+  return apiFetch('/admin/alerts');
+}
+
+/** `getBackupStatus` (ADMIN) — ТЗ ¶143, ¶216; `available: false` when `backups/last.json` is
+ * absent or unreadable. */
+export function getBackupStatus(): Promise<BackupStatus> {
+  return apiFetch('/admin/backup-status');
 }
