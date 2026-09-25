@@ -24,6 +24,7 @@ import { timelineEntryRowId } from './timeline-row-id';
 import { TranscriptAudioPanel } from './transcript-audio-panel';
 import { FinalCardSection } from './final-card-section';
 import { TruthDiffSection } from './truth-diff-section';
+import { TextQualitySection } from './text-quality-section';
 import { HandoffSection } from './handoff-section';
 import { DdsDecisionsSection } from './dds-decisions-section';
 import { DdsParticipantTotalsSection } from './dds-participant-totals-section';
@@ -165,6 +166,9 @@ export function ReportPage() {
       </div>
       <div className="mt-4">
         <TruthDiffSection entries={report.truth_vs_card_diff} />
+      </div>
+      <div className="mt-4">
+        <TextQualitySection textQuality={report.text_quality} />
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <DdsDecisionsSection decisions={report.dds_decisions} />

@@ -32,6 +32,13 @@ const CARDS: LessonReport['cards'] = [
     ],
     failed_rule_count: 3,
     critical_error_count: 1,
+    text_quality: {
+      available: true,
+      fields: [{ source: 'ADDRESS_STREET', text: 'a street', misspellings: [], street: { status: 'UNKNOWN', suggestions: [] } }],
+      dictionary_sha256: 'd',
+      street_list_sha256: 's',
+      unavailable_message_ru: null,
+    },
   },
   {
     position: 2,
@@ -42,6 +49,7 @@ const CARDS: LessonReport['cards'] = [
     norms: [],
     failed_rule_count: null,
     critical_error_count: null,
+    text_quality: null,
   },
 ];
 
@@ -60,6 +68,7 @@ describe('LessonReportTable', () => {
     expect(screen.getByText('8 / 10')).toBeInTheDocument();
     expect(screen.getByText('2.5')).toBeInTheDocument();
     expect(screen.getByText('3')).toHaveAttribute('data-slot', 'report-card-failed-rules');
+    expect(document.querySelector('[data-slot="report-card-text-quality"]')).toHaveTextContent('1'); // one flagged street
 
     const norms = document.querySelectorAll('[data-slot="report-norm"]');
     expect(Array.from(norms).map((norm) => norm.getAttribute('data-kind'))).toEqual(['FILL', 'ACCEPT', 'ACCEPT']);

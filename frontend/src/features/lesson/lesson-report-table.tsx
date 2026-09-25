@@ -4,12 +4,16 @@
 // «Скачать CSV» (`getLessonReportCsv`, the same numbers as a file). Every number is shown exactly
 // as the server sent it (D11); a norm that was not measured says so rather than showing zero.
 // Neither interval is called «время реакции» (Q-E12-1 is open).
+// I4 E35 (71 §71.12): a «Грамотность» column, the card's flagged-word/street count from
+// `LessonReport.cards[].text_quality` (the same object the session report's own section reads);
+// «—» for an unscored card or when the checker was unavailable for it.
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { formatCallDurationMs } from '@/entities/call';
 import { serviceLabelRu } from '@/entities/service-catalog';
 import { formatDeviationMs } from '@/entities/statistics';
+import { textQualityFlaggedCount } from '@/entities/text-quality';
 import {
   getLessonReportCsv,
   problemMessageRu,
@@ -96,11 +100,13 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
           <th className="p-2 font-medium">{t('lessonReportTableColumnFailedRules')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnCriticalErrors')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnNorms')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnTextQuality')}</th>
         </tr>
       </thead>
       <tbody>
         {scored.map((card) => {
           const norms = card.norms ?? [];
+          const textQualityCount = textQualityFlaggedCount(card.text_quality);
           return (
             <tr key={card.session_id} className="border-b border-border/60 align-top" data-slot="lesson-report-row">
               <td className="p-2">{card.position}</td>
@@ -126,6 +132,9 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
                     ))}
                   </ul>
                 )}
+              </td>
+              <td className="p-2 tabular-nums" data-slot="report-card-text-quality">
+                {textQualityCount === null ? t('lessonReportNormNone') : textQualityCount}
               </td>
             </tr>
           );

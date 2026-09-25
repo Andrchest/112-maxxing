@@ -699,6 +699,12 @@ Q-E23-3/Q-E23-4, so E35 writes its own `openapi.yaml` section when it lands (§7
   spelling is in `requirements/normalized/SRC-005-tickets-and-dds-memo.md` (REQ-5226) and
   `requirements/evidence/tickets-ocr.md`. OSM has «Зверинецкая». It is **not changed** (D-h) and is
   recorded as an observation for the owner.
+- **Not built (manager, 2026-09-25): statistics column** — a per-trainee aggregate would re-check
+  every session's text on every `getTraineeStatistics` call, which reads
+  `StatisticsReader.scored_sessions` (deliberately narrowed to `norms.NORM_EVENT_TYPES`, no card
+  text, no re-run of anything) precisely to hold ¶165's 30-second budget at a class's volume; the
+  lesson report's own `text_quality` (per card, already computed for `getSessionReport`) carries no
+  such cost and is built. Q-E23-4 stays open, as E35 left it.
 
 ---
 

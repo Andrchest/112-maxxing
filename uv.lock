@@ -1201,6 +1201,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "redis" },
+    { name = "spylls" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1244,6 +1245,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "redis", specifier = ">=5" },
     { name = "sentencepiece", marker = "extra == 'asr-gigaam'", specifier = ">=0.2,<0.3" },
+    { name = "spylls", specifier = ">=0.1.7,<0.2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2" },
     { name = "torch", marker = "extra == 'asr-gigaam'", specifier = ">=2.6,<2.9" },
     { name = "torchaudio", marker = "extra == 'asr-gigaam'", specifier = ">=2.6,<2.9" },
@@ -1323,6 +1325,15 @@ dev = [
     { name = "types-pyyaml" },
 ]
 tools = [{ name = "openpyxl", specifier = ">=3.1,<4" }]
+
+[[package]]
+name = "spylls"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/c2/19f34deb2dc1475dfeadafbd5666246041ee7578bb933e82de794f0a9283/spylls-0.1.7.tar.gz", hash = "sha256:7045892dcbd324d3685f69c5a760063e78fb839913724ce18077cf0a0c93f220", size = 1499693, upload-time = "2022-01-23T13:26:54.032Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/19/ce6fcb4b86e188983bcfc1f84e4ac6f3038ca8d68b6d70a678cdc566f66c/spylls-0.1.7-py2.py3-none-any.whl", hash = "sha256:0c7fa4b66615f390bd12fd37939b85934c012309fd3cce8584844c54270b7776", size = 1509482, upload-time = "2022-01-23T13:26:40.203Z" },
+]
 
 [[package]]
 name = "sqlalchemy"

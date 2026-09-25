@@ -1,0 +1,34 @@
+reference/lexicon — ru_RU hunspell dictionary (I4 E35, HLD 71 §71.12, D35)
+
+Packaged from the E23 recon (/tmp/teamwork-112-maxxing/data/spell/, report
+/tmp/teamwork-112-maxxing/reports/i4/E23.md), unchanged byte for byte. Read by `spylls` 0.1.7
+(MIT, pure Python — no system hunspell/enchant), via
+`backend/app/infrastructure/reference/spelling_dictionary.py`.
+
+Files, with sha256 (also pinned in that adapter module):
+
+- ru_RU.aff
+  sha256: 38ce7d4af78e211e9bafe4bf7e3d6a2c420591136cb738ec6648f8fdf6524cd7
+  size: 71236 bytes
+- ru_RU.dic
+  sha256: f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc
+  size: 3473191 bytes, 146269 stems (declared in the file's own header line)
+- README_ru_RU.txt (the licence text, kept verbatim)
+  sha256: 262af2f6ad70a61e5ee1332ff44fa8ee50edca819cf33207d8ad6ba6a0c9be52
+  size: 1886 bytes
+
+Fetched 2026-09-24T22:44Z from:
+  https://raw.githubusercontent.com/LibreOffice/dictionaries/master/ru_RU/{ru_RU.aff,ru_RU.dic,README_ru_RU.txt}
+  (https://github.com/LibreOffice/dictionaries, path ru_RU/, branch master)
+
+Licence: BSD-style. Copyright (c) 1997-2008, Alexander I. Lebedev. Redistribution in source or
+binary form, with or without modification, is allowed; the notice and disclaimer must be kept,
+modified versions must be clearly marked as such, and the author's name must not be used for
+endorsement. The file has no SPDX tag; see README_ru_RU.txt in this directory for the verbatim
+text this repository is bound by.
+
+spylls (the reader, not vendored here — a `pyproject.toml` dependency): MIT, pure Python.
+https://pypi.org/project/spylls/
+
+Not a WorldTruth source and not scoring data (INV 3): a report-only reference list, read at
+report time only (D35). Absent this directory, the report section says «Проверка недоступна».

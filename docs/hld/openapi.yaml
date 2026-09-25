@@ -5692,6 +5692,7 @@ components:
         - explanation_available
         - released
         - dds_participant_totals
+        - text_quality
       properties:
         session_id: { type: string, format: uuid }
         session: { $ref: '#/components/schemas/SessionDetail' }
@@ -5738,6 +5739,10 @@ components:
             when the viewer may not see the DDS sections.
           type: array
           items: { $ref: '#/components/schemas/DdsParticipantTotalsView' }
+        text_quality:
+          description: (additive, I4 E35, §71.12) «Грамотность и адреса» — report-only, no score effect (D35).
+          allOf:
+            - $ref: '#/components/schemas/TextQualityReportView'
 
     RescoreRequest:
       type: object
@@ -6359,6 +6364,11 @@ components:
                 items: { $ref: '#/components/schemas/NormView' }
               failed_rule_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
               critical_error_count: { type: [integer, 'null'], minimum: 0, description: (additive, I4 E33) }
+              text_quality:
+                description: (additive, I4 E35, §71.12) «Грамотность и адреса»; `null` for an unscored card, exactly like `score`.
+                oneOf:
+                  - $ref: '#/components/schemas/TextQualityReportView'
+                  - type: 'null'
         weighted_total: { type: number, description: Scored cards only (unchanged). }
         weighted_max: { type: number }
     # ------------------------------------------- I3 E9a: weights & groups ----
@@ -6620,3 +6630,74 @@ components:
         sessions:
           type: array
           items: { $ref: '#/components/schemas/MyHistorySession' }
+    # ------------------------------------------- I4 E35: text quality (§71.12, D35) -----------
+    # «Грамотность и адреса» — report-only, no score effect until the owner answers Q-E11-1.
+    # This section is E35's own (§71.16: "E35's report-section schema is left out of the delta");
+    # it is not in `docs/hld/contracts/i4-openapi-delta.yaml`. `text_quality` is added to
+    # `SessionReport` (above) and to `LessonReport.cards.items` (§71.10, above) — both additive,
+    # neither in the object's own `required` list, matching I4 E33's own norms/counters.
+    MisspelledSpanView:
+      description: (I4 E35) One word the ru_RU dictionary does not recognise, as an offset into its field's `text`.
+      type: object
+      additionalProperties: false
+      required: [start, end, word, suggestions]
+      properties:
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        word: { type: string }
+        suggestions:
+          type: array
+          description: Up to three dictionary suggestions, closest first.
+          items: { type: string }
+    StreetLookupView:
+      description: (I4 E35) `ADDRESS_STREET`'s directory lookup against the Moscow OSM street-name list.
+      type: object
+      additionalProperties: false
+      required: [status, suggestions]
+      properties:
+        status: { type: string, enum: [KNOWN, UNKNOWN, NEAR] }
+        suggestions:
+          type: array
+          description: Close-match directory names; non-empty only when `status` is `NEAR`. Never a correction — the checked text is unchanged.
+          items: { type: string }
+    TextQualityFieldView:
+      description: (I4 E35) One text the trainee typed, checked.
+      type: object
+      additionalProperties: false
+      required: [source, text, misspellings, street]
+      properties:
+        source:
+          type: string
+          enum: [ADDRESS_STREET, DESCRIPTION_TEXT, RECIPIENTS_COMMENT, DDS_STATUS_COMMENT, DDS_CARD_ISSUE_COMMENT, DDS_CLOSE_COMMENT]
+        text: { type: string }
+        misspellings:
+          type: array
+          items: { $ref: '#/components/schemas/MisspelledSpanView' }
+        street:
+          description: 'Non-null only for `source: ADDRESS_STREET` (§71.12: street lookup runs on the 112 card path only).'
+          oneOf:
+            - $ref: '#/components/schemas/StreetLookupView'
+            - type: 'null'
+    TextQualityReportView:
+      description: |
+        (I4 E35, HLD 71 §71.12) «Грамотность и адреса». Report-time, read-only, no score effect
+        (D35; Q-E11-1 open). `available: false` is the whole report when the ru_RU dictionary or
+        the street directory is not installed — rendered as «Проверка недоступна», never as an
+        empty `fields` array (SPEC §27's honesty rule: never «0 ошибок» for "did not run").
+      type: object
+      additionalProperties: false
+      required: [available, fields, dictionary_sha256, street_list_sha256, unavailable_message_ru]
+      properties:
+        available: { type: boolean }
+        fields:
+          type: array
+          items: { $ref: '#/components/schemas/TextQualityFieldView' }
+        dictionary_sha256:
+          type: [string, 'null']
+          description: sha256 of the packaged `reference/lexicon/` dictionary (INV 9); `null` when `available` is `false`.
+        street_list_sha256:
+          type: [string, 'null']
+          description: sha256 of the packaged `reference/streets/` directory; `null` when `available` is `false`.
+        unavailable_message_ru:
+          type: [string, 'null']
+          description: '«Проверка недоступна: словарь/справочник не установлен» when `available` is `false`, else `null`.'

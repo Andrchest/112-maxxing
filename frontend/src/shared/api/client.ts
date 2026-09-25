@@ -353,6 +353,13 @@ export type ReportExplanation = components['schemas']['ReportExplanation'];
 export type InferenceMetricView = components['schemas']['InferenceMetricView'];
 export type InferenceMetricComponent = InferenceMetricView['component'];
 export type InferenceMetricsPage = components['schemas']['InferenceMetricsPage'];
+// -- I4 E35: text quality, «Грамотность и адреса» (71 §71.12, D35) — report-only, no score effect.
+export type TextQualityReportView = components['schemas']['TextQualityReportView'];
+export type TextQualityFieldView = components['schemas']['TextQualityFieldView'];
+export type MisspelledSpanView = components['schemas']['MisspelledSpanView'];
+export type StreetLookupView = components['schemas']['StreetLookupView'];
+export type TextQualitySource = TextQualityFieldView['source'];
+export type StreetStatusKind = StreetLookupView['status'];
 
 /** `getSessionReport` (R1: stored `score_results`/`score_evidence` echoed as-is, never
  * recomputed). `409` = the existing `ReportNotReadyError`/`REPORT_NOT_READY` (session not

@@ -1,0 +1,42 @@
+reference/streets — Moscow OSM street-name directory (I4 E35, HLD 71 §71.12, D35)
+
+Packaged from the E23 recon (/tmp/teamwork-112-maxxing/data/streets/, report
+/tmp/teamwork-112-maxxing/reports/i4/E23.md). Read by
+`backend/app/infrastructure/reference/street_directory.py`.
+
+File, with sha256 (also pinned in that adapter module):
+
+- osm_moscow_street_names.txt
+  sha256: 59e0adf63831d035f006165fc491c79290e01be1781fc8325f59f664a8520b57
+  size: 213581 bytes, 5629 lines (unique values of the `name` column of the query below)
+
+Derived 2026-09-24 from `osm_moscow_named_highways.tsv` (not itself packaged here — it is 3.3 MB
+of intermediate per-way rows the adapter never reads; regenerate it with the query below if it is
+ever needed again), which was fetched 2026-09-24T22:50Z (UTC) from:
+  https://maps.mail.ru/osm/tools/overpass/api/interpreter (POST)
+  data = [out:csv(::id,highway,name,"name:ru","official_name";true;"\t")][timeout:600]
+         [maxsize:536870912];
+         area(3600102269)->.moscow;
+         way["highway"]["name"](area.moscow);
+         out tags;
+  (relation 102269 = Moscow's OSM admin area; the mirror's own timestamp_osm_base was
+  2026-09-24T22:49:49Z)
+
+Licence: ODbL 1.0, (c) OpenStreetMap contributors — https://www.openstreetmap.org/copyright
+Attribution (ODbL 1.0 §4.3): "© OpenStreetMap contributors" must accompany any use of this data or
+a produce of it; the report section this directory feeds carries that credit line.
+
+Coverage notes (E23 recon; not decided here, Q-E11-2/Q-E23-1..4):
+- 45242 ways, 5629 unique names; no okrug/district column (way tags only — a district would need
+  a spatial join with admin boundaries, not attempted).
+- The official ОМК УМ classifier (data.mos.ru, classifier 2044) needs a registered apidata.mos.ru
+  api_key (HTTP 403 without one) — an owner action, not fetched (Q-E23-1).
+- КЛАДР / ФИАС are other official-form sources; ФИАС's `gar_xml.zip` is ~57.7 GB with no regional
+  subset and was not fetched; the КЛАДР `base.7z` (61 MB) was noted but is outside E23's brief.
+- Both «Дубнинская улица» and «Дубининская улица» are real Moscow streets in this list — a
+  directory lookup alone cannot tell which one a caller meant (Q-E23-3).
+
+Not a WorldTruth source and not scoring data (INV 3): a report-only reference list, read at report
+time only (D35), on the 112 card path only. Absent this directory, the report section says
+«Проверка недоступна». Street names in the scenarios are never changed to match this list — see
+D-h and `docs/hld/00-decisions.md` D35 on `scenarios/tickets/ticket-15-call-3`'s «ул. Зверенецкая».

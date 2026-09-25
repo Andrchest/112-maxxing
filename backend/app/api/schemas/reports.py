@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -43,10 +43,12 @@ from app.application.ports.report_explanation_repository import (
     StoredReportExplanation,
 )
 from app.application.ports.session_repository import ReportRelease
+from app.application.ports.text_checker import MisspelledSpan, StreetLookup
 from app.application.reports.assemble_report import SessionReportView
 from app.application.reports.dds_decisions import DdsDecision, DdsParticipantTotals
 from app.application.reports.list_inference_metrics import InferenceMetricsPage
 from app.application.reports.resource_timeline import ResourceTimelineEntry
+from app.application.reports.text_quality import TextQualityField, TextQualityReport
 from app.application.reports.timeline import TimelineEntry
 from app.application.reports.timing_metrics import TimingMetrics
 from app.application.reports.transcript import AudioSegmentRef, TranscriptEntry, ViewSpeaker
@@ -74,6 +76,7 @@ __all__ = [
     "GenerateExplanationRequestSchema",
     "InferenceMetricViewSchema",
     "InferenceMetricsPageSchema",
+    "MisspelledSpanViewSchema",
     "ReportExplanationSchema",
     "ReportReleaseViewSchema",
     "RescoreDifferenceSchema",
@@ -85,6 +88,9 @@ __all__ = [
     "ScoreReportViewSchema",
     "ScoreResultViewSchema",
     "SessionReportSchema",
+    "StreetLookupViewSchema",
+    "TextQualityFieldViewSchema",
+    "TextQualityReportViewSchema",
     "TimelineEntryViewSchema",
     "TimingMetricsViewSchema",
     "TranscriptSegmentViewSchema",
@@ -94,6 +100,7 @@ __all__ = [
     "dds_participant_totals_schema",
     "inference_metric_schema",
     "inference_metrics_page_schema",
+    "misspelled_span_schema",
     "report_explanation_schema",
     "report_release_schema",
     "rescore_result_schema",
@@ -101,6 +108,9 @@ __all__ = [
     "score_report_view_schema",
     "score_result_view_schema",
     "session_report_schema",
+    "street_lookup_schema",
+    "text_quality_field_schema",
+    "text_quality_report_schema",
     "timeline_entry_schema",
     "timing_metrics_schema",
     "transcript_segment_schema",
@@ -429,6 +439,51 @@ class SessionReportSchema(ApiModel):
     explanation_available: bool
     released: bool
     dds_participant_totals: list[DdsParticipantTotalsViewSchema]
+    text_quality: TextQualityReportViewSchema
+    """(additive, I4 E35) «Грамотность и адреса» — report-only, no score effect (D35)."""
+
+
+class MisspelledSpanViewSchema(ApiModel):
+    """`openapi.yaml`'s `MisspelledSpanView` (I4 E35): one word `TextQualityReportView` flags."""
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    word: str
+    suggestions: list[str]
+
+
+class StreetLookupViewSchema(ApiModel):
+    """`openapi.yaml`'s `StreetLookupView` (I4 E35): `ADDRESS_STREET`'s directory lookup."""
+
+    status: Literal["KNOWN", "UNKNOWN", "NEAR"]
+    suggestions: list[str]
+
+
+class TextQualityFieldViewSchema(ApiModel):
+    """`openapi.yaml`'s `TextQualityFieldView` (I4 E35): one checked text."""
+
+    source: Literal[
+        "ADDRESS_STREET",
+        "DESCRIPTION_TEXT",
+        "RECIPIENTS_COMMENT",
+        "DDS_STATUS_COMMENT",
+        "DDS_CARD_ISSUE_COMMENT",
+        "DDS_CLOSE_COMMENT",
+    ]
+    text: str
+    misspellings: list[MisspelledSpanViewSchema]
+    street: StreetLookupViewSchema | None
+
+
+class TextQualityReportViewSchema(ApiModel):
+    """`openapi.yaml`'s `TextQualityReportView` (I4 E35, HLD 71 §71.12) — «Грамотность и
+    адреса». `available=False` is the whole report (D35's honesty rule: never «0 ошибок»)."""
+
+    available: bool
+    fields: list[TextQualityFieldViewSchema]
+    dictionary_sha256: str | None
+    street_list_sha256: str | None
+    unavailable_message_ru: str | None
 
 
 class InferenceMetricViewSchema(ApiModel):
@@ -614,6 +669,39 @@ def truth_vs_card_entry_schema(entry: TruthVsCardEntry) -> TruthVsCardDiffEntryS
     )
 
 
+def misspelled_span_schema(span: MisspelledSpan) -> MisspelledSpanViewSchema:
+    """`MisspelledSpan` -> the wire model (I4 E35)."""
+    return MisspelledSpanViewSchema(
+        start=span.start, end=span.end, word=span.word, suggestions=list(span.suggestions)
+    )
+
+
+def street_lookup_schema(lookup: StreetLookup) -> StreetLookupViewSchema:
+    """`StreetLookup` -> the wire model (I4 E35)."""
+    return StreetLookupViewSchema(status=lookup.status.value, suggestions=list(lookup.suggestions))
+
+
+def text_quality_field_schema(field: TextQualityField) -> TextQualityFieldViewSchema:
+    """`TextQualityField` -> the wire model (I4 E35)."""
+    return TextQualityFieldViewSchema(
+        source=field.source.value,
+        text=field.text,
+        misspellings=[misspelled_span_schema(span) for span in field.misspellings],
+        street=None if field.street is None else street_lookup_schema(field.street),
+    )
+
+
+def text_quality_report_schema(report: TextQualityReport) -> TextQualityReportViewSchema:
+    """`TextQualityReport` -> the wire model (I4 E35) — «Грамотность и адреса»."""
+    return TextQualityReportViewSchema(
+        available=report.available,
+        fields=[text_quality_field_schema(field) for field in report.fields],
+        dictionary_sha256=report.dictionary_sha256,
+        street_list_sha256=report.street_list_sha256,
+        unavailable_message_ru=report.unavailable_message_ru,
+    )
+
+
 def session_report_schema(view: SessionReportView) -> SessionReportSchema:
     """`SessionReportView` -> the wire model — every §29 item, none of them omitted."""
     rules_by_id = {rule.rule_id: rule for rule in view.scoring_rules}
@@ -644,6 +732,7 @@ def session_report_schema(view: SessionReportView) -> SessionReportSchema:
         dds_participant_totals=[
             dds_participant_totals_schema(totals) for totals in view.dds_participant_totals
         ],
+        text_quality=text_quality_report_schema(view.text_quality),
     )
 
 

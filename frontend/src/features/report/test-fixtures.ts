@@ -19,6 +19,7 @@ import type {
   ScoreResultView,
   SessionDetail,
   SessionReport,
+  TextQualityReportView,
   TimelineEntryView,
   TimingMetricsView,
   TranscriptSegmentView,
@@ -211,6 +212,17 @@ export function makeTruthDiffEntry(overrides: Partial<TruthVsCardDiffEntry> = {}
   };
 }
 
+export function makeTextQualityReport(overrides: Partial<TextQualityReportView> = {}): TextQualityReportView {
+  return {
+    available: true,
+    fields: [],
+    dictionary_sha256: 'dict-sha',
+    street_list_sha256: 'streets-sha',
+    unavailable_message_ru: null,
+    ...overrides,
+  };
+}
+
 export function makeHandoffSnapshot(overrides: Partial<HandoffSnapshotView> = {}): HandoffSnapshotView {
   return {
     snapshot_id: 'snapshot-1',
@@ -294,6 +306,7 @@ export function makeSessionReport(overrides: Partial<SessionReport> = {}): Sessi
     explanation_available: false,
     released: false,
     dds_participant_totals: [],
+    text_quality: makeTextQualityReport(),
     ...overrides,
   };
 }

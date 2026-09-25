@@ -1157,4 +1157,18 @@ export const ru = {
   adminBackupStatusStatusFailed: 'Ошибка',
   adminBackupStatusDatabaseSizeLabel: 'Размер БД',
   adminBackupStatusRecordingsSizeLabel: 'Размер записей',
+  // -- I4 E35: text quality, «Грамотность и адреса» (71 §71.12, D35) -----------------------------
+  textQualitySectionTitle: 'Грамотность и адреса',
+  textQualityNoneFlagged: 'Замечаний нет',
+  textQualityMisspelledLabel: 'нет в словаре',
+  textQualitySuggestionLabel: 'возможно',
+  textQualityStreetUnknownLabel: 'улица не найдена в справочнике',
+  textQualityStreetNearLabel: 'похожая улица',
+  textQualitySourceAddressStreet: 'Улица (адрес)',
+  textQualitySourceDescriptionText: 'Описание происшествия',
+  textQualitySourceRecipientsComment: 'Комментарий для служб',
+  textQualitySourceDdsStatusComment: 'Комментарий к статусу (ДДС)',
+  textQualitySourceDdsCardIssueComment: 'Комментарий к замечанию по карточке (ДДС)',
+  textQualitySourceDdsCloseComment: 'Комментарий закрытия происшествия (ДДС)',
+  lessonReportTableColumnTextQuality: 'Грамотность',
 } as const;

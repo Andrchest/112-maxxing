@@ -23,6 +23,11 @@ dependencies = [
     # I4 E34 (HLD 71 §71.11): `uploadMaterial` is `multipart/form-data`; Starlette's form/file
     # parsing needs `python-multipart` installed or it raises at request time, not at import time.
     "python-multipart",
+    # I4 E35 (HLD 71 §71.12, D35): the ru_RU hunspell reader for `text_quality`'s spelling check.
+    # Pure Python, no system hunspell/enchant (E23 proved it offline); imported lazily
+    # (`app.infrastructure.reference.spelling_dictionary`), never at module import time, so a
+    # worktree without the packaged `reference/lexicon/` data still imports `app` cleanly.
+    "spylls>=0.1.7,<0.2",
 ]
 
 # Heavy ML dependencies are optional extras (D1); adapters import them lazily (E12: warm_up()/

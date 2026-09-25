@@ -126,6 +126,7 @@ from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
 from app.application.ports.runner_lock import LessonRunnerLock, RunnerLock
 from app.application.ports.sip_bindings import SipBindingDirectory
+from app.application.ports.text_checker import TextCheckerPort
 from app.application.ports.token_service import TokenService
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
@@ -208,6 +209,7 @@ from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock, lesson_runner_lock_key
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
 from app.infrastructure.reference.file_catalog import FileReferenceCatalog
+from app.infrastructure.reference.text_checker import FileTextChecker
 from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
 from app.infrastructure.transport.livekit_transport_status import LiveKitTransportStatus
 from app.infrastructure.transport.local_call_transport_status import LocalCallTransportStatus
@@ -272,6 +274,8 @@ class Container:
         sip_bindings: SipBindingDirectory | None = None,
         owns_engine: bool = True,
         owns_redis: bool = True,
+        # --- I4 E35 text quality: appended, never inserted among the params above (§71.1) ------
+        text_checker: TextCheckerPort | None = None,
     ) -> None:
         self.settings = settings
         #: False when a test handed in its own engine/Redis and will close them itself.
@@ -455,6 +459,22 @@ class Container:
         )
         self.server_heartbeat: ServerHeartbeatReader = RedisServerHeartbeat(self.redis)
         # --- end I4 E29 -----------------------------------------------------------------------
+
+        # --- I4 E35 text quality (`71-i4-wave4.md` §71.12, D35) --------------------------------
+        #
+        # `reference/lexicon/` and `reference/streets/` under the same `settings.reference_dir`
+        # root the reference pack uses (I3 E2a, above). `FileTextChecker.load` returns `None` when
+        # either is absent — never raises — and `GetSessionReport` reads that as the report's
+        # `available: false` (D35's honesty rule: «Проверка недоступна», never «0 ошибок»). A test
+        # passes its own checker, or `None` to force the absent-data path, through this parameter.
+        self.text_checker: TextCheckerPort | None = (
+            text_checker
+            if text_checker is not None
+            else FileTextChecker.load(
+                Path(settings.reference_dir) / "lexicon", Path(settings.reference_dir) / "streets"
+            )
+        )
+        # --- end I4 E35 -------------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
     #
@@ -641,7 +661,9 @@ class Container:
 
     def get_session_report(self) -> GetSessionReport:
         """`getSessionReport` — reads the stored score, never recomputes it (E16 R1)."""
-        return GetSessionReport(self.unit_of_work, self.clock, self.reference)
+        # (I4 E35) `self.text_checker` is `None` when the lexicon/street data is absent; the
+        # report's own `text_quality.available` carries that, the checksum above never does.
+        return GetSessionReport(self.unit_of_work, self.clock, self.reference, self.text_checker)
 
     def release_report_to_trainee(self) -> ReleaseReportToTrainee:
         """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""

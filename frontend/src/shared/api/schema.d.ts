@@ -3810,6 +3810,8 @@ export interface components {
              *     when the viewer may not see the DDS sections.
              */
             dds_participant_totals: components["schemas"]["DdsParticipantTotalsView"][];
+            /** @description (additive, I4 E35, §71.12) «Грамотность и адреса» — report-only, no score effect (D35). */
+            text_quality: components["schemas"]["TextQualityReportView"];
         };
         RescoreRequest: {
             /**
@@ -4291,6 +4293,8 @@ export interface components {
                 failed_rule_count?: number | null;
                 /** @description (additive */
                 critical_error_count?: number | null;
+                /** @description (additive, I4 E35, §71.12) «Грамотность и адреса»; `null` for an unscored card, exactly like `score`. */
+                text_quality?: components["schemas"]["TextQualityReportView"] | null;
             }[];
             /** @description Scored cards only (unchanged). */
             weighted_total: number;
@@ -4483,6 +4487,46 @@ export interface components {
         MyHistory: {
             statistics: components["schemas"]["TraineeStatisticsRow"];
             sessions: components["schemas"]["MyHistorySession"][];
+        };
+        /** @description (I4 E35) One word the ru_RU dictionary does not recognise, as an offset into its field's `text`. */
+        MisspelledSpanView: {
+            start: number;
+            end: number;
+            word: string;
+            /** @description Up to three dictionary suggestions, closest first. */
+            suggestions: string[];
+        };
+        /** @description (I4 E35) `ADDRESS_STREET`'s directory lookup against the Moscow OSM street-name list. */
+        StreetLookupView: {
+            /** @enum {string} */
+            status: "KNOWN" | "UNKNOWN" | "NEAR";
+            /** @description Close-match directory names; non-empty only when `status` is `NEAR`. Never a correction — the checked text is unchanged. */
+            suggestions: string[];
+        };
+        /** @description (I4 E35) One text the trainee typed, checked. */
+        TextQualityFieldView: {
+            /** @enum {string} */
+            source: "ADDRESS_STREET" | "DESCRIPTION_TEXT" | "RECIPIENTS_COMMENT" | "DDS_STATUS_COMMENT" | "DDS_CARD_ISSUE_COMMENT" | "DDS_CLOSE_COMMENT";
+            text: string;
+            misspellings: components["schemas"]["MisspelledSpanView"][];
+            /** @description Non-null only for `source: ADDRESS_STREET` (§71.12: street lookup runs on the 112 card path only). */
+            street: components["schemas"]["StreetLookupView"] | null;
+        };
+        /**
+         * @description (I4 E35, HLD 71 §71.12) «Грамотность и адреса». Report-time, read-only, no score effect
+         *     (D35; Q-E11-1 open). `available: false` is the whole report when the ru_RU dictionary or
+         *     the street directory is not installed — rendered as «Проверка недоступна», never as an
+         *     empty `fields` array (SPEC §27's honesty rule: never «0 ошибок» for "did not run").
+         */
+        TextQualityReportView: {
+            available: boolean;
+            fields: components["schemas"]["TextQualityFieldView"][];
+            /** @description sha256 of the packaged `reference/lexicon/` dictionary (INV 9); `null` when `available` is `false`. */
+            dictionary_sha256: string | null;
+            /** @description sha256 of the packaged `reference/streets/` directory; `null` when `available` is `false`. */
+            street_list_sha256: string | null;
+            /** @description «Проверка недоступна: словарь/справочник не установлен» when `available` is `false`, else `null`. */
+            unavailable_message_ru: string | null;
         };
     };
     responses: {

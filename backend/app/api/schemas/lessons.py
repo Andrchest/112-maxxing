@@ -17,8 +17,10 @@ from pydantic import Field, model_validator
 from app.api.schemas.common import ApiModel
 from app.api.schemas.reports import (
     ScoreReportViewSchema,
+    TextQualityReportViewSchema,
     TimelineEntryViewSchema,
     score_report_view_schema,
+    text_quality_report_schema,
     timeline_entry_schema,
 )
 from app.api.schemas.sessions import (
@@ -243,6 +245,9 @@ class LessonReportCardSchema(ApiModel):
     norms: list[NormViewSchema]
     failed_rule_count: int | None = Field(ge=0)
     critical_error_count: int | None = Field(ge=0)
+    # (I4 E35, HLD 71 §71.12) «Грамотность и адреса» over the same `getSessionReport` view;
+    # `null` for an unscored (ABORTED) card, exactly like `score`.
+    text_quality: TextQualityReportViewSchema | None
 
 
 class LessonReportSchema(ApiModel):
@@ -399,6 +404,9 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
                 norms=[] if report is None else [norm_view_schema(n) for n in report.norms],
                 failed_rule_count=None if report is None else report.failed_rule_count,
                 critical_error_count=None if report is None else report.critical_error_count,
+                text_quality=(
+                    None if report is None else text_quality_report_schema(report.text_quality)
+                ),
             )
         )
     return LessonReportSchema(

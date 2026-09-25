@@ -74,6 +74,13 @@ module = [
 ]
 ignore_missing_imports = true
 
+# I4 E35 (HLD 71 §71.12, D35): `spylls` is a hard dependency (`backend/pyproject.toml`) but ships
+# no `py.typed`/stubs. Imported lazily inside `SpellingDictionary._read`, never at module import
+# time (same discipline as the extras above).
+[[tool.mypy.overrides]]
+module = ["spylls.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # `benchmarks/tests` (E19-A) is gate-side by construction: it runs every SPEC §35 benchmark

@@ -54,6 +54,17 @@ FILES: tuple[str, ...] = (
     "services/v1.yaml",
     "services/sluzhby-112.transcription.tsv",
     "personas/v1.yaml",
+    # I4 E35 (HLD 71 §71.12, D35): `text_quality`'s data — no pack names these (they are read by
+    # `TextCheckerPort`, not `ReferencePort`'s pack machinery), but every file under `reference/`
+    # is pinned here regardless (`test_every_file_under_reference_is_pinned`). Fetched verbatim
+    # from an external URL, like `personas/v1.yaml` is hand-authored: no `SOURCES` entry, because
+    # there is no repo-local organizer file to re-derive them from.
+    "lexicon/ru_RU.aff",
+    "lexicon/ru_RU.dic",
+    "lexicon/README_ru_RU.txt",
+    "lexicon/SOURCES.txt",
+    "streets/osm_moscow_street_names.txt",
+    "streets/SOURCES.txt",
 )
 
 CLASSIFIER_SOURCE = (

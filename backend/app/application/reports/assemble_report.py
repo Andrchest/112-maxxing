@@ -35,12 +35,18 @@ own schema does not carry them. The norms are `norms.card_norms` over the events
 against the session's recorded timers, gated like the sections they describe: an `ACCEPT` leg
 with the ДДС sections, the 112 `FILL` with the operator's. The counters are over the **whole**
 stored report, never the viewer's filtered rule list — numbers are one per session (R3, D11).
+
+**«Грамотность и адреса» (I4 E35, HLD 71 §71.12, D35).** `text_quality` is built from `card` and
+`events` alone, strictly after `score_report`/`checksum` are already computed from the stored
+results — a `TextCheckerPort | None` cannot move either (report-only, no score effect until the
+owner answers Q-E11-1). Gated per source the same way `norms` is gated per kind: the 112-card
+fields with the operator sections, the ДДС comments with the ДДС ones.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID
 
@@ -48,6 +54,7 @@ from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.operator.views import OperatorCardView, card_view
 from app.application.ports.clock import Clock
 from app.application.ports.reference import ReferencePort
+from app.application.ports.text_checker import TextCheckerPort
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from app.application.realtime.redaction import source_of_row
 from app.application.reference.queries import reference_catalog
@@ -66,6 +73,11 @@ from app.application.reports.norms import (
     failed_rule_count,
 )
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
+from app.application.reports.text_quality import (
+    TextQualityReport,
+    is_operator_source,
+    text_quality_report,
+)
 from app.application.reports.timeline import TimelineEntry, call_parties, timeline_entry
 from app.application.reports.timing_metrics import TimingMetrics, timing_metrics
 from app.application.reports.transcript import (
@@ -151,6 +163,13 @@ class SessionReportView:
     """(I4 E33) Stored results that did not pass — the whole session's."""
     critical_error_count: int = 0
     """(I4 E33) Stored critical failures — the whole session's."""
+    text_quality: TextQualityReport = field(
+        default_factory=lambda: TextQualityReport(available=False)
+    )
+    """(I4 E35, HLD 71 §71.12) «Грамотность и адреса» — report-only, no score effect (D35). Never
+    part of `checksum`: it is built after `score_report`/`checksum` from a wholly separate read
+    (the card's texts and the ДДС comments), so a checker's presence or absence cannot move
+    either."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,10 +195,14 @@ class GetSessionReport:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         reference: ReferencePort | None = None,
+        text_checker: TextCheckerPort | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._reference = reference
+        # (I4 E35) `None` when the lexicon/street data is absent — `text_quality_report` reads
+        # that as `available: false`, never raises.
+        self._text_checker = text_checker
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> SessionReportView:
         async with self._unit_of_work() as uow:
@@ -291,6 +314,12 @@ class GetSessionReport:
             service_names_ru=service_names,
             failed_rule_count=failed_rule_count(score_report.results),
             critical_error_count=critical_error_count(score_report.results),
+            # (I4 E35) Built from `card`/`events` alone, after `score_report`/`checksum` are
+            # already fixed above — the checker's presence can only add or remove `text_quality`
+            # itself, never move the score or the checksum (§71.12's own acceptance item).
+            text_quality=_visible_text_quality(
+                card=card, events=events, visibility=visibility, checker=self._text_checker
+            ),
         )
 
     async def unscored(
@@ -380,6 +409,35 @@ def _visible_norms(norms: Sequence[CardNorm], visibility: ReportVisibility) -> t
             if norm.kind is NormKind.ACCEPT
             else visibility.shows_operator_sections
         )
+    )
+
+
+def _visible_text_quality(
+    *,
+    card: OperatorCard | None,
+    events: Sequence[SessionEvent],
+    visibility: ReportVisibility,
+    checker: TextCheckerPort | None,
+) -> TextQualityReport:
+    """(I4 E35) The 112-card fields with the operator sections, the ДДС comments with the ДДС
+    ones (mirrors `_visible_norms`'s per-kind gate). `available` stays `False` only when the
+    checker itself is absent — a viewer who may see neither side simply gets an empty `fields`."""
+    report = text_quality_report(
+        card_values=None if card is None else card.values, events=events, checker=checker
+    )
+    if not report.available:
+        return report
+    return replace(
+        report,
+        fields=tuple(
+            field
+            for field in report.fields
+            if (
+                visibility.shows_operator_sections
+                if is_operator_source(field.source)
+                else visibility.shows_dds_sections
+            )
+        ),
     )
 
 
