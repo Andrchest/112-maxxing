@@ -941,6 +941,9 @@ export const ru = {
   ddsPhoneOnSoftphone: 'Разговор идёт на SIP-телефоне.',
   problemDialNumberUnknown: 'Набранный номер не найден в карточке.',
   problemNoActiveDdsSession: 'Нет активного занятия ДДС с телефоном.',
+  problemUsernameTaken: 'Пользователь с таким логином уже существует.',
+  problemSelfModificationForbidden: 'Нельзя изменить роль или заблокировать собственную учётную запись.',
+  problemLastAdminRequired: 'В системе должен остаться хотя бы один активный администратор.',
   // -- I4 E31: per-card timers and unfinished cards in the lesson report (HLD 71 §71.8) ----------
   lessonFormEntryTimersLabel: 'Временные рамки карточки',
   lessonFormEntryTimersHint: 'Пустое поле — значение из сценария.',

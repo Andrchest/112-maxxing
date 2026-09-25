@@ -70,14 +70,19 @@ class SqlAlchemyUserRepository:
         return [_stored_user(row) for row in result.all()]
 
     async def list_users(
-        self, *, role: UserRole | None = None, limit: int, offset: int
+        self,
+        *,
+        role: UserRole | None = None,
+        limit: int,
+        offset: int,
+        include_inactive: bool = False,
     ) -> tuple[list[StoredUser], int]:
-        """`listUsers` — active accounts only, `username` order, plus the unpaged total.
+        """`listUsers` — active-only by default, `username` order, plus the unpaged total.
 
-        The `is_active` predicate is applied to the count as well as to the page, so a client
+        The `is_active` predicate (when applied) covers the count as well as the page, so a client
         paginating never walks past the end of a total that includes rows it will never be sent.
         """
-        criteria = [_USERS.c.is_active.is_(True)]
+        criteria = [] if include_inactive else [_USERS.c.is_active.is_(True)]
         if role is not None:
             criteria.append(_USERS.c.role == role.value)
 
@@ -140,6 +145,79 @@ class SqlAlchemyUserRepository:
             .returning(_USERS.c.id)
         )
         return result.first() is not None
+
+    # --- I4 E28 accounts (`71-i4-wave4.md` §71.5) ----------------------------------------------
+
+    async def create(
+        self,
+        *,
+        user_id: UserId,
+        username: str,
+        display_name_ru: str,
+        user_role: UserRole,
+        password_hash: str,
+    ) -> StoredUser:
+        """A plain `INSERT` (not `upsert`'s `ON CONFLICT`) — a duplicate username is the
+        database's own `uq_users_username` violation, not a silent overwrite."""
+        statement = (
+            sa.insert(_USERS)
+            .values(
+                id=UUID(str(user_id)),
+                username=username,
+                display_name_ru=display_name_ru,
+                role=user_role.value,
+                password_hash=password_hash,
+            )
+            .returning(*_COLUMNS)
+        )
+        result = await self._session.execute(statement)
+        return _stored_user(result.one())
+
+    async def update(
+        self,
+        user_id: UserId,
+        *,
+        display_name_ru: str | None = None,
+        user_role: UserRole | None = None,
+        is_active: bool | None = None,
+    ) -> StoredUser | None:
+        """Patch only the columns given; no field given is a plain re-read, not a no-op UPDATE."""
+        values: dict[str, object] = {}
+        if display_name_ru is not None:
+            values["display_name_ru"] = display_name_ru
+        if user_role is not None:
+            values["role"] = user_role.value
+        if is_active is not None:
+            values["is_active"] = is_active
+        if not values:
+            return await self.get(user_id)
+        result = await self._session.execute(
+            sa.update(_USERS)
+            .where(_USERS.c.id == UUID(str(user_id)))
+            .values(**values)
+            .returning(*_COLUMNS)
+        )
+        row = result.one_or_none()
+        return None if row is None else _stored_user(row)
+
+    async def set_password_hash(self, user_id: UserId, password_hash: str) -> bool:
+        result = await self._session.execute(
+            sa.update(_USERS)
+            .where(_USERS.c.id == UUID(str(user_id)))
+            .values(password_hash=password_hash)
+            .returning(_USERS.c.id)
+        )
+        return result.first() is not None
+
+    async def count_active(self, user_role: UserRole) -> int:
+        result = await self._session.execute(
+            sa.select(sa.func.count())
+            .select_from(_USERS)
+            .where(_USERS.c.role == user_role.value, _USERS.c.is_active.is_(True))
+        )
+        return int(result.scalar_one())
+
+    # --- end I4 E28 -----------------------------------------------------------------------------
 
 
 def _stored_user(row: sa.Row[tuple[object, ...]]) -> StoredUser:

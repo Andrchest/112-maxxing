@@ -108,7 +108,11 @@ paths:
     get:
       tags: [auth]
       operationId: listUsers
-      summary: List user accounts (additive, E7) — INSTRUCTOR / ADMIN only.
+      summary: List user accounts (additive, E7; CHANGED I4 E28) — INSTRUCTOR / ADMIN only.
+      description: |
+        (I4 E28) Plus `include_inactive` (ADMIN only; an INSTRUCTOR passing it — any value — is
+        `403`). Without it only active accounts are listed, as before. Items are `UserAccountI4`
+        (adds `is_active`).
       x-action: '-'
       x-emits: []
       parameters:
@@ -124,6 +128,11 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 0, default: 0 }
+        - name: include_inactive
+          in: query
+          required: false
+          description: (additive, I4 E28) ADMIN only.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: User accounts.
@@ -136,10 +145,100 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/UserAccount' }
+                    items: { $ref: '#/components/schemas/UserAccountI4' }
                   total: { type: integer, minimum: 0 }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ------------------------------------------------------- accounts (I4 E28) ----
+  /api/v1/admin/users:
+    post:
+      tags: [admin]
+      operationId: createUser
+      summary: Create an account of any role (ADMIN) — ТЗ ¶195.
+      description: |
+        (I4 E28) Password hashed with argon2 as today; shorter than the configured minimum is
+        `422 VALIDATION_ERROR`; an existing username is `409 USERNAME_TAKEN`. Audited by E25's
+        middleware (no session event).
+      x-action: '-'
+      x-emits: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreateRequest' }
+      responses:
+        '201':
+          description: The created account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserAccountI4' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/admin/users/{user_id}:
+    patch:
+      tags: [admin]
+      operationId: updateUser
+      summary: Change role, display name or block/unblock (ADMIN) — ТЗ ¶196, ¶197.
+      description: |
+        (I4 E28) Every field optional. Guards: an ADMIN cannot block or demote itself
+        (`409 SELF_MODIFICATION_FORBIDDEN`); the last active ADMIN cannot be blocked or demoted
+        (`409 LAST_ADMIN_REQUIRED`). A blocked user's existing token is refused on the next
+        request (`get_current_user` already checks `is_active`).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdateRequest' }
+      responses:
+        '200':
+          description: The account after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserAccountI4' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/admin/users/{user_id}/password:
+    post:
+      tags: [admin]
+      operationId: resetUserPassword
+      summary: Set a new password for an account (ADMIN).
+      description: |
+        (I4 E28) The password is never echoed, logged or audited in clear (E25 records the
+        operation, not the body).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequest' }
+      responses:
+        '204':
+          description: The password was replaced.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
 
   # ----------------------------------------------------------- scenarios ----
   /api/v1/scenarios:
@@ -2922,7 +3021,10 @@ components:
         `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
         (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session;
         (additive, I3 E6e) `NO_ACTIVE_DDS_SESSION` — a softphone dialled and the user has no ACTIVE
-        session where they are a ДДС participant with a phone.
+        session where they are a ДДС participant with a phone; (additive, I4 E28) `USERNAME_TAKEN`
+        — `createUser` names an existing username; `SELF_MODIFICATION_FORBIDDEN` — an ADMIN tried
+        to block or demote its own account; `LAST_ADMIN_REQUIRED` — the last active ADMIN account
+        cannot be blocked or demoted.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2991,6 +3093,9 @@ components:
         - DDS_LINE_BUSY                # additive, I3 E6b
         - DIAL_NUMBER_UNKNOWN          # additive, I3 E6e
         - NO_ACTIVE_DDS_SESSION        # additive, I3 E6e
+        - USERNAME_TAKEN               # additive, I4 E28
+        - SELF_MODIFICATION_FORBIDDEN  # additive, I4 E28
+        - LAST_ADMIN_REQUIRED          # additive, I4 E28
 
     Problem:
       type: object
@@ -3372,6 +3477,51 @@ components:
         display_name_ru: { type: string }
         user_role: { $ref: '#/components/schemas/UserRole' }
         created_at: { type: string, format: date-time }
+
+    # ---------------------------------------------------- accounts (I4 E28) ----
+    UserAccountI4:
+      description: (additive, I4 E28) `UserAccount` plus `is_active`.
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name_ru, user_role, created_at, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+        user_role: { $ref: '#/components/schemas/UserRole' }
+        created_at: { type: string, format: date-time }
+        is_active:
+          type: boolean
+          description: (I4 E28) `false` = blocked (ТЗ ¶197); refused at login and per request.
+    UserCreateRequest:
+      description: (I4 E28) `createUser`'s body.
+      type: object
+      additionalProperties: false
+      required: [username, display_name_ru, user_role, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        display_name_ru: { type: string, minLength: 1 }
+        user_role: { $ref: '#/components/schemas/UserRole' }
+        password:
+          type: string
+          writeOnly: true
+          description: Minimum length from config; never logged or audited.
+    UserUpdateRequest:
+      description: (I4 E28) `updateUser`'s body. Every field optional; at least one is required.
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name_ru: { type: string, minLength: 1 }
+        user_role: { $ref: '#/components/schemas/UserRole' }
+        is_active: { type: boolean }
+    PasswordResetRequest:
+      description: (I4 E28) `resetUserPassword`'s body.
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { type: string, writeOnly: true }
 
     # --------------------------------------------------------- scenarios ----
     ScenarioSummary:

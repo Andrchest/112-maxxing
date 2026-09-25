@@ -159,6 +159,10 @@ from app.application.simulation.tick_session import TickSession
 from app.application.telephony.dial_from_sip import DialFromSip
 from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
 from app.application.telephony.report_sip_leg import ReportSipLeg
+from app.application.users.create_user import CreateUser
+from app.application.users.reset_password import ResetPassword
+from app.application.users.set_active import SetActive
+from app.application.users.update_user import UpdateUser
 from app.application.voice_token.create_voice_token import CreateVoiceToken
 from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings, get_settings
@@ -1053,6 +1057,33 @@ class Container:
     def get_explanation(self) -> GetExplanation:
         """`getReportExplanation`."""
         return GetExplanation(self.unit_of_work)
+
+    # --- I4 E28 accounts (`71-i4-wave4.md` §71.5) -----------------------------------------------
+
+    def create_user(self) -> CreateUser:
+        """`createUser` (ADMIN)."""
+        return CreateUser(
+            self.unit_of_work,
+            self.hasher,
+            self.ids,
+            min_password_length=self.settings.min_password_length,
+        )
+
+    def update_user(self) -> UpdateUser:
+        """`updateUser`'s role / display-name half (ADMIN)."""
+        return UpdateUser(self.unit_of_work)
+
+    def set_active(self) -> SetActive:
+        """`updateUser`'s `is_active` half (ADMIN)."""
+        return SetActive(self.unit_of_work)
+
+    def reset_password(self) -> ResetPassword:
+        """`resetUserPassword` (ADMIN)."""
+        return ResetPassword(
+            self.unit_of_work, self.hasher, min_password_length=self.settings.min_password_length
+        )
+
+    # --- end I4 E28 -----------------------------------------------------------------------------
 
     # -- lifecycle -----------------------------------------------------------------------------
 

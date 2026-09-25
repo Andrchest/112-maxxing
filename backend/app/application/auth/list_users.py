@@ -11,8 +11,9 @@ What it never carries is the digest: `UserAccount` has no `password_hash` proper
 `StoredUser.password_hash` carries `repr=False` so it cannot leak through a traceback either
 (SPEC §41).
 
-Retired accounts are not returned at all — see `UserRepository.list_users` for why the schema
-leaves no honest way to render one.
+Retired accounts are not returned at all by default — see `UserRepository.list_users` for why the
+schema leaves no honest way to render one, and how I4 E28's `include_inactive` (ADMIN only, gated
+by the router, not here) changes that.
 """
 
 from __future__ import annotations
@@ -30,10 +31,17 @@ class ListUsers:
         self._unit_of_work = unit_of_work
 
     async def __call__(
-        self, *, role: UserRole | None = None, limit: int, offset: int
+        self,
+        *,
+        role: UserRole | None = None,
+        limit: int,
+        offset: int,
+        include_inactive: bool = False,
     ) -> tuple[list[StoredUser], int]:
-        """One page of active accounts in `username` order, and how many match the filter."""
+        """One page of accounts in `username` order, and how many match the filter."""
         async with self._unit_of_work() as uow:
-            page = await uow.users.list_users(role=role, limit=limit, offset=offset)
+            page = await uow.users.list_users(
+                role=role, limit=limit, offset=offset, include_inactive=include_inactive
+            )
             await uow.commit()
         return page

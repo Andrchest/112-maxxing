@@ -94,6 +94,10 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "DDS_LINE_BUSY": 409,
     # 409 — I3 E6e addition to Conflict (`ConflictE6`): a softphone dialled, no eligible session
     "NO_ACTIVE_DDS_SESSION": 409,
+    # 409 — I4 E28 addition to Conflict (`docs/hld/contracts/i4-openapi-delta.yaml` `ConflictI4`)
+    "USERNAME_TAKEN": 409,
+    "SELF_MODIFICATION_FORBIDDEN": 409,
+    "LAST_ADMIN_REQUIRED": 409,
     # 410 / 416 — stated inline on `getAudioSegment`, which E16 implements
     # (`app.application.reports.serve_audio_segment`).
     "AUDIO_PURGED": 410,

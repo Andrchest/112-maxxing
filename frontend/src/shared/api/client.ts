@@ -792,6 +792,9 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   PROPOSAL_UNKNOWN: 'problemProposalUnknown', // additive, I3 E6c
   DIAL_NUMBER_UNKNOWN: 'problemDialNumberUnknown', // additive, I3 E6e (SIP gateway only)
   NO_ACTIVE_DDS_SESSION: 'problemNoActiveDdsSession', // additive, I3 E6e (SIP gateway only)
+  USERNAME_TAKEN: 'problemUsernameTaken', // additive, I4 E28
+  SELF_MODIFICATION_FORBIDDEN: 'problemSelfModificationForbidden', // additive, I4 E28
+  LAST_ADMIN_REQUIRED: 'problemLastAdminRequired', // additive, I4 E28
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that

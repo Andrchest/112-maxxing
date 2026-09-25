@@ -75,13 +75,20 @@ class UserRepository(Protocol):
         ...
 
     async def list_users(
-        self, *, role: UserRole | None = None, limit: int, offset: int
+        self,
+        *,
+        role: UserRole | None = None,
+        limit: int,
+        offset: int,
+        include_inactive: bool = False,
     ) -> tuple[list[StoredUser], int]:
-        """One page of **active** accounts in `username` order, and the unpaged total.
+        """One page of accounts in `username` order, and the unpaged total.
 
-        `openapi.yaml`'s `listUsers` answers `UserAccount`, which has no `is_active` property —
-        there is no way to render a retired account honestly, so a retired account is not
-        returned at all. That is also the only reading that keeps the endpoint useful for what it
+        Active accounts only unless `include_inactive` (I4 E28, ADMIN only at the router):
+        `openapi.yaml`'s `listUsers` used to answer plain `UserAccount`, which has no `is_active`
+        property, so a retired account could not be rendered honestly and was excluded outright.
+        `UserAccountI4` (I4 E28) can render one, so an ADMIN may now ask for the whole roster —
+        e.g. to block/unblock — while the default stays "active only", which is what the endpoint
         exists for: picking the participants of a new session (`createSession`), which a
         deactivated account cannot be.
 
@@ -114,3 +121,51 @@ class UserRepository(Protocol):
         re-run of `app.tools.seed_users` keeps a SIP credential set by `app.tools.set_sip_password`.
         """
         ...
+
+    # --- I4 E28 accounts (`71-i4-wave4.md` §71.5) ----------------------------------------------
+    #
+    # `upsert` above is `seed_users`'s idempotent-by-username tool; these four are the ADMIN
+    # surface's own primitives, keyed by `user_id` (the account already exists by the time any of
+    # them is called, `createUser` excepted).
+
+    async def create(
+        self,
+        *,
+        user_id: UserId,
+        username: str,
+        display_name_ru: str,
+        user_role: UserRole,
+        password_hash: str,
+    ) -> StoredUser:
+        """Insert a brand-new account (`createUser`, ТЗ ¶195).
+
+        The caller has already checked `get_by_username` is `None`; a concurrent duplicate still
+        surfaces through `uq_users_username` rather than silently overwriting the other row (the
+        difference from `upsert`, which is intentionally `ON CONFLICT DO UPDATE`).
+        """
+        ...
+
+    async def update(
+        self,
+        user_id: UserId,
+        *,
+        display_name_ru: str | None = None,
+        user_role: UserRole | None = None,
+        is_active: bool | None = None,
+    ) -> StoredUser | None:
+        """Patch the fields given (`None` = leave unchanged); `None` back = no such account.
+
+        Shared by `UpdateUser` (role / display name) and `SetActive` (`is_active`) — one column
+        set, one place that writes it.
+        """
+        ...
+
+    async def set_password_hash(self, user_id: UserId, password_hash: str) -> bool:
+        """Replace the digest (`resetUserPassword`). `False` when no such account."""
+        ...
+
+    async def count_active(self, user_role: UserRole) -> int:
+        """How many **active** accounts hold this role — the last-active-ADMIN guard's count."""
+        ...
+
+    # --- end I4 E28 -----------------------------------------------------------------------------

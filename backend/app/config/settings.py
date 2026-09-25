@@ -453,6 +453,13 @@ class Settings(BaseSettings):
 
     # --- end I4 E25 -------------------------------------------------------------------------------
 
+    # --- I4 E28 accounts (`71-i4-wave4.md` §71.5) -------------------------------------------------
+    #: `SIM_MIN_PASSWORD_LENGTH`: the floor `createUser`/`resetUserPassword` enforce (`422
+    #: VALIDATION_ERROR` below it). Not a ТЗ-mandated number — a technical detail this epic chose,
+    #: same order of magnitude as `LoginRequest.password`'s existing 1-256 bound.
+    min_password_length: int = 8
+    # --- end I4 E28 -------------------------------------------------------------------------------
+
 
 @lru_cache
 def get_settings() -> Settings:

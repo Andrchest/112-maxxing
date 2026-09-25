@@ -1,16 +1,16 @@
-"""`GET /api/v1/users` — `listUsers` (`openapi.yaml`, additive E7, D8, SPEC §41).
+"""`GET /api/v1/users` — `listUsers` (`openapi.yaml`, additive E7, D8, SPEC §41; CHANGED I4 E28).
 
 The operation exists so that an instructor building a session can pick its participants, and
 everything asserted here follows from that one sentence:
 
 * it is INSTRUCTOR / ADMIN only — a trainee enumerating the other trainees is not part of the
   product, and `openapi.yaml` gives the operation a `403`;
-* it never carries a credential. `UserAccount` has no `password_hash` and no `is_active`, and the
-  assertion below is on the **exact property set** of every item, not on the absence of one name,
-  so a field added to `StoredUser` later cannot leak through this endpoint unnoticed;
-* a deactivated account is not offered as a participant, because it cannot be one — it is refused
-  on its very next request (`authenticate_token`). `UserAccount` has no honest way to render it,
-  so it is excluded rather than flagged.
+* it never carries the digest. `UserAccountI4` (I4 E28) has no `password_hash`, and the assertion
+  below is on the **exact property set** of every item, not on the absence of one name, so a field
+  added to `StoredUser` later cannot leak through this endpoint unnoticed;
+* by default, a deactivated account is not offered as a participant, because it cannot be one — it
+  is refused on its very next request (`authenticate_token`). I4 E28's `include_inactive` (ADMIN
+  only) is the one way to see it anyway — see `tests/api/admin/test_users.py` for that half.
 
 `retired1` in `tests/api/conftest.py`'s five seeded accounts is the deactivated one; it is a
 `TRAINEE`, so it also proves the `is_active` predicate is applied to the role filter and to the
@@ -31,9 +31,16 @@ pytestmark = pytest.mark.integration
 
 USERS_URL = "/api/v1/users"
 
-#: `openapi.yaml`'s `UserAccount.required` — `additionalProperties: false`, so this is the whole
-#: object. Never `password_hash`, never `is_active`.
-USER_ACCOUNT_PROPERTIES = {"id", "username", "display_name_ru", "user_role", "created_at"}
+#: `openapi.yaml`'s `UserAccountI4.required` (I4 E28) — `additionalProperties: false`, so this is
+#: the whole object. Never `password_hash`.
+USER_ACCOUNT_PROPERTIES = {
+    "id",
+    "username",
+    "display_name_ru",
+    "user_role",
+    "created_at",
+    "is_active",
+}
 
 #: The four active accounts of `tests/api/conftest.py`, in `username` order. `retired1` is absent.
 ACTIVE_USERNAMES = ["admin1", "instructor1", "trainee1", "trainee2"]
@@ -111,15 +118,15 @@ async def test_no_item_carries_a_credential_or_any_other_property(
         assert set(item) == USER_ACCOUNT_PROPERTIES, item
 
 
-async def test_it_returns_the_same_shape_getcurrentuser_does(
+async def test_it_returns_getcurrentuser_s_shape_plus_is_active(
     client: httpx.AsyncClient, tokens: dict[str, str]
 ) -> None:
-    """The contract says "the same `UserAccount` schema" — asserted against the live `/auth/me`."""
+    """`UserAccountI4` (I4 E28) is `UserAccount` plus `is_active` — asserted against `/auth/me`."""
     me = await client.get("/api/v1/auth/me", headers=auth(tokens["instructor1"]))
     assert me.status_code == 200
     _, body = await list_users(client, tokens["instructor1"])
     listed = next(item for item in body["items"] if item["username"] == "instructor1")
-    assert listed == me.json()
+    assert listed == {**me.json(), "is_active": True}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -188,6 +195,41 @@ async def test_out_of_range_pagination_is_422(
     client: httpx.AsyncClient, tokens: dict[str, str], params: dict[str, int]
 ) -> None:
     """The bounds are `openapi.yaml`'s: `limit` 1-200, `offset` >= 0."""
-    status, body = await list_users(client, tokens["instructor1"], **params)
+    status, _body = await list_users(client, tokens["instructor1"], **params)
     assert status == 422
-    assert body["code"] == "VALIDATION_ERROR"
+
+
+# ---------------------------------------------------------------------------------------------
+# `include_inactive` (I4 E28, ADMIN only, §71.5)
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+async def test_an_instructor_passing_include_inactive_at_all_is_refused(
+    client: httpx.AsyncClient, tokens: dict[str, str], value: str
+) -> None:
+    """ "An INSTRUCTOR passing it gets `403`" — any value, not only `true` (§71.5)."""
+    status, body = await list_users(client, tokens["instructor1"], include_inactive=value)
+    assert status == 403
+    assert body["code"] == "FORBIDDEN_FOR_ROLE"
+
+
+async def test_an_admin_without_include_inactive_still_sees_only_active_accounts(
+    client: httpx.AsyncClient, tokens: dict[str, str]
+) -> None:
+    status, body = await list_users(client, tokens["admin1"])
+    assert status == 200
+    assert "retired1" not in [item["username"] for item in body["items"]]
+    assert body["total"] == 4
+
+
+async def test_an_admin_with_include_inactive_sees_the_whole_roster(
+    client: httpx.AsyncClient, tokens: dict[str, str]
+) -> None:
+    status, body = await list_users(client, tokens["admin1"], include_inactive="true")
+    assert status == 200
+    by_username = {item["username"]: item for item in body["items"]}
+    assert set(by_username) == {"admin1", "instructor1", "trainee1", "trainee2", "retired1"}
+    assert body["total"] == 5
+    assert by_username["retired1"]["is_active"] is False
+    assert by_username["admin1"]["is_active"] is True

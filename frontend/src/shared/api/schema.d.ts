@@ -48,10 +48,81 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List user accounts (additive, E7) — INSTRUCTOR / ADMIN only. */
+        /**
+         * List user accounts (additive, E7; CHANGED I4 E28) — INSTRUCTOR / ADMIN only.
+         * @description (I4 E28) Plus `include_inactive` (ADMIN only; an INSTRUCTOR passing it — any value — is
+         *     `403`). Without it only active accounts are listed, as before. Items are `UserAccountI4`
+         *     (adds `is_active`).
+         */
         get: operations["listUsers"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an account of any role (ADMIN) — ТЗ ¶195.
+         * @description (I4 E28) Password hashed with argon2 as today; shorter than the configured minimum is
+         *     `422 VALIDATION_ERROR`; an existing username is `409 USERNAME_TAKEN`. Audited by E25's
+         *     middleware (no session event).
+         */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change role, display name or block/unblock (ADMIN) — ТЗ ¶196, ¶197.
+         * @description (I4 E28) Every field optional. Guards: an ADMIN cannot block or demote itself
+         *     (`409 SELF_MODIFICATION_FORBIDDEN`); the last active ADMIN cannot be blocked or demoted
+         *     (`409 LAST_ADMIN_REQUIRED`). A blocked user's existing token is refused on the next
+         *     request (`get_current_user` already checks `is_active`).
+         */
+        patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a new password for an account (ADMIN).
+         * @description (I4 E28) The password is never echoed, logged or audited in clear (E25 records the
+         *     operation, not the body).
+         */
+        post: operations["resetUserPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2017,7 +2088,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -2219,6 +2290,36 @@ export interface components {
             user_role: components["schemas"]["UserRole"];
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description (additive, I4 E28) `UserAccount` plus `is_active`. */
+        UserAccountI4: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            display_name_ru: string;
+            user_role: components["schemas"]["UserRole"];
+            /** Format: date-time */
+            created_at: string;
+            /** @description (I4 E28) `false` = blocked (ТЗ ¶197); refused at login and per request. */
+            is_active: boolean;
+        };
+        /** @description (I4 E28) `createUser`'s body. */
+        UserCreateRequest: {
+            username: string;
+            display_name_ru: string;
+            user_role: components["schemas"]["UserRole"];
+            /** @description Minimum length from config; never logged or audited. */
+            password: string;
+        };
+        /** @description (I4 E28) `updateUser`'s body. Every field optional; at least one is required. */
+        UserUpdateRequest: {
+            display_name_ru?: string;
+            user_role?: components["schemas"]["UserRole"];
+            is_active?: boolean;
+        };
+        /** @description (I4 E28) `resetUserPassword`'s body. */
+        PasswordResetRequest: {
+            password: string;
         };
         /** @description `Scenario` — identity only (D4): slug and title, never content. */
         ScenarioSummary: {
@@ -3997,7 +4098,10 @@ export interface components {
          *     `SERVICE_REMOVAL_FORBIDDEN` — a service removal under a card schema other than `v1`;
          *     (additive, I3 E6b) `DDS_LINE_BUSY` — the user already has a live ДДС call in the session;
          *     (additive, I3 E6e) `NO_ACTIVE_DDS_SESSION` — a softphone dialled and the user has no ACTIVE
-         *     session where they are a ДДС participant with a phone.
+         *     session where they are a ДДС participant with a phone; (additive, I4 E28) `USERNAME_TAKEN`
+         *     — `createUser` names an existing username; `SELF_MODIFICATION_FORBIDDEN` — an ADMIN tried
+         *     to block or demote its own account; `LAST_ADMIN_REQUIRED` — the last active ADMIN account
+         *     cannot be blocked or demoted.
          */
         Conflict: {
             headers: {
@@ -4109,6 +4213,8 @@ export interface operations {
                 role?: components["schemas"]["UserRole"];
                 limit?: number;
                 offset?: number;
+                /** @description (additive, I4 E28) ADMIN only. */
+                include_inactive?: boolean;
             };
             header?: never;
             path?: never;
@@ -4123,13 +4229,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items: components["schemas"]["UserAccount"][];
+                        items: components["schemas"]["UserAccountI4"][];
                         total: number;
                     };
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created account. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAccountI4"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The account after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAccountI4"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    resetUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description The password was replaced. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     listScenarios: {
