@@ -8,6 +8,7 @@
 # `profiles: ["qwen3-tts"]` so it only starts with `docker compose --profile qwen3-tts up`.
 # `sip-gateway` (I3 E6a, HLD 80 §80.2) is a second additive service under `profiles: ["sip"]`
 # (`docker compose --profile sip up`): SIP 5060 udp+tcp and RTP 20000-20199/udp on the host.
+# `edge` (I4 E27, D32) is the Caddy TLS endpoint on 443, under `profiles: ["tls"]`.
 #
 # This file is for `make dev-infra-up` and the new `make up` (the seven, or all eight with
 # `TTS_COMPOSE_PROFILE=qwen3-tts make up` — see the Makefile). CORRECTED (E20-D2, 2026-09-22):
@@ -172,6 +173,11 @@ services:
       SIM_LLM_BASE_URL: http://llama-server:8080/v1
       # I3 E2a: the reference pack baked into the image by backend/Dockerfile (HLD 70 §70.6.1).
       SIM_REFERENCE_DIR: /workspace/reference
+      # I4 E27 (§71.4): behind the `edge` proxy every request arrives from the edge container, so
+      # uvicorn must trust its X-Forwarded-For/-Proto or the audit log (E25) records the edge's
+      # address for every user. Docker's default bridge pool is 172.16.0.0/12; Caddy itself drops
+      # a client-supplied X-Forwarded-For and writes the real peer address.
+      FORWARDED_ALLOW_IPS: ${SIM_FORWARDED_ALLOW_IPS:-172.16.0.0/12}
     volumes:
       - recordings-data:/data
     ports:
@@ -197,6 +203,9 @@ services:
       dockerfile: Dockerfile
     environment:
       VITE_API_PROXY_TARGET: http://backend:8100
+      # I4 E27 (§71.4): the edge forwards the browser's own Host header; Vite accepts localhost and
+      # any IP by default, and every other name (the server's hostname) must be listed here.
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
     ports:
       # 5173 is the repo's existing Vite dev port (already referenced by `.env.example`'s
       # SIM_CORS_ALLOW_ORIGINS) — not 8000/8001, which belong to another project on this machine.
@@ -438,6 +447,64 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    restart: unless-stopped
+
+  edge:
+    # I4 E27 (docs/hld/71-i4-wave4.md §71.4, D32; scheme puml/i4-tls-edge-topology.puml): the one
+    # TLS endpoint (Caddy) on 443 in front of the frontend, `/api` + `/api/v1/ws`, and LiveKit's
+    # `/rtc` signalling — browsers grant the microphone only in a secure context, so a classroom PC
+    # must open https://<server>, never http://<server-LAN-IP>. Routes live in `edge/Caddyfile`.
+    # Profiled (`--profile tls`, or `COMPOSE_PROFILES=tls` in `.env`): it cannot start before
+    # `infra/scripts/make-certs.sh` has issued `infra/certs/server.{crt,key}` for this server's LAN
+    # IP/hostname, and a plain `make up` must keep working on a box where that has not happened yet.
+    # With the edge up, set SIM_LIVEKIT_PUBLIC_URL=wss://<host> (`.env.example`, I4 E27 section).
+    # SIP stays plain (Q-E15-2): `sip-gateway` is not behind this edge.
+    profiles: ["tls"]
+    # Pinned by digest (caddy 2.11.4, pulled 2026-09-25), never a floating tag, same rule as
+    # livekit above.
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    environment:
+      # Compose service names by default; point them at host-run processes for a host run.
+      SIM_EDGE_FRONTEND_UPSTREAM: ${SIM_EDGE_FRONTEND_UPSTREAM:-frontend:5173}
+      SIM_EDGE_BACKEND_UPSTREAM: ${SIM_EDGE_BACKEND_UPSTREAM:-backend:8100}
+      SIM_EDGE_LIVEKIT_UPSTREAM: ${SIM_EDGE_LIVEKIT_UPSTREAM:-livekit:7880}
+    volumes:
+      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The server certificate and key only — the CA key (`infra/certs/ca.key`) never enters a
+      # container. `infra/certs/` is git-ignored (SPEC §41). Long syntax with `create_host_path:
+      # false`: before make-certs.sh has run, `up` fails naming the missing file, instead of Docker
+      # creating an empty directory at that path (which would then break make-certs.sh).
+      - type: bind
+        source: ./certs/server.crt
+        target: /certs/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./certs/server.key
+        target: /certs/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      # SIM_EDGE_HTTPS_BIND narrows the listen address when another process already owns 443 on
+      # one of this host's addresses (a VPN's own 443, for instance) — binding 0.0.0.0 then fails.
+      - "${SIM_EDGE_HTTPS_BIND:-0.0.0.0}:${SIM_EDGE_HTTPS_PORT:-443}:443"
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+      livekit:
+        condition: service_started
+    healthcheck:
+      # Through the edge to the backend's liveness route: TLS up, routing up. Liveness, not trust:
+      # the container holds no CA file (only server.crt/.key), hence --no-check-certificate.
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/api/v1/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
 volumes:

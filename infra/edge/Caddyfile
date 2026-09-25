@@ -1,0 +1,80 @@
+# I4 E27 — the TLS edge (docs/hld/71-i4-wave4.md §71.4, D32; scheme puml/i4-tls-edge-topology.puml).
+#
+# One HTTPS endpoint on 443 in front of everything a browser dials, so a classroom PC opening
+# https://<server LAN IP or hostname> is a secure context and may use the microphone (¶293
+# REQ-2241, ¶142 REQ-2125):
+#   /rtc, /rtc/*  -> livekit:7880   LiveKit signalling (WebSocket + /rtc/validate); the backend
+#                                   hands browsers SIM_LIVEKIT_PUBLIC_URL=wss://<host>. Media stays
+#                                   WebRTC DTLS-SRTP on UDP 7882, straight to the SFU.
+#   /api/*        -> backend:8100   REST, and /api/v1/ws/... (the realtime WebSocket, upgraded)
+#   everything    -> frontend:5173  the Vite dev server, including its HMR WebSocket
+# Compression (¶390 REQ-2321): zstd or gzip, whichever the client accepts. WebSocket upgrades pass
+# through reverse_proxy untouched.
+#
+# Under compose the edge listens on 443 in its own container and the upstreams are compose service
+# names. For the host-run variant (backend, Vite and LiveKit on the host, README) the same file runs
+# with `--network host`: SIM_EDGE_LISTEN_PORT picks the host port and the SIM_EDGE_*_UPSTREAM
+# variables name host addresses (docs/RUNBOOK.md, «HTTPS в классе»).
+{
+	# The only certificate is the one infra/scripts/make-certs.sh issues: no ACME (a closed
+	# classroom contour has no internet), no Caddy-managed internal CA, no http->https redirect
+	# listener on 80, and no admin API.
+	auto_https off
+	admin off
+	servers {
+		# HTTP/3 would need UDP 443 published as well; TCP 443 with h2 is what the stack exposes.
+		protocols h1 h2
+	}
+	# Every line Caddy writes besides the access log — including the proxy's error lines, which
+	# carry the request URI too. Both WebSockets carry a bearer credential in the query string —
+	# the realtime channel's `?token=` and LiveKit's `?access_token=` — so those two are replaced
+	# before a line is written (SPEC §41); the site's access log below applies the same filter
+	# (a snippet cannot be imported here: global options come before any snippet definition).
+	# Caddy already redacts the Authorization and Cookie headers on its own.
+	log default {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace token REDACTED
+					replace access_token REDACTED
+				}
+			}
+		}
+	}
+}
+
+:{$SIM_EDGE_LISTEN_PORT:443} {
+	tls /certs/server.crt /certs/server.key
+
+	encode zstd gzip
+
+	@livekit path /rtc /rtc/*
+	handle @livekit {
+		reverse_proxy {$SIM_EDGE_LIVEKIT_UPSTREAM:livekit:7880}
+	}
+
+	handle /api/* {
+		reverse_proxy {$SIM_EDGE_BACKEND_UPSTREAM:backend:8100}
+	}
+
+	handle {
+		reverse_proxy {$SIM_EDGE_FRONTEND_UPSTREAM:frontend:5173}
+	}
+
+	log {
+		# JSON access log on stdout, like every other process in the stack (¶372 REQ-2308, D33),
+		# with the credential filter of `log default` above.
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace token REDACTED
+					replace access_token REDACTED
+				}
+			}
+		}
+	}
+}

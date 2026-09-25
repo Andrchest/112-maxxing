@@ -337,3 +337,132 @@ Proved end to end against a scratch database on the **test** Postgres (`:55432`,
 A real (compose-stack) walk follows the same `make restore FILE=…` command; the mechanism proved
 above (steps 2, 5, 6) is identical, the only difference being which Postgres/container the dump
 targets.
+
+## HTTPS в классе (I4 E27 — `docs/hld/71-i4-wave4.md` §71.4, D32)
+
+Browsers grant the microphone only in a **secure context**. A classroom PC that opens
+`http://<server-LAN-IP>:5173` gets no microphone at all (`navigator.mediaDevices` is undefined), so
+the phone widget, the ДДС call-back and the service-head calls are silent. `localhost` is the only
+plain-http exception, which is why the problem never shows on the server itself. The fix is one
+TLS endpoint, the compose `edge` service (Caddy, `infra/edge/Caddyfile`, profile `tls`), on 443:
+
+| Path | Goes to | Notes |
+|:--|:--|:--|
+| `/rtc`, `/rtc/*` | `livekit:7880` | LiveKit signalling (WebSocket). Media stays WebRTC DTLS-SRTP on UDP 7882 (TCP 7881 fallback), straight to the SFU. |
+| `/api/*` | `backend:8100` | REST and the realtime WebSocket `/api/v1/ws/...`. |
+| everything else | `frontend:5173` | The Vite dev server, including its HMR WebSocket. |
+
+Responses are compressed with zstd or gzip (¶390). Neither the access log nor the error log ever
+contains the `?token=` / `?access_token=` of a WebSocket URL: both are replaced with `REDACTED`.
+
+### 1. Certificates (once per server, and again whenever its address changes)
+
+```
+infra/scripts/make-certs.sh --ip <server LAN IP> --host <server hostname>
+```
+
+This writes `infra/certs/` (git-ignored, private keys `0600`). `ca.crt` is the local CA, and it is
+the **only** file that goes onto classroom PCs. `ca.key` never leaves the server and never enters a
+container. `server.crt`/`server.key` are what the edge serves. The certificate names `localhost`,
+`127.0.0.1`, `::1`, every `--ip` and every `--host`. Without flags the script uses the default
+route's source address and `hostname`. Re-running it **keeps the CA** and re-issues only the
+server certificate, so the PCs install nothing again. `--new-ca` replaces the CA, and then every PC
+must install the new `ca.crt`. The script prints the CA's SHA-256 and SHA-1 fingerprints; the
+teacher compares one of them on each PC.
+
+### 2. Start
+
+In `.env` (all four lines are in `.env.example`, I4 E27 section):
+
+```
+COMPOSE_PROFILES=tls                         # `make up` now starts `edge` too
+SIM_LIVEKIT_PUBLIC_URL=wss://<the IP or hostname the PCs open>
+VITE_ALLOWED_HOSTS=<server hostname>         # only if PCs open a hostname; IPs are always allowed
+#SIM_EDGE_HTTPS_BIND=<one address>           # only if something else already owns 443 on this box
+```
+
+Then `make up`. `TTS_COMPOSE_PROFILE=qwen3-tts make up` passes `--profile`, which **replaces**
+`COMPOSE_PROFILES`; with both, write `COMPOSE_PROFILES=tls,qwen3-tts` and leave
+`TTS_COMPOSE_PROFILE` unset. Before `make-certs.sh` has run, `up` stops with a "bind source path
+does not exist" error that names `infra/certs/server.crt`. That is on purpose: Docker would
+otherwise create an empty directory at that path.
+
+Check from any machine that already trusts the CA: `curl --cacert infra/certs/ca.crt
+https://<LAN IP>/api/v1/health/live` → `{"status":"LIVE",…}`. The PCs open **`https://<LAN IP or
+hostname>`**. The old plain ports (5173, 8100, 7880) stay published for the host-run and development
+paths, but a PC that uses them gets no microphone.
+
+**CORS:** through the edge, the UI, the API and both WebSockets share one origin, so
+`SIM_CORS_ALLOW_ORIGINS` needs no entry for the edge. **Audit addresses:** the backend trusts
+`X-Forwarded-For` from Docker's bridge pool (`SIM_FORWARDED_ALLOW_IPS`, default `172.16.0.0/12`),
+so `audit_log.client_ip` is the user's address, not the edge's. Caddy discards any
+client-supplied `X-Forwarded-For`. **HMR** works through the edge: Vite's client dials
+`wss://<page host:port>/`, and the edge forwards it (proved by the browser check below).
+
+### 3. Установка корневого сертификата на компьютеры класса (один раз на каждый ПК)
+
+Скопируйте `infra/certs/ca.crt` на флешку или в общую папку. Перед установкой сверьте отпечаток
+сертификата с тем, что напечатал `make-certs.sh`.
+
+- **Windows (Chrome, Edge, Яндекс Браузер):** дважды щёлкните `ca.crt`. На вкладке «Состав»
+  сверьте «Отпечаток» (SHA-1). Затем «Установить сертификат…» → «Локальный компьютер» →
+  «Поместить все сертификаты в следующее хранилище» → «Доверенные корневые центры сертификации»
+  → «Готово». Перезапустите браузер. Вместо этого можно выполнить в командной строке от имени
+  администратора: `certutil -addstore -f Root ca.crt`.
+- **Firefox (любая ОС):** «Настройки» → «Приватность и защита» → «Сертификаты» → «Просмотр
+  сертификатов» → «Центры сертификации» → «Импортировать…» → `ca.crt` → отметьте «Доверять при
+  идентификации веб-сайтов».
+- **Linux (Ubuntu), системное хранилище:** `sudo cp ca.crt /usr/local/share/ca-certificates/sim112-ca.crt
+  && sudo update-ca-certificates`. Chrome/Chromium на Linux берёт корневые сертификаты из своей базы
+  NSS: `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n sim112-ca -i ca.crt` (пакет
+  `libnss3-tools`).
+
+Проверка: откройте `https://<адрес сервера>`. Замка с предупреждением быть не должно. При первом
+звонке браузер спросит разрешение на микрофон.
+
+### Host-run variant (backend, Vite and LiveKit on the host)
+
+A container on this kind of host often cannot reach services bound on the host (the dev machine's
+firewall drops container→host traffic), so the edge runs on the host network. `SIM_EDGE_LISTEN_PORT`
+chooses the port, and the upstreams name host addresses:
+
+```
+docker run -d --name sim112-edge --network host \
+  -e SIM_EDGE_LISTEN_PORT=9443 \
+  -e SIM_EDGE_FRONTEND_UPSTREAM=127.0.0.1:5174 -e SIM_EDGE_BACKEND_UPSTREAM=127.0.0.1:8100 \
+  -e SIM_EDGE_LIVEKIT_UPSTREAM=127.0.0.1:7880 \
+  -v "$PWD/infra/edge/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  -v "$PWD/infra/certs/server.crt:/certs/server.crt:ro" -v "$PWD/infra/certs/server.key:/certs/server.key:ro" \
+  caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+```
+
+Pass the same `SIM_LIVEKIT_PUBLIC_URL=wss://<LAN IP>:9443` to the backend, and start uvicorn with
+`--forwarded-allow-ips 127.0.0.1` (the default) or the address the edge dials from. Remove the
+container with `docker rm -f sim112-edge`.
+
+### Browser check (Playwright, not part of `make gate`)
+
+`frontend/e2e/tls-edge.e2e.ts` opens the UI through the edge at `https://<LAN IP>` (never
+`localhost`, which is a secure context even over http) and asserts:
+
+- `window.isSecureContext === true`, that `getUserMedia({audio: true})` returns a track, and that
+  Vite's HMR socket connects over `wss://`;
+- a control: the same UI over `http://<non-loopback address>` is **not** a secure context;
+- the ДДС phone widget joins LiveKit over `wss://<edge>/rtc`, and its WebRTC transport reaches
+  `connected`. It also asserts that the realtime channel runs over `wss://` and that nothing on the
+  page dials plain `ws://`.
+
+Chromium trusts exactly the local CA's key (`--ignore-certificate-errors-spki-list`, computed
+from `SIM_EDGE_CA_CERT`). Any other certificate still fails. The stack is the "E2E screenshot
+comparison" one above, plus LiveKit (`docker compose … up -d --no-deps livekit`, same
+`SIM_LIVEKIT_API_KEY/SECRET` as the backend) and the edge:
+
+```
+SIM_SEED_TRAINEE_PASSWORD=... SIM_SEED_INSTRUCTOR_PASSWORD=... \
+UI_BASE=https://<LAN IP>:<edge port> UI_INSECURE_BASE=http://<non-loopback Vite address> \
+SIM_EDGE_CA_CERT=../infra/certs/ca.crt npx playwright test e2e/tls-edge.e2e.ts
+```
+
+**What this does not cover.** SIP TLS/SRTP (Q-E15-2): `sip-gateway` stays plain SIP/RTP and is not
+behind the edge. The CA install is a manual step on each workstation. A second physical device
+was not tested; the same box through its LAN IP stands in for the secure-context rule (§71.15).

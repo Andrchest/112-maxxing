@@ -1,0 +1,4 @@
+# I4 E27: infra/scripts/make-certs.sh writes the local CA and the server certificate here.
+# Private keys never enter git (SPEC §41) — everything in this directory but this file is ignored.
+*
+!.gitignore

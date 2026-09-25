@@ -32,6 +32,9 @@ SIP_GATEWAY = "sip-gateway"
 #: I4 E26 (docs/hld/71-i4-wave4.md §71.3, D33): the daily backup loop. Unprofiled — it always runs
 #: with a plain `make up`, unlike the two additive/profiled services above.
 BACKUP_SERVICE = "backup"
+#: I4 E27 (docs/hld/71-i4-wave4.md §71.4, D32): the Caddy TLS edge, profiled (`tls`) — its own
+#: checks are in `test_tls_edge.py`.
+EDGE_SERVICE = "edge"
 
 # The GPU process PID 1082982's owner and everything on these ports belongs to another project on
 # the dev machine (this task's brief, MACHINE RULES) — never bound anywhere in this file.
@@ -54,7 +57,7 @@ def test_service_names_are_exactly_the_spec_seven_plus_the_additive_eighth(
     compose_doc: dict,
 ) -> None:
     services = set(compose_doc["services"])
-    assert services == SPEC_36_SEVEN | {ADDITIVE_EIGHTH, SIP_GATEWAY, BACKUP_SERVICE}
+    assert services == SPEC_36_SEVEN | {ADDITIVE_EIGHTH, SIP_GATEWAY, BACKUP_SERVICE, EDGE_SERVICE}
 
 
 def test_the_eighth_service_is_gated_behind_a_compose_profile_so_a_plain_up_is_the_seven(

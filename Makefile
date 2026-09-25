@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs
 # `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
 # environment down to the base dependency set, silently uninstalling the ML extras a previous
 # `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
@@ -346,7 +346,11 @@ test: test-backend
 # -q` only parses/validates the YAML and its `${VAR}` interpolations. `--profile qwen3-tts` so the
 # additive eighth service's own definition is validated too, even though a plain `up` never starts it.
 compose-check:
-	docker compose -f infra/docker-compose.yml --env-file infra/compose.check.env --profile qwen3-tts config -q
+	docker compose -f infra/docker-compose.yml --env-file infra/compose.check.env --profile qwen3-tts --profile tls config -q
+# I4 E27: local CA + server certificate for the `tls` profile's edge proxy (infra/certs/, gitignored).
+# See docs/RUNBOOK.md «HTTPS в классе».
+certs:
+	infra/scripts/make-certs.sh
 # Emits the active profile's llm.* block as SIM_LLAMA_* env lines (app.config.profile_env, E18-E)
 # for infra/scripts/llama-server-entrypoint.sh to read — see that script's own header comment.
 # Depends on E18-A's `app.config.profile.load_profile`; fails loudly (not silently) if that module
