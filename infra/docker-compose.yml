@@ -152,8 +152,15 @@ services:
       dockerfile: backend/Dockerfile
     # `required: false` so `make compose-check` (no `.env` present) still renders (R10 of the E18
     # brief); a real run needs a real `.env` (`cp .env.example .env`) regardless.
+    # I5 E37 (Q-E16-1): `.env.settings` is `make settings-import`'s own output — gitignored, absent
+    # until an ADMIN's `exportSettingsXml` + `make settings-import` writes it, same `required:
+    # false` treatment as `.env.profile` below. Listed after `../.env` so an imported, non-secret
+    # setting overrides that file's own value; `environment:` below still wins over both, exactly
+    # as it already does over `../.env` alone.
     env_file:
       - path: ../.env
+        required: false
+      - path: .env.settings
         required: false
     environment:
       # Compose-internal service hostnames override `.env`'s host-oriented defaults (which target

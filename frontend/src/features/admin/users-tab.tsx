@@ -13,8 +13,10 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
+import { saveBlob } from '@/shared/lib/download';
 import {
   createUser,
+  exportUserProfile,
   listUsers,
   problemMessageRu,
   queryKeys,
@@ -184,6 +186,39 @@ function ResetPasswordDialog({ user }: { user: UserAccountI4 }) {
   );
 }
 
+// I5 E37 (Q-E16-4): «Скачать профиль (JSON)» — account fields plus the E33 history summary for a
+// trainee, never the password hash or SIP HA1. ADMIN may download anyone's; the server enforces it
+// (`403 FORBIDDEN_FOR_ROLE`), this button is just always shown here since every row's viewer is ADMIN.
+function DownloadProfileButton({ user }: { user: UserAccountI4 }) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function handleDownload() {
+    setDownloading(true);
+    setError(null);
+    try {
+      saveBlob(await exportUserProfile(user.id), `profile-${user.username}.json`);
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button type="button" size="sm" variant="outline" disabled={downloading} onClick={() => void handleDownload()}>
+        {downloading ? t('profileExportDownloading') : t('adminUsersDownloadProfileButton')}
+      </Button>
+      {error ? (
+        <span role="alert" className="text-xs text-destructive">
+          {problemText(error)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function UsersTab() {
   const queryClient = useQueryClient();
   const [roleFilter, setRoleFilter] = useState<UserRole | ''>('');
@@ -297,6 +332,7 @@ export function UsersTab() {
                         {row.is_active ? t('adminUsersBlockButton') : t('adminUsersUnblockButton')}
                       </Button>
                       <ResetPasswordDialog user={row} />
+                      <DownloadProfileButton user={row} />
                     </div>
                   </td>
                 </tr>

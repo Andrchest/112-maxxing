@@ -18,15 +18,18 @@ I4 E28 adds `include_inactive` (ADMIN only — an INSTRUCTOR *passing* it, of an
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from app.api.deps import ContainerDep
 from app.api.schemas.auth import UserAccountI4Schema, user_account_i4_schema
 from app.api.schemas.common import PageSchema
-from app.api.security import AdminOrInstructorDep
+from app.api.schemas.user_profile import user_profile_export_schema
+from app.api.security import AdminOrInstructorDep, CurrentUserDep
 from app.application.ports.user_repository import UserRole
 from app.application.sessions.queries import ForbiddenForRoleError
+from app.domain.common.ids import UserId
 
 router = APIRouter(prefix="/api/v1/users", tags=["auth"])
 
@@ -60,3 +63,31 @@ async def list_users(
         role=role, limit=limit, offset=offset, include_inactive=bool(include_inactive)
     )
     return UserPage(items=[user_account_i4_schema(user) for user in users], total=total)
+
+
+# --- I5 E37: profile JSON export (Q-E16-4, ТЗ ¶363) ----------------------------------------------
+
+
+@router.get(
+    "/{user_id}/profile-export",
+    operation_id="exportUserProfile",
+    summary="Download one account's profile as JSON (self or ADMIN) — Q-E16-4, ТЗ ¶363.",
+    status_code=200,
+    response_class=Response,
+)
+async def export_user_profile(
+    user_id: UUID, container: ContainerDep, user: CurrentUserDep
+) -> Response:
+    """Account fields plus the E33 history summary for a TRAINEE; never the password hash or the
+    SIP HA1 (SPEC §41). `403 FORBIDDEN_FOR_ROLE` for anyone but the account itself or ADMIN,
+    `404` for an unknown account."""
+    view = await container.export_user_profile()(UserId(user_id), user)
+    body = user_profile_export_schema(view).model_dump_json()
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="profile-{view.username}.json"'},
+    )
+
+
+# --- end I5 E37 -----------------------------------------------------------------------------

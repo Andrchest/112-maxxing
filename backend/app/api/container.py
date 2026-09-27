@@ -176,12 +176,14 @@ from app.application.telephony.dial_from_sip import DialFromSip
 from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
 from app.application.telephony.report_sip_leg import ReportSipLeg
 from app.application.users.create_user import CreateUser
+from app.application.users.export_profile import ExportUserProfile
 from app.application.users.reset_password import ResetPassword
 from app.application.users.set_active import SetActive
 from app.application.users.update_user import UpdateUser
 from app.application.voice_token.create_voice_token import CreateVoiceToken
 from app.config.profile import active_profile, apply_profile, validate_vram_margin
 from app.config.settings import Settings, get_settings
+from app.config.settings_xml import export_settings_xml as render_settings_xml
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
 from app.domain.scoring.results import ScoreResult
@@ -1161,6 +1163,18 @@ class Container:
         )
 
     # --- end I4 E28 -----------------------------------------------------------------------------
+
+    # --- I5 E37: profile JSON export, settings XML export (Q-E16-4, Q-E16-1) --------------------
+
+    def export_user_profile(self) -> ExportUserProfile:
+        """`exportUserProfile` — the caller's own profile, or ADMIN reading anyone's."""
+        return ExportUserProfile(self.unit_of_work, self.statistics_reader)
+
+    def export_settings_xml(self) -> str:
+        """`exportSettingsXml` (ADMIN) — the effective, non-secret settings as XML."""
+        return render_settings_xml(self.settings)
+
+    # --- end I5 E37 -----------------------------------------------------------------------------
 
     # -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) ------------------------
 

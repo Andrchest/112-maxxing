@@ -84,6 +84,8 @@ __all__ = [
     "session_pass",
     "session_percent",
     "statistics_row",
+    "took_part",
+    "visible_to_trainee",
 ]
 
 

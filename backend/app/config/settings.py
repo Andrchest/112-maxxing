@@ -71,9 +71,16 @@ class Settings(BaseSettings):
         env_prefix="SIM_", env_file=resolve_env_file(), extra="ignore"
     )
 
-    database_url: str
-    redis_url: str
-    jwt_secret: str
+    #: I5 E37 (Q-E16-1): `repr=False` doubles as this class's *secret* marker —
+    #: `app.config.settings_xml` derives its `SECRET_FIELD_NAMES` from exactly this attribute
+    #: (`Settings.model_fields[name].repr is False`) rather than a second, hand-kept list, so a
+    #: future secret field is excluded from `exportSettingsXml` by the same annotation that
+    #: already keeps it out of `repr()`/tracebacks (SPEC §41). A DB URL carries its credentials
+    #: (`postgresql+asyncpg://user:pass@host/db`), so it is a secret in full, not just its password
+    #: half.
+    database_url: str = Field(repr=False)
+    redis_url: str = Field(repr=False)
+    jwt_secret: str = Field(repr=False)
 
     @field_validator("jwt_secret")
     @classmethod
@@ -145,8 +152,10 @@ class Settings(BaseSettings):
     model_profile: str = "DEV_3060TI"
     recording_retention_days: int = 30
     livekit_url: str
-    livekit_api_key: str
-    livekit_api_secret: str
+    #: I5 E37: the LiveKit API key/secret pair is a credential (`repr=False`, see `database_url`'s
+    #: comment above); `livekit_url` itself is just an endpoint and stays a plain, exportable field.
+    livekit_api_key: str = Field(repr=False)
+    livekit_api_secret: str = Field(repr=False)
     llm_base_url: str
     # -- the voice turn path (HLD `50-voice-pipeline.md` §4.1, D9, SPEC §17) ------------------
     # SPEC §17: "Make this configuration, not a hard-coded magic value." Every key of §4.1's

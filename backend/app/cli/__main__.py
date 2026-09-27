@@ -1,5 +1,6 @@
-"""`python -m app.cli <sub-command> [args...]` — dispatches to `preflight` / `purge_recordings`
-(R7, R8). No sub-command, or an unknown one, prints the two names and exits 2."""
+"""`python -m app.cli <sub-command> [args...]` — dispatches to `preflight` / `purge_recordings` /
+`settings_import` (R7, R8, I5 E37). No sub-command, or an unknown one, prints the names and exits
+2."""
 
 from __future__ import annotations
 
@@ -7,7 +8,7 @@ import sys
 
 __all__ = ["main"]
 
-_SUB_COMMANDS = ("preflight", "purge_recordings")
+_SUB_COMMANDS = ("preflight", "purge_recordings", "settings_import")
 
 
 def main(argv: list[str]) -> int:
@@ -25,6 +26,11 @@ def main(argv: list[str]) -> int:
         from app.cli.preflight import main as preflight_main
 
         return preflight_main(rest)
+
+    if name == "settings_import":
+        from app.cli.settings_import import main as settings_import_main
+
+        return settings_import_main(rest)
 
     from app.cli.purge_recordings import main as purge_recordings_main
 

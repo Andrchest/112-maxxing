@@ -1069,3 +1069,84 @@ defaults and the level (lesson / session) left to the stage — decided by the m
 (`percent ≥ threshold`); the UI truncates (never rounds up) the percent it prints beside a failed
 threshold. A request at the defaults sends no `pass_criteria` (the server records the same
 defaults). The criteria are not shown on the lesson detail page (not asked for).
+
+## 71.18.6 I5 E37 — Admin read audit, profile JSON export, settings XML export/import
+
+**Purpose.** Three of I5's owner answers of 2026-09-26: ADMIN's read access to reports/
+transcripts/recordings/lesson reports is audited by name and target (Q-E14-1 variant б); a
+downloadable JSON profile per account (Q-E16-4, ТЗ ¶363); export/import of the effective settings
+as XML (Q-E16-1).
+
+**Sources:** Q-E14-1, Q-E16-4, Q-E16-1 (`docs/owner-decisions.md`).
+
+**Design.**
+- **Q-E14-1 (audit of ADMIN reads).** No new access grant: `report_visibility`
+  (`app.application.reports.visibility`) already treats `ADMIN` exactly like `INSTRUCTOR`
+  (`user.is_instructor_or_admin`) for `getSessionReport`, `getAudioSegment`, `getAudioSegmentMp3`
+  and `getLessonReport`, and E25's `AuditMiddleware` already writes one `audit_log` row per HTTP
+  request naming the caller (`user_id`, `role`) and the path's own parameters as `target_ids`
+  (`app.api.main._record`/`_target_ids`) — every one of these four operations' path already
+  carries its full target (`session_id`, plus `audio_segment_id` for the two audio downloads,
+  `lesson_id` for the lesson report), so no code changed here; `tests/api/reports/
+  test_admin_read_audit.py` and `tests/api/lessons/test_admin_read_audit.py` prove it, one test
+  per operation, as the epic's `CHECK` asks.
+- **Q-E16-4 (`exportUserProfile`).** `app.application.users.export_profile.ExportUserProfile`
+  (new): the account fields `UserAccountI4` already carries (never `password_hash`, never
+  `sip_ha1`, SPEC §41) plus the E33 history summary (`TraineeStatisticsRowView`, reusing
+  `statistics_row`/`took_part`/`visible_to_trainee` from `trainee_statistics.py`, now in that
+  module's `__all__`) for a `TRAINEE` account, `null` for `INSTRUCTOR`/`ADMIN`. Allowed for the
+  account itself or `ADMIN` only — deliberately narrower than Q-E14-1's `is_instructor_or_admin`:
+  an `INSTRUCTOR` reading another account's profile is `403 FORBIDDEN_FOR_ROLE`. `GET /api/v1/
+  users/{user_id}/profile-export`, downloads as `profile-<username>.json`
+  (`Content-Disposition`). Frontend: «Скачать профиль (JSON)» on the admin users tab (per row) and
+  on the trainee's `/history` page (own profile).
+- **Q-E16-1 (settings XML export/import).** `app.config.settings_xml` (new module):
+  - `SECRET_FIELD_NAMES` is derived from `Settings.model_fields` — every field already marked
+    `Field(repr=False)` (this task additionally marks `database_url`, `redis_url`, `jwt_secret`,
+    `livekit_api_key`, `livekit_api_secret`; `sip_gateway_secret`/`sip_password` were marked
+    already) — never a second, hand-kept list.
+  - `export_settings_xml(settings)`: every non-secret field as
+    `<settings version="1"><setting name="SIM_…">value</setting>…</settings>`, its real env var
+    name (honouring a field's `validation_alias`, e.g. `tts_model_variant` ->
+    `SIM_TTS_QWEN3_MODEL`), `bool` as `"true"`/`"false"`, `list`/`dict` as JSON (the same wire
+    pydantic-settings' env source already expects), a `None` value omitted.
+  - `settings_env_lines(xml_text)`: validates schema (root, version, `<setting name="…">` only),
+    every name known and non-secret, and each value's *type* — proved by actually constructing a
+    throwaway `Settings()` with the values overlaid on the environment inside a
+    restore-on-exit `with` block (`_temporary_env`), never the real `get_settings()` singleton.
+  - `exportSettingsXml` `GET /api/v1/admin/settings/export` (ADMIN only) serves the export; a
+    «Экспорт настроек (XML)» button on `/admin`.
+  - Import is **CLI only** (manager decision): `python -m app.cli settings_import --file <xml>
+    [--out infra/.env.settings]` (`backend/app/cli/settings_import.py`, wired into
+    `app.cli.__main__`), `make settings-import FILE=<xml> [OUT=...]`. Validates with the same
+    `settings_env_lines`, writes `NAME=value` lines to `--out` (default `infra/.env.settings`) on
+    success only, refuses any secret name, never touches the running process or `os.environ`
+    outside its own restore-on-exit probe.
+
+**Data / DB.** None (no migration).
+
+**API** (additive, `docs/hld/openapi.yaml`): `exportUserProfile`
+(`GET /api/v1/users/{user_id}/profile-export`, new schema `UserProfileExport`), `exportSettingsXml`
+(`GET /api/v1/admin/settings/export`). No new `ProblemCode` — both reuse `FORBIDDEN_FOR_ROLE` /
+`NOT_FOUND` already in the enum.
+
+**Acceptance.**
+- One audit test per ADMIN read operation (session report, WAV, MP3, lesson report), each proving
+  the row names the admin and carries the full target.
+- `exportUserProfile`'s JSON asserted on its **exact** property set (never `password_hash`/
+  `sip_ha1`); `403` for an `INSTRUCTOR` or another `TRAINEE` reading someone else's profile.
+- `exportSettingsXml`'s body contains no secret's env name, the secret set derived from `Settings`
+  in the test itself, not retyped.
+- `settings_env_lines`'s round trip: export -> import -> the written env file loads into `Settings`
+  equal to the exported (non-secret) values, including a `None`-valued and an aliased field.
+- `make settings-import` end to end (real CLI process, real file).
+
+**Not built (owner questions).** None — Q-E14-1, Q-E16-4 and Q-E16-1 are now implemented
+(`docs/owner-decisions.md` marked "Сделано: I5 E37.").
+
+**HLD gaps.** `infra/docker-compose.yml`'s `backend` service now also loads `.env.settings`
+(`required: false`, same pattern as `llama-server`'s `.env.profile`) so a compose deployment's
+next restart picks up an import; a host run (`make run-api`) has only one `SIM_ENV_FILE`, so an
+operator folds `infra/.env.settings` into their own `.env` by hand (documented in
+`docs/RUNBOOK.md`) — a second `SIM_ENV_FILE`-like variable for a host run was judged out of scope
+for this epic (a technical choice, not a product one).

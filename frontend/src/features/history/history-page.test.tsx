@@ -1,10 +1,12 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HistoryPage } from './history-page';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
+import { setAuthToken } from '@/shared/lib/api';
 import type { MyHistory } from '@/shared/api';
 
 function jsonResponse(body: unknown): Response {
@@ -96,5 +98,44 @@ describe('HistoryPage', () => {
     );
     renderPage();
     expect(await screen.findByText(ru.historyEmpty)).toBeInTheDocument();
+  });
+
+  // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» downloads the caller's own profile.
+  it('downloads the own profile as JSON with the bearer token', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/v1/me/history') return jsonResponse(HISTORY);
+      if (url === '/api/v1/users/trainee-1/profile-export') {
+        return new Response('{"id":"trainee-1"}', { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    const createObjectURL = vi.fn(() => 'blob:profile');
+    const revokeObjectURL = vi.fn();
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    setAuthToken('jwt-token');
+
+    try {
+      renderPage();
+      await screen.findByText('Apartment fire');
+      await userEvent.setup().click(screen.getByRole('button', { name: ru.historyDownloadProfileButton }));
+
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      const [, init] = fetchMock.mock.calls.find(([requestInput]) => String(requestInput) === '/api/v1/users/trainee-1/profile-export') as unknown as [
+        string,
+        RequestInit,
+      ];
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer jwt-token');
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:profile');
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+      click.mockRestore();
+      setAuthToken(null);
+    }
   });
 });

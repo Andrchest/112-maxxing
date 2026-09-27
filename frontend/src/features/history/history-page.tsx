@@ -4,16 +4,19 @@
 // its score and a link to its report. A session whose report is not released to them yet is
 // listed without a score (`score_percent: null`, the existing release rule). Every number is the
 // server's (`getMyHistory`, D11); the page only rounds it for display.
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { AppShell } from '@/shared/ui/app-shell';
+import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { getMyHistory, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
+import { exportUserProfile, getMyHistory, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
+import { saveBlob } from '@/shared/lib/download';
 import {
   failedRulesLines,
   formatMeanDeviationMs,
@@ -35,6 +38,24 @@ export function HistoryPage() {
   const history = historyQuery.data;
   const failed = history ? failedRulesLines(history.statistics.failed_rules_by_category) : [];
 
+  // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» — the trainee's own account fields plus this same
+  // history summary, never the password hash or SIP HA1.
+  const [profileDownloading, setProfileDownloading] = useState(false);
+  const [profileDownloadError, setProfileDownloadError] = useState<unknown>(null);
+
+  async function handleProfileDownload() {
+    if (!user) return;
+    setProfileDownloading(true);
+    setProfileDownloadError(null);
+    try {
+      saveBlob(await exportUserProfile(user.id), `profile-${user.username}.json`);
+    } catch (error) {
+      setProfileDownloadError(error);
+    } finally {
+      setProfileDownloading(false);
+    }
+  }
+
   return (
     <AppShell
       title={t('historyPageTitle')}
@@ -44,10 +65,20 @@ export function HistoryPage() {
     >
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold tracking-tight">{t('historyPageTitle')}</h1>
-        <Link to="/sessions" className="text-sm text-primary underline-offset-2 hover:underline">
-          {t('statisticsBackLink')}
-        </Link>
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="outline" size="sm" disabled={profileDownloading} onClick={() => void handleProfileDownload()}>
+            {profileDownloading ? t('profileExportDownloading') : t('historyDownloadProfileButton')}
+          </Button>
+          <Link to="/sessions" className="text-sm text-primary underline-offset-2 hover:underline">
+            {t('statisticsBackLink')}
+          </Link>
+        </div>
       </div>
+      {profileDownloadError ? (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {profileDownloadError instanceof ProblemError ? problemMessageRu(profileDownloadError.code as ProblemCode) : t('problemUnknown')}
+        </p>
+      ) : null}
       {historyQuery.isLoading ? <p className="mt-2 text-sm text-muted-foreground">{t('historyLoading')}</p> : null}
       {historyQuery.isError ? (
         <p role="alert" className="mt-2 text-sm text-destructive">

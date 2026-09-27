@@ -334,3 +334,29 @@ async def get_backup_status(container: ContainerDep, _user: AdminDep) -> BackupS
 
 
 # --- end I4 E29 -----------------------------------------------------------------------------------
+
+
+# --- I5 E37: settings XML export (Q-E16-1) -------------------------------------------------------
+
+
+@router.get(
+    "/settings/export",
+    operation_id="exportSettingsXml",
+    summary="The effective, non-secret settings as XML (ADMIN) — Q-E16-1.",
+    status_code=200,
+    response_class=Response,
+)
+async def export_settings_xml(container: ContainerDep, _user: AdminDep) -> Response:
+    """`<settings version="1"><setting name="SIM_…">value</setting>…</settings>`. Every secret
+    (passwords, keys, tokens, the JWT secret, DB URLs with credentials) is omitted entirely, never
+    masked-in-place (SPEC §41) — `app.config.settings_xml.SECRET_FIELD_NAMES`. Import is CLI only
+    (`make settings-import`, `docs/RUNBOOK.md`), never this API."""
+    body = container.export_settings_xml()
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={"Content-Disposition": 'attachment; filename="settings.xml"'},
+    )
+
+
+# --- end I5 E37 -----------------------------------------------------------------------------------

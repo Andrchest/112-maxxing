@@ -1217,4 +1217,10 @@ export const ru = {
   lessonReportTableColumnVerdict: 'Итог',
   statisticsColumnPassed: 'Сдано',
   statisticsRatingColumnPassed: 'Сдано',
+  // --- I5 E37: admin read audit, profile JSON export, settings XML export (Q-E14-1, Q-E16-4,
+  // Q-E16-1) ---
+  adminUsersDownloadProfileButton: 'Скачать профиль (JSON)',
+  historyDownloadProfileButton: 'Скачать профиль (JSON)',
+  profileExportDownloading: 'Загрузка…',
+  adminSettingsExportXmlButton: 'Экспорт настроек (XML)',
 } as const;

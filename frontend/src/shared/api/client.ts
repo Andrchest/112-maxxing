@@ -1150,3 +1150,41 @@ export type PassCriteriaRequest = components['schemas']['PassCriteriaRequest'];
 export type PassCriteriaView = components['schemas']['PassCriteriaView'];
 export type PassCriterion = components['schemas']['PassCriterion'];
 export type PassVerdictView = components['schemas']['PassVerdictView'];
+
+// --- I5 E37: admin read audit, profile JSON export, settings XML export (Q-E14-1, Q-E16-4,
+// Q-E16-1) — the audit itself is server-side (E25's middleware); this section is the two new
+// downloads' typed wrappers.
+
+/** A file download as a `Blob`, like {@link fetchCsv} but for a caller-chosen `Accept` (JSON, XML)
+ * — fetched directly because {@link apiFetch} assumes JSON *parsed*, not JSON *as a file*. Throws
+ * {@link ProblemError} on a problem+json answer. */
+async function fetchFile(path: string, accept: string): Promise<Blob> {
+  const headers: Record<string, string> = { Accept: `${accept}, application/problem+json` };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE_PATH}${path}`, { headers });
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return await response.blob();
+}
+
+/** `exportUserProfile` (Q-E16-4, ТЗ ¶363) — one account's profile as JSON (id, username, display
+ * name, role, is_active, created_at, plus the E33 history summary for a TRAINEE), never the
+ * password hash or SIP HA1. Allowed for the account itself and ADMIN — anyone else gets
+ * `403 FORBIDDEN_FOR_ROLE`. */
+export function exportUserProfile(userId: string): Promise<Blob> {
+  return fetchFile(`/users/${encodeURIComponent(userId)}/profile-export`, 'application/json');
+}
+
+/** `exportSettingsXml` (Q-E16-1) — ADMIN only; the effective non-secret settings as XML. Every
+ * secret (passwords, keys, tokens, the JWT secret, DB URLs with credentials) is omitted entirely.
+ * Import is CLI only (`make settings-import`) — there is no matching upload here. */
+export function exportSettingsXml(): Promise<Blob> {
+  return fetchFile('/admin/settings/export', 'application/xml');
+}

@@ -140,6 +140,36 @@ does not override it.
    — `postgres`/`redis`/`livekit`/`backend`/`frontend` do not read the profile and need no restart.
 4. `make preflight` to confirm the new profile's checks 1-6 are green before starting a session.
 
+## Экспорт и импорт настроек (I5 E37 — `docs/hld/71-i4-wave4.md` §71.18.5, Q-E16-1)
+
+**Экспорт** — из интерфейса, вкладка `/admin`, кнопка «Экспорт настроек (XML)»
+(`exportSettingsXml`, только ADMIN). Файл `settings.xml` содержит **действующие** (после наложения
+`.env`/профиля) настройки, кроме секретов — пароли, ключи, токены, секрет JWT, строки подключения
+к БД/Redis с учётными данными в них **не попадают в файл вовсе**, а не маскируются.
+
+**Импорт — только из командной строки**, никогда через интерфейс:
+
+```
+make settings-import FILE=./settings.xml                    # пишет infra/.env.settings
+make settings-import FILE=./settings.xml OUT=./other.env     # другой путь назначения
+```
+
+`make settings-import` проверяет файл (схема `<settings version="1">`, только известные имена
+`SIM_*`, ни одного секрета, каждое значение — по типу соответствующей настройки) и, только если
+всё верно, записывает строки `ИМЯ=значение` в `OUT` (по умолчанию `infra/.env.settings`,
+гитигнорится). При любой ошибке файл **не создаётся и не изменяется** — сообщение об ошибке уходит
+в stderr, код выхода `2`. Ни один работающий процесс командой не затрагивается.
+
+**Когда изменение применится:**
+- **compose-стенд** (`make up`): `infra/docker-compose.yml`'s `backend`-сервис уже подключает
+  `infra/.env.settings` (`env_file`, `required: false`, после `../.env`, так что импортированное
+  значение перекрывает `.env`, а компоуновский собственный блок `environment:` по-прежнему
+  перекрывает оба). Перезапустите `backend` (`docker compose -f infra/docker-compose.yml restart
+  backend`) или весь стенд (`make up`);
+- **запуск на хосте** (`make run-api`): читается только один файл (`SIM_ENV_FILE`, по умолчанию
+  `.env`) — перенесите нужные строки из `infra/.env.settings` в `.env` вручную, затем перезапустите
+  `run-api`.
+
 ## SIP gateway (I3 E6a — `docs/hld/80-telephony.md` §80.2, §80.8)
 
 **Ports** (prove them free first: `ss -lntup | awk '$5 ~ /:(5060|8114|20[01][0-9][0-9])$/'`

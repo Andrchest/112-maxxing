@@ -3,12 +3,16 @@
 // named by the design: Пользователи / Журнал / Статистика / Нагрузка / Ошибки / Оповещения.
 // No new API: every tab is a thin read/write layer over the E28/E29 operations already in
 // `shared/api/client.ts`.
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { AppShell } from '@/shared/ui/app-shell';
+import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { listAdminAlerts, queryKeys, type UserRole } from '@/shared/api';
+import { exportSettingsXml, listAdminAlerts, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
+import { ProblemError } from '@/shared/lib/api';
+import { saveBlob } from '@/shared/lib/download';
 import { useAuthStore } from '@/entities/session';
 import { LogoutButton } from '@/features/auth/logout-button';
 import { AdminAlertsBadge } from './admin-alerts-badge';
@@ -34,6 +38,23 @@ export function AdminPage() {
     queryFn: listAdminAlerts,
   });
 
+  // I5 E37 (Q-E16-1): «Экспорт настроек (XML)» — the effective, non-secret settings; import is
+  // CLI only (`make settings-import`, docs/RUNBOOK.md), there is no matching upload here.
+  const [settingsDownloading, setSettingsDownloading] = useState(false);
+  const [settingsDownloadError, setSettingsDownloadError] = useState<unknown>(null);
+
+  async function handleSettingsExport() {
+    setSettingsDownloading(true);
+    setSettingsDownloadError(null);
+    try {
+      saveBlob(await exportSettingsXml(), 'settings.xml');
+    } catch (error) {
+      setSettingsDownloadError(error);
+    } finally {
+      setSettingsDownloading(false);
+    }
+  }
+
   return (
     <AppShell
       title={t('adminPageTitle')}
@@ -44,8 +65,18 @@ export function AdminPage() {
     >
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold tracking-tight">{t('adminPageTitle')}</h1>
-        <LogoutButton />
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="outline" size="sm" disabled={settingsDownloading} onClick={() => void handleSettingsExport()}>
+            {settingsDownloading ? t('profileExportDownloading') : t('adminSettingsExportXmlButton')}
+          </Button>
+          <LogoutButton />
+        </div>
       </div>
+      {settingsDownloadError ? (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {settingsDownloadError instanceof ProblemError ? problemMessageRu(settingsDownloadError.code as ProblemCode) : t('problemUnknown')}
+        </p>
+      ) : null}
 
       <Tabs defaultValue="users" className="mt-4">
         <TabsList>

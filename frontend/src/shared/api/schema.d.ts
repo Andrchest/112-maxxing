@@ -63,6 +63,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/{user_id}/profile-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one account's profile as JSON (self or ADMIN) — Q-E16-4, ТЗ ¶363.
+         * @description Account fields (id, username, display_name_ru, user_role, is_active, created_at — never
+         *     the password hash or the SIP HA1, SPEC §41) plus the E33 history summary
+         *     (`TraineeStatisticsRow`) for a TRAINEE account, `null` for INSTRUCTOR/ADMIN. Allowed for
+         *     the account itself or ADMIN only — an INSTRUCTOR reading another account's profile is
+         *     `403`. Downloads as `profile-<username>.json`. Audited like every operation (E25).
+         */
+        get: operations["exportUserProfile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -247,6 +271,30 @@ export interface paths {
          * @description (I4 E29) `available: false` when no `last.json` is readable.
          */
         get: operations["getBackupStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective, non-secret settings as XML (ADMIN) — Q-E16-1.
+         * @description `<settings version="1"><setting name="SIM_…">value</setting>…</settings>` — every secret
+         *     (passwords, keys, tokens, the JWT secret, DB URLs with credentials) is omitted entirely,
+         *     never masked-in-place (SPEC §41). Import is CLI only (`make settings-import FILE=<xml>`,
+         *     `docs/RUNBOOK.md`) — never an HTTP write, so no authenticated ADMIN session can apply a
+         *     settings change to the running process by accident.
+         */
+        get: operations["exportSettingsXml"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2652,6 +2700,22 @@ export interface components {
             /** @description (I4 E28) `false` = blocked (ТЗ ¶197); refused at login and per request. */
             is_active: boolean;
         };
+        /**
+         * @description (additive, I5 E37) `exportUserProfile` — `UserAccountI4`'s fields plus the E33 history
+         *     summary for a TRAINEE account (`null` for INSTRUCTOR/ADMIN). Never the password hash or
+         *     the SIP HA1 (SPEC §41).
+         */
+        UserProfileExport: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            display_name_ru: string;
+            user_role: components["schemas"]["UserRole"];
+            /** Format: date-time */
+            created_at: string;
+            is_active: boolean;
+            history: components["schemas"]["TraineeStatisticsRow"] | null;
+        };
         /** @description (I4 E28) `createUser`'s body. */
         UserCreateRequest: {
             username: string;
@@ -4896,6 +4960,31 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    exportUserProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profile, as a JSON file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserProfileExport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     createUser: {
         parameters: {
             query?: never;
@@ -5136,6 +5225,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    exportSettingsXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings, as an XML file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
                 };
             };
             401: components["responses"]["Unauthorized"];

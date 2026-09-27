@@ -154,6 +154,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # ------------------------------------------------- I5 E37: profile JSON export (Q-E16-4) ----
+  /api/v1/users/{user_id}/profile-export:
+    get:
+      tags: [auth]
+      operationId: exportUserProfile
+      summary: Download one account's profile as JSON (self or ADMIN) — Q-E16-4, ТЗ ¶363.
+      description: |
+        Account fields (id, username, display_name_ru, user_role, is_active, created_at — never
+        the password hash or the SIP HA1, SPEC §41) plus the E33 history summary
+        (`TraineeStatisticsRow`) for a TRAINEE account, `null` for INSTRUCTOR/ADMIN. Allowed for
+        the account itself or ADMIN only — an INSTRUCTOR reading another account's profile is
+        `403`. Downloads as `profile-<username>.json`. Audited like every operation (E25).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The profile, as a JSON file.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfileExport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ------------------------------------------------------- accounts (I4 E28) ----
   /api/v1/admin/users:
     post:
@@ -428,6 +457,29 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BackupStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ------------------------------------------------- I5 E37: settings XML export (Q-E16-1) ----
+  /api/v1/admin/settings/export:
+    get:
+      tags: [admin]
+      operationId: exportSettingsXml
+      summary: The effective, non-secret settings as XML (ADMIN) — Q-E16-1.
+      description: |
+        `<settings version="1"><setting name="SIM_…">value</setting>…</settings>` — every secret
+        (passwords, keys, tokens, the JWT secret, DB URLs with credentials) is omitted entirely,
+        never masked-in-place (SPEC §41). Import is CLI only (`make settings-import FILE=<xml>`,
+        `docs/RUNBOOK.md`) — never an HTTP write, so no authenticated ADMIN session can apply a
+        settings change to the running process by accident.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: The settings, as an XML file.
+          content:
+            application/xml:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -4012,6 +4064,27 @@ components:
         is_active:
           type: boolean
           description: (I4 E28) `false` = blocked (ТЗ ¶197); refused at login and per request.
+
+    # ---------------------------------------------- I5 E37: profile export (Q-E16-4) ----
+    UserProfileExport:
+      description: |
+        (additive, I5 E37) `exportUserProfile` — `UserAccountI4`'s fields plus the E33 history
+        summary for a TRAINEE account (`null` for INSTRUCTOR/ADMIN). Never the password hash or
+        the SIP HA1 (SPEC §41).
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name_ru, user_role, created_at, is_active, history]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name_ru: { type: string }
+        user_role: { $ref: '#/components/schemas/UserRole' }
+        created_at: { type: string, format: date-time }
+        is_active: { type: boolean }
+        history:
+          oneOf:
+            - $ref: '#/components/schemas/TraineeStatisticsRow'
+            - type: 'null'
     UserCreateRequest:
       description: (I4 E28) `createUser`'s body.
       type: object

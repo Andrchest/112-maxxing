@@ -96,4 +96,37 @@ describe('UsersTab', () => {
     );
     expect(await screen.findByText('newuser')).toBeInTheDocument();
   });
+
+  // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» per row.
+  it('downloads a row\'s profile as JSON', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/v1/users') return jsonResponse({ items: [ACTIVE_USER], total: 1 });
+      if (url === '/api/v1/users/user-1/profile-export') {
+        return new Response('{"id":"user-1"}', { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    const createObjectURL = vi.fn(() => 'blob:profile');
+    const revokeObjectURL = vi.fn();
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      renderTab();
+      await screen.findByText('trainee1');
+      await userEvent.setup().click(screen.getByRole('button', { name: ru.adminUsersDownloadProfileButton }));
+
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput) === '/api/v1/users/user-1/profile-export')).toBe(true);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:profile');
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+      click.mockRestore();
+    }
+  });
 });

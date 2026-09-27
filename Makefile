@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs settings-import
 # `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
 # environment down to the base dependency set, silently uninstalling the ML extras a previous
 # `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
@@ -466,3 +466,13 @@ restore:
 # `postgres:16` image has none — see backup-once.sh's header comment).
 backup-verify:
 	$(UV) run python infra/scripts/backup_status.py --path backups/last.json
+
+# --- I5 E37: settings XML import (Q-E16-1) ---------------------------------------------------
+# The CLI half of `exportSettingsXml` (ADMIN, `GET /api/v1/admin/settings/export`): validates the
+# XML (schema, known SIM_* names, no secret, each value against its Settings field's type) and
+# writes plain NAME=value lines to OUT (default infra/.env.settings) — never the running process.
+# `make settings-import FILE=./settings.xml [OUT=infra/.env.settings]`.
+OUT ?= infra/.env.settings
+settings-import:
+	$(UV) run python -m app.cli settings_import --file "$(FILE)" --out "$(OUT)"
+# --- end I5 E37 ---------------------------------------------------------------------------------

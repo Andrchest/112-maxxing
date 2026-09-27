@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -89,5 +89,40 @@ describe('AdminPage — the six tabs', () => {
     await user.click(screen.getByRole('tab', { name: ru.adminTabAlerts }));
     expect(await screen.findByText(ru.adminAlertsEmpty)).toBeInTheDocument();
     expect(await screen.findByText(ru.adminBackupStatusUnavailable)).toBeInTheDocument();
+  });
+
+  // I5 E37 (Q-E16-1): «Экспорт настроек (XML)» downloads the effective, non-secret settings.
+  it('downloads the settings XML', async () => {
+    signIn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/v1/admin/alerts') return jsonResponse({ items: [] });
+      if (url === '/api/v1/users') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/admin/settings/export') {
+        return new Response('<settings version="1"></settings>', { status: 200, headers: { 'content-type': 'application/xml' } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    const createObjectURL = vi.fn(() => 'blob:settings');
+    const revokeObjectURL = vi.fn();
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      renderPage();
+      await screen.findByText(ru.adminUsersEmpty);
+      await userEvent.setup().click(screen.getByRole('button', { name: ru.adminSettingsExportXmlButton }));
+
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput) === '/api/v1/admin/settings/export')).toBe(true);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:settings');
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+      click.mockRestore();
+    }
   });
 });
