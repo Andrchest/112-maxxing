@@ -5,6 +5,8 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import type { ConnectionStatus } from '@/shared/realtime/ws-client';
 import type { HealthStatus } from '@/shared/api';
+import { useAuthStore } from '@/entities/session';
+import { LogoutButton } from '@/features/auth/logout-button';
 
 const CONNECTION_LABEL_KEY: Record<ConnectionStatus, keyof typeof ru> = {
   idle: 'connectionPlaceholder',
@@ -90,6 +92,12 @@ interface AppShellProps {
  * app — the caller's dialogue is a phone widget added in E11, not a
  * message thread. Purely presentational: every value it shows is passed in
  * by the caller, which is the layer allowed to fetch or subscribe to it.
+ *
+ * I6 (logout on every authenticated page): the one deliberate exception is the «Выйти» button —
+ * it reads `useAuthStore` itself and renders whenever a user is signed in, instead of a per-page
+ * prop, so that every route sharing this shell gets it for free and cannot forget it. There is no
+ * frontend import-boundary check (D2's `check_imports.py` covers `backend/`/`workers/`/
+ * `benchmarks/` only), so this shared component importing a `features/auth` component is allowed.
  */
 export function AppShell({
   title,
@@ -103,6 +111,7 @@ export function AppShell({
   adminAlertsBadge,
   children,
 }: AppShellProps) {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   return (
     <div
       className={`flex min-h-svh flex-col bg-background text-foreground ${referenceTheme ? 'reference-light' : ''}`}
@@ -150,6 +159,7 @@ export function AppShell({
               {t(CONNECTION_LABEL_KEY[connectionStatus ?? 'idle'])}
             </span>
           )}
+          {isAuthenticated ? <LogoutButton /> : null}
         </div>
       </header>
       <main className={fillHeight ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex-1 overflow-auto p-4'}>{children}</main>

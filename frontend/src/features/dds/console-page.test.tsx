@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -138,6 +139,29 @@ describe('DdsConsolePage — refresh restore (SPEC §39, §42 test 13)', () => {
       expect(await screen.findByText(ru.ddsWorkItemTitle)).toBeInTheDocument();
     },
   );
+
+  // I6: the «Выйти» button must be available on every authenticated page — this trainee console
+  // renders it exactly once (via AppShell, not a per-page usage) and clicking it clears the session.
+  it('shows the logout button exactly once and logs the trainee out on click', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () => jsonResponse(makeSnapshot()),
+        '/dds/resources': () => jsonResponse({ items: [makeResource()], total: 1 }),
+      }),
+    );
+
+    renderConsole();
+
+    expect(await screen.findByText(ru.ddsWorkItemTitle)).toBeInTheDocument();
+    const logoutButtons = screen.getAllByRole('button', { name: ru.logoutButton });
+    expect(logoutButtons).toHaveLength(1);
+
+    await userEvent.setup().click(logoutButtons[0]!);
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
 
   it('shows a Russian message when the session has no DDS work item for this role', async () => {
     signIn();

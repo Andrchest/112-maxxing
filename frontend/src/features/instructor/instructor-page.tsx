@@ -6,7 +6,6 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { getHealthReady, queryKeys } from '@/shared/api';
 import { useAuthStore } from '@/entities/session';
-import { LogoutButton } from '@/features/auth/logout-button';
 import type { UserRole } from '@/shared/api';
 import { CreateSessionForm } from './create-session-form';
 import { InstructorSessionsList } from './instructor-sessions-list';
@@ -53,7 +52,6 @@ export function InstructorPage() {
           <Button asChild variant="ghost" size="sm">
             <Link to="/instructor/statistics">{t('navStatisticsLink')}</Link>
           </Button>
-          <LogoutButton />
         </nav>
       </div>
       <div className="mt-4 flex flex-col gap-4">

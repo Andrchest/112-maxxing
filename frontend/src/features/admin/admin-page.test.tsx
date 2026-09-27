@@ -91,6 +91,31 @@ describe('AdminPage — the six tabs', () => {
     expect(await screen.findByText(ru.adminBackupStatusUnavailable)).toBeInTheDocument();
   });
 
+  // I6: the «Выйти» button must be available on every authenticated page — /admin renders it
+  // exactly once (via AppShell, not the page's own removed usage) and clicking it clears the
+  // session.
+  it('shows the logout button exactly once and logs the admin out on click', async () => {
+    signIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/admin/alerts') return jsonResponse({ items: [] });
+        if (url === '/api/v1/users') return jsonResponse({ items: [], total: 0 });
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText(ru.adminUsersEmpty)).toBeInTheDocument();
+    const logoutButtons = screen.getAllByRole('button', { name: ru.logoutButton });
+    expect(logoutButtons).toHaveLength(1);
+
+    await userEvent.setup().click(logoutButtons[0]!);
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
   // I5 E37 (Q-E16-1): «Экспорт настроек (XML)» downloads the effective, non-secret settings.
   it('downloads the settings XML', async () => {
     signIn();

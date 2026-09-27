@@ -1,6 +1,9 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { MemoryRouter } from 'react-router';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AppShell } from './app-shell';
+import { useAuthStore } from '@/entities/session';
+import { ru } from '@/shared/i18n/ru';
 
 // D4 addendum: a seeded demo account's own display_name_ru can equal its account role's own
 // label (e.g. the trainee account is literally named "Стажёр") — the header must not then print
@@ -81,5 +84,45 @@ describe('AppShell — adminAlertsBadge slot (I4 E30)', () => {
       </AppShell>,
     );
     expect(screen.getByText('Оповещения: 2')).toBeInTheDocument();
+  });
+});
+
+// I6: the «Выйти» button must be on every authenticated page. AppShell renders it itself (reading
+// `useAuthStore` directly) instead of a per-page prop, so no caller can forget it — see the class
+// doc comment for why this is the one deliberate exception to "purely presentational".
+describe('AppShell — logout button (I6)', () => {
+  afterEach(() => {
+    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+  });
+
+  it('renders no logout button when signed out', () => {
+    render(
+      <MemoryRouter>
+        <AppShell title="Тренажёр 112">
+          <div />
+        </AppShell>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: ru.logoutButton })).not.toBeInTheDocument();
+  });
+
+  it('renders exactly one logout button, after the other header items, when signed in', () => {
+    useAuthStore.setState({
+      token: 'jwt-token',
+      isAuthenticated: true,
+      user: { id: 'u1', username: 'trainee', display_name_ru: 'Стажёр', user_role: 'TRAINEE', created_at: '2026-09-21T00:00:00Z' },
+    });
+    render(
+      <MemoryRouter>
+        <AppShell title="Тренажёр 112" userLabel="Стажёр" role="Стажёр">
+          <div />
+        </AppShell>
+      </MemoryRouter>,
+    );
+    const buttons = screen.getAllByRole('button', { name: ru.logoutButton });
+    expect(buttons).toHaveLength(1);
+    // Header items render left to right; the logout button is the header's last child.
+    const header = document.querySelector('header');
+    expect(header?.lastElementChild?.lastElementChild).toBe(buttons[0]);
   });
 });

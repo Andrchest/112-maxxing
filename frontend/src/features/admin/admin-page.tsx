@@ -14,7 +14,6 @@ import { exportSettingsXml, listAdminAlerts, problemMessageRu, queryKeys, type P
 import { ProblemError } from '@/shared/lib/api';
 import { saveBlob } from '@/shared/lib/download';
 import { useAuthStore } from '@/entities/session';
-import { LogoutButton } from '@/features/auth/logout-button';
 import { AdminAlertsBadge } from './admin-alerts-badge';
 import { UsersTab } from './users-tab';
 import { AuditLogTab } from './audit-log-tab';
@@ -69,7 +68,6 @@ export function AdminPage() {
           <Button type="button" variant="outline" size="sm" disabled={settingsDownloading} onClick={() => void handleSettingsExport()}>
             {settingsDownloading ? t('profileExportDownloading') : t('adminSettingsExportXmlButton')}
           </Button>
-          <LogoutButton />
         </div>
       </div>
       {settingsDownloadError ? (
