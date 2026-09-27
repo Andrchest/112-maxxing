@@ -16,6 +16,13 @@ interface DdsWorkItemsSectionProps {
   resources: readonly EmergencyResourceView[];
 }
 
+/** I6 UX fix: `missing_field_paths` used to render as raw paths (e.g. `address.locality`) —
+ * `DdsWorkItem.field_specs` (I3 E3a) carries the same `label_ru` the live operator card and the
+ * handoff snapshot already look up by path, so this does the same lookup instead of the raw path. */
+function missingFieldLabel(assignment: DdsWorkItem, fieldPath: string): string {
+  return assignment.field_specs?.find((spec) => spec.field_path === fieldPath)?.label_ru ?? fieldPath;
+}
+
 export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSectionProps) {
   const callsignByResourceId = new Map(resources.map((resource) => [resource.resource_id, resource.callsign]));
   return (
@@ -52,7 +59,7 @@ export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSect
                 </div>
                 {assignment.missing_field_paths.length > 0 ? (
                   <p className="text-xs text-amber-600">
-                    {t('instructorDdsMissingFieldsLabel')}: {assignment.missing_field_paths.join(', ')}
+                    {t('instructorDdsMissingFieldsLabel')}: {assignment.missing_field_paths.map((path) => missingFieldLabel(assignment, path)).join(', ')}
                   </p>
                 ) : null}
                 {assignment.dispatched_resource_ids.length > 0 ? (

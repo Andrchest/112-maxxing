@@ -51,6 +51,13 @@ class StoredSessionListing(BaseModel):
     created_at: datetime
     created_by_user_id: UserId
     my_role_type: RoleType | None = None
+    #: (additive, I6 NAV2): the lesson this session is a card of, `null` for a single session —
+    #: same field `SessionDetail.lesson_id` already carries; a trainee's own session list needs it
+    #: to tell same-scenario runs apart by lesson.
+    lesson_id: LessonId | None = None
+    #: (additive, I6 NAV2): when the session left `READY`, `null` before that — lets a listing
+    #: show a lesson card's start time without a second `getSession` round trip.
+    started_at: datetime | None = None
 
 
 class StoredParticipant(BaseModel):

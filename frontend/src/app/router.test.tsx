@@ -53,10 +53,11 @@ describe('AppRoutes', () => {
     expect(screen.getByRole('heading', { name: ru.sessionsTitle })).toBeInTheDocument();
   });
 
-  it('redirects / to /instructor for a signed-in INSTRUCTOR', () => {
+  it('redirects / to /instructor/lessons for a signed-in INSTRUCTOR (I6 NAV2)', () => {
     signIn('INSTRUCTOR');
     renderAt('/');
-    expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+    // `LessonsPage` shows the same title as both its `<h1>` and its lessons-list `<h2>`.
+    expect(screen.getAllByRole('heading', { name: ru.lessonsPageTitle }).length).toBeGreaterThan(0);
   });
 
   it('renders a Russian 404 for an unknown path regardless of auth state', () => {
@@ -87,10 +88,10 @@ describe('AppRoutes', () => {
       expect(screen.getByRole('heading', { name: ru.ddsTitle })).toBeInTheDocument();
     });
 
-    it('redirects an INSTRUCTOR away from /operator to their own home route', () => {
+    it('redirects an INSTRUCTOR away from /operator to their own home route (I6 NAV2: /instructor/lessons)', () => {
       signIn('INSTRUCTOR');
       renderAt('/operator');
-      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+      expect(screen.getAllByRole('heading', { name: ru.lessonsPageTitle }).length).toBeGreaterThan(0);
     });
 
     it('renders "my sessions" for a signed-in TRAINEE at /sessions (E8-B)', () => {
@@ -105,10 +106,10 @@ describe('AppRoutes', () => {
       expect(screen.getByText(ru.operatorConsoleLoading)).toBeInTheDocument();
     });
 
-    it('redirects an INSTRUCTOR away from /operator/:sessionId to their own home route', () => {
+    it('redirects an INSTRUCTOR away from /operator/:sessionId to their own home route (I6 NAV2)', () => {
       signIn('INSTRUCTOR');
       renderAt('/operator/session-1');
-      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+      expect(screen.getAllByRole('heading', { name: ru.lessonsPageTitle }).length).toBeGreaterThan(0);
     });
 
     it('renders the DDS console for a signed-in TRAINEE at /dds/:sessionId (E10)', () => {
@@ -117,10 +118,10 @@ describe('AppRoutes', () => {
       expect(screen.getByText(ru.ddsConsoleLoading)).toBeInTheDocument();
     });
 
-    it('redirects an INSTRUCTOR away from /dds/:sessionId to their own home route', () => {
+    it('redirects an INSTRUCTOR away from /dds/:sessionId to their own home route (I6 NAV2)', () => {
       signIn('INSTRUCTOR');
       renderAt('/dds/session-1');
-      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+      expect(screen.getAllByRole('heading', { name: ru.lessonsPageTitle }).length).toBeGreaterThan(0);
     });
 
     it('renders the session-open resolver for a signed-in TRAINEE at /sessions/:sessionId/open (E10)', () => {
@@ -206,10 +207,10 @@ describe('AppRoutes', () => {
       expect(screen.getByRole('heading', { name: ru.adminPageTitle })).toBeInTheDocument();
     });
 
-    it('redirects an INSTRUCTOR away from /admin to their own home route', () => {
+    it('redirects an INSTRUCTOR away from /admin to their own home route (I6 NAV2)', () => {
       signIn('INSTRUCTOR');
       renderAt('/admin');
-      expect(screen.getByRole('heading', { name: ru.instructorTitle })).toBeInTheDocument();
+      expect(screen.getAllByRole('heading', { name: ru.lessonsPageTitle }).length).toBeGreaterThan(0);
     });
 
     it('redirects a TRAINEE away from /admin to their own home route', () => {

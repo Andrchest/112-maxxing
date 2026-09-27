@@ -10,7 +10,18 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import { listSessions, problemMessageRu, queryKeys, type ProblemCode, type RoleType, type SessionMode, type SessionState, type UserRole } from '@/shared/api';
+import {
+  getLesson,
+  listScenarios,
+  listSessions,
+  problemMessageRu,
+  queryKeys,
+  type ProblemCode,
+  type RoleType,
+  type SessionMode,
+  type SessionState,
+  type UserRole,
+} from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 
 const SESSION_MODE_LABEL_KEY: Record<SessionMode, keyof typeof ru> = {
@@ -48,6 +59,24 @@ function consoleHrefFor(sessionId: string, myRoleType: RoleType | null, sessionM
   return null;
 }
 
+/** I6 NAV2 (manager decision, final): the lesson's name and this card's own start time, so two
+ * runs of the same scenario (e.g. two cards of the same lesson) can be told apart — `getLesson`
+ * is the same read `GetLesson` grants a TRAINEE for a lesson they participate in. `started_at` is
+ * this session's own (not the lesson's), since a lesson's cards can start at different offsets. */
+function LessonRunLabel({ lessonId, startedAt }: { lessonId: string; startedAt: string | null }) {
+  const lessonQuery = useQuery({
+    queryKey: queryKeys.lessons.detail(lessonId),
+    queryFn: () => getLesson(lessonId),
+  });
+  if (!lessonQuery.data) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-slot="session-lesson-run">
+      {t('sessionsLessonLabel')}: {lessonQuery.data.title_ru}
+      {startedAt ? ` · ${t('sessionsStartedAtLabel')}: ${new Date(startedAt).toLocaleString('ru-RU')}` : null}
+    </p>
+  );
+}
+
 export function SessionsLandingPage() {
   const user = useAuthStore((state) => state.user);
   const userLabel = user?.display_name_ru;
@@ -56,6 +85,13 @@ export function SessionsLandingPage() {
     queryKey: queryKeys.sessions.list('MINE'),
     queryFn: () => listSessions({ scope: 'MINE' }),
   });
+  // D3: the same "look the Russian title up by scenario slug" read `instructor-sessions-list.tsx`
+  // uses, so a trainee's own row reads as a title too, not a raw scenario slug + version.
+  const scenariosQuery = useQuery({
+    queryKey: queryKeys.scenarios.list(),
+    queryFn: listScenarios,
+  });
+  const scenarioTitleBySlug = new Map((scenariosQuery.data?.items ?? []).map((scenario) => [scenario.slug, scenario.title_ru]));
 
   return (
     <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
@@ -93,11 +129,14 @@ export function SessionsLandingPage() {
                 <CardHeader className="flex flex-row items-center justify-between gap-2">
                   <div>
                     <p className="font-medium">
-                      {session.scenario_slug} (v{session.scenario_version})
+                      {scenarioTitleBySlug.get(session.scenario_slug) ?? session.scenario_slug} (v{session.scenario_version})
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {t(SESSION_MODE_LABEL_KEY[session.session_mode])} · {t('sessionsStateLabel')}: {t(SESSION_STATE_LABEL_KEY[session.state])}
                     </p>
+                    {session.lesson_id ? (
+                      <LessonRunLabel lessonId={session.lesson_id} startedAt={session.started_at ?? null} />
+                    ) : null}
                   </div>
                   {href ? (
                     <Button asChild size="sm">

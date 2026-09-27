@@ -1,5 +1,5 @@
 // I3 E4b (manager follow-up): the instructor reaches «Занятия» from their own home page.
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +57,10 @@ describe('InstructorPage — the lessons nav link (INSTRUCTOR/ADMIN only route)'
     });
     renderPage();
 
-    const link = await screen.findByRole('link', { name: ru.appNavInstructorLessons });
+    // I6 NAV2: the sessions list below now carries its OWN «Занятия» link too (the hint pointing
+    // at the real lessons list) — scope to the role nav bar to keep finding this one, specifically.
+    const nav = await screen.findByRole('navigation', { name: ru.appNavAriaLabel });
+    const link = within(nav).getByRole('link', { name: ru.appNavInstructorLessons });
     expect(link).toHaveAttribute('href', '/instructor/lessons');
   });
 });

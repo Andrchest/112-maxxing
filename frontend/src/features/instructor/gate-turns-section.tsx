@@ -20,9 +20,15 @@ const OUTCOME_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'outline
 
 interface GateTurnsSectionProps {
   gateTurns: readonly GateTurnView[];
+  /** I6 UX fix: `fact_id -> FactDefinition.label_ru` (`WorldTruthView.label_ru`, E20-E R11) — a
+   * decision's `fact_id` and a turn's `allowed_fact_ids`/`spontaneous_attached` render under this
+   * label when the join covers it, the raw id otherwise (never a blank row), same fallback
+   * `world-truth-section.tsx`/`caller-belief-section.tsx` already use for their own facts. */
+  labelRu?: Record<string, string>;
 }
 
-export function GateTurnsSection({ gateTurns }: GateTurnsSectionProps) {
+export function GateTurnsSection({ gateTurns, labelRu }: GateTurnsSectionProps) {
+  const labelFor = (factId: string): string => labelRu?.[factId] ?? factId;
   return (
     <Card>
       <CardHeader>
@@ -45,18 +51,18 @@ export function GateTurnsSection({ gateTurns }: GateTurnsSectionProps) {
                   {turn.decisions.map((decision) => (
                     <li key={decision.fact_id} className="flex items-center gap-2 text-xs">
                       <Badge variant={OUTCOME_BADGE_VARIANT[decision.outcome] ?? 'outline'}>{gateOutcomeLabelRu(decision.outcome)}</Badge>
-                      <span>{decision.fact_id}</span>
+                      <span>{labelFor(decision.fact_id)}</span>
                       <span className="text-muted-foreground">{gateReasonLabelRu(decision.reason)}</span>
                     </li>
                   ))}
                 </ul>
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>
-                    {t('instructorGateTurnAllowedLabel')}: {turn.allowed_fact_ids.join(', ') || t('factValueEmpty')}
+                    {t('instructorGateTurnAllowedLabel')}: {turn.allowed_fact_ids.map(labelFor).join(', ') || t('factValueEmpty')}
                   </span>
                   {turn.spontaneous_attached.length > 0 ? (
                     <span>
-                      {t('instructorGateTurnSpontaneousLabel')}: {turn.spontaneous_attached.join(', ')}
+                      {t('instructorGateTurnSpontaneousLabel')}: {turn.spontaneous_attached.map(labelFor).join(', ')}
                     </span>
                   ) : null}
                   <span>

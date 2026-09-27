@@ -106,6 +106,12 @@ export const ru = {
 
   // -- sessions: trainee "my sessions" landing (E8-B) -----------------------
   sessionsTitle: 'Мои занятия',
+  // I6 NAV2 (manager decision, final): a row used to read as just "ticket-01-call-1 (v1)" — no
+  // way to tell two runs of the same scenario apart. Now: the scenario's Russian title (same
+  // lookup the instructor sessions list already does), plus, when the session belongs to a
+  // lesson, that lesson's name and start time.
+  sessionsLessonLabel: 'Занятие',
+  sessionsStartedAtLabel: 'Начало',
   sessionsLoading: 'Загрузка занятий…',
   sessionsEmpty: 'У вас пока нет занятий.',
   sessionsStateLabel: 'Состояние',
@@ -555,7 +561,12 @@ export const ru = {
   reportOffsetMsUnit: 'мс',
 
   // -- instructor: sessions list (E17-C) --------------------------------------
-  instructorSessionsListTitle: 'Занятия',
+  // I6 NAV2 (manager decision, final): renamed from «Занятия» — this list's rows are per-card
+  // *sessions* (a live overview each, no «Начать занятие»), not the lessons themselves; the real
+  // lessons list is `/instructor/lessons` (`lessonsPageTitle` below).
+  instructorSessionsListTitle: 'Карточки (сессии)',
+  instructorSessionsListHintPrefix: 'Здесь каждая карточка отдельно. Чтобы запустить занятие, откройте его в разделе',
+  instructorSessionsListHintLink: 'Занятия',
   instructorSessionsListLoading: 'Загрузка занятий…',
   instructorSessionsListEmpty: 'Занятий пока нет.',
   instructorSessionsListOverviewButton: 'Открыть обзор',
@@ -563,6 +574,10 @@ export const ru = {
   // -- instructor: live overview page (SPEC §7, §13; D6, HLD §10.8/§10.10/§10.13, R4) ---------
   instructorLiveOverviewTitle: 'Обзор занятия (инструктор)',
   instructorOverviewLoading: 'Загрузка обзора…',
+  // I6 NAV2 (manager decision, final): when this session is a lesson's card, a link to that
+  // lesson's own detail page — «Начать занятие» lives there, not on this read-only overview.
+  instructorOverviewOpenLessonPrefix: 'Открыть занятие «',
+  instructorOverviewOpenLessonSuffix: '»',
 
   instructorOverviewSessionTitle: 'Занятие',
   instructorOverviewStagesTitle: 'Этапы',

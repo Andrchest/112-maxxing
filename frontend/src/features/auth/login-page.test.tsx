@@ -14,7 +14,8 @@ function renderLoginPage() {
       <MemoryRouter initialEntries={['/login']}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/instructor" element={<div>instructor-home</div>} />
+          {/* I6 NAV2: an INSTRUCTOR's home route is now `/instructor/lessons` (`homeRouteForRole`). */}
+          <Route path="/instructor/lessons" element={<div>instructor-home</div>} />
           <Route path="/operator" element={<div>operator-home</div>} />
         </Routes>
       </MemoryRouter>

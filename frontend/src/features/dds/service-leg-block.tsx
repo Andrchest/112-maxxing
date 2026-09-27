@@ -129,7 +129,11 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
 
       {expanded ? (
         <div
-          className="absolute bottom-full left-0 z-10 mb-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-popover p-2 shadow-md"
+          // I6 UX fix: the surrounding bar's `--reference-dds-bar-foreground` (white, for the
+          // bar's own dark background) would otherwise be inherited here too — same trap the tab
+          // button's own comment above describes — reading as near-white text on this popup's
+          // light `bg-popover` in the reference theme. `text-popover-foreground` sets its own.
+          className="absolute bottom-full left-0 z-10 mb-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-md"
           data-slot="dds-leg-popup"
         >
           <ul className="flex flex-col gap-1" data-slot="dds-leg-history">

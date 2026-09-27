@@ -24,7 +24,7 @@ import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { canChangeOwned, useAuthStore } from '@/entities/session';
-import { getInstructorSessionOverview, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
+import { getInstructorSessionOverview, getLesson, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
 import { SessionStagesSection } from './session-stages-section';
@@ -60,6 +60,18 @@ export function InstructorLiveOverviewPage() {
     queryFn: () => getInstructorSessionOverview(sessionId ?? ''),
     enabled: sessionId !== undefined,
     retry: false,
+  });
+
+  // I6 NAV2 (manager decision, final): when this session is a lesson's card
+  // (`SessionDetail.lesson_id`, additive I3 E4a — already on the wire, no new field needed), a
+  // link to that lesson's own detail page names it — a second read, not folded into the overview
+  // itself, same posture the lessons list already has for a scenario's title (a separate query by
+  // id, not a join the overview endpoint would have to carry for every session).
+  const lessonId = overviewQuery.data?.session.lesson_id ?? null;
+  const lessonQuery = useQuery({
+    queryKey: queryKeys.lessons.detail(lessonId ?? ''),
+    queryFn: () => getLesson(lessonId ?? ''),
+    enabled: lessonId !== null,
   });
 
   useEffect(() => {
@@ -129,7 +141,20 @@ export function InstructorLiveOverviewPage() {
       readiness={overview.inference_health.overall}
     >
       <div className="flex items-center justify-between gap-2">
-        <h1 className="font-heading text-lg font-medium">{t('instructorLiveOverviewTitle')}</h1>
+        <div>
+          <h1 className="font-heading text-lg font-medium">{t('instructorLiveOverviewTitle')}</h1>
+          {overview.session.lesson_id && lessonQuery.data ? (
+            <Link
+              to={`/instructor/lessons/${overview.session.lesson_id}`}
+              className="text-sm text-primary underline-offset-2 hover:underline"
+              data-slot="open-lesson-link"
+            >
+              {t('instructorOverviewOpenLessonPrefix')}
+              {lessonQuery.data.title_ru}
+              {t('instructorOverviewOpenLessonSuffix')}
+            </Link>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2">
           {!isTerminal && canAbort ? (
             <>
@@ -158,7 +183,11 @@ export function InstructorLiveOverviewPage() {
         <CallerBeliefSection callerBelief={overview.caller_belief} />
       </div>
       <div className="mt-4">
-        <GateTurnsSection gateTurns={overview.gate_turns} />
+        {/* I6 UX fix: `worldTruth.label_ru` is the same `fact_id -> label_ru` join over every
+            scenario fact (`_fact_labels_ru`, narrowed to `world_truth`'s own keys, which is every
+            fact the scenario declares) — gate decisions name candidate facts from that same
+            universe, so it labels them too instead of showing the raw `fact_id`. */}
+        <GateTurnsSection gateTurns={overview.gate_turns} labelRu={overview.world_truth.label_ru} />
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <LiveOperatorCardSection card={overview.card} />

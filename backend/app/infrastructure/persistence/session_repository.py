@@ -419,6 +419,8 @@ class SqlAlchemySessionRepository:
             _SESSIONS.c.created_at,
             _SESSIONS.c.created_by_user_id,
             mine.c.assigned_role_type.label("my_role_type"),
+            _SESSIONS.c.lesson_id,
+            _SESSIONS.c.started_at,
         )
 
     # -- internals ----------------------------------------------------------------------------
@@ -471,6 +473,8 @@ def _session_listing(row: sa.Row[tuple[Any, ...]]) -> StoredSessionListing:
         created_at=row.created_at,
         created_by_user_id=UserId(UUID(str(row.created_by_user_id))),
         my_role_type=None if row.my_role_type is None else RoleType(str(row.my_role_type)),
+        lesson_id=None if row.lesson_id is None else LessonId(UUID(str(row.lesson_id))),
+        started_at=row.started_at,
     )
 
 

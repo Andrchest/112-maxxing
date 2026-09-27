@@ -91,13 +91,19 @@ setUnauthorizedHandler(() => {
  * I4 E30 (71 §71.7): ADMIN now lands on `/admin` instead of `/instructor` — its own screens over
  * E28/E29. Whether ADMIN also keeps INSTRUCTOR's own powers is Q-E14-1, undecided by the owner
  * (71 §71.5); `/instructor/*`'s own `RequireRole` guard is unchanged by this epic, so an ADMIN
- * that navigates there directly still gets in. */
+ * that navigates there directly still gets in.
+ *
+ * I6 NAV2 (manager decision, final): INSTRUCTOR now lands on `/instructor/lessons`, not
+ * `/instructor` — the owner following `docs/demo-scenario.md` could not find «Открыть» for a
+ * lesson from `/instructor`'s own sessions list (per-card sessions, no «Начать занятие»); the
+ * real lessons list with «Начать занятие» is `/instructor/lessons`. `/instructor` itself is
+ * unchanged and still reachable from the role navigation bar. */
 export function homeRouteForRole(role: UserAccount['user_role']): string {
   switch (role) {
     case 'TRAINEE':
       return '/sessions';
     case 'INSTRUCTOR':
-      return '/instructor';
+      return '/instructor/lessons';
     case 'ADMIN':
       return '/admin';
   }

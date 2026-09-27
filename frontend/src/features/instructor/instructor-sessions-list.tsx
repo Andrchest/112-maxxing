@@ -39,6 +39,16 @@ export function InstructorSessionsList() {
     <Card className="max-w-xl">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('instructorSessionsListTitle')}</h2>
+        {/* I6 NAV2 (manager decision, final): points at `/instructor/lessons`, where «Начать
+            занятие» actually lives — the owner could not find it starting from this list. */}
+        <p className="text-xs text-muted-foreground">
+          {t('instructorSessionsListHintPrefix')}{' '}
+          «
+          <Link to="/instructor/lessons" className="text-primary underline-offset-2 hover:underline">
+            {t('instructorSessionsListHintLink')}
+          </Link>
+          ».
+        </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {sessionsQuery.isLoading ? <p className="text-sm text-muted-foreground">{t('instructorSessionsListLoading')}</p> : null}

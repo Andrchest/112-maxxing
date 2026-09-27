@@ -4522,6 +4522,19 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RoleType'
             - type: 'null'
+        lesson_id:
+          description: |
+            (additive, I6 NAV2) The lesson this session is a card of — same `SessionDetail.lesson_id`
+            — or `null` for a single session.
+          oneOf:
+            - { type: string, format: uuid }
+            - type: 'null'
+        started_at:
+          description: |
+            (additive, I6 NAV2) Same `SessionDetail.started_at`; `null` before the session starts.
+          oneOf:
+            - { type: string, format: date-time }
+            - type: 'null'
 
     SessionDetail:
       type: object

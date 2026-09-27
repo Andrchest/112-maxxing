@@ -33,4 +33,26 @@ describe('GateTurnsSection — what the caller was allowed to say per turn', () 
     render(<GateTurnsSection gateTurns={[makeGateTurn({ spontaneous_attached: ['flags.threat_to_life'] })]} />);
     expect(screen.getByText(new RegExp(ru.instructorGateTurnSpontaneousLabel))).toBeInTheDocument();
   });
+
+  // I6 UX fix: a raw `fact_id` like `address.locality` used to render verbatim even though the
+  // scenario carries a Russian label for it (`WorldTruthView.label_ru`) — this join covers it.
+  it('labels a decision and the allowed/spontaneous lists via labelRu, falling back to the raw fact_id', () => {
+    render(
+      <GateTurnsSection
+        gateTurns={[
+          makeGateTurn({
+            turn_index: 0,
+            decisions: [makeGateDecision({ fact_id: 'address.locality', outcome: 'ALLOWED', reason: 'OK' })],
+            allowed_fact_ids: ['address.locality'],
+            spontaneous_attached: ['flags.threat_to_life'],
+          }),
+        ]}
+        labelRu={{ 'address.locality': 'Locality' }}
+      />,
+    );
+    expect(screen.getAllByText('Locality').length).toBeGreaterThan(0);
+    expect(screen.queryByText('address.locality')).not.toBeInTheDocument();
+    // no label for `flags.threat_to_life` in the map — falls back to the raw id.
+    expect(screen.getByText(new RegExp('flags.threat_to_life'))).toBeInTheDocument();
+  });
 });

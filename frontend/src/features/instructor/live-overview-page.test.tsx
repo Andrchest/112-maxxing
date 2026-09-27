@@ -100,6 +100,40 @@ describe('InstructorLiveOverviewPage — one getInstructorSessionOverview fetch,
     expect(link).toHaveAttribute('href', '/report/sess-1');
   });
 
+  // I6 NAV2 (manager decision, final): a card of a lesson links back into that lesson's own
+  // detail page — «Начать занятие» lives there, not on this read-only overview.
+  it('links to the lesson when this session is one of its cards', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ lesson_id: 'lesson-1' }) });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith('/api/v1/lessons/lesson-1')) {
+          return jsonResponse({
+            lesson_id: 'lesson-1',
+            title_ru: 'Fire drill, three cards',
+            session_mode: 'SINGLE_ROLE',
+            state: 'ACTIVE',
+            participants: [],
+            scenario_plan: [],
+            sessions: [],
+            created_at: '2026-09-21T00:00:00Z',
+            started_at: null,
+            completed_at: null,
+            created_by_user_id: 'instr-1',
+            report_released_at: null,
+          });
+        }
+        return jsonResponse(overview);
+      }),
+    );
+    renderPage();
+    const link = await screen.findByRole('link', { name: /Fire drill, three cards/ });
+    expect(link).toHaveAttribute('href', '/instructor/lessons/lesson-1');
+  });
+
   // -- E20-E R11: abortSession client wrapper + the confirm-dialog button ----------------------
 
   it('shows the abort button for an INSTRUCTOR on a non-terminal session', async () => {

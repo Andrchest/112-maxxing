@@ -3021,6 +3021,13 @@ export interface components {
             created_by_user_id: string;
             /** @description The caller's role in this session, or `null` when they only observe it. */
             my_role_type: components["schemas"]["RoleType"] | null;
+            /**
+             * @description (additive, I6 NAV2) The lesson this session is a card of — same `SessionDetail.lesson_id`
+             *     — or `null` for a single session.
+             */
+            lesson_id?: string | null;
+            /** @description (additive, I6 NAV2) Same `SessionDetail.started_at`; `null` before the session starts. */
+            started_at?: string | null;
         };
         /**
          * @description The materialized session header every command returns (D8). `session_seed` is included

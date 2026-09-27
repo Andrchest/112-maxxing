@@ -206,6 +206,10 @@ class SessionListItemSchema(ApiModel):
     created_at: datetime
     created_by_user_id: UUID
     my_role_type: RoleType | None = None
+    #: (additive, I6 NAV2) — same `SessionDetail.lesson_id`; `null` for a single session.
+    lesson_id: UUID | None = None
+    #: (additive, I6 NAV2) — same `SessionDetail.started_at`; `null` before the session starts.
+    started_at: datetime | None = None
 
 
 class SessionDetailSchema(ApiModel):
@@ -280,6 +284,8 @@ def session_list_item_schema(listing: StoredSessionListing) -> SessionListItemSc
         created_at=listing.created_at,
         created_by_user_id=UUID(str(listing.created_by_user_id)),
         my_role_type=listing.my_role_type,
+        lesson_id=None if listing.lesson_id is None else UUID(str(listing.lesson_id)),
+        started_at=listing.started_at,
     )
 
 
