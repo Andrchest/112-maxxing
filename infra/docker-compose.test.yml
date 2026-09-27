@@ -1,6 +1,13 @@
 services:
   postgres:
     image: postgres:16
+    # PID 1 must be docker-init, not the postmaster. The healthcheck's `sh -c` forks pg_isready;
+    # when a probe outlives `timeout` (a loaded host during the suite's parallel CREATE DATABASE
+    # burst), Docker kills the sh and the orphaned pg_isready is re-parented to PID 1. A postmaster
+    # there reaps it, reads pg_isready's own "no response" exit code 2 as a crashed backend and
+    # restarts the whole server (crash recovery, every test connection dropped). docker-init reaps
+    # such orphans silently.
+    init: true
     environment:
       POSTGRES_USER: sim
       POSTGRES_PASSWORD: sim

@@ -30,6 +30,10 @@ name: sim112dev
 services:
   postgres:
     image: postgres:16
+    # docker-init as PID 1: a healthcheck probe killed on timeout leaves an orphaned pg_isready that a
+    # postmaster-as-PID-1 would reap and misread as a crashed backend (full crash recovery). Same fix
+    # and full explanation in docker-compose.test.yml.
+    init: true
     environment:
       POSTGRES_USER: ${SIM_POSTGRES_USER:-sim}
       POSTGRES_PASSWORD: ${SIM_POSTGRES_PASSWORD:-sim}
