@@ -355,75 +355,79 @@ export function CreateSessionForm() {
     session !== null && session.state === 'READY' && !startMutation.isPending && readinessSatisfied;
 
   return (
-    <Card className="max-w-xl">
+    <Card>
       <CardHeader>
         <h1 className="font-heading text-base leading-snug font-medium">
           {t('instructorCreateSessionTitle')}
         </h1>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="instructor-scenario">{t('instructorScenarioLabel')}</Label>
-          <select
-            id="instructor-scenario"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={scenarioId}
-            onChange={(event) => handleScenarioChange(event.target.value)}
-            disabled={scenariosQuery.isLoading}
-          >
-            <option value="">{t('instructorSelectScenarioPlaceholder')}</option>
-            {(scenariosQuery.data?.items ?? []).map((scenario) => (
-              <option key={scenario.scenario_id} value={scenario.scenario_id}>
-                {/* I3 E9a: every scenario picker shows its «Сложность». */}
-                {scenario.latest_difficulty
-                  ? `${t('difficultyLabel')} ${scenario.latest_difficulty} · ${scenario.title_ru}`
-                  : scenario.title_ru}
-              </option>
-            ))}
-          </select>
-          {scenariosQuery.isLoading ? (
-            <p className="text-xs text-muted-foreground">{t('instructorLoadingScenarios')}</p>
-          ) : null}
-          {scenariosQuery.data && scenariosQuery.data.items.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t('instructorNoScenarios')}</p>
-          ) : null}
-        </div>
+      {/* I6 layout: `@container` — see `lesson-create-form.tsx`'s own note (the same reason its
+          grids read `@lg`/`@4xl` instead of the viewport-relative `lg`/`2xl`). */}
+      <CardContent className="@container flex flex-col gap-3">
+        <div className="grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="instructor-scenario">{t('instructorScenarioLabel')}</Label>
+            <select
+              id="instructor-scenario"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={scenarioId}
+              onChange={(event) => handleScenarioChange(event.target.value)}
+              disabled={scenariosQuery.isLoading}
+            >
+              <option value="">{t('instructorSelectScenarioPlaceholder')}</option>
+              {(scenariosQuery.data?.items ?? []).map((scenario) => (
+                <option key={scenario.scenario_id} value={scenario.scenario_id}>
+                  {/* I3 E9a: every scenario picker shows its «Сложность». */}
+                  {scenario.latest_difficulty
+                    ? `${t('difficultyLabel')} ${scenario.latest_difficulty} · ${scenario.title_ru}`
+                    : scenario.title_ru}
+                </option>
+              ))}
+            </select>
+            {scenariosQuery.isLoading ? (
+              <p className="text-xs text-muted-foreground">{t('instructorLoadingScenarios')}</p>
+            ) : null}
+            {scenariosQuery.data && scenariosQuery.data.items.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{t('instructorNoScenarios')}</p>
+            ) : null}
+          </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="instructor-version">{t('instructorVersionLabel')}</Label>
-          <select
-            id="instructor-version"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={versionId}
-            onChange={(event) => handleVersionChange(event.target.value)}
-            disabled={scenarioId === '' || versionsQuery.isLoading}
-          >
-            <option value="">{t('instructorSelectVersionPlaceholder')}</option>
-            {(versionsQuery.data?.items ?? []).map((version) => (
-              <option key={version.id} value={version.id}>
-                {`${t('difficultyLabel')} ${version.difficulty} · ${version.title} (v${version.version})`}
-              </option>
-            ))}
-          </select>
-          {versionsQuery.isLoading ? (
-            <p className="text-xs text-muted-foreground">{t('instructorLoadingVersions')}</p>
-          ) : null}
-        </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="instructor-version">{t('instructorVersionLabel')}</Label>
+            <select
+              id="instructor-version"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={versionId}
+              onChange={(event) => handleVersionChange(event.target.value)}
+              disabled={scenarioId === '' || versionsQuery.isLoading}
+            >
+              <option value="">{t('instructorSelectVersionPlaceholder')}</option>
+              {(versionsQuery.data?.items ?? []).map((version) => (
+                <option key={version.id} value={version.id}>
+                  {`${t('difficultyLabel')} ${version.difficulty} · ${version.title} (v${version.version})`}
+                </option>
+              ))}
+            </select>
+            {versionsQuery.isLoading ? (
+              <p className="text-xs text-muted-foreground">{t('instructorLoadingVersions')}</p>
+            ) : null}
+          </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="instructor-mode">{t('instructorModeLabel')}</Label>
-          <select
-            id="instructor-mode"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={sessionMode}
-            onChange={(event) => handleModeChange(event.target.value as SessionMode)}
-          >
-            {SESSION_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {t(SESSION_MODE_LABEL_KEY[mode])}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="instructor-mode">{t('instructorModeLabel')}</Label>
+            <select
+              id="instructor-mode"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={sessionMode}
+              onChange={(event) => handleModeChange(event.target.value as SessionMode)}
+            >
+              {SESSION_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {t(SESSION_MODE_LABEL_KEY[mode])}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {selectedVersion && variants ? (

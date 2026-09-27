@@ -36,7 +36,7 @@ function LessonsList() {
   });
 
   return (
-    <Card className="max-w-2xl">
+    <Card>
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('lessonsPageTitle')}</h2>
       </CardHeader>
@@ -95,8 +95,13 @@ export function LessonsPage() {
       <h1 className="text-lg font-semibold tracking-tight">{t('lessonsPageTitle')}</h1>
       <div className="mt-4 flex flex-col gap-4">
         <TraineeGroupsCard />
-        <LessonsList />
-        <LessonCreateForm onCreated={handleCreated} />
+        {/* I6 layout (manager decision, final): «Занятия» and «Новое занятие» side by side on wide
+            screens (list left, form right) instead of one long scroll with the whole right half of
+            the viewport empty; stacked (list first) below `xl` where there is no room for both. */}
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          <LessonsList />
+          <LessonCreateForm onCreated={handleCreated} />
+        </div>
       </div>
     </AppShell>
   );

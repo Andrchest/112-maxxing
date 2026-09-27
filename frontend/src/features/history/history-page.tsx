@@ -88,12 +88,16 @@ export function HistoryPage() {
 
       {history ? (
         <div className="mt-4 flex flex-col gap-4">
-          <Card className="max-w-2xl">
+          <Card>
             <CardHeader>
               <h2 className="font-heading text-base leading-snug font-medium">{t('historySummaryTitle')}</h2>
             </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-slot="history-summary">
+            <CardContent className="@container">
+              {/* I6 layout: the summary card is now full width (`max-w-2xl` removed above), so its
+                  7 rows spread into more columns instead of leaving most of a wide card empty. */}
+              {/* Each `dt`/`dd` pair must land in the same row, so the column count stays a
+                  multiple of 2 (one pair per column pair), never 3. */}
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm @lg:grid-cols-4 @4xl:grid-cols-6" data-slot="history-summary">
                 <dt className="text-muted-foreground">{t('statisticsColumnSessions')}</dt>
                 <dd className="tabular-nums">{history.statistics.session_count}</dd>
                 <dt className="text-muted-foreground">{t('statisticsColumnLessons')}</dt>
@@ -112,7 +116,7 @@ export function HistoryPage() {
             </CardContent>
           </Card>
 
-          <Card className="max-w-2xl">
+          <Card>
             <CardHeader>
               <h2 className="font-heading text-base leading-snug font-medium">{t('historySessionsTitle')}</h2>
             </CardHeader>

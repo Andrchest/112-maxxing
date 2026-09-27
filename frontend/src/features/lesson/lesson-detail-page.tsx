@@ -259,7 +259,7 @@ export function LessonDetailPage() {
 
       {lesson ? (
         <div className="mt-4 flex flex-col gap-4">
-          <Card className="max-w-2xl">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2">
               <h2 className="font-heading text-base leading-snug font-medium">{t('lessonDetailPlanTitle')}</h2>
               <span className="text-xs text-muted-foreground">{lessonStateLabelRu(lesson.state)}</span>
@@ -329,7 +329,7 @@ export function LessonDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="max-w-2xl">
+          <Card>
             <CardHeader>
               <h2 className="font-heading text-base leading-snug font-medium">{t('lessonDetailCardsTitle')}</h2>
             </CardHeader>
@@ -391,7 +391,7 @@ export function LessonDetailPage() {
           />
 
           {lesson.state === 'COMPLETED' || lesson.state === 'ABORTED' ? (
-            <Card className="max-w-2xl">
+            <Card>
               <CardHeader>
                 <h2 className="font-heading text-base leading-snug font-medium">{t('lessonDetailReportTitle')}</h2>
               </CardHeader>

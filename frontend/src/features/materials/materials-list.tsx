@@ -70,7 +70,7 @@ export function MaterialsList({ canManage }: MaterialsListProps) {
   }
 
   return (
-    <Card className="max-w-2xl" data-slot="materials-list">
+    <Card data-slot="materials-list">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         {canManage ? (
           <label className="flex items-center gap-2 text-sm">

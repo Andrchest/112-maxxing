@@ -47,18 +47,20 @@ function UploadMaterialForm() {
   }
 
   return (
-    <Card className="max-w-2xl" data-slot="materials-upload">
+    <Card data-slot="materials-upload">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('materialsInstructorTitle')}</h2>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="material-title">{t('materialsUploadTitleLabel')}</Label>
-          <Input id="material-title" value={titleRu} onChange={(event) => setTitleRu(event.target.value)} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="material-file">{t('materialsUploadFileLabel')}</Label>
-          <input id="material-file" ref={fileInputRef} type="file" className="text-sm" />
+      <CardContent className="@container flex flex-col gap-3">
+        <div className="grid gap-3 @lg:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="material-title">{t('materialsUploadTitleLabel')}</Label>
+            <Input id="material-title" value={titleRu} onChange={(event) => setTitleRu(event.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="material-file">{t('materialsUploadFileLabel')}</Label>
+            <input id="material-file" ref={fileInputRef} type="file" className="text-sm" />
+          </div>
         </div>
         {uploadMutation.error ? (
           <p role="alert" className="text-sm text-destructive">

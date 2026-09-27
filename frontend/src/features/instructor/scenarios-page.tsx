@@ -99,7 +99,7 @@ function UploadCard() {
   const hasFile = content !== null && format !== null;
 
   return (
-    <Card className="max-w-2xl">
+    <Card>
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('scenarioUploadTitle')}</h2>
       </CardHeader>
@@ -183,7 +183,7 @@ function ScenarioListCard() {
   });
 
   return (
-    <Card className="max-w-2xl">
+    <Card>
       <CardHeader>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />

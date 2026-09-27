@@ -36,7 +36,7 @@ export function InstructorSessionsList() {
   const scenarioTitleBySlug = new Map((scenariosQuery.data?.items ?? []).map((scenario) => [scenario.slug, scenario.title_ru]));
 
   return (
-    <Card className="max-w-xl">
+    <Card>
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('instructorSessionsListTitle')}</h2>
         {/* I6 NAV2 (manager decision, final): points at `/instructor/lessons`, where «Начать

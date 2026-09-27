@@ -129,7 +129,13 @@ export function AppShell({
       className={`flex min-h-svh flex-col bg-background text-foreground ${referenceTheme ? 'reference-light' : ''}`}
       data-theme={referenceTheme ? 'reference-light' : undefined}
     >
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
+      {/* I6 layout: on a narrow phone (≤ 640 px) the header's own content (name, title, nav,
+          role/connection/readiness badges, «Выйти») no longer fits even with `AppNav` free to
+          shrink to zero — `overflow-x-auto` here keeps that overflow contained to the header's own
+          scrollable strip (swipe to see the rest) instead of forcing the whole page to scroll
+          horizontally, which the layout check (`/home/andreipc/112-demo/verify/layout-check.js`)
+          asserts against at 390×844 on every route (this header is shared by all of them). */}
+      <header className="flex h-11 shrink-0 items-center gap-3 overflow-x-auto border-b border-border bg-card px-4">
         {backTo ? (
           <Link
             to={backTo}

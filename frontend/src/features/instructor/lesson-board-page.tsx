@@ -87,7 +87,7 @@ export function LessonBoardPage() {
         {t('instructorBoardTitle')}
         {lesson ? `: ${lesson.title_ru}` : ''}
       </h1>
-      <Card className="mt-4 max-w-3xl">
+      <Card className="mt-4">
         <CardHeader />
         <CardContent>
           {lessonQuery.isError ? (

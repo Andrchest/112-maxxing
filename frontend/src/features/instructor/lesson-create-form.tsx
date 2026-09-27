@@ -302,45 +302,47 @@ function PlanEntryFields({
   }
 
   return (
-    <fieldset className="flex flex-col gap-2 rounded-md border border-border p-2" data-slot="plan-entry">
+    <fieldset className="@container flex flex-col gap-2 rounded-md border border-border p-2" data-slot="plan-entry">
       <legend className="px-1 text-sm font-medium">
         {t('lessonFormEntryLabel')} {index + 1}
       </legend>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`lesson-entry-${row.key}-scenario`}>{t('lessonFormEntryScenarioLabel')}</Label>
-        <select
-          id={`lesson-entry-${row.key}-scenario`}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-          value={row.scenarioId}
-          onChange={(event) => handleScenarioChange(event.target.value)}
-          disabled={scenariosQuery.isLoading}
-        >
-          <option value="">{t('lessonFormSelectScenarioPlaceholder')}</option>
-          {scenarioOptions.map((scenario) => (
-            <option key={scenario.scenario_id} value={scenario.scenario_id}>
-              {withDifficulty(scenario.title_ru, scenario.latest_difficulty)}
-            </option>
-          ))}
-        </select>
-      </div>
+      <div className="grid gap-2 @lg:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`lesson-entry-${row.key}-scenario`}>{t('lessonFormEntryScenarioLabel')}</Label>
+          <select
+            id={`lesson-entry-${row.key}-scenario`}
+            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            value={row.scenarioId}
+            onChange={(event) => handleScenarioChange(event.target.value)}
+            disabled={scenariosQuery.isLoading}
+          >
+            <option value="">{t('lessonFormSelectScenarioPlaceholder')}</option>
+            {scenarioOptions.map((scenario) => (
+              <option key={scenario.scenario_id} value={scenario.scenario_id}>
+                {withDifficulty(scenario.title_ru, scenario.latest_difficulty)}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`lesson-entry-${row.key}-version`}>{t('lessonFormEntryVersionLabel')}</Label>
-        <select
-          id={`lesson-entry-${row.key}-version`}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-          value={row.versionId}
-          onChange={(event) => handleVersionChange(event.target.value)}
-          disabled={row.scenarioId === '' || versionsQuery.isLoading}
-        >
-          <option value="">{t('lessonFormSelectVersionPlaceholder')}</option>
-          {(versionsQuery.data?.items ?? []).map((version) => (
-            <option key={version.id} value={version.id}>
-              {withDifficulty(`${version.title} (v${version.version})`, version.difficulty)}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`lesson-entry-${row.key}-version`}>{t('lessonFormEntryVersionLabel')}</Label>
+          <select
+            id={`lesson-entry-${row.key}-version`}
+            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            value={row.versionId}
+            onChange={(event) => handleVersionChange(event.target.value)}
+            disabled={row.scenarioId === '' || versionsQuery.isLoading}
+          >
+            <option value="">{t('lessonFormSelectVersionPlaceholder')}</option>
+            {(versionsQuery.data?.items ?? []).map((version) => (
+              <option key={version.id} value={version.id}>
+                {withDifficulty(`${version.title} (v${version.version})`, version.difficulty)}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -675,71 +677,76 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
   }
 
   return (
-    <Card className="max-w-2xl">
+    <Card>
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('lessonFormTitle')}</h2>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lesson-title">{t('lessonFormTitleFieldLabel')}</Label>
-          <Input
-            id="lesson-title"
-            value={title}
-            placeholder={t('lessonFormTitlePlaceholder')}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </div>
+      {/* I6 layout: `@container` so the 2-column split responds to this card's own rendered width
+          (it may sit full-width or share a row with `LessonsList`, `lessons-page.tsx`), not the
+          viewport — the same reason every grid below reads `@lg`/`@4xl` instead of `lg`/`2xl`. */}
+      <CardContent className="@container flex flex-col gap-3">
+        <div className="grid gap-3 @lg:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lesson-title">{t('lessonFormTitleFieldLabel')}</Label>
+            <Input
+              id="lesson-title"
+              value={title}
+              placeholder={t('lessonFormTitlePlaceholder')}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lesson-mode">{t('lessonFormModeLabel')}</Label>
-          <select
-            id="lesson-mode"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={sessionMode}
-            onChange={(event) => handleModeChange(event.target.value as SessionMode)}
-          >
-            {SESSION_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {t(SESSION_MODE_LABEL_KEY[mode])}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lesson-mode">{t('lessonFormModeLabel')}</Label>
+            <select
+              id="lesson-mode"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={sessionMode}
+              onChange={(event) => handleModeChange(event.target.value as SessionMode)}
+            >
+              {SESSION_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {t(SESSION_MODE_LABEL_KEY[mode])}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lesson-group">{t('lessonFormGroupLabel')}</Label>
-          <select
-            id="lesson-group"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={groupId}
-            onChange={(event) => handleGroupChange(event.target.value)}
-            disabled={groupsQuery.isLoading}
-          >
-            <option value="">{t('lessonFormGroupNone')}</option>
-            {(groupsQuery.data?.items ?? []).map((group) => (
-              <option key={group.group_id} value={group.group_id}>
-                {group.name_ru}
-              </option>
-            ))}
-          </select>
-          {selectedGroup ? <p className="text-xs text-muted-foreground">{t('lessonFormGroupHint')}</p> : null}
-        </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lesson-group">{t('lessonFormGroupLabel')}</Label>
+            <select
+              id="lesson-group"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={groupId}
+              onChange={(event) => handleGroupChange(event.target.value)}
+              disabled={groupsQuery.isLoading}
+            >
+              <option value="">{t('lessonFormGroupNone')}</option>
+              {(groupsQuery.data?.items ?? []).map((group) => (
+                <option key={group.group_id} value={group.group_id}>
+                  {group.name_ru}
+                </option>
+              ))}
+            </select>
+            {selectedGroup ? <p className="text-xs text-muted-foreground">{t('lessonFormGroupHint')}</p> : null}
+          </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lesson-difficulty-filter">{t('lessonFormDifficultyFilterLabel')}</Label>
-          <select
-            id="lesson-difficulty-filter"
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={difficultyFilter ?? ''}
-            onChange={(event) => setDifficultyFilter(event.target.value === '' ? null : Number(event.target.value))}
-          >
-            <option value="">{t('lessonFormDifficultyAll')}</option>
-            {DIFFICULTIES.map((difficulty) => (
-              <option key={difficulty} value={difficulty}>
-                {`${t('difficultyLabel')} ${difficulty}`}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lesson-difficulty-filter">{t('lessonFormDifficultyFilterLabel')}</Label>
+            <select
+              id="lesson-difficulty-filter"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={difficultyFilter ?? ''}
+              onChange={(event) => setDifficultyFilter(event.target.value === '' ? null : Number(event.target.value))}
+            >
+              <option value="">{t('lessonFormDifficultyAll')}</option>
+              {DIFFICULTIES.map((difficulty) => (
+                <option key={difficulty} value={difficulty}>
+                  {`${t('difficultyLabel')} ${difficulty}`}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex flex-col gap-2">

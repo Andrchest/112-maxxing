@@ -103,7 +103,7 @@ export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChange
   const set = proposalsQuery.data ?? null;
 
   return (
-    <Card className="max-w-2xl" data-slot="weight-proposals">
+    <Card data-slot="weight-proposals">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('weightProposalsTitle')}</h2>
       </CardHeader>
