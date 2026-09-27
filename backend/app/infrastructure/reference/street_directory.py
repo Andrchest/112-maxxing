@@ -1,11 +1,24 @@
-"""`StreetDirectory` — the OSM half of `TextCheckerPort` (I4 E35, HLD 71 §71.12, D35).
+"""`StreetDirectory` — the street half of `TextCheckerPort` (I4 E35 + I5 E41, HLD 71 §71.12, D35,
+Q-E23-2).
 
-Reads `reference/streets/osm_moscow_street_names.txt` (ODbL 1.0, OpenStreetMap contributors;
-provenance in `reference/streets/SOURCES.txt`) — the unique `name` values of Moscow's named
-`highway` ways, one per line, in the Overpass CSV's own quoting (RFC 4180: a value with a comma is
-`"quoted"`, and a literal `"` inside one is doubled). Moscow-only (Q-E11-2 leaves the rest); the
-directory has no okrug or district, so `street_status`'s `locality` parameter is accepted for the
-port's signature but not used to filter — there is nothing else to filter *to* yet.
+Reads two files under its directory and unions them:
+
+* `reference/streets/osm_moscow_street_names.txt` (ODbL 1.0, OpenStreetMap contributors;
+  provenance in `reference/streets/SOURCES.txt`) — the unique `name` values of Moscow's named
+  `highway` ways, one per line, in the Overpass CSV's own quoting (RFC 4180: a value with a comma
+  is `"quoted"`, and a literal `"` inside one is doubled). **Required**: `load` returns `None`
+  without it, same as before I5 E41.
+* `reference/streets/kladr_moscow_street_names.txt` (ФНС open data, КЛАДР region 77; provenance in
+  the same `SOURCES.txt`) — one `"<name> <socr>"` per line, plain text (`backend/tools/
+  import_kladr_streets.py`). **Optional**: when it is absent the directory still loads, OSM-only,
+  exactly as before this epic — the raw `base.7z` archive it is built from is never committed
+  (I5 E41 CHANGE A), so an environment that never ran the extractor keeps working.
+
+A street is `KNOWN` if either source has it (I5 E41 CHANGE A, manager decision, final); `NEAR`
+suggestions are drawn from the union of both directories' keys. Moscow-only (Q-E11-2 leaves the
+rest); the directory has no okrug or district, so `street_status`'s `locality` parameter is
+accepted for the port's signature but not used to filter — there is nothing else to filter *to*
+yet.
 
 **Matching, order- and abbreviation-insensitive.** A street's type word («улица», «проспект», …)
 sits on either side of the name depending on the type (§71.12's own examples: «Кутузовский
@@ -112,26 +125,62 @@ class StreetDirectory:
 
     @classmethod
     def load(cls, directory: Path) -> StreetDirectory | None:
-        """`reference/streets/osm_moscow_street_names.txt`, or `None` when absent — cached per
-        directory for the process."""
-        path = directory / "osm_moscow_street_names.txt"
-        if not path.is_file():
+        """The OSM file (required) unioned with the КЛАДР file (optional) — `None` when the OSM
+        file is absent — cached per directory for the process."""
+        osm_path = directory / "osm_moscow_street_names.txt"
+        if not osm_path.is_file():
             return None
+        kladr_path = directory / "kladr_moscow_street_names.txt"
         with _LOCK:
             cached = _CACHE.get(directory)
             if cached is None:
-                cached = cls._read(path)
+                cached = cls._read(osm_path, kladr_path if kladr_path.is_file() else None)
                 _CACHE[directory] = cached
             return cached
 
     @classmethod
-    def _read(cls, path: Path) -> StreetDirectory:
-        raw = path.read_bytes()
-        sha = hashlib.sha256(raw).hexdigest()
+    def _read(cls, osm_path: Path, kladr_path: Path | None) -> StreetDirectory:
+        osm_raw = osm_path.read_bytes()
+        by_key = cls._read_osm_csv(osm_raw)
+        combined_raw = osm_raw
+        if kladr_path is not None:
+            kladr_raw = kladr_path.read_bytes()
+            by_key = _merge_by_key(by_key, cls._read_plain_lines(kladr_raw))
+            combined_raw = osm_raw + kladr_raw
+        sha = hashlib.sha256(combined_raw).hexdigest()
+        return cls(by_key, sha256=sha)
+
+    @staticmethod
+    def _read_osm_csv(raw: bytes) -> dict[str, list[str]]:
+        """`osm_moscow_street_names.txt`'s own Overpass CSV quoting (module doc)."""
         by_key: dict[str, list[str]] = {}
         for row in csv.reader(raw.decode("utf-8").splitlines()):
             if not row or not row[0].strip():
                 continue
             name = row[0].strip()
             by_key.setdefault(_normalise(name), []).append(name)
-        return cls(by_key, sha256=sha)
+        return by_key
+
+    @staticmethod
+    def _read_plain_lines(raw: bytes) -> dict[str, list[str]]:
+        """`kladr_moscow_street_names.txt`: one name per line, no quoting needed."""
+        by_key: dict[str, list[str]] = {}
+        for line in raw.decode("utf-8").splitlines():
+            name = line.strip()
+            if not name:
+                continue
+            by_key.setdefault(_normalise(name), []).append(name)
+        return by_key
+
+
+def _merge_by_key(*sources: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Union several `by_key` maps, keeping each key's display names in source order, deduplicated
+    (so a name present in both files is not offered twice as a suggestion)."""
+    merged: dict[str, list[str]] = {}
+    for source in sources:
+        for key, names in source.items():
+            bucket = merged.setdefault(key, [])
+            for name in names:
+                if name not in bucket:
+                    bucket.append(name)
+    return merged

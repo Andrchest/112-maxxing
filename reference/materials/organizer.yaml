@@ -1,0 +1,34 @@
+# reference/materials/organizer.yaml — the organizer methodical materials `seed-materials` uploads
+# (I5 E41 CHANGE B, HLD 71 §71.11/§71.18.1, Q-E13-2).
+#
+# Each entry names a file under `requirements/sources/` (read-only — never copied here; the
+# organizer archive stays the single source of truth) that
+# `app.tools.seed_materials` (`make seed-materials`) reads and uploads through the E34
+# `UploadMaterial` use case, sha256-deduped, as the seeded `admin` account (`app.tools.seed_users`).
+# `sha256` pins the source file at the moment it was listed here: `seed_materials` refuses to
+# upload a file whose bytes have drifted from this pin (an organizer source is never silently
+# re-read as something else).
+#
+# Screened out of this list (I5 E41 CHANGE B, manager decision, final) — every other file under
+# `requirements/sources/05-organizer-materials`:
+# - «Билеты- задачи по C 112 . АГС_ГСИ (1).pdf» — the tickets PDF; it contains scenario answers.
+# - «ЛЦТ2026 Шаблон презентации (1).pptx» — the presentation template, not a reference/instruction
+#   document.
+# - «9. Деп Обороны и ЧС (1).pdf» — its first page is the project's own ТЗ cover sheet
+#   ("Учебное программное обеспечение для подготовки оператора ДДС города Москвы с использованием
+#   искусственного интеллекта... Техническое задание"), not a reference/instruction document for
+#   112/ДДС operational work — left out per this epic's own screening rule (checked page 1 only,
+#   as the brief asks).
+materials:
+  - id: dds-arm112-memo
+    title_ru: "Работа с АРМ-112 для ДДС от ОКр"
+    path: "requirements/sources/05-organizer-materials/Работа с АРМ-112 для ДДС от ОКр_ГСИ (1).pdf"
+    sha256: b6bd6d69c2c4668b2c4d481cedfd9392096e3d7f5ca4092550f053387258af0e
+  - id: incident-classifier-xlsx
+    title_ru: "Классификатор происшествий v_046_24 (корректировка МВД + Департамент)"
+    path: "requirements/sources/05-organizer-materials/Классификатор_происшествий_v_046_24_корректировка_МВД_+_Департамент (1).xlsx"
+    sha256: 1d907424ab96ae397cf4b67dfd0193aa94deda56fba2d2ca4f8df8f2c2585937
+  - id: card-112-docx
+    title_ru: "КАРТОЧКА 112"
+    path: "requirements/sources/01-qna-session-telegram/files/КАРТОЧКА 112.docx"
+    sha256: 49037e9a2a90760b1fc0c50243aae75ec396e12302f43eae514691d5bb94bc4c

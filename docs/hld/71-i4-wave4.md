@@ -873,3 +873,76 @@ WAV one — a second representation of the same `audio_segments` row, not a new 
   (same file, plus an HTTP-level proof in `tests/api/reports/test_audio_segment_mp3.py` that makes
   a second `encode()` call fail the test outright).
 - A trainee without access gets the same refusal as for WAV (403/410/404 parity, same file).
+
+## 71.18.3 I5 E41 — КЛАДР streets + organizer materials seed
+
+**Purpose.** Two owner answers of 2026-09-26 (`docs/owner-decisions.md`): Q-E23-2 (pull КЛАДР
+alongside OSM for the §71.12 street directory) and Q-E13-2 (put the organizer's own materials into
+the §71.11 reference base).
+
+**CHANGE A — КЛАДР streets (Q-E23-2).**
+- `base.7z` (ФНС open data, 61,067,244 bytes) fetched 2026-09-27 from
+  `https://fias-file.nalog.ru/downloads/2026.07.07/base.7z` (URL read from `Kladr47ZUrl` at
+  `https://fias.nalog.ru/WebServices/Public/GetLastDownloadFileInfo`, which changes per ФНС
+  release) — well inside the 30-minute time-box (E23's own recon had already proved the URL
+  reachable). The archive is **not committed**; `backend/tools/import_kladr_streets.py` extracts
+  it with `py7zr` (new `tools`-group dependency, `pyproject.toml`) into
+  `reference/streets/kladr_moscow_street_names.txt` (9,079 unique `"<NAME> <SOCR>"` values of every
+  `STREET.DBF` row whose `CODE` starts with `77`, КЛАДР's region code for Moscow, ТиНАО included).
+  `STREET.DBF` (dBase III, codepage 866) is read with a small stdlib parser
+  (`_iter_dbf_records`) rather than a general dbf library — `py7zr` is the one dependency this
+  epic adds.
+- `app.infrastructure.reference.street_directory.StreetDirectory` now unions the OSM file
+  (required, unchanged behaviour if the КЛАДР file is absent) with the new КЛАДР file (optional):
+  a street is `KNOWN` if either has it, and `NEAR` suggestions are drawn from the union
+  (manager decision, final — CHANGE A's own wording). `TextCheckerPort.street_list_sha256` is now
+  `sha256(osm_bytes + kladr_bytes)` when the КЛАДР file is present, the same "concatenate, then
+  hash" shape `dictionary_sha256` already used for its two-file lexicon — no port/API contract
+  change.
+- Both files, their sha256 and their licence notes are recorded in `reference/streets/SOURCES.txt`
+  and pinned in `reference/manifest.json`.
+- E23's own recon (§71.12) had already noted `base.7z` "outside E23's brief" and left Q-E23-1
+  (apidata.mos.ru ОМК УМ classifier key) and Q-E23-3/Q-E23-4 (confused real street pairs; whether
+  street names bypass the general spell check) untouched — this epic does not touch them either.
+
+**CHANGE B — organizer materials seed (Q-E13-2).**
+- `reference/materials/organizer.yaml`: a tracked list naming three files under
+  `requirements/sources/` (read-only, never copied) with Russian titles — the ДДС ARM-112 memo PDF
+  («Работа с АРМ-112 для ДДС от ОКр»), the incident classifier xlsx («Классификатор происшествий
+  v_046_24…»), and «КАРТОЧКА 112» (the docx under `01-qna-session-telegram/files`, not the
+  `05-organizer-materials` folder). Each entry pins the source's sha256 at listing time; the seed
+  CLI refuses to upload a source that has since drifted.
+- **Excluded**, and why: the tickets PDF («Билеты- задачи по C 112 . АГС_ГСИ (1).pdf») contains
+  scenario answers; the presentation template («ЛЦТ2026 Шаблон презентации (1).pptx») is not a
+  reference/instruction document; «9. Деп Обороны и ЧС (1).pdf»'s first page is the project's own
+  ТЗ cover sheet ("Учебное программное обеспечение для подготовки оператора ДДС… Техническое
+  задание"), not a 112/ДДС operational reference — checked and left out per this epic's own
+  screening rule.
+- `app.tools.seed_materials` (`python -m app.tools.seed_materials`, `make seed-materials`) reads
+  `organizer.yaml` and uploads each entry through the I4 E34 `UploadMaterial` use case — the same
+  allow-list, size limit and sha256 file-dedupe an instructor's own upload gets. It adds its own
+  idempotency on top: existing `training_materials` rows are read first, and a source whose
+  sha256 is already present is skipped, so a second run creates no duplicate row (`UploadMaterial`
+  alone only dedupes the *file on disk*, not the row). Uploader: the seeded `admin` account
+  (`app.tools.seed_users`) — "a system or admin account per the existing seed pattern" — a missing
+  `admin` account refuses the run rather than silently picking another actor.
+
+**Data / DB.** No migration; `training_materials` rows only, through the existing E34 schema.
+
+**API.** No contract change — no new endpoint, problem code or schema field.
+
+**Acceptance.**
+- A street packaged only in the КЛАДР extract (not in the OSM file) is `KNOWN`; a street packaged
+  only in the OSM file is still `KNOWN` (`backend/tests/unit/infrastructure/reference/
+  test_text_checker.py`).
+- The reference-pack manifest tests pass unchanged (`backend/tests/unit/reference/
+  test_manifest_shas.py`, `test_reference_pack.py`).
+- `make seed-materials` run twice against a scratch database yields each material exactly once
+  (`backend/tests/integration/persistence/test_seed_materials.py`).
+
+**Not built (owner questions, unchanged by this epic).**
+- **Q-E23-1**: registering an apidata.mos.ru key for ОМК УМ.
+- **Q-E23-3/Q-E23-4**: confused real street-name pairs; whether street names bypass the general
+  spell check.
+- **Q-E13-1**: whether materials are assigned per lesson/group — still every trainee sees every
+  material (unchanged; this epic only adds rows to the same reference base).

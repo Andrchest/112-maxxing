@@ -65,6 +65,17 @@ FILES: tuple[str, ...] = (
     "lexicon/SOURCES.txt",
     "streets/osm_moscow_street_names.txt",
     "streets/SOURCES.txt",
+    # I5 E41 (Q-E23-2, CHANGE A): the ФНС КЛАДР half of `StreetDirectory`'s union (region 77,
+    # Moscow). Also fetched verbatim from an external source with nothing repo-local to re-derive
+    # it from — the raw `base.7z` archive is not committed (`backend/tools/import_kladr_streets.py`)
+    # — so it gets no `SOURCES` entry either, same as the OSM extract above.
+    "streets/kladr_moscow_street_names.txt",
+    # I5 E41 (CHANGE B, Q-E13-2): the organizer materials list `seed-materials` uploads from.
+    # Points at files under `requirements/sources/05-organizer-materials` (read-only, not copied)
+    # — pinned here as a plain reference-directory file even though it names no bytes copied under
+    # `reference/` (its own sha is what `test_every_reference_file_has_the_sha256_the_manifest_pins`
+    # checks; the sources it points to are verified by `app.tools.seed_materials` itself, not here).
+    "materials/organizer.yaml",
 )
 
 CLASSIFIER_SOURCE = (

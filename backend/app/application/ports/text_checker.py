@@ -1,21 +1,22 @@
-"""`TextCheckerPort` — the text-quality annotation's two reads (I4 E35, `docs/hld/71-i4-wave4.md`
-§71.12, D35).
+"""`TextCheckerPort` — the text-quality annotation's two reads (I4 E35 + I5 E41,
+`docs/hld/71-i4-wave4.md` §71.12, D35, Q-E23-2).
 
 **Report-time, read-only, no score effect** (D35, Q-E11-1 open). The port has exactly the two
 methods the design names:
 
 * `misspellings(text)` — every word the ru_RU dictionary does not recognise, as a `MisspelledSpan`
   (offsets into `text`, plus up to three suggestions);
-* `street_status(street, locality)` — whether a street name is in the Moscow OSM directory:
-  `KNOWN`, `UNKNOWN`, or `NEAR` with suggestions when the directory has a close match. `locality`
-  is accepted for the signature's future scope (Q-E11-2, streets outside Moscow) but the one
-  adapter today checks every street against the same Moscow list regardless of its value — no
+* `street_status(street, locality)` — whether a street name is in the Moscow street directory:
+  `KNOWN`, `UNKNOWN`, or `NEAR` with suggestions when the directory has a close match. Since I5 E41
+  CHANGE A, `KNOWN` means the OSM extract *or* the КЛАДР extract has it (the two are unioned).
+  `locality` is accepted for the signature's future scope (Q-E11-2, streets outside Moscow) but the
+  one adapter today checks every street against the same Moscow list regardless of its value — no
   locality-based skip is built, because outside-Moscow coverage does not exist to skip *to*.
 
 The adapter is `app.infrastructure.reference.text_checker.FileTextChecker`, over the packaged data
-under `reference/lexicon/` and `reference/streets/` (BSD-style LibreOffice dictionary, ODbL OSM
-names). Both properties below are the data's own sha256, recorded so a report can say exactly
-which snapshot it checked against (INV 9).
+under `reference/lexicon/` and `reference/streets/` (BSD-style LibreOffice dictionary; ODbL OSM
+names unioned with ФНС open-data КЛАДР names). Both properties below are the data's own sha256,
+recorded so a report can say exactly which snapshot it checked against (INV 9).
 
 `TextCheckerPort | None` is the composition root's shape for "the data is absent" (mirrors
 `ReferencePort | None` in `assemble_report.py`): `application.reports.text_quality` reads `None`
@@ -84,5 +85,8 @@ class TextCheckerPort(Protocol):
 
     @property
     def street_list_sha256(self) -> str:
-        """`reference/streets/osm_moscow_street_names.txt`'s pinned sha256."""
+        """`reference/streets/`'s street files, pinned: `osm_moscow_street_names.txt`'s sha256
+        alone, or (since I5 E41) that sha256 concatenated with `kladr_moscow_street_names.txt`'s
+        when the КЛАДР extract is present — the same "concatenate, then hash" shape
+        `dictionary_sha256` already uses for its two-file lexicon."""
         ...

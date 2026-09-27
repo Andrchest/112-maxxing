@@ -27,7 +27,9 @@
     "lexicon/README_ru_RU.txt": "262af2f6ad70a61e5ee1332ff44fa8ee50edca819cf33207d8ad6ba6a0c9be52",
     "lexicon/SOURCES.txt": "5c0bb4745b00b1c2209e50ab0cee791a6a3439a9a685532cf4573e8be69dcf10",
     "streets/osm_moscow_street_names.txt": "59e0adf63831d035f006165fc491c79290e01be1781fc8325f59f664a8520b57",
-    "streets/SOURCES.txt": "78f76f89c7ae16388aec8d099b2ea47ace023c4b9e4ef3ca2e5957bc596fdfd4"
+    "streets/SOURCES.txt": "1f499aee69f4ff5f916a024d546b1f4d56eb5d43c82ee6bb0df1d78ccd7bb5bb",
+    "streets/kladr_moscow_street_names.txt": "68ea430dbed69dde7422ca3045efb68889d03300a92ef76a4704c3227b63e678",
+    "materials/organizer.yaml": "d7493f2f630b1087a6a2746ca52c6708bdf5c34e5fe446599c6077d37e172989"
   },
   "sources": {
     "card-schema/v2.yaml": {

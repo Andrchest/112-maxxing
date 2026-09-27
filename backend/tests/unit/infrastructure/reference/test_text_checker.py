@@ -67,6 +67,29 @@ def test_both_confused_streets_are_known() -> None:
     assert checker.street_status("Дубининская улица").status is StreetStatusKind.KNOWN
 
 
+def test_a_kladr_only_moscow_street_is_known() -> None:
+    """I5 E41 CHANGE A: a street packaged only in the КЛАДР extract (not in the OSM list) is still
+    `KNOWN` — the two directories are unioned. «Елизаровой» does not occur anywhere in the OSM
+    file at all, so this is not a normalisation coincidence."""
+    checker = FileTextChecker.load()
+    assert checker is not None
+    assert "Елизаровой" not in (DEFAULT_STREETS_DIR / "osm_moscow_street_names.txt").read_text(
+        encoding="utf-8"
+    )
+    assert checker.street_status("улица Елизаровой").status is StreetStatusKind.KNOWN
+
+
+def test_an_osm_only_moscow_street_is_still_known() -> None:
+    """I5 E41 CHANGE A: adding КЛАДР must not regress a street the OSM list alone already knew.
+    «Хапиловский» does not occur anywhere in the КЛАДР file at all."""
+    checker = FileTextChecker.load()
+    assert checker is not None
+    assert "Хапиловский" not in (DEFAULT_STREETS_DIR / "kladr_moscow_street_names.txt").read_text(
+        encoding="utf-8"
+    )
+    assert checker.street_status("Хапиловский проезд").status is StreetStatusKind.KNOWN
+
+
 def test_an_unknown_street_is_unknown() -> None:
     checker = FileTextChecker.load()
     assert checker is not None
@@ -96,6 +119,7 @@ def test_the_data_sha_is_recorded_and_matches_the_files_on_disk() -> None:
     ).hexdigest()
     expected_streets = hashlib.sha256(
         (DEFAULT_STREETS_DIR / "osm_moscow_street_names.txt").read_bytes()
+        + (DEFAULT_STREETS_DIR / "kladr_moscow_street_names.txt").read_bytes()
     ).hexdigest()
     assert checker.dictionary_sha256 == expected_dictionary
     assert checker.street_list_sha256 == expected_streets

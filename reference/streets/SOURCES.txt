@@ -1,10 +1,12 @@
-reference/streets — Moscow OSM street-name directory (I4 E35, HLD 71 §71.12, D35)
+reference/streets — Moscow street-name directories: OSM + КЛАДР (I4 E35, I5 E41, HLD 71 §71.12,
+D35, Q-E23-2)
 
 Packaged from the E23 recon (/tmp/teamwork-112-maxxing/data/streets/, report
-/tmp/teamwork-112-maxxing/reports/i4/E23.md). Read by
-`backend/app/infrastructure/reference/street_directory.py`.
+/tmp/teamwork-112-maxxing/reports/i4/E23.md) and, since I5 E41, the ФНС КЛАДР extract below. Both
+read and unioned by `backend/app/infrastructure/reference/street_directory.py`: a street is
+`KNOWN` if either file has it (I5 E41 CHANGE A).
 
-File, with sha256 (also pinned in that adapter module):
+Files, with sha256 (also pinned in `reference/manifest.json`):
 
 - osm_moscow_street_names.txt
   sha256: 59e0adf63831d035f006165fc491c79290e01be1781fc8325f59f664a8520b57
@@ -29,14 +31,33 @@ a produce of it; the report section this directory feeds carries that credit lin
 Coverage notes (E23 recon; not decided here, Q-E11-2/Q-E23-1..4):
 - 45242 ways, 5629 unique names; no okrug/district column (way tags only — a district would need
   a spatial join with admin boundaries, not attempted).
-- The official ОМК УМ classifier (data.mos.ru, classifier 2044) needs a registered apidata.mos.ru
+- The official street classifier (data.mos.ru, classifier 2044) needs a registered apidata.mos.ru
   api_key (HTTP 403 without one) — an owner action, not fetched (Q-E23-1).
-- КЛАДР / ФИАС are other official-form sources; ФИАС's `gar_xml.zip` is ~57.7 GB with no regional
-  subset and was not fetched; the КЛАДР `base.7z` (61 MB) was noted but is outside E23's brief.
+- ФИАС's `gar_xml.zip` is ~57.7 GB with no regional subset and was not fetched (still not fetched,
+  I5 E41 — outside CHANGE A's 30-minute box for a 61 MB archive).
 - Both «Дубнинская улица» and «Дубининская улица» are real Moscow streets in this list — a
   directory lookup alone cannot tell which one a caller meant (Q-E23-3).
 
+- kladr_moscow_street_names.txt
+  sha256: 68ea430dbed69dde7422ca3045efb68889d03300a92ef76a4704c3227b63e678
+  size: 288788 bytes, 9079 lines: unique `"<NAME> <SOCR>"` values (КЛАДР's own name + abbreviated
+  type-word columns, e.g. `Хапиловский проезд` or `Елизаровой ул`) of every `STREET.DBF` record
+  whose `CODE` starts with `77` (КЛАДР's region code for Moscow, ТиНАО included)
+
+I5 E41 CHANGE A (manager decision, final; answers Q-E23-2's "ФИАС/КЛАДР" note above): fetched
+2026-09-27 from `https://fias-file.nalog.ru/downloads/2026.07.07/base.7z` (61,067,244 bytes; the
+URL is read from `Kladr47ZUrl` at `https://fias.nalog.ru/WebServices/Public/GetLastDownloadFileInfo`
+and changes per ФНС release), extracted with `py7zr` (`tools` dependency group) by
+`backend/tools/import_kladr_streets.py`. The archive itself is not committed — regenerate the
+extract by downloading it again and passing `--archive` to that tool.
+
+Licence: КЛАДР (Классификатор Адресов Российской Федерации) is published by ФНС России (the
+Federal Tax Service) as open data at `https://fias.nalog.ru/`; no attribution string is required
+the way ODbL's is, but the source and fetch date are recorded here for provenance.
+
 Not a WorldTruth source and not scoring data (INV 3): a report-only reference list, read at report
-time only (D35), on the 112 card path only. Absent this directory, the report section says
-«Проверка недоступна». Street names in the scenarios are never changed to match this list — see
-D-h and `docs/hld/00-decisions.md` D35 on `scenarios/tickets/ticket-15-call-3`'s «ул. Зверенецкая».
+time only (D35), on the 112 card path only. Absent both files, the report section says «Проверка
+недоступна»; absent the КЛАДР file alone, the directory still loads and checks OSM only (I5 E41,
+`street_directory.py`'s own module doc). Street names in the scenarios are never changed to match
+this list — see D-h and `docs/hld/00-decisions.md` D35 on `scenarios/tickets/ticket-15-call-3`'s
+«ул. Зверенецкая».

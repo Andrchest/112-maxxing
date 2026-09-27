@@ -126,6 +126,7 @@ async def test_text_quality_is_available_by_default_and_unavailable_without_a_ch
     ).hexdigest()
     expected_streets = hashlib.sha256(
         (DEFAULT_STREETS_DIR / "osm_moscow_street_names.txt").read_bytes()
+        + (DEFAULT_STREETS_DIR / "kladr_moscow_street_names.txt").read_bytes()
     ).hexdigest()
     assert with_body["text_quality"]["dictionary_sha256"] == expected_dictionary
     assert with_body["text_quality"]["street_list_sha256"] == expected_streets

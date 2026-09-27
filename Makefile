@@ -331,6 +331,11 @@ run-api:
 # there is no default and none is ever written in source (SPEC §41).
 seed-users:
 	$(UV) run python -m app.tools.seed_users
+# I5 E41 CHANGE B: upload reference/materials/organizer.yaml's organizer files through the E34
+# `uploadMaterial` use case, as the seeded `admin` account. Idempotent (sha256 dedupe) — run
+# `make seed-users` first.
+seed-materials:
+	$(UV) run python -m app.tools.seed_materials
 test-backend: infra-up
 	SIM_ENV_FILE= $(UV) run pytest -q -n $(PYTEST_WORKERS) --dist loadfile
 gate-backend: lint typecheck boundaries scenarios db-check compose-check test-backend
