@@ -797,7 +797,7 @@ For the manager (not decided by E24):
 - `docs/hld/puml/i4-tls-edge-topology.puml`: S3, with the Caddy edge and the named fallback.
 - `docs/hld/puml/i4-backup-restore.puml`: S2 backup loop, restore, and the S5 purge guard.
 
-## 71.18.2 I5 E39 — Instructors see everything, change only their own
+## 71.18.1 I5 E39 — Instructors see everything, change only their own
 
 Sources: Q-E9b-4 (answer 2026-09-26, variant а); ТЗ ¶245; Q&A L786–789; I3 E9a (shared groups).
 
@@ -829,3 +829,47 @@ Sources: Q-E9b-4 (answer 2026-09-26, variant а); ТЗ ¶245; Q&A L786–789; I3
 - Tests: `backend/tests/api/ownership/test_resource_ownership.py` (every guarded operation × owner
   / other instructor / admin; reads and comments by another instructor; a refused change writes
   nothing), `backend/tests/unit/application/auth/test_ownership.py` (the rule, incl. no owner).
+
+## 71.18.2 I5 E40 — MP3 download of a call recording (Q-E16-3 variant b)
+
+**Purpose.** ТЗ ¶369 allows «MP3 или WAV» for a call recording download; the recording is WAV
+today (served with HTTP `Range` for the report player, `getAudioSegment`, E16 R7). ¶383 requires
+MP3 specifically. Owner answer 2026-09-26, **Q-E16-3 variant (б)**: add the MP3 download, keep the
+WAV one — a second representation of the same `audio_segments` row, not a new resource.
+
+**Design as built.**
+- `getAudioSegmentMp3` `GET /api/v1/sessions/{session_id}/audio/{audio_segment_id}/mp3` — the same
+  segment `getAudioSegment` serves, as a complete `audio/mpeg` download (no `Range`: this is a
+  download, not a seekable stream).
+- Format (this task's own decision, not a re-litigated owner question): mono, the segment's own
+  sample rate (16 kHz in every recording this codebase writes today), 64 kbit/s CBR.
+- Encoding: `lameenc` (a compiled binding of the LAME encoder), added as a new backend dependency
+  (`backend/pyproject.toml`, `uv.lock`) because the container has no system `ffmpeg`/`lame` binary
+  — only the owner's conda env does, out of scope for a container-run backend. **Licence: LAME is
+  LGPL-2.1-or-later; `lameenc`'s own Python binding is MIT.** Recorded next to the dependency in
+  `backend/pyproject.toml` and here.
+- Cache: `<sha256>.mp3` written next to the segment's WAV file under
+  `DATA_DIR/recordings/{session_id}/…`, the hash taken over the WAV representation
+  `getAudioSegment` would answer a plain `200` with (44-byte header + PCM) — a second request for
+  the same segment is a cache hit, never a re-encode.
+- Authorization: identical to `getAudioSegment` (E16 R3/R7) by construction —
+  `ServeAudioSegmentMp3` composes `ServeAudioSegment.resolve_audio` (this task's addition to that
+  use case) for the lookup, visibility check and file read, so the two operations' access rule can
+  never drift apart. A trainee refused the WAV gets the identical refusal for MP3.
+- Frontend: a «Скачать MP3» button next to the report's `<audio>` playback controls
+  (`features/report/transcript-audio-panel.tsx`), downloading whichever segment is currently
+  loaded into the player.
+
+**Data / DB.** None (no migration; the cache is files on disk, not a table).
+
+**API** (additive, `docs/hld/openapi.yaml`): `getAudioSegmentMp3`, reusing every existing
+`ProblemCode` the WAV endpoint uses (`NOT_FOUND`, `FORBIDDEN_FOR_ROLE`/`PARTICIPANT_NOT_ASSIGNED`/
+`REPORT_NOT_RELEASED`, `AUDIO_PURGED`) — no new problem code.
+
+**Acceptance (this task's tests).**
+- A known WAV is encoded and the result is a valid MP3 (frame sync header) whose decoded duration
+  is within 5% of the source's (`tests/unit/application/reports/test_serve_audio_segment_mp3.py`).
+- A second request for the same segment hits the cache and never re-encodes
+  (same file, plus an HTTP-level proof in `tests/api/reports/test_audio_segment_mp3.py` that makes
+  a second `encode()` call fail the test outright).
+- A trainee without access gets the same refusal as for WAV (403/410/404 parity, same file).

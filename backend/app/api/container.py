@@ -122,6 +122,7 @@ from app.application.ports.idempotency_store import IdempotencyStore
 from app.application.ports.inference_readiness import InferenceReadiness
 from app.application.ports.last_seq_no_cache import LastSeqNoCache
 from app.application.ports.llm import LLMClient
+from app.application.ports.mp3_encoder import Mp3Encoder
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
 from app.application.ports.runner_lock import LessonRunnerLock, RunnerLock
@@ -149,6 +150,7 @@ from app.application.reports.explanation.ports import ScoreReportReader
 from app.application.reports.list_inference_metrics import ListInferenceMetrics
 from app.application.reports.release_report import ReleaseReportToTrainee
 from app.application.reports.serve_audio_segment import ServeAudioSegment
+from app.application.reports.serve_audio_segment_mp3 import ServeAudioSegmentMp3
 from app.application.scenarios.archive import ArchiveScenario, UnarchiveScenario
 from app.application.scenarios.import_scenario_version import ImportScenarioVersion
 from app.application.scenarios.queries import (
@@ -208,6 +210,7 @@ from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCa
 from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock, lesson_runner_lock_key
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
+from app.infrastructure.recording import LameMp3Encoder
 from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 from app.infrastructure.reference.text_checker import FileTextChecker
 from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
@@ -678,6 +681,18 @@ class Container:
     def serve_audio_segment(self) -> ServeAudioSegment:
         """`getAudioSegment` — Range-served WAV bytes under `DATA_DIR/recordings` (D9, E16 R7)."""
         return ServeAudioSegment(self.unit_of_work, recordings_dir=self.recordings_dir)
+
+    def serve_audio_segment_mp3(self) -> ServeAudioSegmentMp3:
+        """`getAudioSegmentMp3` (I5 E40, Q-E16-3 variant b) — the same segment as MP3, encoded on
+        demand by `LameMp3Encoder` and cached under `DATA_DIR/recordings` (same access rule as
+        `serve_audio_segment` above, by construction: it composes that same use case)."""
+        return ServeAudioSegmentMp3(
+            self.unit_of_work, recordings_dir=self.recordings_dir, encoder=self.mp3_encoder()
+        )
+
+    def mp3_encoder(self) -> Mp3Encoder:
+        """`LameMp3Encoder` — stateless, so a fresh one per call costs nothing (I5 E40)."""
+        return LameMp3Encoder()
 
     def list_inference_metrics(self) -> ListInferenceMetrics:
         """`listInferenceMetrics` (SPEC §27)."""

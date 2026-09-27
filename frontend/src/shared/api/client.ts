@@ -397,6 +397,33 @@ export async function getAudioSegment(sessionId: string, audioSegmentId: string)
   return await response.blob();
 }
 
+// -- I5 E40: MP3 download (Q-E16-3 variant b, ТЗ ¶383) — the same segment `getAudioSegment` plays,
+// as a downloadable `audio/mpeg` file (same fetch-with-Bearer-token pattern, same problem mapping).
+/** `getAudioSegmentMp3`: mono 64 kbit/s CBR MP3 of one `audio_segments` row, cached server-side by
+ * content hash — a repeat call for the same segment is a cache hit, not a re-encode. Same access
+ * rule and problems as {@link getAudioSegment} (`404`/`410 AUDIO_PURGED`). */
+export async function getAudioSegmentMp3(sessionId: string, audioSegmentId: string): Promise<Blob> {
+  const headers: Record<string, string> = { Accept: 'audio/mpeg, application/problem+json' };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(
+    `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/audio/${encodeURIComponent(audioSegmentId)}/mp3`,
+    { headers },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/problem+json')) {
+      const problem = (await response.json()) as ProblemDetails;
+      throw new ProblemError(problem, response.status);
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+
+  return await response.blob();
+}
+
 /** `404` when none has been generated yet (openapi) — the caller checks
  * `SessionReport.explanation_available` first and skips this call otherwise. */
 export function getReportExplanation(sessionId: string): Promise<ReportExplanation> {

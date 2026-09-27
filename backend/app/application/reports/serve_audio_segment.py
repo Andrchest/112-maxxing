@@ -190,6 +190,28 @@ class ServeAudioSegment:
         *,
         range_header: str | None = None,
     ) -> AudioSegmentResponse:
+        segment = await self._authorize(session_id, audio_segment_id, user)
+        return self._serve(segment, range_header)
+
+    async def resolve_audio(
+        self, session_id: SessionId, audio_segment_id: UUID, user: AuthenticatedUser
+    ) -> tuple[StoredAudioSegment, bytes, Path]:
+        """The same authorization and lookup as `__call__` (E16 R3/R7), for a caller that wants
+        the segment's raw PCM rather than an `AudioSegmentResponse` — `ServeAudioSegmentMp3`
+        (I5 E40, Q-E16-3 variant b) is the one caller today, so a trainee without access gets the
+        same refusal for the MP3 download as for the WAV one.
+
+        Returns `(segment, pcm, wav_path)`: `pcm` is the segment's whole slice (no WAV header,
+        no `Range`), `wav_path` is the resolved, containment-checked path of the file it lives in
+        — the directory `ServeAudioSegmentMp3` caches its `<sha>.mp3` files next to.
+        """
+        segment = await self._authorize(session_id, audio_segment_id, user)
+        path = self._resolved_path(segment)
+        return segment, self._pcm(path, segment, 0, segment.byte_length), path
+
+    async def _authorize(
+        self, session_id: SessionId, audio_segment_id: UUID, user: AuthenticatedUser
+    ) -> StoredAudioSegment:
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get(session_id)
             if session is None:
@@ -211,7 +233,7 @@ class ServeAudioSegment:
             raise AudioSegmentNotFoundError(audio_segment_id)
         if segment.purged_at is not None or segment.file_path is None:
             raise AudioPurgedError(audio_segment_id)
-        return self._serve(segment, range_header)
+        return segment
 
     # -- the bytes ----------------------------------------------------------------------------
 

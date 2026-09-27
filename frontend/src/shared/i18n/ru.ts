@@ -1175,4 +1175,7 @@ export const ru = {
   problemNotResourceOwner: 'Изменять может только преподаватель, который это создал.',
   ownershipHintLesson: 'Изменять может только преподаватель, создавший занятие',
   ownershipHintGroup: 'Изменять может только преподаватель, создавший группу',
+  // -- I5 E40: MP3 download (Q-E16-3 variant b, ТЗ ¶383) --------------------------------------
+  reportDownloadMp3: 'Скачать MP3',
+  reportDownloadingMp3: 'Загрузка…',
 } as const;

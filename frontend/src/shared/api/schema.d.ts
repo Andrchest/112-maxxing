@@ -625,6 +625,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{session_id}/audio/{audio_segment_id}/mp3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one audio segment as MP3 (ТЗ ¶383).
+         * @description (additive, I5 E40) ТЗ ¶369 allows «MP3 or WAV» for a call recording download and the WAV
+         *     one already exists (`getAudioSegment` above); ¶383 requires MP3 specifically. Owner answer
+         *     2026-09-26, Q-E16-3 variant (б): add the MP3 download, keep the WAV one. Mono, the
+         *     recording's own sample rate (16 kHz today), 64 kbit/s CBR, LAME-encoded, cached under
+         *     `DATA_DIR/recordings` by sha256 of the WAV representation `getAudioSegment` would answer
+         *     with — a repeat request for the same segment is a cache hit, never a re-encode. No `Range`
+         *     support (this is a download, not a seekable stream); the access rule and every error are
+         *     `getAudioSegment`'s (E16 R3/R7) — a caller refused the WAV gets the same refusal here.
+         */
+        get: operations["getAudioSegmentMp3"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{session_id}/operator/call/answer": {
         parameters: {
             query?: never;
@@ -5478,6 +5505,42 @@ export interface operations {
             };
             /** @description `RANGE_NOT_SATISFIABLE`. */
             416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getAudioSegmentMp3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+                audio_segment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The complete segment, as MP3. */
+            200: {
+                headers: {
+                    "Content-Length"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `AUDIO_PURGED` — the recording was deleted by the retention policy. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

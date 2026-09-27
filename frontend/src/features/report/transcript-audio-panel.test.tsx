@@ -111,4 +111,46 @@ describe('TranscriptAudioPanel — click a transcript line, seek to the segment-
     );
     expect(screen.getByRole('button', { name: new RegExp(CALLER_LINE) })).toBeDisabled();
   });
+
+  // I5 E40 (Q-E16-3 variant b, TZ p.383): the MP3 download button next to the recording controls.
+  describe('the MP3 download button', () => {
+    it('is disabled until a segment is loaded into the player', () => {
+      render(
+        <TranscriptAudioPanel
+          sessionId="sess-1"
+          transcript={[makeTranscriptSegment({ id: 't1', text: CALLER_LINE, audio_segment_id: 'audio-1' })]}
+          audioSegments={[makeAudioSegment({ audio_segment_id: 'audio-1' })]}
+        />,
+      );
+      expect(screen.getByRole('button', { name: ru.reportDownloadMp3 })).toBeDisabled();
+    });
+
+    it('fetches the active segment as MP3 and hands it to the browser as a download', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/mp3')) {
+          expect(String(input)).toBe('/api/v1/sessions/sess-1/audio/audio-1/mp3');
+          return new Response('fake-mp3-bytes', { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+        }
+        return blobResponse();
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+      render(
+        <TranscriptAudioPanel
+          sessionId="sess-1"
+          transcript={[makeTranscriptSegment({ id: 't1', text: CALLER_LINE, audio_segment_id: 'audio-1' })]}
+          audioSegments={[makeAudioSegment({ audio_segment_id: 'audio-1' })]}
+        />,
+      );
+      await user.click(screen.getByText(CALLER_LINE));
+      await waitFor(() => expect(screen.getByRole('button', { name: ru.reportDownloadMp3 })).toBeEnabled());
+
+      await user.click(screen.getByRole('button', { name: ru.reportDownloadMp3 }));
+
+      await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/sessions/sess-1/audio/audio-1/mp3', expect.anything());
+    });
+  });
 });

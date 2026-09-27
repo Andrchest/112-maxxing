@@ -8,13 +8,17 @@
 // order the calls first speak, each group headed by its party label («Вызов 112: абонент»,
 // «Звонок ДДС: Оператор 112»); on a ДДС call «Оператор» is the ДДС trainee. A transcript without
 // them renders as one list, exactly as before.
+// I5 E40 (Q-E16-3 variant b, ТЗ ¶383): a «Скачать MP3» link next to the audio controls,
+// downloading the segment currently loaded into the player (activeAudioSegmentId) as MP3.
 import { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { getAudioSegment, problemMessageRu, type AudioSegmentRef, type ProblemCode, type TranscriptSegmentView } from '@/shared/api';
+import { getAudioSegment, getAudioSegmentMp3, problemMessageRu, type AudioSegmentRef, type ProblemCode, type TranscriptSegmentView } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { saveBlob } from '@/shared/lib/download';
 import { isTranscriptSegmentPlaying, seekTargetForTranscriptSegment } from '@/shared/media/report-audio';
 import { groupTranscriptByCall } from './call-groups';
 
@@ -46,6 +50,8 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [seekRequest, setSeekRequest] = useState<PendingSeek | null>(null);
+  const [downloadingMp3, setDownloadingMp3] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     objectUrlsRef.current = objectUrls;
@@ -105,6 +111,23 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
 
   const activeUrl = activeAudioSegmentId ? objectUrls[activeAudioSegmentId] : undefined;
 
+  // I5 E40: downloads the segment currently loaded into the player, not the whole transcript — the
+  // brief places «Скачать MP3» next to the recording controls, which is per-segment (D9's
+  // `getAudioSegment` granularity), not a single per-session file.
+  async function handleDownloadMp3(): Promise<void> {
+    if (!activeAudioSegmentId) return;
+    setDownloadError(null);
+    setDownloadingMp3(true);
+    try {
+      const blob = await getAudioSegmentMp3(sessionId, activeAudioSegmentId);
+      saveBlob(blob, `${sessionId}-${activeAudioSegmentId}.mp3`);
+    } catch (error) {
+      setDownloadError(error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('reportAudioLoadFailed'));
+    } finally {
+      setDownloadingMp3(false);
+    }
+  }
+
   function renderSegment(segment: TranscriptSegmentView) {
     const target = seekTargetForTranscriptSegment(segment, audioSegments);
     const playing = isTranscriptSegmentPlaying(segment, activeAudioSegmentId, currentTimeSeconds, audioSegments);
@@ -143,9 +166,25 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
           className="w-full"
           onTimeUpdate={(event) => setCurrentTimeSeconds(event.currentTarget.currentTime)}
         />
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handleDownloadMp3()}
+            disabled={!activeAudioSegmentId || downloadingMp3}
+          >
+            {downloadingMp3 ? t('reportDownloadingMp3') : t('reportDownloadMp3')}
+          </Button>
+        </div>
         {errorMessage ? (
           <p role="alert" className="text-xs text-destructive">
             {errorMessage}
+          </p>
+        ) : null}
+        {downloadError ? (
+          <p role="alert" className="text-xs text-destructive">
+            {downloadError}
           </p>
         ) : null}
         {transcript.length === 0 ? (

@@ -28,6 +28,14 @@ dependencies = [
     # (`app.infrastructure.reference.spelling_dictionary`), never at module import time, so a
     # worktree without the packaged `reference/lexicon/` data still imports `app` cleanly.
     "spylls>=0.1.7,<0.2",
+    # I5 E40 (Q-E16-3 variant b, ТЗ ¶383): `getAudioSegmentMp3` encodes a recording to MP3 on
+    # demand. `lameenc` bundles the LAME encoder as a compiled extension (no system `ffmpeg`/`lame`
+    # binary needed, which the container does not have — the owner's conda env's ffmpeg is out of
+    # scope, see 71-i4-wave4.md §71.18.1). Licence: LGPL-2.1-or-later (LAME itself), `lameenc`'s own
+    # Python binding is MIT — recorded here because we ship the compiled LAME code, not just link
+    # a system library, so LGPL's dynamic-linking exception does not obviously apply; the binding
+    # is used unmodified and only as a library dependency, which LGPL permits.
+    "lameenc>=1.8.4",
 ]
 
 # Heavy ML dependencies are optional extras (D1); adapters import them lazily (E12: warm_up()/

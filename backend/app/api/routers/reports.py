@@ -6,7 +6,8 @@ Two routers, because the contract puts the operations under two prefixes:
   `rescoreSession` (E15-B), `listInferenceMetrics` (SPEC §27) and, appended below in their own
   marked section, the two explanation operations;
 * `audio_router` — `/api/v1/sessions/{session_id}/audio/{audio_segment_id}`: `getAudioSegment`,
-  which is tagged `reports` but lives under the session path because it is a session's recording.
+  which is tagged `reports` but lives under the session path because it is a session's recording,
+  plus (I5 E40) `getAudioSegmentMp3` at the same resource's `/mp3` sub-path.
 
 `rescoreSession` is the "re-score equality endpoint" `docs/hld/90-tbd-epics.md`'s E15 row names
 explicitly: it re-runs `score()` over the stored log and reports whether the result still equals
@@ -125,6 +126,38 @@ async def get_audio_segment(
         media_type=served.media_type,
         headers=headers,
     )
+
+
+# --- I5 E40: MP3 download (Q-E16-3 variant b, ТЗ ¶383) -------------------------------------------
+
+
+@audio_router.get(
+    "/{session_id}/audio/{audio_segment_id}/mp3",
+    operation_id="getAudioSegmentMp3",
+    summary="Download one audio segment as MP3.",
+    status_code=200,
+    response_class=Response,
+)
+async def get_audio_segment_mp3(
+    session_id: UUID,
+    audio_segment_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+) -> Response:
+    """Mono, 64 kbit/s CBR, encoded on demand and cached under `DATA_DIR/recordings` by content
+    hash (I5 E40, Q-E16-3 variant b: ТЗ ¶383 requires MP3 alongside the WAV of `getAudioSegment`).
+    `410 AUDIO_PURGED` once retention removed the recording; the access rule is `getAudioSegment`'s
+    (E16 R3/R7) — a trainee refused the WAV gets the same refusal here."""
+    served = await container.serve_audio_segment_mp3()(
+        SessionId(session_id), audio_segment_id, user
+    )
+    headers = {"Content-Length": str(len(served.content))}
+    return Response(
+        content=served.content, status_code=200, media_type=served.media_type, headers=headers
+    )
+
+
+# --- end I5 E40 -----------------------------------------------------------------------------------
 
 
 @router.post(

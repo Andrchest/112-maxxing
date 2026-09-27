@@ -968,6 +968,47 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  # ------------------------------------------- I5 E40: MP3 download (Q-E16-3 variant b) ----
+  /api/v1/sessions/{session_id}/audio/{audio_segment_id}/mp3:
+    get:
+      tags: [reports]
+      operationId: getAudioSegmentMp3
+      summary: Download one audio segment as MP3 (ТЗ ¶383).
+      description: |
+        (additive, I5 E40) ТЗ ¶369 allows «MP3 or WAV» for a call recording download and the WAV
+        one already exists (`getAudioSegment` above); ¶383 requires MP3 specifically. Owner answer
+        2026-09-26, Q-E16-3 variant (б): add the MP3 download, keep the WAV one. Mono, the
+        recording's own sample rate (16 kHz today), 64 kbit/s CBR, LAME-encoded, cached under
+        `DATA_DIR/recordings` by sha256 of the WAV representation `getAudioSegment` would answer
+        with — a repeat request for the same segment is a cache hit, never a re-encode. No `Range`
+        support (this is a download, not a seekable stream); the access rule and every error are
+        `getAudioSegment`'s (E16 R3/R7) — a caller refused the WAV gets the same refusal here.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: audio_segment_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The complete segment, as MP3.
+          headers:
+            Content-Length:
+              schema: { type: integer }
+          content:
+            audio/mpeg:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: '`AUDIO_PURGED` — the recording was deleted by the retention policy.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # --------------------------------------------- operator stage commands ----
   /api/v1/sessions/{session_id}/operator/call/answer:
     post:
