@@ -1,13 +1,20 @@
-"""A card's times against the norms the system holds (I4 E33, HLD 71 §71.10; ТЗ ¶329
+"""A card's times against the norms the system holds (I4 E33, HLD 71 §71.10; I5 E36; ТЗ ¶329
 REQ-2274/2275: «времени заполнения карточки, отличия времени от нормативного (заданного в
 системе)»).
 
-Pure: a fold over one session's log, no I/O, no clock, no score. Two intervals are measured:
+Pure: a fold over one session's log, no I/O, no clock, no score. Three norm intervals are
+measured:
 
 * `ACCEPT`, per leg: the leg's `HANDOFF_RECEIVED` → its first primary decision (`ACCEPTED` /
   `NOT_ACCEPTED`), against `accept_within_ms`;
 * `FILL`, the 112 card: the first `CALL_ANSWERED` → the first `HANDOFF_CREATED`, against
-  `fill_within_ms`.
+  `fill_within_ms`;
+* `DDS_FILL` (I5 E36, Q-E9b-2), per notified service: the same interval as `ACCEPT` — the leg's
+  `HANDOFF_RECEIVED` → its first primary decision — but against `fill_within_ms`: the owner's
+  answer to "what counts as «заполнение карточки» for a ДДС that never fills a card, only sets
+  statuses" is "its first status (Принята / Не принята)". Listed for every leg alongside `ACCEPT`,
+  never in its place — the two are different norms of the same measured moment. A service with no
+  status by session end is listed with `measured_ms` `None` (rendered «—»), exactly like `ACCEPT`.
 
 The first decision is `CardStatusFold`'s, the same one the card status and the list countdowns
 use (`app.domain.dds.card_status`): the leg's own first `ACCEPTED`/`NOT_ACCEPTED` under
@@ -21,12 +28,18 @@ the «Не оповещено» the trainee saw.
 own ones, which the caller passes in (`ScenarioVersion.card_timers`).
 
 `FILL` is listed only for a session whose effective chain has the 112 desk
-(`SESSION_CREATED.role_chain`): a ДДС-only card (`GENERATED_CARD`) never answers a 112 call, and
-the ДДС fill norm is not defined (Q-E9b-2). An interval that never closed is listed with
-`measured_ms` and `deviation_ms` `None` — "not measured" is not zero. `deviation_ms` is
-`measured − norm`: positive is late.
+(`SESSION_CREATED.role_chain`): a ДДС-only card (`GENERATED_CARD`) never answers a 112 call.
+`ACCEPT` and `DDS_FILL` are listed for every leg regardless of the chain. An interval that never
+closed is listed with `measured_ms` and `deviation_ms` `None` — "not measured" is not zero.
+`deviation_ms` is `measured − norm`: positive is late.
 
-"Which of the two is the «время реакции»" is not decided (Q-E12-1): neither is labelled so.
+**Reaction times (I5 E36, Q-E12-1)** are a separate, descriptive pair — no norm, no deviation —
+computed by `card_reaction_times`: per leg, (a) `HANDOFF_RECEIVED` → the leg's first
+`DDS_CARD_OPENED`, (b) `HANDOFF_RECEIVED` → the leg's first primary decision (numerically the same
+moment as its `ACCEPT`/`DDS_FILL` `measured_ms`, exposed again here under its own name because
+"reaction time" is the owner's own word for it, `norms.card_norms`'s "neither is labelled" note no
+longer applies to (b)). For 112-operator cards nothing new is invented: `FILL` is the only
+112-side interval and stays as it is.
 
 The two counters beside the norms — failed rules and critical errors — are counted over the
 **stored** results, the same rows the report shows (D11: nothing is re-scored here).
@@ -46,8 +59,10 @@ from app.domain.events.types import EventType
 __all__ = [
     "NORM_EVENT_TYPES",
     "CardNorm",
+    "LegReactionTime",
     "NormKind",
     "card_norms",
+    "card_reaction_times",
     "critical_error_count",
     "failed_rule_count",
     "recorded_timers",
@@ -59,6 +74,8 @@ class NormKind(str, Enum):
 
     ACCEPT = "ACCEPT"
     FILL = "FILL"
+    DDS_FILL = "DDS_FILL"
+    """(I5 E36, Q-E9b-2) The ДДС's own 3-minute norm, per notified service."""
 
 
 NORM_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -69,9 +86,26 @@ NORM_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.HANDOFF_RECEIVED,
         EventType.DDS_ACKNOWLEDGED,
         EventType.DDS_SERVICE_STATUS_SET,
+        EventType.DDS_CARD_OPENED,
     }
 )
-"""Every event type `card_norms` reads; a reader may pass the whole log, others are ignored."""
+"""Every event type `card_norms` / `card_reaction_times` reads; a reader may pass the whole log,
+others are ignored."""
+
+
+@dataclass(frozen=True, slots=True)
+class LegReactionTime:
+    """(I5 E36, Q-E12-1) One leg's two reaction times, delivery (`HANDOFF_RECEIVED`) as the
+    start — no norm, no deviation, purely descriptive. `leg_responder` / `leg_bound_user_id`
+    mirror `CardNorm`'s, for the same attribution."""
+
+    service_id: str | None
+    to_open_ms: int | None
+    """Delivery → the leg's first `DDS_CARD_OPENED`; `None` if the card was never opened."""
+    to_first_status_ms: int | None
+    """Delivery → the leg's first primary decision; `None` if none was taken."""
+    leg_responder: str | None = None
+    leg_bound_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +157,8 @@ def recorded_timers(events: Iterable[_Event], scenario_timers: CardTimers) -> Ca
 
 
 def card_norms(events: Iterable[_Event], scenario_timers: CardTimers) -> tuple[CardNorm, ...]:
-    """The card's `FILL` (when it has a 112 desk) and one `ACCEPT` per leg, in log order."""
+    """The card's `FILL` (when it has a 112 desk), then one `ACCEPT` and one `DDS_FILL` per leg
+    (I5 E36, Q-E9b-2), in log order."""
     log = [event for event in events if event.event_type in NORM_EVENT_TYPES]
     timers = recorded_timers(log, scenario_timers)
     norms: list[CardNorm] = []
@@ -147,7 +182,44 @@ def card_norms(events: Iterable[_Event], scenario_timers: CardTimers) -> tuple[C
                 bound_user_id=bound,
             )
         )
+        norms.append(
+            _norm(
+                NormKind.DDS_FILL,
+                leg.service_type or None,
+                measured,
+                timers.fill_within_ms,
+                responder=responder,
+                bound_user_id=bound,
+            )
+        )
     return tuple(norms)
+
+
+def card_reaction_times(events: Iterable[_Event]) -> tuple[LegReactionTime, ...]:
+    """(I5 E36, Q-E12-1) One `LegReactionTime` per leg, in log order — no norm."""
+    log = [event for event in events if event.event_type in NORM_EVENT_TYPES]
+    players = _leg_players(log)
+    opened = _leg_opened_offsets(log)
+    times: list[LegReactionTime] = []
+    for leg in fold_card_status(log).legs:
+        opened_at = opened.get(leg.assignment_id)
+        to_open = None if opened_at is None else opened_at - leg.received_at_offset_ms
+        to_status = (
+            None
+            if leg.decided_at_offset_ms is None
+            else leg.decided_at_offset_ms - leg.received_at_offset_ms
+        )
+        responder, bound = players.get(leg.assignment_id, (None, None))
+        times.append(
+            LegReactionTime(
+                service_id=leg.service_type or None,
+                to_open_ms=to_open,
+                to_first_status_ms=to_status,
+                leg_responder=responder,
+                leg_bound_user_id=bound,
+            )
+        )
+    return tuple(times)
 
 
 def failed_rule_count(results: Iterable[_Result]) -> int:
@@ -229,3 +301,18 @@ def _leg_players(log: list[_Event]) -> dict[str, tuple[str | None, str | None]]:
             None if bound is None else str(bound),
         )
     return players
+
+
+def _leg_opened_offsets(log: list[_Event]) -> dict[str, int]:
+    """`assignment_id` → the offset of its first `DDS_CARD_OPENED` (I5 E36, Q-E12-1)."""
+    opened: dict[str, int] = {}
+    for event in log:
+        if event.event_type is not EventType.DDS_CARD_OPENED:
+            continue
+        assignment_id = event.payload.get("assignment_id")
+        if assignment_id is None:
+            continue
+        key = str(assignment_id)
+        if key not in opened:
+            opened[key] = event.monotonic_offset_ms
+    return opened

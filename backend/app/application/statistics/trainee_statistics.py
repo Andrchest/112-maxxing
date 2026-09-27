@@ -1,5 +1,5 @@
-"""`getTraineeStatistics` and `getMyHistory` (I4 E33, HLD 71 §71.10; ТЗ ¶101 REQ-2092, ¶138
-REQ-2122, ¶225 REQ-2189, ¶232 REQ-2194, ¶252 REQ-2210, ¶265/266 REQ-2220/2221).
+"""`getTraineeStatistics` and `getMyHistory` (I4 E33, HLD 71 §71.10; I5 E36; ТЗ ¶101 REQ-2092,
+¶138 REQ-2122, ¶225 REQ-2189, ¶232 REQ-2194, ¶252 REQ-2210, ¶265/266 REQ-2220/2221).
 
 **Read, never re-scored (D11).** Every number is an aggregate of stored rows: a session's percent
 is its stored `total_points / total_max_points` (the same two numbers its report shows), the
@@ -13,7 +13,11 @@ failed rules are stored results that did not pass, and the norm deviations are
   has none), `None` without one;
 * `failed_rules_by_category` — stored failed results per `ScoringCategory`, summed;
 * `accept_deviation_ms_avg` — the mean `ACCEPT` deviation of the legs **this trainee played**;
-* `fill_deviation_ms_avg` — the mean `FILL` deviation of the 112 cards **this trainee filled**.
+* `fill_deviation_ms_avg` — the mean `FILL` deviation of the 112 cards **this trainee filled**;
+* `reaction_to_open_ms_avg` / `reaction_to_status_ms_avg` (I5 E36, Q-E12-1) — the mean of the two
+  reaction times (`norms.card_reaction_times`) over the same legs `accept_deviation_ms_avg`
+  attributes to this trainee — no `DDS_FILL` deviation average: it measures the same moment as
+  `ACCEPT` against a different limit, so a third average of it would repeat, not add, information.
 
 Who played what is read from the session, never guessed: the 112 card is filled by the
 participant covering `OPERATOR_112` (an explicit `assigned_role_type`, or none under
@@ -42,7 +46,13 @@ from datetime import datetime
 from statistics import fmean
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.reports.norms import CardNorm, NormKind, card_norms
+from app.application.reports.norms import (
+    CardNorm,
+    LegReactionTime,
+    NormKind,
+    card_norms,
+    card_reaction_times,
+)
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.statistics.ports import (
     ScoredSession,
@@ -82,12 +92,21 @@ class TraineeStatisticsRowView:
 
     trainee_user_id: UserId
     display_name_ru: str
+    username: str
+    """(I5 E36, Q-E12-3) The login «рабочее место» — the statistics CSV's own column, not part of
+    the JSON `TraineeStatisticsRow` (item 4's decision names only the CSVs and the lesson report
+    table)."""
     session_count: int
     lesson_count: int
     average_percent: float | None
     failed_rules_by_category: Mapping[str, int]
     accept_deviation_ms_avg: float | None
     fill_deviation_ms_avg: float | None
+    reaction_to_open_ms_avg: float | None
+    """(I5 E36, Q-E12-1) The mean delivery → `DDS_CARD_OPENED`, over the legs this trainee
+    played."""
+    reaction_to_status_ms_avg: float | None
+    """(I5 E36, Q-E12-1) The mean delivery → the leg's first primary decision."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +166,8 @@ def statistics_row(
     failed: dict[str, int] = {}
     accept: list[int] = []
     fill: list[int] = []
+    to_open: list[int] = []
+    to_status: list[int] = []
     for session in sessions:
         for category, count in session.failed_by_category.items():
             failed[category] = failed.get(category, 0) + count
@@ -154,23 +175,35 @@ def statistics_row(
             if norm.deviation_ms is None:
                 continue
             (accept if norm.kind is NormKind.ACCEPT else fill).append(norm.deviation_ms)
+        for reaction in _attributed_reaction_times(session, trainee.user_id):
+            if reaction.to_open_ms is not None:
+                to_open.append(reaction.to_open_ms)
+            if reaction.to_first_status_ms is not None:
+                to_status.append(reaction.to_first_status_ms)
     lessons = {session.lesson_id for session in sessions if session.lesson_id is not None}
     return TraineeStatisticsRowView(
         trainee_user_id=trainee.user_id,
         display_name_ru=trainee.display_name_ru,
+        username=trainee.username,
         session_count=len(sessions),
         lesson_count=len(lessons),
         average_percent=fmean(percents) if percents else None,
         failed_rules_by_category=dict(sorted(failed.items())),
         accept_deviation_ms_avg=fmean(accept) if accept else None,
         fill_deviation_ms_avg=fmean(fill) if fill else None,
+        reaction_to_open_ms_avg=fmean(to_open) if to_open else None,
+        reaction_to_status_ms_avg=fmean(to_status) if to_status else None,
     )
 
 
 def _attributed_norms(session: ScoredSession, user_id: UserId) -> Iterable[CardNorm]:
-    """The norms of `session` this participant is answerable for (module doc)."""
+    """The norms of `session` this participant is answerable for (module doc). Only `ACCEPT` and
+    `FILL` feed the deviation averages (I5 E36's `DDS_FILL` measures the same moment as `ACCEPT`
+    against a different limit, so it would double it, not add information)."""
     roles = _roles_of(session, user_id)
     for norm in card_norms(session.events, session.scenario_timers):
+        if norm.kind is NormKind.DDS_FILL:
+            continue
         if norm.kind is NormKind.FILL:
             if RoleType.OPERATOR_112 in roles:
                 yield norm
@@ -181,6 +214,23 @@ def _attributed_norms(session: ScoredSession, user_id: UserId) -> Iterable[CardN
                 yield norm
         elif RoleType.DDS in roles:
             yield norm
+
+
+def _attributed_reaction_times(
+    session: ScoredSession, user_id: UserId
+) -> Iterable[LegReactionTime]:
+    """(I5 E36, Q-E12-1) This participant's own legs' reaction times — the same attribution as
+    `_attributed_norms`'s `ACCEPT` branch (a leg's `bound_user_id`, or any DDS participant for an
+    unbound leg; a `SCRIPTED` leg is nobody's)."""
+    roles = _roles_of(session, user_id)
+    for reaction in card_reaction_times(session.events):
+        if reaction.leg_responder == LegResponder.SCRIPTED.value:
+            continue
+        if reaction.leg_bound_user_id is not None:
+            if reaction.leg_bound_user_id == str(user_id):
+                yield reaction
+        elif RoleType.DDS in roles:
+            yield reaction
 
 
 def _roles_of(session: ScoredSession, user_id: UserId) -> frozenset[RoleType]:

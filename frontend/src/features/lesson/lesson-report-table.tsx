@@ -3,10 +3,13 @@
 // norms (`LessonReport.cards[].norms`, measured against the session's recorded timers) — plus
 // «Скачать CSV» (`getLessonReportCsv`, the same numbers as a file). Every number is shown exactly
 // as the server sent it (D11); a norm that was not measured says so rather than showing zero.
-// Neither interval is called «время реакции» (Q-E12-1 is open).
 // I4 E35 (71 §71.12): a «Грамотность» column, the card's flagged-word/street count from
 // `LessonReport.cards[].text_quality` (the same object the session report's own section reads);
 // «—» for an unscored card or when the checker was unavailable for it.
+// I5 E36 (Q-E9b-2, Q-E12-1, Q-E12-3): a `DDS_FILL` norm line (the ДДС's own 3-minute norm, beside
+// `ACCEPT`, same measured moment, the 3-minute limit); a «Время реакции» column from
+// `LessonReport.cards[].reaction_times` (delivery → open / delivery → first status, no norm); a
+// «Рабочее место» column, the card's participants' logins (`LessonReport.cards[].workstation`).
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
@@ -17,6 +20,7 @@ import { textQualityFlaggedCount } from '@/entities/text-quality';
 import {
   getLessonReportCsv,
   problemMessageRu,
+  type LegReactionTimeView,
   type LessonReport,
   type NormView,
   type ProblemCode,
@@ -26,6 +30,11 @@ import { saveBlob } from '@/shared/lib/download';
 
 function normLabel(norm: NormView): string {
   if (norm.kind === 'FILL') return t('lessonReportNormFill');
+  if (norm.kind === 'DDS_FILL') {
+    return norm.service_id
+      ? `${t('lessonReportNormDdsFill')}: ${serviceLabelRu(norm.service_id)}`
+      : t('lessonReportNormDdsFill');
+  }
   return norm.service_id ? `${t('lessonReportNormAccept')}: ${serviceLabelRu(norm.service_id)}` : t('lessonReportNormAccept');
 }
 
@@ -52,6 +61,25 @@ function NormLine({ norm }: { norm: NormView }) {
           )}
         </span>
       )}
+    </li>
+  );
+}
+
+function ReactionTimeLine({ reaction }: { reaction: LegReactionTimeView }) {
+  const service = reaction.service_id ? ` (${serviceLabelRu(reaction.service_id)})` : '';
+  return (
+    <li data-slot="report-reaction-time">
+      <span className="text-muted-foreground">{t('lessonReportReactionToOpen')}{service}:</span>{' '}
+      <span className="tabular-nums">
+        {reaction.to_open_ms === null ? t('lessonReportNormNotMeasured') : formatCallDurationMs(reaction.to_open_ms)}
+      </span>
+      {', '}
+      <span className="text-muted-foreground">{t('lessonReportReactionToStatus')}:</span>{' '}
+      <span className="tabular-nums">
+        {reaction.to_first_status_ms === null
+          ? t('lessonReportNormNotMeasured')
+          : formatCallDurationMs(reaction.to_first_status_ms)}
+      </span>
     </li>
   );
 }
@@ -95,21 +123,27 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
       <thead>
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
           <th className="p-2 font-medium">{t('lessonReportTableColumnPosition')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnWorkstation')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnScore')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnWeight')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnFailedRules')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnCriticalErrors')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnNorms')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnReactionTimes')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnTextQuality')}</th>
         </tr>
       </thead>
       <tbody>
         {scored.map((card) => {
           const norms = card.norms ?? [];
+          const reactionTimes = card.reaction_times ?? [];
           const textQualityCount = textQualityFlaggedCount(card.text_quality);
           return (
             <tr key={card.session_id} className="border-b border-border/60 align-top" data-slot="lesson-report-row">
               <td className="p-2">{card.position}</td>
+              <td className="p-2" data-slot="report-card-workstation">
+                {card.workstation || t('lessonReportNormNone')}
+              </td>
               <td className="p-2 tabular-nums">
                 {card.score?.total_points} / {card.score?.total_max_points}
               </td>
@@ -129,6 +163,17 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
                   <ul className="flex flex-col gap-0.5 text-xs">
                     {norms.map((norm, index) => (
                       <NormLine key={`${norm.kind}-${norm.service_id ?? ''}-${index}`} norm={norm} />
+                    ))}
+                  </ul>
+                )}
+              </td>
+              <td className="p-2" data-slot="report-card-reaction-times">
+                {reactionTimes.length === 0 ? (
+                  t('lessonReportNormNone')
+                ) : (
+                  <ul className="flex flex-col gap-0.5 text-xs">
+                    {reactionTimes.map((reaction, index) => (
+                      <ReactionTimeLine key={`${reaction.service_id ?? ''}-${index}`} reaction={reaction} />
                     ))}
                   </ul>
                 )}

@@ -2388,6 +2388,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/statistics/rating": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I5 E36) Trainees ranked by their average score percent (INSTRUCTOR / ADMIN).
+         * @description Same filters as `getTraineeStatistics` (one trainee, one group, a `completed_at` window),
+         *     same exclusion rule (unscored/aborted cards do not count, D11 — nothing is re-scored).
+         *     Ordered by `average_percent` descending, ties by `display_name_ru`; a trainee with no
+         *     qualifying session has nothing to rank and is left out. INSTRUCTOR / ADMIN only — `403
+         *     FORBIDDEN_FOR_ROLE` for a TRAINEE.
+         */
+        get: operations["getTraineeRating"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/statistics/rating.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** (additive, I5 E36) getTraineeRating as CSV (same access, same numbers). */
+        get: operations["getTraineeRatingCsv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4327,6 +4368,10 @@ export interface components {
                 critical_error_count?: number | null;
                 /** @description (additive, I4 E35, §71.12) «Грамотность и адреса»; `null` for an unscored card, exactly like `score`. */
                 text_quality?: components["schemas"]["TextQualityReportView"] | null;
+                /** @description (additive, I5 E36, Q-E12-1) Per leg; `[]` for an unscored card, like `norms`. */
+                reaction_times?: components["schemas"]["LegReactionTimeView"][];
+                /** @description (additive, I5 E36, Q-E12-3) The card's participants' logins, joined with ", "; "" for an unscored card. */
+                workstation?: string;
             }[];
             /** @description Scored cards only (unchanged). */
             weighted_total: number;
@@ -4473,18 +4518,29 @@ export interface components {
             /** Format: date-time */
             archived_at: string | null;
         };
-        /** @description (I4 E33) One measured interval against the norm the system holds (the session's recorded timers). */
+        /** @description (I4 E33; I5 E36) One measured interval against the norm the system holds (the session's recorded timers). */
         NormView: {
-            /** @enum {string} */
-            kind: "ACCEPT" | "FILL";
-            /** @description The leg's service for ACCEPT; `null` for the 112 FILL interval. */
+            /**
+             * @description DDS_FILL (additive, I5 E36, Q-E9b-2): the ДДС's own 3-minute norm, per notified service — the same measured moment as ACCEPT, against the 3-minute limit.
+             * @enum {string}
+             */
+            kind: "ACCEPT" | "FILL" | "DDS_FILL";
+            /** @description The leg's service for ACCEPT/DDS_FILL; `null` for the 112 FILL interval. */
             service_id: string | null;
             measured_ms: number | null;
             norm_ms: number;
             /** @description measured − norm (positive = late); `null` when not measured. */
             deviation_ms: number | null;
         };
-        /** @description (I4 E33) One trainee's aggregates over their completed, scored sessions. */
+        /** @description (additive, I5 E36, Q-E12-1) A leg's two reaction times, delivery (`HANDOFF_RECEIVED`) as the start — no norm. */
+        LegReactionTimeView: {
+            service_id: string | null;
+            /** @description Delivery → the leg's first DDS_CARD_OPENED; `null` if the card was never opened. */
+            to_open_ms: number | null;
+            /** @description Delivery → the leg's first primary decision; `null` if none was taken. */
+            to_first_status_ms: number | null;
+        };
+        /** @description (I4 E33; I5 E36) One trainee's aggregates over their completed, scored sessions. */
         TraineeStatisticsRow: {
             /** Format: uuid */
             trainee_user_id: string;
@@ -4498,6 +4554,10 @@ export interface components {
             };
             accept_deviation_ms_avg: number | null;
             fill_deviation_ms_avg: number | null;
+            /** @description (additive, I5 E36, Q-E12-1) Mean delivery → DDS_CARD_OPENED, over the legs this trainee played. */
+            reaction_to_open_ms_avg?: number | null;
+            /** @description (additive, I5 E36, Q-E12-1) Mean delivery → the leg's first primary decision. */
+            reaction_to_status_ms_avg?: number | null;
         };
         /** @description (I4 E33) `getTraineeStatistics`. */
         TraineeStatistics: {
@@ -4519,6 +4579,18 @@ export interface components {
         MyHistory: {
             statistics: components["schemas"]["TraineeStatisticsRow"];
             sessions: components["schemas"]["MyHistorySession"][];
+        };
+        /** @description (additive, I5 E36, Q-E12-2) One ranked trainee. */
+        TraineeRatingRow: {
+            rank: number;
+            /** Format: uuid */
+            trainee_user_id: string;
+            display_name_ru: string;
+            average_percent: number;
+        };
+        /** @description (additive, I5 E36, Q-E12-2) `getTraineeRating`. */
+        TraineeRating: {
+            rows: components["schemas"]["TraineeRatingRow"][];
         };
         /** @description (I4 E35) One word the ru_RU dictionary does not recognise, as an offset into its field's `text`. */
         MisspelledSpanView: {
@@ -7831,6 +7903,70 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getTraineeRating: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ranking, best first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraineeRating"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getTraineeRatingCsv: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

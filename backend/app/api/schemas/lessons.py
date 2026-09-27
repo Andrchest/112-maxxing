@@ -29,7 +29,12 @@ from app.api.schemas.sessions import (
     SessionVariantsSchema,
     VariantsRequestSchema,
 )
-from app.api.schemas.statistics import NormViewSchema, norm_view_schema
+from app.api.schemas.statistics import (
+    LegReactionTimeViewSchema,
+    NormViewSchema,
+    leg_reaction_time_schema,
+    norm_view_schema,
+)
 from app.application.lessons.lesson_report import LessonReportView
 from app.application.lessons.queries import IncidentListItemView, LessonDetailView
 from app.application.lessons.weight_proposals import WeightProposalsView
@@ -251,6 +256,10 @@ class LessonReportCardSchema(ApiModel):
     # (I4 E35, HLD 71 §71.12) «Грамотность и адреса» over the same `getSessionReport` view;
     # `null` for an unscored (ABORTED) card, exactly like `score`.
     text_quality: TextQualityReportViewSchema | None
+    # (I5 E36, Q-E12-1) Per-leg reaction times; `[]` for an unscored card, like `norms`.
+    reaction_times: list[LegReactionTimeViewSchema]
+    # (I5 E36, Q-E12-3) The card's participants' logins, joined; «» for an unscored card.
+    workstation: str
 
 
 class LessonReportSchema(ApiModel):
@@ -411,6 +420,12 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
                 text_quality=(
                     None if report is None else text_quality_report_schema(report.text_quality)
                 ),
+                reaction_times=(
+                    []
+                    if report is None
+                    else [leg_reaction_time_schema(r) for r in report.reaction_times]
+                ),
+                workstation="" if report is None else ", ".join(report.workstations),
             )
         )
     return LessonReportSchema(

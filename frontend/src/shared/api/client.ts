@@ -984,6 +984,10 @@ export type TraineeStatistics = components['schemas']['TraineeStatistics'];
 export type TraineeStatisticsRow = components['schemas']['TraineeStatisticsRow'];
 export type MyHistory = components['schemas']['MyHistory'];
 export type MyHistorySession = components['schemas']['MyHistorySession'];
+// --- I5 E36: norms (DDS_FILL), reaction time, trainee rating, workstation --------------------
+export type LegReactionTimeView = components['schemas']['LegReactionTimeView'];
+export type TraineeRating = components['schemas']['TraineeRating'];
+export type TraineeRatingRow = components['schemas']['TraineeRatingRow'];
 
 /** `getTraineeStatistics` / `getTraineeStatisticsCsv`'s filter: one trainee, one group's
  * members, and a `completed_at` window (`from` inclusive, `to` exclusive, ISO date-times). */
@@ -1039,6 +1043,17 @@ export function getLessonReportCsv(lessonId: string): Promise<Blob> {
 /** `getTraineeStatisticsCsv` — {@link getTraineeStatistics} as a file. */
 export function getTraineeStatisticsCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
   return fetchCsv(`/statistics.csv${statisticsQueryString(params)}`);
+}
+
+/** `getTraineeRating` (I5 E36, Q-E12-2) — trainees ranked by average score percent, best first
+ * (INSTRUCTOR / ADMIN only; same filters as {@link getTraineeStatistics}). */
+export function getTraineeRating(params: TraineeStatisticsQuery = {}): Promise<TraineeRating> {
+  return apiFetch(`/statistics/rating${statisticsQueryString(params)}`);
+}
+
+/** `getTraineeRatingCsv` — {@link getTraineeRating} as a file. */
+export function getTraineeRatingCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
+  return fetchCsv(`/statistics/rating.csv${statisticsQueryString(params)}`);
 }
 
 // --- I4 E30: Admin UI (71 §71.7) — typed wrappers over E28's accounts and E29's monitoring

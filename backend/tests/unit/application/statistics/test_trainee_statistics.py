@@ -139,9 +139,9 @@ class FakeReader:
         self.sessions = tuple(sessions)
         self.groups = groups or set()
         self.accounts_by_id = {
-            OPERATOR: TraineeAccount(OPERATOR, "Оператор"),
-            DISPATCHER: TraineeAccount(DISPATCHER, "Диспетчер"),
-            SOLO: TraineeAccount(SOLO, "Один"),
+            OPERATOR: TraineeAccount(OPERATOR, "Оператор", "operator1"),
+            DISPATCHER: TraineeAccount(DISPATCHER, "Диспетчер", "dispatcher1"),
+            SOLO: TraineeAccount(SOLO, "Один", "solo1"),
         }
 
     async def trainees(self, query: StatisticsFilter) -> tuple[TraineeAccount, ...]:
@@ -218,6 +218,33 @@ def test_a_trainee_without_sessions_has_no_averages() -> None:
     assert row.failed_rules_by_category == {}
 
 
+def test_reaction_times_are_averaged_over_the_same_legs_as_accept_deviation() -> None:
+    """(I5 E36, Q-E12-1) `reaction_to_open_ms_avg` / `reaction_to_status_ms_avg`, attributed like
+    `accept_deviation_ms_avg`; no `DDS_FILL` deviation average (it would repeat `ACCEPT`'s)."""
+    log = (
+        *_memo_log(["OPERATOR_112", "DDS"]),
+        _event(EventType.DDS_CARD_OPENED, 170_000, assignment_id="a"),
+        _event(EventType.DDS_CARD_OPENED, 165_000, assignment_id="b"),
+    )
+    session = _session([(OPERATOR, RoleType.OPERATOR_112), (DISPATCHER, RoleType.DDS)], events=log)
+    dispatcher = statistics_row(TraineeAccount(DISPATCHER, "Диспетчер"), [session])
+    # leg a: bound to DISPATCHER, received 160_000, opened 170_000 (+10s), status 200_000 (+40s)
+    # leg b: unbound, DDS-covered, received 160_000, opened 165_000 (+5s), status 170_000 (+10s)
+    # leg c: SCRIPTED, excluded.
+    assert dispatcher.reaction_to_open_ms_avg == pytest.approx((10_000 + 5_000) / 2)
+    assert dispatcher.reaction_to_status_ms_avg == pytest.approx((40_000 + 10_000) / 2)
+    operator = statistics_row(TraineeAccount(OPERATOR, "Оператор"), [session])
+    assert operator.reaction_to_open_ms_avg is None, "the 112 desk plays no leg"
+
+
+def test_the_workstation_login_rides_the_account_never_the_json_row() -> None:
+    """(I5 E36, Q-E12-3) `TraineeStatisticsRowView.username` mirrors the account; it is CSV-only
+    and does not appear on `TraineeStatisticsRowSchema` (item 4's decision names only the CSVs and
+    the lesson report table)."""
+    row = statistics_row(TraineeAccount(SOLO, "Один", "solo1"), [])
+    assert row.username == "solo1"
+
+
 # -- who sees what ----------------------------------------------------------------------------
 
 
@@ -290,6 +317,7 @@ async def test_the_statistics_csv_carries_the_rows_numbers() -> None:
     for line, row in zip(lines, view.rows, strict=True):
         cells = dict(zip(header, line, strict=True))
         assert cells["Идентификатор"] == str(row.trainee_user_id)
+        assert cells["Рабочее место"] == row.username
         assert int(cells["Сессий"]) == row.session_count
         assert _number(cells["Средний процент"]) == row.average_percent
         assert _number(cells["Среднее отклонение принятия решения, мс"]) == (
@@ -297,6 +325,12 @@ async def test_the_statistics_csv_carries_the_rows_numbers() -> None:
         )
         assert _number(cells["Среднее отклонение заполнения карточки, мс"]) == (
             row.fill_deviation_ms_avg
+        )
+        assert _number(cells["Среднее время реакции: открытие карточки, мс"]) == (
+            row.reaction_to_open_ms_avg
+        )
+        assert _number(cells["Среднее время реакции: первый статус, мс"]) == (
+            row.reaction_to_status_ms_avg
         )
         assert int(cells["Нарушено правил: Порядок действий"]) == (
             row.failed_rules_by_category.get("WORKFLOW", 0)

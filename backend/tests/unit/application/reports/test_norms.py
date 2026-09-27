@@ -1,9 +1,12 @@
-"""A card's times against the system's norms (I4 E33, HLD 71 §71.10; ТЗ ¶329 REQ-2274/2275).
+"""A card's times against the system's norms (I4 E33, HLD 71 §71.10; I5 E36; ТЗ ¶329
+REQ-2274/2275).
 
 The rule the suite holds above all: **the norm is the session's recorded timer, never a literal**
 (I4 E31, D34) — `SESSION_CREATED.timers` when the log records them, the scenario's own `timers`
 otherwise. Then: which interval each kind measures, that an interval that never closed is `None`
-(not zero), and that a ДДС-only card has no 112 fill norm (Q-E9b-2).
+(not zero), that a ДДС-only card has no 112 fill norm (Q-E9b-2), that every leg now also carries a
+`DDS_FILL` norm against the 3-minute timer (I5 E36, Q-E9b-2), and the two reaction times per leg
+(I5 E36, Q-E12-1).
 """
 
 from __future__ import annotations
@@ -13,8 +16,10 @@ from typing import Any
 
 from app.application.reports.norms import (
     CardNorm,
+    LegReactionTime,
     NormKind,
     card_norms,
+    card_reaction_times,
     critical_error_count,
     failed_rule_count,
     recorded_timers,
@@ -58,19 +63,31 @@ def _status(offset_ms: int, assignment: str, status: str) -> StatisticsEvent:
     )
 
 
+def _opened(offset_ms: int, assignment: str) -> StatisticsEvent:
+    return _event(EventType.DDS_CARD_OPENED, offset_ms, assignment_id=assignment)
+
+
 def test_the_norm_is_the_recorded_timer_not_the_scenario_s_or_a_literal() -> None:
     log = [
         _created(["DDS"]),
         _received(1_000, "a", "FIRE_RESCUE"),
         _event(EventType.DDS_ACKNOWLEDGED, 13_000),
     ]
-    [accept] = card_norms(log, SCENARIO)
+    accept, dds_fill = card_norms(log, SCENARIO)
     assert accept == CardNorm(
         kind=NormKind.ACCEPT,
         service_id="FIRE_RESCUE",
         measured_ms=12_000,
         norm_ms=45_000,
         deviation_ms=-33_000,
+    )
+    # (I5 E36, Q-E9b-2) same measured moment, against the 3-minute timer instead.
+    assert dds_fill == CardNorm(
+        kind=NormKind.DDS_FILL,
+        service_id="FIRE_RESCUE",
+        measured_ms=12_000,
+        norm_ms=120_000,
+        deviation_ms=-108_000,
     )
 
 
@@ -80,9 +97,10 @@ def test_a_log_without_recorded_timers_takes_the_scenario_s_own() -> None:
         _received(0, "a", "POLICE"),
         _event(EventType.DDS_ACKNOWLEDGED, 25_000),
     ]
-    [accept] = card_norms(log, SCENARIO)
+    accept, dds_fill = card_norms(log, SCENARIO)
     assert accept.norm_ms == SCENARIO.accept_within_ms != DEFAULT_CARD_TIMERS.accept_within_ms
     assert accept.deviation_ms == 5_000
+    assert dds_fill.norm_ms == SCENARIO.fill_within_ms
     assert recorded_timers(log, SCENARIO) is SCENARIO
 
 
@@ -98,12 +116,22 @@ def test_a_memo_leg_is_decided_by_its_own_first_accepted_or_not_accepted() -> No
         _status(50_000, "b", "NOT_ACCEPTED"),
         _event(EventType.DDS_ACKNOWLEDGED, 5_000),  # decides nothing under MEMO_STATUSES
     ]
-    first, second, third = card_norms(log, SCENARIO)
+    first, first_fill, second, second_fill, third, third_fill = card_norms(log, SCENARIO)
     assert (first.measured_ms, first.deviation_ms) == (7_000, -38_000)
     assert (first.leg_responder, first.leg_bound_user_id) == ("TRAINEE", "u-1")
+    assert first_fill.kind is NormKind.DDS_FILL and first_fill.measured_ms == 7_000
+    assert (first_fill.leg_responder, first_fill.leg_bound_user_id) == ("TRAINEE", "u-1")
     assert (second.measured_ms, second.deviation_ms) == (48_000, 3_000)
     assert second.leg_responder == "SCRIPTED"
+    assert second_fill.kind is NormKind.DDS_FILL and second_fill.measured_ms == 48_000
     assert (third.service_id, third.measured_ms, third.deviation_ms) == ("POLICE", None, None)
+    # (I5 E36, Q-E9b-2) no status by session end: not met, measured «—».
+    assert third_fill.kind is NormKind.DDS_FILL
+    assert (third_fill.service_id, third_fill.measured_ms, third_fill.deviation_ms) == (
+        "POLICE",
+        None,
+        None,
+    )
 
 
 def test_the_112_fill_runs_from_the_answer_to_the_handoff() -> None:
@@ -113,7 +141,7 @@ def test_the_112_fill_runs_from_the_answer_to_the_handoff() -> None:
         _event(EventType.HANDOFF_CREATED, 95_000),
         _received(96_000, "a", "FIRE_RESCUE"),
     ]
-    fill, accept = card_norms(log, SCENARIO)
+    fill, accept, dds_fill = card_norms(log, SCENARIO)
     assert fill == CardNorm(
         kind=NormKind.FILL,
         service_id=None,
@@ -122,6 +150,7 @@ def test_the_112_fill_runs_from_the_answer_to_the_handoff() -> None:
         deviation_ms=-30_000,
     )
     assert accept.kind is NormKind.ACCEPT and accept.measured_ms is None
+    assert dds_fill.kind is NormKind.DDS_FILL and dds_fill.measured_ms is None
 
 
 def test_a_fill_that_never_closed_is_not_measured_and_a_dds_only_card_has_none() -> None:
@@ -132,6 +161,29 @@ def test_a_fill_that_never_closed_is_not_measured_and_a_dds_only_card_has_none()
         CardNorm(NormKind.FILL, None, measured_ms=None, norm_ms=120_000, deviation_ms=None),
     )
     assert card_norms([_created(["DDS"])], SCENARIO) == ()
+
+
+def test_reaction_times_are_delivery_to_open_and_delivery_to_first_status() -> None:
+    log = [
+        _created(["DDS"], memo=True),
+        _received(1_000, "a", "FIRE_RESCUE", responder="TRAINEE", bound_user_id="u-1"),
+        _opened(1_500, "a"),
+        _status(1_500, "a", "RECEIVED"),
+        _status(9_000, "a", "ACCEPTED"),
+        _received(2_000, "b", "POLICE"),
+    ]
+    opened, never_opened = card_reaction_times(log)
+    assert opened == LegReactionTime(
+        service_id="FIRE_RESCUE",
+        to_open_ms=500,
+        to_first_status_ms=8_000,
+        leg_responder="TRAINEE",
+        leg_bound_user_id="u-1",
+    )
+    # (I5 E36, Q-E12-1) never opened and never given a status: both «—».
+    assert never_opened == LegReactionTime(
+        service_id="POLICE", to_open_ms=None, to_first_status_ms=None
+    )
 
 
 @dataclass(frozen=True)

@@ -170,6 +170,7 @@ from app.application.simulation.responder_scripts import ScenarioResponderScript
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
 from app.application.statistics.ports import StatisticsReader
+from app.application.statistics.trainee_rating import GetTraineeRating
 from app.application.statistics.trainee_statistics import GetMyHistory, GetTraineeStatistics
 from app.application.telephony.dial_from_sip import DialFromSip
 from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
@@ -1235,6 +1236,14 @@ class Container:
         return GetMyHistory(self.statistics_reader)
 
     # --- end I4 E33 -----------------------------------------------------------------------------
+
+    # --- I5 E36: norms, reaction time, trainee rating, workstation (Q-E9b-2, Q-E12-1..3) --------
+
+    def get_trainee_rating(self) -> GetTraineeRating:
+        """`getTraineeRating` / `getTraineeRatingCsv` (Q-E12-2) — INSTRUCTOR / ADMIN only."""
+        return GetTraineeRating(self.statistics_reader)
+
+    # --- end I5 E36 -------------------------------------------------------------------------
 
     # -- lifecycle -----------------------------------------------------------------------------
 

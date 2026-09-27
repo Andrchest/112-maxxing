@@ -82,6 +82,9 @@ export const queryKeys = {
     list: (groupId?: string, from?: string, to?: string) =>
       ['statistics', 'list', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
     myHistory: () => ['statistics', 'my-history'] as const,
+    // I5 E36, Q-E12-2: the trainee rating, same filters as `list`.
+    rating: (groupId?: string, from?: string, to?: string) =>
+      ['statistics', 'rating', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
   },
   // -- I4 E30: Admin UI (71 §71.7) — E28's accounts and E29's monitoring reads ----------------
   admin: {

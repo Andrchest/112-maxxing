@@ -59,7 +59,9 @@ class SqlAlchemyStatisticsReader:
         self._session_factory = session_factory
 
     async def trainees(self, query: StatisticsFilter) -> tuple[TraineeAccount, ...]:
-        statement = sa.select(UserRow.id, UserRow.display_name_ru).where(UserRow.role == _TRAINEE)
+        statement = sa.select(UserRow.id, UserRow.display_name_ru, UserRow.username).where(
+            UserRow.role == _TRAINEE
+        )
         if query.trainee_id is not None:
             statement = statement.where(UserRow.id == query.trainee_id)
         if query.group_id is not None:
@@ -72,19 +74,23 @@ class SqlAlchemyStatisticsReader:
         statement = statement.order_by(UserRow.display_name_ru, UserRow.id)
         async with self._session_factory() as session:
             rows = (await session.execute(statement)).all()
-        return tuple(TraineeAccount(UserId(row.id), row.display_name_ru) for row in rows)
+        return tuple(
+            TraineeAccount(UserId(row.id), row.display_name_ru, row.username) for row in rows
+        )
 
     async def accounts(self, user_ids: Sequence[UserId]) -> tuple[TraineeAccount, ...]:
         if not user_ids:
             return ()
         statement = (
-            sa.select(UserRow.id, UserRow.display_name_ru)
+            sa.select(UserRow.id, UserRow.display_name_ru, UserRow.username)
             .where(UserRow.id.in_(list(user_ids)))
             .order_by(UserRow.display_name_ru, UserRow.id)
         )
         async with self._session_factory() as session:
             rows = (await session.execute(statement)).all()
-        return tuple(TraineeAccount(UserId(row.id), row.display_name_ru) for row in rows)
+        return tuple(
+            TraineeAccount(UserId(row.id), row.display_name_ru, row.username) for row in rows
+        )
 
     async def group_exists(self, group_id: TraineeGroupId) -> bool:
         statement = sa.select(sa.exists().where(TraineeGroupRow.id == group_id))

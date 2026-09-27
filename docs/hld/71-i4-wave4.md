@@ -946,3 +946,60 @@ the §71.11 reference base).
   spell check.
 - **Q-E13-1**: whether materials are assigned per lesson/group — still every trainee sees every
   material (unchanged; this epic only adds rows to the same reference base).
+
+## 71.18.4 I5 E36 — Norms, reaction time, trainee rating, workstation
+
+**Purpose.** I5's owner answers of 2026-09-26 (`docs/owner-decisions.md`) close four E33 gaps this
+epic left "not built": the ДДС's own 3-minute norm, the two reaction times, the trainee rating,
+and «Рабочее место».
+
+**Sources:** Q-E9b-2, Q-E12-1, Q-E12-2, Q-E12-3 (`docs/owner-decisions.md`).
+
+**Design.**
+- `application/reports/norms.py`:
+  - a new `NormKind.DDS_FILL` (Q-E9b-2): per leg, the same measured interval as `ACCEPT`
+    (`HANDOFF_RECEIVED` → the leg's first primary decision), against `timers.fill_within_ms`
+    instead of `accept_within_ms` — listed beside `ACCEPT`, not instead of it (the module still
+    also has the 112 desk's own `FILL`, unchanged). A service with no status by session end is
+    `measured_ms: null` («—»), exactly like `ACCEPT`.
+  - `card_reaction_times` (Q-E12-1): a new pure fold, per leg — (a) `HANDOFF_RECEIVED` → the leg's
+    first `DDS_CARD_OPENED`, (b) `HANDOFF_RECEIVED` → its first primary decision (numerically
+    `ACCEPT`/`DDS_FILL`'s own `measured_ms`, exposed again under its own name — no norm, no
+    deviation, purely descriptive). `DDS_CARD_OPENED` joins `NORM_EVENT_TYPES`. Nothing new for the
+    112 operator's own card (Q-E12-1's instruction: "keep what exists").
+- `application/reports/assemble_report.py`: `SessionReportView` carries `reaction_times` (gated
+  with the ДДС sections, like `ACCEPT`/`DDS_FILL`) and `workstations` (the session's participants'
+  logins, `SessionDetailView.participants[].username`, Q-E12-3).
+- `application/statistics/trainee_statistics.py`: two new averages, `reaction_to_open_ms_avg` /
+  `reaction_to_status_ms_avg`, attributed exactly like `accept_deviation_ms_avg` (a leg's
+  `bound_user_id`, or any DDS participant for an unbound leg, never a `SCRIPTED` one). No new
+  `DDS_FILL` deviation average — it would repeat `ACCEPT`'s, not add information.
+  `TraineeAccount`/`TraineeStatisticsRowView` gain `username` (Q-E12-3), CSV-only — not part of the
+  JSON `TraineeStatisticsRow`.
+- `application/statistics/trainee_rating.py` (new, Q-E12-2): `GetTraineeRating` — the same
+  `statistics_row` per trainee, over the same `StatisticsFilter`, ranked by `average_percent`
+  descending (ties by `display_name_ru`), ranks `1..N`; a trainee with no qualifying session has
+  none. INSTRUCTOR/ADMIN only. `trainee_rating_csv` renders it as a file.
+- Frontend: the lesson report table gets a «Рабочее место» column and the reaction times beside the
+  norms; `/instructor/statistics` gets a «Рейтинг» table (`getTraineeRating` +
+  `getTraineeRatingCsv`).
+
+**Data / DB.** None (no migration).
+
+**API** (additive, `docs/hld/openapi.yaml`):
+- `NormView.kind` gains `DDS_FILL`.
+- `LegReactionTimeView` (new) on `LessonReport.cards.items.reaction_times`.
+- `LessonReport.cards.items.workstation` (new, `string`).
+- `TraineeStatisticsRow` gains `reaction_to_open_ms_avg` / `reaction_to_status_ms_avg`.
+- `getTraineeRating` `GET /api/v1/statistics/rating`, `getTraineeRatingCsv`
+  `GET /api/v1/statistics/rating.csv` (new, INSTRUCTOR/ADMIN).
+
+**Acceptance.**
+- A service with no status by session end: `DDS_FILL` norm not met, `measured_ms: null`.
+- A tie in the rating: both trainees ranked, sequential ranks, ordered by name.
+- The lesson report CSV and the statistics CSV parse back to the same numbers, workstation column
+  included.
+- The existing "no score is recomputed by a report path" test still passes.
+
+**Not built (owner questions).** None outstanding for this epic — Q-E9b-2, Q-E12-1, Q-E12-2 and
+Q-E12-3 are now implemented (`docs/owner-decisions.md` marked "Сделано: I5 E36.").

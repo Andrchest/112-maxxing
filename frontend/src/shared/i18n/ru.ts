@@ -1178,4 +1178,19 @@ export const ru = {
   // -- I5 E40: MP3 download (Q-E16-3 variant b, ТЗ ¶383) --------------------------------------
   reportDownloadMp3: 'Скачать MP3',
   reportDownloadingMp3: 'Загрузка…',
+  // --- I5 E36: norms (DDS_FILL), reaction time, trainee rating, workstation ---------------------
+  lessonReportTableColumnWorkstation: 'Рабочее место',
+  lessonReportTableColumnReactionTimes: 'Время реакции',
+  lessonReportNormDdsFill: 'Заполнение карточки ДДС (3 мин)',
+  lessonReportReactionToOpen: 'До открытия карточки',
+  lessonReportReactionToStatus: 'До первого статуса',
+  statisticsColumnWorkstation: 'Рабочее место',
+  statisticsColumnReactionToOpen: 'Время реакции: открытие, среднее',
+  statisticsColumnReactionToStatus: 'Время реакции: первый статус, среднее',
+  statisticsRatingTitle: 'Рейтинг',
+  statisticsRatingColumnRank: 'Место',
+  statisticsRatingColumnTrainee: 'Обучаемый',
+  statisticsRatingColumnAverage: 'Средний процент',
+  statisticsRatingEmpty: 'Рейтинг пуст.',
+  statisticsRatingLoading: 'Загрузка рейтинга…',
 } as const;

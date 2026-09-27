@@ -32,9 +32,16 @@ sees exactly the events they would see in a finished card's timeline.
 **The card's norms and counters (I4 E33, HLD 71 §71.10).** `norms`, `failed_rule_count` and
 `critical_error_count` ride on the view for `getLessonReport` (and its CSV); `getSessionReport`'s
 own schema does not carry them. The norms are `norms.card_norms` over the events already read,
-against the session's recorded timers, gated like the sections they describe: an `ACCEPT` leg
-with the ДДС sections, the 112 `FILL` with the operator's. The counters are over the **whole**
-stored report, never the viewer's filtered rule list — numbers are one per session (R3, D11).
+against the session's recorded timers, gated like the sections they describe: an `ACCEPT` or
+`DDS_FILL` leg with the ДДС sections, the 112 `FILL` with the operator's. The counters are over
+the **whole** stored report, never the viewer's filtered rule list — numbers are one per session
+(R3, D11).
+
+**Reaction times and the workstation (I5 E36, Q-E12-1, Q-E12-3).** `reaction_times` is
+`norms.card_reaction_times` over the same events, gated with the ДДС sections exactly like
+`ACCEPT`/`DDS_FILL` — nothing new for the 112 operator's own card. `workstations` is the session's
+participants' logins (`SessionDetailView.participants[].username`, Q-E12-3's «логин считается
+рабочим местом»), sorted for a stable order; a lesson report row joins them into one column.
 
 **«Грамотность и адреса» (I4 E35, HLD 71 §71.12, D35).** `text_quality` is built from `card` and
 `events` alone, strictly after `score_report`/`checksum` are already computed from the stored
@@ -67,8 +74,10 @@ from app.application.reports.dds_decisions import (
 )
 from app.application.reports.norms import (
     CardNorm,
+    LegReactionTime,
     NormKind,
     card_norms,
+    card_reaction_times,
     critical_error_count,
     failed_rule_count,
 )
@@ -157,6 +166,10 @@ class SessionReportView:
     Empty when the viewer may not see the DDS sections."""
     norms: tuple[CardNorm, ...] = ()
     """(I4 E33) The card's times against its recorded timers, gated per section (module doc)."""
+    reaction_times: tuple[LegReactionTime, ...] = ()
+    """(I5 E36, Q-E12-1) Per-leg reaction times, gated with the ДДС sections (module doc)."""
+    workstations: tuple[str, ...] = ()
+    """(I5 E36, Q-E12-3) The session's participants' logins, sorted."""
     service_names_ru: Mapping[str, str] | None = None
     """(I4 E33) The reference pack's service names, for the lesson report's CSV."""
     failed_rule_count: int = 0
@@ -311,6 +324,8 @@ class GetSessionReport:
                 else ()
             ),
             norms=_visible_norms(card_norms(events, scenario_version.card_timers), visibility),
+            reaction_times=(card_reaction_times(events) if visibility.shows_dds_sections else ()),
+            workstations=tuple(sorted({p.username for p in detail.participants})),
             service_names_ru=service_names,
             failed_rule_count=failed_rule_count(score_report.results),
             critical_error_count=critical_error_count(score_report.results),
@@ -400,13 +415,14 @@ def _timeline(
 
 
 def _visible_norms(norms: Sequence[CardNorm], visibility: ReportVisibility) -> tuple[CardNorm, ...]:
-    """(I4 E33) A leg's `ACCEPT` with the ДДС sections, the 112 `FILL` with the operator's."""
+    """(I4 E33; I5 E36) A leg's `ACCEPT`/`DDS_FILL` with the ДДС sections, the 112 `FILL` with the
+    operator's."""
     return tuple(
         norm
         for norm in norms
         if (
             visibility.shows_dds_sections
-            if norm.kind is NormKind.ACCEPT
+            if norm.kind in (NormKind.ACCEPT, NormKind.DDS_FILL)
             else visibility.shows_operator_sections
         )
     )

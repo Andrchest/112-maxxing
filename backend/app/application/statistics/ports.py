@@ -50,6 +50,8 @@ class TraineeAccount:
 
     user_id: UserId
     display_name_ru: str
+    username: str = ""
+    """(I5 E36, Q-E12-3) The login «рабочее место» — the statistics CSV's own column."""
 
 
 @dataclass(frozen=True, slots=True)

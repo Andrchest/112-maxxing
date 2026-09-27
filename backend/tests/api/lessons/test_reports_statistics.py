@@ -132,9 +132,14 @@ async def test_a_scored_card_carries_its_norms_against_the_recorded_timers(
     acknowledged = next(e for e in events if e["event_type"] == "DDS_ACKNOWLEDGED")
     legs = await _accept_legs(lessons, first)
     assert legs, "the prefab handoff notifies at least one service"
-    # A ДДС-only card (GENERATED_CARD) has no 112 desk: no FILL norm (Q-E9b-2).
-    assert [norm["kind"] for norm in scored["norms"]] == ["ACCEPT"] * len(legs)
-    for norm, (received_ms, payload) in zip(scored["norms"], legs, strict=True):
+    created = next(e for e in events if e["event_type"] == "SESSION_CREATED")
+    recorded_fill_ms = created["payload"]["timers"]["fill_within_ms"]
+    # A ДДС-only card (GENERATED_CARD) has no 112 desk: no FILL norm (Q-E9b-2). Every leg now
+    # carries both ACCEPT and DDS_FILL (I5 E36, Q-E9b-2): same measured moment, the 3-minute limit.
+    assert [norm["kind"] for norm in scored["norms"]] == ["ACCEPT", "DDS_FILL"] * len(legs)
+    accept_norms = [n for n in scored["norms"] if n["kind"] == "ACCEPT"]
+    dds_fill_norms = [n for n in scored["norms"] if n["kind"] == "DDS_FILL"]
+    for norm, (received_ms, payload) in zip(accept_norms, legs, strict=True):
         measured = int(acknowledged["monotonic_offset_ms"]) - received_ms
         assert norm == {
             "kind": "ACCEPT",
@@ -143,14 +148,35 @@ async def test_a_scored_card_carries_its_norms_against_the_recorded_timers(
             "norm_ms": OVERRIDDEN_ACCEPT_MS,  # the recorded override, not the scenario's 30 s
             "deviation_ms": measured - OVERRIDDEN_ACCEPT_MS,
         }
-    created = next(e for e in events if e["event_type"] == "SESSION_CREATED")
+    for norm, (received_ms, payload) in zip(dds_fill_norms, legs, strict=True):
+        measured = int(acknowledged["monotonic_offset_ms"]) - received_ms
+        assert norm == {
+            "kind": "DDS_FILL",
+            "service_id": payload["service_type"],
+            "measured_ms": measured,
+            "norm_ms": recorded_fill_ms,
+            "deviation_ms": measured - recorded_fill_ms,
+        }
     assert created["payload"]["timers"]["accept_within_ms"] == OVERRIDDEN_ACCEPT_MS
+
+    # (I5 E36, Q-E12-1) two reaction times per leg, delivery as the start.
+    assert len(scored["reaction_times"]) == len(legs)
+    for reaction, (received_ms, payload) in zip(scored["reaction_times"], legs, strict=True):
+        assert reaction["service_id"] == payload["service_type"]
+        expected = int(acknowledged["monotonic_offset_ms"]) - received_ms
+        assert reaction["to_first_status_ms"] == expected
+        assert reaction["to_open_ms"] is None, "the memo mode never opens a card here"
+
+    # (I5 E36, Q-E12-3) the login of the ДДС suffix's sole player.
+    assert scored["workstation"] == "trainee2"
 
     results = scored["score"]["results"]
     assert scored["failed_rule_count"] == sum(1 for r in results if not r["passed"])
     assert scored["critical_error_count"] == len(scored["score"]["critical_errors"])
     assert unscored["score"] is None
     assert unscored["norms"] == []
+    assert unscored["reaction_times"] == []
+    assert unscored["workstation"] == ""
     assert unscored["failed_rule_count"] is None and unscored["critical_error_count"] is None
 
 
@@ -169,6 +195,7 @@ async def test_the_lesson_report_csv_parses_back_to_the_same_numbers(
     assert list(rows[0]) == [
         "Позиция",
         "Сессия",
+        "Рабочее место",
         "Состояние",
         "Вес",
         "Баллы",
@@ -185,22 +212,39 @@ async def test_the_lesson_report_csv_parses_back_to_the_same_numbers(
     scored, unscored = report["cards"]
     *card_rows, total = rows
     scored_rows = [row for row in card_rows if row["Сессия"] == scored["session_id"]]
-    assert len(scored_rows) == len(scored["norms"])
-    for row, norm in zip(scored_rows, scored["norms"], strict=True):
+    # (I5 E36) one row per norm (ACCEPT + DDS_FILL per leg), plus two reaction rows per leg.
+    assert len(scored_rows) == len(scored["norms"]) + 2 * len(scored["reaction_times"])
+    norm_rows = scored_rows[: len(scored["norms"])]
+    reaction_rows = scored_rows[len(scored["norms"]) :]
+    for row in scored_rows:
         assert int(row["Позиция"]) == scored["position"]
+        assert row["Рабочее место"] == scored["workstation"] == "trainee2"
         assert _number(row["Вес"]) == scored["weight"]
         assert _number(row["Баллы"]) == scored["score"]["total_points"]
         assert _number(row["Максимум баллов"]) == scored["score"]["total_max_points"]
         assert int(row["Нарушено правил"]) == scored["failed_rule_count"]
         assert int(row["Критических ошибок"]) == scored["critical_error_count"]
-        assert row["Норматив"] == "Принятие решения службой"
+    for row, norm in zip(norm_rows, scored["norms"], strict=True):
+        assert (
+            row["Норматив"]
+            == {
+                "ACCEPT": "Принятие решения службой",
+                "DDS_FILL": "Заполнение карточки ДДС (3 мин)",
+            }[norm["kind"]]
+        )
         assert row["Служба"] != ""
         assert _number(row["Время, мс"]) == norm["measured_ms"]
         assert _number(row["Норма, мс"]) == norm["norm_ms"]
         assert _number(row["Отклонение от нормы, мс"]) == norm["deviation_ms"]
+    # (I5 E36, Q-E12-1) the reaction-time rows: no norm, no deviation.
+    reaction_labels = ("Время реакции: открытие карточки", "Время реакции: первый статус")
+    for row in reaction_rows:
+        assert row["Норматив"] in reaction_labels
+        assert row["Норма, мс"] == "" and row["Отклонение от нормы, мс"] == ""
     [aborted_row] = [row for row in card_rows if row["Сессия"] == unscored["session_id"]]
     assert aborted_row["Состояние"] == "Прервано"
     assert aborted_row["Баллы"] == "" and aborted_row["Норматив"] == ""
+    assert aborted_row["Рабочее место"] == ""
     assert _number(total["Баллы"]) == report["weighted_total"]
     assert _number(total["Максимум баллов"]) == report["weighted_max"]
 
@@ -236,15 +280,23 @@ async def test_the_statistics_are_the_stored_numbers_and_their_csv_round_trips(
         if not result["passed"]:
             failed[result["category"]] = failed.get(result["category"], 0) + 1
     assert row["failed_rules_by_category"] == failed
+    accept_norms = [n for n in card["norms"] if n["kind"] == "ACCEPT"]
+    legs = await _accept_legs(lessons, first)
     played = [
         norm["deviation_ms"]
-        for norm, (_, payload) in zip(
-            card["norms"], await _accept_legs(lessons, first), strict=True
-        )
+        for norm, (_, payload) in zip(accept_norms, legs, strict=True)
         if payload.get("responder") != "SCRIPTED"
     ]
     assert row["accept_deviation_ms_avg"] == pytest.approx(fmean(played))
     assert row["fill_deviation_ms_avg"] is None, "trainee2 filled no 112 card"
+    # (I5 E36, Q-E12-1) the reaction-time averages, over the same played legs.
+    played_status = [
+        reaction["to_first_status_ms"]
+        for reaction, (_, payload) in zip(card["reaction_times"], legs, strict=True)
+        if payload.get("responder") != "SCRIPTED"
+    ]
+    assert row["reaction_to_status_ms_avg"] == pytest.approx(fmean(played_status))
+    assert row["reaction_to_open_ms_avg"] is None, "no leg was ever opened in this flow"
     assert rows[trainee1]["session_count"] == 0
     assert rows[trainee1]["average_percent"] is None
 
@@ -260,6 +312,7 @@ async def test_the_statistics_are_the_stored_numbers_and_their_csv_round_trips(
     assert set(by_id) == set(rows)
     line = by_id[trainee2]
     assert line["Обучаемый"] == row["display_name_ru"]
+    assert line["Рабочее место"] == "trainee2"  # (I5 E36, Q-E12-3)
     assert int(line["Сессий"]) == row["session_count"]
     assert int(line["Занятий"]) == row["lesson_count"]
     assert _number(line["Средний процент"]) == row["average_percent"]
@@ -267,6 +320,11 @@ async def test_the_statistics_are_the_stored_numbers_and_their_csv_round_trips(
         _number(line["Среднее отклонение принятия решения, мс"]) == row["accept_deviation_ms_avg"]
     )
     assert _number(line["Среднее отклонение заполнения карточки, мс"]) is None
+    assert _number(line["Среднее время реакции: открытие карточки, мс"]) is None
+    assert (
+        _number(line["Среднее время реакции: первый статус, мс"])
+        == (row["reaction_to_status_ms_avg"])
+    )
     labelled = {key: int(value) for key, value in line.items() if key.startswith("Нарушено")}
     assert sum(labelled.values()) == sum(failed.values())
 

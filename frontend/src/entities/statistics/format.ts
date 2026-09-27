@@ -40,6 +40,12 @@ export function formatMeanDeviationMs(value: number | null): string {
   return value === null ? t('statisticsNoValue') : formatDeviationMs(value);
 }
 
+/** (I5 E36, Q-E12-1) A mean reaction time: a plain duration, no +/− sign (it is not a deviation
+ * from a norm) — `—` when nothing was measured. */
+export function formatMeanDurationMs(value: number | null): string {
+  return value === null ? t('statisticsNoValue') : formatCallDurationMs(Math.round(value));
+}
+
 /** `failed_rules_by_category` as «Категория: N» pairs, in the server's order. */
 export function failedRulesLines(byCategory: Record<string, number>): string[] {
   return Object.entries(byCategory)

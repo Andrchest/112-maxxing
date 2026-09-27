@@ -28,6 +28,7 @@ const CARDS: LessonReport['cards'] = [
     norms: [
       { kind: 'FILL', service_id: null, measured_ms: 150_000, norm_ms: 180_000, deviation_ms: -30_000 },
       { kind: 'ACCEPT', service_id: 'FIRE_RESCUE', measured_ms: 42_000, norm_ms: 30_000, deviation_ms: 12_000 },
+      { kind: 'DDS_FILL', service_id: 'FIRE_RESCUE', measured_ms: 42_000, norm_ms: 180_000, deviation_ms: -138_000 },
       { kind: 'ACCEPT', service_id: 'POLICE', measured_ms: null, norm_ms: 30_000, deviation_ms: null },
     ],
     failed_rule_count: 3,
@@ -39,6 +40,11 @@ const CARDS: LessonReport['cards'] = [
       street_list_sha256: 's',
       unavailable_message_ru: null,
     },
+    reaction_times: [
+      { service_id: 'FIRE_RESCUE', to_open_ms: 5_000, to_first_status_ms: 42_000 },
+      { service_id: 'POLICE', to_open_ms: null, to_first_status_ms: null },
+    ],
+    workstation: 'trainee2',
   },
   {
     position: 2,
@@ -50,6 +56,8 @@ const CARDS: LessonReport['cards'] = [
     failed_rule_count: null,
     critical_error_count: null,
     text_quality: null,
+    reaction_times: [],
+    workstation: '',
   },
 ];
 
@@ -71,11 +79,20 @@ describe('LessonReportTable', () => {
     expect(document.querySelector('[data-slot="report-card-text-quality"]')).toHaveTextContent('1'); // one flagged street
 
     const norms = document.querySelectorAll('[data-slot="report-norm"]');
-    expect(Array.from(norms).map((norm) => norm.getAttribute('data-kind'))).toEqual(['FILL', 'ACCEPT', 'ACCEPT']);
+    expect(Array.from(norms).map((norm) => norm.getAttribute('data-kind'))).toEqual(['FILL', 'ACCEPT', 'DDS_FILL', 'ACCEPT']);
     expect(norms[0]).toHaveTextContent(`${ru.lessonReportNormFill} 02:30 ${ru.lessonReportNormAgainst} 03:00 (−00:30)`);
     expect(norms[1]).toHaveTextContent(`${ru.lessonReportNormAccept}: ${ru.serviceTypeFireRescue} 00:42 ${ru.lessonReportNormAgainst} 00:30 (+00:12)`);
-    expect(norms[2]).toHaveTextContent(`${ru.lessonReportNormNotMeasured} (${ru.lessonReportNormAgainst} 00:30)`);
-    expect(norms[2]).not.toHaveTextContent('00:00');
+    expect(norms[2]).toHaveTextContent(`${ru.lessonReportNormDdsFill}: ${ru.serviceTypeFireRescue} 00:42 ${ru.lessonReportNormAgainst} 03:00`);
+    expect(norms[3]).toHaveTextContent(`${ru.lessonReportNormNotMeasured} (${ru.lessonReportNormAgainst} 00:30)`);
+    expect(norms[3]).not.toHaveTextContent('00:00');
+
+    // (I5 E36, Q-E12-1, Q-E12-3) the reaction times and the workstation column.
+    expect(document.querySelector('[data-slot="report-card-workstation"]')).toHaveTextContent('trainee2');
+    const reactions = document.querySelectorAll('[data-slot="report-reaction-time"]');
+    expect(reactions).toHaveLength(2);
+    expect(reactions[0]).toHaveTextContent(`${ru.lessonReportReactionToOpen} (${ru.serviceTypeFireRescue}): 00:05`);
+    expect(reactions[0]).toHaveTextContent(`${ru.lessonReportReactionToStatus}: 00:42`);
+    expect(reactions[1]).toHaveTextContent(ru.lessonReportNormNotMeasured);
   });
 
   it('downloads the report CSV with the bearer token and hands it to the browser', async () => {
