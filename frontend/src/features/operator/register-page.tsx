@@ -21,6 +21,7 @@ export function RegisterPage() {
 
   return (
     <AppShell
+      backTo="/sessions"
       title={t('registerPageTitle')}
       role={roleLabel}
       userLabel={user?.display_name_ru}

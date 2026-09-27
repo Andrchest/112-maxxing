@@ -40,7 +40,7 @@ export function SessionOpenRedirect() {
 
   if (query.isLoading) {
     return (
-      <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
+      <AppShell backTo="/sessions" title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
         <p className="text-sm text-muted-foreground">{t('sessionsOpeningConsole')}</p>
       </AppShell>
     );
@@ -49,7 +49,7 @@ export function SessionOpenRedirect() {
   if (query.isError) {
     const message = query.error instanceof ProblemError ? problemMessageRu(query.error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
+      <AppShell backTo="/sessions" title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -66,7 +66,7 @@ export function SessionOpenRedirect() {
   }
 
   return (
-    <AppShell title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
+    <AppShell backTo="/sessions" title={t('sessionsTitle')} role={roleLabel} userLabel={userLabel}>
       <p className="text-sm text-muted-foreground">{t('sessionsNoConsoleYet')}</p>
     </AppShell>
   );

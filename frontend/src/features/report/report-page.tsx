@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
+import { reportBackTo } from '@/shared/ui/app-nav';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { canChangeOwned, useAuthStore } from '@/entities/session';
@@ -82,6 +83,9 @@ export function ReportPage() {
     }
   }
 
+  // I6 UX «← Назад»: the trainee's history, or the instructor's lesson / sessions list.
+  const backTo = reportBackTo(user?.user_role, reportQuery.data?.session.lesson_id);
+
   function handleJumpToEvent(seqNo: number): void {
     setHighlightedSeqNo(seqNo);
     document.getElementById(timelineEntryRowId(seqNo))?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
@@ -93,7 +97,7 @@ export function ReportPage() {
 
   if (reportQuery.isLoading) {
     return (
-      <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
+      <AppShell backTo={backTo} title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
         <h1 className="sr-only">{t('reportTitle')}</h1>
         <p className="text-sm text-muted-foreground">{t('reportLoading')}</p>
       </AppShell>
@@ -114,7 +118,7 @@ export function ReportPage() {
               ? problemMessageRu(error.code as ProblemCode)
               : t('problemUnknown');
     return (
-      <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
+      <AppShell backTo={backTo} title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
         <h1 className="sr-only">{t('reportTitle')}</h1>
         <p role={code === 'REPORT_NOT_RELEASED' || code === 'REPORT_NOT_READY' ? undefined : 'alert'} className="text-sm text-muted-foreground">
           {stateMessage}
@@ -131,7 +135,7 @@ export function ReportPage() {
   const canChange = canChangeOwned(user, report.session.created_by_user_id);
 
   return (
-    <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
+    <AppShell backTo={backTo} title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-heading text-lg font-medium">{t('reportTitle')}</h1>
         {canManage ? (

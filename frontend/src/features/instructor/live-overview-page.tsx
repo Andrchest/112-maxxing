@@ -93,7 +93,7 @@ export function InstructorLiveOverviewPage() {
 
   if (overviewQuery.isLoading) {
     return (
-      <AppShell title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell backTo="/instructor" title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p className="text-sm text-muted-foreground">{t('instructorOverviewLoading')}</p>
       </AppShell>
     );
@@ -103,7 +103,7 @@ export function InstructorLiveOverviewPage() {
     const error = overviewQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+      <AppShell backTo="/instructor" title={t('instructorLiveOverviewTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -121,6 +121,7 @@ export function InstructorLiveOverviewPage() {
 
   return (
     <AppShell
+      backTo={overview.session.lesson_id ? `/instructor/lessons/${overview.session.lesson_id}` : '/instructor'}
       title={t('instructorLiveOverviewTitle')}
       role={roleLabel}
       userLabel={userLabel}

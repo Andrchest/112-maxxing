@@ -252,7 +252,18 @@ export const ru = {
 
   // -- DDS console (E10; SPEC §10, §11, §32, §39; D3, D12) -----------------------------------
   ddsConsoleLoading: 'Загрузка занятия…',
-  ddsConsoleNoWorkItem: 'В этом занятии у вас нет активной заявки ДДС.',
+  // I6 UX: the ДДС console's empty state says why there is no request yet and what happens next.
+  ddsWaitingTitle: 'Заявка ДДС ещё не поступила',
+  ddsWaitingLessonNotStarted:
+    'Занятие ещё не запущено преподавателем. Когда преподаватель нажмёт «Начать занятие», заявка появится здесь сама.',
+  ddsWaitingSessionNotStarted: 'Занятие ещё не запущено преподавателем. Когда преподаватель его запустит, заявка появится здесь сама.',
+  ddsWaitingCardInPrefix: 'Занятие идёт. Карточка поступит через',
+  ddsWaitingCardDue: 'Карточка поступает — подождите несколько секунд.',
+  ddsWaitingAfterPrevious112Stage: 'Карточка поступит, когда оператор 112 закончит приём вызова по предыдущей карточке занятия.',
+  ddsWaitingAfterPreviousSession: 'Карточка поступит после завершения предыдущей карточки занятия.',
+  ddsWaitingAwaitingHandoff: 'Занятие идёт: оператор 112 ещё не передал карточку в ДДС. Она появится здесь сама.',
+  ddsWaitingAutoRefresh:
+    'Страница обновляется автоматически, перезагружать её не нужно. Если заявка долго не появляется, обратитесь к преподавателю.',
   ddsStageLabel: 'Этап',
 
   ddsStageReceived: 'Получено',
@@ -777,7 +788,6 @@ export const ru = {
   lessonsListEmpty: 'Занятий пока нет.',
   lessonsListOpenButton: 'Открыть',
   lessonDetailLoading: 'Загрузка занятия…',
-  lessonDetailBackButton: 'К списку занятий',
   lessonDetailPlanTitle: 'План занятия',
   lessonDetailCardsTitle: 'Карточки занятия',
   lessonDetailStartButton: 'Начать занятие',
@@ -825,8 +835,6 @@ export const ru = {
   ddsIncidentListPageTitle: 'Список происшествий',
 
   // -- I3 E4b (manager follow-up): in-app nav links into the new pages -----------------------
-  navLessonsLink: 'Занятия',
-  navScenariosLink: 'Сценарии',
   navRegisterLink: 'Реестр',
   navIncidentListLink: 'Список происшествий',
 
@@ -993,7 +1001,6 @@ export const ru = {
   instructorBoardScorePending: '—',
 
   // -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) -------------------------
-  navMaterialsLink: 'Материалы',
   materialsInstructorTitle: 'Материалы',
   materialsTraineeTitle: 'Справочная база',
   materialsUploadTitleLabel: 'Название',
@@ -1021,7 +1028,6 @@ export const ru = {
   lessonReportNormNone: '—',
   lessonReportDownloadCsv: 'Скачать CSV',
   lessonReportDownloadingCsv: 'Загрузка…',
-  navStatisticsLink: 'Статистика',
   statisticsPageTitle: 'Статистика обучаемых',
   statisticsGroupLabel: 'Группа',
   statisticsGroupAll: 'Все обучаемые',
@@ -1038,7 +1044,6 @@ export const ru = {
   statisticsColumnFailedRules: 'Нарушено правил по категориям',
   statisticsNoValue: '—',
   statisticsBackLink: 'Назад',
-  navHistoryLink: 'Мои результаты',
   historyPageTitle: 'Мои результаты',
   historyLoading: 'Загрузка истории…',
   historyEmpty: 'Завершённых сессий пока нет.',
@@ -1223,4 +1228,17 @@ export const ru = {
   historyDownloadProfileButton: 'Скачать профиль (JSON)',
   profileExportDownloading: 'Загрузка…',
   adminSettingsExportXmlButton: 'Экспорт настроек (XML)',
+  // --- I6 UX: role-based navigation bar in the app shell header, and the «Назад» link of the
+  // detail pages ---
+  appNavAriaLabel: 'Разделы',
+  appNavTraineeLessons: 'Мои занятия',
+  appNavTraineeHistory: 'История',
+  appNavTraineeMaterials: 'Справочная база',
+  appNavInstructorLessons: 'Занятия',
+  appNavInstructorSessions: 'Сессии',
+  appNavInstructorStatistics: 'Статистика',
+  appNavInstructorScenarios: 'Сценарии',
+  appNavInstructorMaterials: 'Материалы',
+  appNavAdmin: 'Администрирование',
+  appBackLink: '← Назад',
 } as const;

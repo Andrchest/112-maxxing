@@ -71,13 +71,6 @@ export function SessionsLandingPage() {
           <Button asChild variant="ghost" size="sm">
             <Link to="/dds/incidents">{t('navIncidentListLink')}</Link>
           </Button>
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/materials">{t('materialsTraineeTitle')}</Link>
-          </Button>
-          {/* I4 E33 (71 §71.10): the trainee's own results and history. */}
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/history">{t('navHistoryLink')}</Link>
-          </Button>
         </nav>
       </div>
       {sessionsQuery.isLoading ? <p className="mt-2 text-sm text-muted-foreground">{t('sessionsLoading')}</p> : null}

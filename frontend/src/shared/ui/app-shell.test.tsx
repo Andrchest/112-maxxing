@@ -126,3 +126,79 @@ describe('AppShell — logout button (I6)', () => {
     expect(header?.lastElementChild?.lastElementChild).toBe(buttons[0]);
   });
 });
+
+// I6 UX (owner: «нет кнопок возврата из одного меню в другое»): the role's sections on every
+// authenticated page, the current one highlighted, and a «← Назад» link on detail pages.
+describe('AppShell — role navigation bar and back link (I6 UX)', () => {
+  afterEach(() => {
+    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+  });
+
+  function signInAs(user_role: 'TRAINEE' | 'INSTRUCTOR' | 'ADMIN'): void {
+    useAuthStore.setState({
+      token: 'jwt-token',
+      isAuthenticated: true,
+      user: { id: 'u1', username: 'u', display_name_ru: 'Пользователь', user_role, created_at: '2026-09-21T00:00:00Z' },
+    });
+  }
+
+  function renderAt(path: string, backTo?: string) {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <AppShell title="Тренажёр 112" backTo={backTo}>
+          <div />
+        </AppShell>
+      </MemoryRouter>,
+    );
+  }
+
+  function navLinks(): string[] {
+    const nav = screen.getByRole('navigation', { name: ru.appNavAriaLabel });
+    return Array.from(nav.querySelectorAll('a')).map((a) => a.textContent ?? '');
+  }
+
+  it('renders no navigation bar when signed out', () => {
+    renderAt('/login');
+    expect(screen.queryByRole('navigation', { name: ru.appNavAriaLabel })).not.toBeInTheDocument();
+  });
+
+  it('shows a trainee their three sections and highlights the current one (a console counts as «Мои занятия»)', () => {
+    signInAs('TRAINEE');
+    renderAt('/dds/sess-1');
+    expect(navLinks()).toEqual([ru.appNavTraineeLessons, ru.appNavTraineeHistory, ru.appNavTraineeMaterials]);
+    expect(screen.getByRole('link', { name: ru.appNavTraineeLessons })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: ru.appNavTraineeHistory })).not.toHaveAttribute('aria-current');
+  });
+
+  it('shows an instructor the five instructor sections, no admin link, «Сессии» current only on /instructor itself', () => {
+    signInAs('INSTRUCTOR');
+    renderAt('/instructor/lessons/lesson-1');
+    expect(navLinks()).toEqual([
+      ru.appNavInstructorLessons,
+      ru.appNavInstructorSessions,
+      ru.appNavInstructorStatistics,
+      ru.appNavInstructorScenarios,
+      ru.appNavInstructorMaterials,
+    ]);
+    expect(screen.getByRole('link', { name: ru.appNavInstructorLessons })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: ru.appNavInstructorSessions })).not.toHaveAttribute('aria-current');
+    expect(screen.queryByRole('link', { name: ru.appNavAdmin })).not.toBeInTheDocument();
+  });
+
+  it('shows an admin «Администрирование» plus the instructor sections', () => {
+    signInAs('ADMIN');
+    renderAt('/admin');
+    expect(navLinks()[0]).toBe(ru.appNavAdmin);
+    expect(navLinks()).toHaveLength(6);
+    expect(screen.getByRole('link', { name: ru.appNavAdmin })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('renders the «← Назад» link to the parent list only when the page passes one', () => {
+    signInAs('INSTRUCTOR');
+    const { unmount } = renderAt('/instructor/lessons/lesson-1', '/instructor/lessons');
+    expect(screen.getByRole('link', { name: ru.appBackLink })).toHaveAttribute('href', '/instructor/lessons');
+    unmount();
+    renderAt('/instructor/lessons');
+    expect(screen.queryByRole('link', { name: ru.appBackLink })).not.toBeInTheDocument();
+  });
+});

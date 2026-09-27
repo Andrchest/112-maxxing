@@ -161,6 +161,24 @@
     --reference-timer-foreground: #ffffff;
 }
 
+/* I6 UX (owner: «все выпадающие списки на белом фоне»): the native popups a page cannot style
+ * through the shadcn tokens — an open <select>'s option list, the date picker, scrollbars — are
+ * drawn by the browser in its own light/dark scheme, which defaults to light. Declaring the
+ * scheme per theme root makes them follow the theme everywhere at once; the explicit option
+ * colours cover browsers that honour `color-scheme` only partially for <option>. The organizer's
+ * reference routes (`.reference-light`, below `<html class="dark">`) switch back to light. */
+.dark {
+    color-scheme: dark;
+}
+.reference-light {
+    color-scheme: light;
+}
+select option,
+select optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

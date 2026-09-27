@@ -22,6 +22,7 @@ export function DdsIncidentListPage() {
 
   return (
     <AppShell
+      backTo="/sessions"
       title={t('ddsIncidentListPageTitle')}
       role={roleLabel}
       userLabel={user?.display_name_ru}

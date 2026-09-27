@@ -36,6 +36,8 @@ import { DdsPhoneWidget } from './phone-widget';
 import { DDS_CALL_EVENT_TYPES, useDdsCallStore } from '@/entities/call';
 import { PROPOSAL_EVENT_TYPE, useCallProposalStore } from './call-proposals';
 import { ddsStageStateLabelRu } from './dds-labels';
+import { WaitingForCardNotice } from './waiting-for-card-notice';
+import { WAITING_POLL_INTERVAL_MS } from './waiting-reason';
 
 // I3 E5c: events that mean "the legs list (or a leg's history) may have changed elsewhere" —
 // broadcast, so another ДДС participant's command must reach this caller's read too
@@ -84,6 +86,15 @@ export function DdsConsolePage() {
     queryKey: queryKeys.sessions.snapshot(sessionId ?? ''),
     queryFn: () => getSessionSnapshot(sessionId ?? ''),
     enabled: sessionId !== undefined,
+    // I6 UX: while there is no work item yet (the lesson not started, the card's arrival offset
+    // not reached, the 112 stage not handed off), re-read the snapshot so the card appears by
+    // itself. The realtime channel alone does not deliver it: this viewer's event stream skips the
+    // seq_nos it may not see, and the client's gap re-resume jumps past the handoff events.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data || data.work_item !== null) return false;
+      return data.session.state === 'COMPLETED' || data.session.state === 'ABORTED' ? false : WAITING_POLL_INTERVAL_MS;
+    },
   });
 
   // I3 E5c: the resource board/dispatch tray (and the board data behind them) are kept entirely
@@ -164,7 +175,7 @@ export function DdsConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('ddsConsoleLoading')}</p>
       </AppShell>
     );
@@ -174,7 +185,7 @@ export function DdsConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -188,7 +199,7 @@ export function DdsConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot && (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED')) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -201,8 +212,8 @@ export function DdsConsolePage() {
 
   if (!snapshot || snapshot.work_item === null) {
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
-        <p className="text-sm text-muted-foreground">{t('ddsConsoleNoWorkItem')}</p>
+      <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+        {snapshot ? <WaitingForCardNotice snapshot={snapshot} snapshotFetchedAtMs={snapshotQuery.dataUpdatedAt} /> : null}
       </AppShell>
     );
   }
@@ -227,7 +238,7 @@ export function DdsConsolePage() {
     // is something to scroll, which is the bug the manager's review reported). Everything above
     // the bar lives in its own `overflow-y-auto` region instead.
     return (
-      <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
+      <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
           {workItem ? (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -258,7 +269,7 @@ export function DdsConsolePage() {
   }
 
   return (
-    <AppShell title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+    <AppShell backTo="/sessions" title={t('ddsTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
       {workItem ? (
         <div className="mb-3">
           <Badge variant="outline" data-slot="dds-stage-badge">

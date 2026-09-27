@@ -107,7 +107,7 @@ function RoleTransitionScreen({ session, sessionId, roleLabel, userLabel, connec
   }
 
   return (
-    <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
+    <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus}>
       <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
         <h1 className="font-heading text-lg font-medium">{t('operatorRoleTransitionTitle')}</h1>
         {remainingSeconds > 0 ? (
@@ -217,7 +217,7 @@ export function OperatorConsolePage() {
 
   if (snapshotQuery.isLoading) {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleLoading')}</p>
       </AppShell>
     );
@@ -227,7 +227,7 @@ export function OperatorConsolePage() {
     const error = snapshotQuery.error;
     const message = error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p role="alert" className="text-sm text-destructive">
           {message}
         </p>
@@ -266,7 +266,7 @@ export function OperatorConsolePage() {
 
   if (snapshot.card === null) {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <p className="text-sm text-muted-foreground">{t('operatorConsoleWrongRole')}</p>
       </AppShell>
     );
@@ -276,7 +276,7 @@ export function OperatorConsolePage() {
   // COMPLETED/ABORTED session has nothing left to command here, only the report to view.
   if (snapshot.session.state === 'COMPLETED' || snapshot.session.state === 'ABORTED') {
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
+      <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme>
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-12 text-center">
           <p className="text-sm text-muted-foreground">{t('reportSessionCompletedNotice')}</p>
           <Button asChild size="sm">
@@ -323,7 +323,7 @@ export function OperatorConsolePage() {
     // console above it is shorter than the viewport (a `position: sticky` bar alone only pins
     // once there is something to scroll, which is the bug the manager's review reported).
     return (
-      <AppShell title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
+      <AppShell backTo="/sessions" title={t('operatorTitle')} role={roleLabel} userLabel={userLabel} connectionStatus={connectionStatus} referenceTheme fillHeight>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">{consoleColumns}</div>
         <ServicesPanel sessionId={sessionId} />
       </AppShell>
@@ -332,6 +332,7 @@ export function OperatorConsolePage() {
 
   return (
     <AppShell
+      backTo="/sessions"
       title={t('operatorTitle')}
       role={roleLabel}
       userLabel={userLabel}

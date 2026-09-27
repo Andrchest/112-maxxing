@@ -49,9 +49,15 @@ describe('InstructorPage — the lessons nav link (INSTRUCTOR/ADMIN only route)'
       }),
     );
 
+    // I6 UX: the link now lives in the app shell's role navigation bar, shown to a signed-in user.
+    useAuthStore.setState({
+      token: 'jwt-token',
+      isAuthenticated: true,
+      user: { id: 'i1', username: 'instructor', display_name_ru: 'Instructor', user_role: 'INSTRUCTOR', created_at: '2026-09-21T00:00:00Z' },
+    });
     renderPage();
 
-    const link = await screen.findByRole('link', { name: ru.navLessonsLink });
+    const link = await screen.findByRole('link', { name: ru.appNavInstructorLessons });
     expect(link).toHaveAttribute('href', '/instructor/lessons');
   });
 });

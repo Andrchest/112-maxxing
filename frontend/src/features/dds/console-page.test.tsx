@@ -163,17 +163,59 @@ describe('DdsConsolePage — refresh restore (SPEC §39, §42 test 13)', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
   });
 
-  it('shows a Russian message when the session has no DDS work item for this role', async () => {
+  // I6 UX: the empty state says why there is no request yet and what happens next.
+  it('explains a running session whose 112 stage has not handed the card to DDS yet', async () => {
     signIn();
     vi.stubGlobal('WebSocket', InertSocket);
     vi.stubGlobal(
       'fetch',
-      stubFetchByPath({ '/snapshot': () => jsonResponse(makeSnapshot({ work_item: null })) }),
+      stubFetchByPath({ '/snapshot': () => jsonResponse(makeSnapshot({ work_item: null }, { lesson_id: null })) }),
     );
 
     renderConsole();
 
-    expect(await screen.findByText(ru.ddsConsoleNoWorkItem)).toBeInTheDocument();
+    expect(await screen.findByText(ru.ddsWaitingTitle)).toBeInTheDocument();
+    expect(screen.getByText(ru.ddsWaitingAwaitingHandoff)).toBeInTheDocument();
+    expect(screen.getByText(ru.ddsWaitingAutoRefresh)).toBeInTheDocument();
+  });
+
+  it('says the lesson is not started yet when the trainee opens a READY card of a CREATED lesson', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () => jsonResponse(makeSnapshot({ work_item: null }, { state: 'READY', started_at: null, lesson_id: 'lesson-1' })),
+        '/lessons/lesson-1': () =>
+          jsonResponse({ lesson_id: 'lesson-1', state: 'CREATED', started_at: null, sessions: [{ session_id: 'sess-1', arrival: { kind: 'AT_OFFSET', offset_ms: 0, delay_ms: 0 } }] }),
+      }),
+    );
+
+    renderConsole();
+
+    expect(await screen.findByText(ru.ddsWaitingLessonNotStarted)).toBeInTheDocument();
+  });
+
+  it('re-reads the snapshot while waiting, so the card appears without a reload', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      stubFetchByPath({
+        '/snapshot': () => {
+          calls += 1;
+          return jsonResponse(calls === 1 ? makeSnapshot({ work_item: null }, { lesson_id: null }) : makeSnapshot());
+        },
+        '/resources': () => jsonResponse({ items: [] }),
+      }),
+    );
+
+    renderConsole();
+
+    expect(await screen.findByText(ru.ddsWaitingAwaitingHandoff)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(ru.ddsWaitingTitle)).not.toBeInTheDocument(), { timeout: 5000 });
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
 
   it('re-fetches the snapshot on STAGE_STATE_CHANGED and folds RESOURCE_STATUS_CHANGED live', async () => {

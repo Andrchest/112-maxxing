@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 import { Badge } from '@/shared/ui/badge';
 import { Separator } from '@/shared/ui/separator';
 import { t } from '@/shared/i18n';
@@ -7,6 +8,7 @@ import type { ConnectionStatus } from '@/shared/realtime/ws-client';
 import type { HealthStatus } from '@/shared/api';
 import { useAuthStore } from '@/entities/session';
 import { LogoutButton } from '@/features/auth/logout-button';
+import { AppNav } from '@/shared/ui/app-nav';
 
 const CONNECTION_LABEL_KEY: Record<ConnectionStatus, keyof typeof ru> = {
   idle: 'connectionPlaceholder',
@@ -82,6 +84,12 @@ interface AppShellProps {
    * today; every other route omits it, unchanged.
    */
   adminAlertsBadge?: ReactNode;
+  /**
+   * I6 UX: a detail page's parent list (lesson detail → lessons, console → «Мои занятия», …),
+   * rendered as a «← Назад» link at the start of the header. List pages omit it — the role's
+   * navigation bar (`AppNav`) already links every section.
+   */
+  backTo?: string;
   children: ReactNode;
 }
 
@@ -98,6 +106,8 @@ interface AppShellProps {
  * prop, so that every route sharing this shell gets it for free and cannot forget it. There is no
  * frontend import-boundary check (D2's `check_imports.py` covers `backend/`/`workers/`/
  * `benchmarks/` only), so this shared component importing a `features/auth` component is allowed.
+ * I6 UX: the role's navigation bar (`AppNav`) follows the same rule — it renders whenever a user is
+ * signed in, from the stored account's role, so no page can forget it.
  */
 export function AppShell({
   title,
@@ -109,19 +119,36 @@ export function AppShell({
   referenceTheme = false,
   fillHeight = false,
   adminAlertsBadge,
+  backTo,
   children,
 }: AppShellProps) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const user = useAuthStore((state) => state.user);
   return (
     <div
       className={`flex min-h-svh flex-col bg-background text-foreground ${referenceTheme ? 'reference-light' : ''}`}
       data-theme={referenceTheme ? 'reference-light' : undefined}
     >
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
-        <span className="text-sm font-semibold tracking-tight">{t('appName')}</span>
+        {backTo ? (
+          <Link
+            to={backTo}
+            className="shrink-0 text-xs text-primary underline-offset-2 hover:underline"
+            data-slot="back-link"
+          >
+            {t('appBackLink')}
+          </Link>
+        ) : null}
+        <span className="shrink-0 text-sm font-semibold tracking-tight">{t('appName')}</span>
         <Separator orientation="vertical" className="h-5" />
-        <span className="font-mono text-xs text-muted-foreground">{title}</span>
-        <div className="ml-auto flex items-center gap-3">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">{title}</span>
+        {isAuthenticated && user ? (
+          <>
+            <Separator orientation="vertical" className="h-5" />
+            <AppNav role={user.user_role} />
+          </>
+        ) : null}
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           {/* D4 addendum: the seeded demo accounts' own `display_name_ru` can equal the account
               role's own label (e.g. the trainee account is literally named "Стажёр"), which would
               otherwise print the same word twice ("Стажёр Стажёр"). The role chip already carries

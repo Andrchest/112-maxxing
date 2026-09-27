@@ -240,6 +240,7 @@ export function LessonDetailPage() {
 
   return (
     <AppShell
+      backTo="/instructor/lessons"
       title={t('lessonsPageTitle')}
       role={roleLabel}
       userLabel={user?.display_name_ru}
@@ -247,9 +248,6 @@ export function LessonDetailPage() {
     >
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold tracking-tight">{lesson?.title_ru ?? t('lessonDetailLoading')}</h1>
-        <Link to="/instructor/lessons" className="text-sm text-primary underline-offset-2 hover:underline">
-          {t('lessonDetailBackButton')}
-        </Link>
       </div>
 
       {lessonQuery.isLoading && !lesson ? <p className="mt-2 text-sm text-muted-foreground">{t('lessonDetailLoading')}</p> : null}

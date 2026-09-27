@@ -78,6 +78,7 @@ export function LessonBoardPage() {
 
   return (
     <AppShell
+      backTo={lessonId ? `/instructor/lessons/${lessonId}` : '/instructor/lessons'}
       title={t('instructorBoardTitle')}
       userLabel={user?.display_name_ru}
       role={user ? t(USER_ROLE_LABEL_KEY[user.user_role]) : undefined}
