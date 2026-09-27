@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs settings-import
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs settings-import e2e-scenarios e2e-scenarios-doc e2e-scenarios-bundle
 # `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
 # environment down to the base dependency set, silently uninstalling the ML extras a previous
 # `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
@@ -476,3 +476,22 @@ OUT ?= infra/.env.settings
 settings-import:
 	$(UV) run python -m app.cli settings_import --file "$(FILE)" --out "$(OUT)"
 # --- end I5 E37 ---------------------------------------------------------------------------------
+
+# --- I6 SCENARIOS: the test scenarios (docs/test-scenarios/, frontend/e2e/scenarios/) -----------
+# `e2e-scenarios` runs them against a RUNNING stand (not part of `gate`): env E2E_BASE_URL,
+# E2E_ADMIN_USER/E2E_ADMIN_PASS, E2E_INSTRUCTOR_USER/E2E_INSTRUCTOR_PASS,
+# E2E_TRAINEE_USER/E2E_TRAINEE_PASS (never written into the repo); `SCENARIO=S03` (or `S01,S03`)
+# runs a subset; results (summary.md/json, screenshots) go to E2E_RESULTS_DIR, by default
+# /tmp/teamwork-112-maxxing/reports/i6/scenario-runs/<timestamp>/. A broken scenario stops at
+# its first unseen expectation and the run continues with the next one.
+# `e2e-scenarios-doc` rewrites the Russian text in docs/test-scenarios/ from the definitions
+# (the vitest check `e2e/scenarios/doc.test.ts` fails when they drift).
+# `e2e-scenarios-bundle` copies the text for a tester on another machine to BUNDLE_DIR.
+BUNDLE_DIR ?= /home/andreipc/112-demo/e2e-bundle
+e2e-scenarios:
+	cd frontend && E2E_SCENARIO="$(SCENARIO)" npx playwright test -c e2e/scenarios/playwright.config.ts
+e2e-scenarios-doc:
+	cd frontend && SCENARIO_DOC_WRITE=1 npx vitest run e2e/scenarios/doc.test.ts
+e2e-scenarios-bundle:
+	frontend/e2e/scenarios/build-bundle.sh "$(BUNDLE_DIR)"
+# --- end I6 SCENARIOS ---------------------------------------------------------------------------
