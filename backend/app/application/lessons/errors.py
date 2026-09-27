@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.ports.user_repository import UserRole
-from app.application.sessions.queries import ForbiddenForRoleError
+from app.application.auth.ownership import require_owner_or_admin
 from app.domain.common.errors import DomainError, InvalidTransitionError, ScenarioValidationError
 from app.domain.common.ids import LessonId
 from app.domain.enums import SessionState
@@ -76,19 +75,14 @@ def _code_of(cause: DomainError) -> str:
 
 
 def require_creator_or_admin(lesson: Lesson, user: AuthenticatedUser) -> None:
-    """`startLesson` / `abortLesson`: the instructor who created the lesson, or an ADMIN (§70.3.2).
+    """Every mutating lesson operation: the instructor who created the lesson, or an ADMIN.
 
-    An instructor who is not the creator is refused with `403 FORBIDDEN_FOR_ROLE`: the lesson's
-    cards act as its creator (`ActorRef(INSTRUCTOR, created_by_user_id)`), and a second instructor
-    starting or stopping them would act under somebody else's name.
+    I5 E39 (Q-E9b-4 variant а): an instructor who is not the creator is refused with
+    `403 NOT_RESOURCE_OWNER` (it was `FORBIDDEN_FOR_ROLE` before I5) — the lesson's cards act as
+    its creator (`ActorRef(INSTRUCTOR, created_by_user_id)`), and a second instructor changing
+    them would act under somebody else's name. A TRAINEE is still `403 FORBIDDEN_FOR_ROLE`.
     """
-    if user.user_role is UserRole.ADMIN:
-        return
-    if user.user_role is UserRole.INSTRUCTOR and user.user_id == lesson.created_by_user_id:
-        return
-    raise ForbiddenForRoleError(
-        f"lesson {lesson.lesson_id} may be started or aborted by its creator or an ADMIN only"
-    )
+    require_owner_or_admin(lesson.created_by_user_id, user, resource=f"lesson {lesson.lesson_id}")
 
 
 TERMINAL_SESSION_STATES: frozenset[SessionState] = frozenset(

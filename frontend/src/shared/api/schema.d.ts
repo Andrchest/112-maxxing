@@ -2369,7 +2369,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE" | "BACKUP_REQUIRED";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE" | "BACKUP_REQUIRED" | "NOT_RESOURCE_OWNER";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -4274,6 +4274,11 @@ export interface components {
              * @description (additive, I3 E9a) The trainee group the lesson was created for, or `null`.
              */
             group_id: string | null;
+            /**
+             * Format: uuid
+             * @description (additive, I5 E39) The lesson's owner — the instructor who created it. Only this instructor or an ADMIN may change the lesson (`403 NOT_RESOURCE_OWNER` otherwise).
+             */
+            created_by_user_id: string;
         };
         LessonReport: {
             /** Format: uuid */
@@ -4543,6 +4548,8 @@ export interface components {
          * @description `FORBIDDEN_FOR_ROLE` — the caller's user role, or the participant assignment to the
          *     active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`;
          *     (additive, I3 E5a) `FORBIDDEN_FOR_SERVICE` — the leg is bound to another ДДС participant.
+         *     (additive, I5 E39) `NOT_RESOURCE_OWNER` — an INSTRUCTOR changing a lesson, session, report
+         *     or trainee group another instructor created (reads stay open; ADMIN is exempt).
          */
         Forbidden: {
             headers: {

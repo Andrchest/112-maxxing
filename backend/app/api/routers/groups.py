@@ -85,10 +85,13 @@ async def update_trainee_group(
     group_id: UUID,
     body: TraineeGroupRequestSchema,
     container: ContainerDep,
-    _user: AdminOrInstructorDep,
+    user: AdminOrInstructorDep,
 ) -> TraineeGroupSchema:
     view = await container.update_trainee_group()(
-        TraineeGroupId(group_id), name_ru=body.name_ru, member_user_ids=body.domain_members()
+        TraineeGroupId(group_id),
+        name_ru=body.name_ru,
+        member_user_ids=body.domain_members(),
+        actor=user,
     )
     return trainee_group_schema(view)
 
@@ -101,7 +104,7 @@ async def update_trainee_group(
     response_class=Response,
 )
 async def delete_trainee_group(
-    group_id: UUID, container: ContainerDep, _user: AdminOrInstructorDep
+    group_id: UUID, container: ContainerDep, user: AdminOrInstructorDep
 ) -> Response:
-    await container.delete_trainee_group()(TraineeGroupId(group_id))
+    await container.delete_trainee_group()(TraineeGroupId(group_id), actor=user)
     return Response(status_code=204)

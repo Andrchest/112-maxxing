@@ -2,10 +2,12 @@
 `updateTraineeGroup`, `deleteTraineeGroup` (HLD 70 §70.3.7, I3 E9a; F-15 «Назначать учащимся
 конкретные задания и группы»).
 
-A group is a named list of trainees. Every INSTRUCTOR/ADMIN manages every group (the router's
-account gate): groups are shared among the instructors of one training centre, like the scenario
-catalog. A member must be an active `TRAINEE` account (`422 VALIDATION_ERROR` otherwise); the
-member list is written whole.
+A group is a named list of trainees. Every INSTRUCTOR/ADMIN sees and uses every group (the
+router's account gate): groups are shared among the instructors of one training centre, like the
+scenario catalog. I5 E39 (Q-E9b-4 а): only its creator (`created_by_user_id`) or an ADMIN may
+rename, re-member or delete a group; another instructor gets `403 NOT_RESOURCE_OWNER`. A member
+must be an active `TRAINEE` account (`422 VALIDATION_ERROR` otherwise); the member list is
+written whole.
 
 A lesson "for a group" is a lesson whose form was pre-filled from the group: the lesson copies
 the members into its own `participants` and records `lessons.group_id`. Changing or deleting the
@@ -18,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.trainee_group_repository import StoredTraineeGroup
@@ -99,6 +102,17 @@ async def _view(uow: UnitOfWork, group: StoredTraineeGroup) -> TraineeGroupView:
     )
 
 
+async def _owned_group(
+    uow: UnitOfWork, group_id: TraineeGroupId, actor: AuthenticatedUser
+) -> StoredTraineeGroup:
+    """The group, if `actor` may change it: its creator or an ADMIN (I5 E39, Q-E9b-4 а)."""
+    group = await uow.trainee_groups.get(group_id)
+    if group is None:
+        raise TraineeGroupNotFoundError(group_id)
+    require_owner_or_admin(group.created_by_user_id, actor, resource=f"trainee group {group_id}")
+    return group
+
+
 class CreateTraineeGroup:
     """`createTraineeGroup`."""
 
@@ -165,12 +179,16 @@ class UpdateTraineeGroup:
         self._unit_of_work = unit_of_work
 
     async def __call__(
-        self, group_id: TraineeGroupId, *, name_ru: str, member_user_ids: Sequence[UserId]
+        self,
+        group_id: TraineeGroupId,
+        *,
+        name_ru: str,
+        member_user_ids: Sequence[UserId],
+        actor: AuthenticatedUser,
     ) -> TraineeGroupView:
         name = _clean_name(name_ru)
         async with self._unit_of_work() as uow:
-            if await uow.trainee_groups.get(group_id) is None:
-                raise TraineeGroupNotFoundError(group_id)
+            await _owned_group(uow, group_id, actor)
             members = await _checked_members(uow, member_user_ids)
             await uow.trainee_groups.replace(group_id, name_ru=name, member_user_ids=members)
             stored = await uow.trainee_groups.get(group_id)
@@ -186,9 +204,8 @@ class DeleteTraineeGroup:
     def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
         self._unit_of_work = unit_of_work
 
-    async def __call__(self, group_id: TraineeGroupId) -> None:
+    async def __call__(self, group_id: TraineeGroupId, *, actor: AuthenticatedUser) -> None:
         async with self._unit_of_work() as uow:
-            if await uow.trainee_groups.get(group_id) is None:
-                raise TraineeGroupNotFoundError(group_id)
+            await _owned_group(uow, group_id, actor)
             await uow.trainee_groups.delete(group_id)
             await uow.commit()

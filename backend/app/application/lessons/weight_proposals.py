@@ -26,13 +26,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.lessons.errors import LessonNotFoundError
+from app.application.lessons.errors import LessonNotFoundError, require_creator_or_admin
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
-from app.application.ports.user_repository import UserRole
 from app.application.ports.weight_proposer import WeightProposer
-from app.application.sessions.queries import ForbiddenForRoleError
 from app.domain.common.errors import DomainError
 from app.domain.common.ids import LessonId, ScenarioVersionId, UserId
 from app.domain.lesson.lesson import Lesson
@@ -116,16 +114,6 @@ def proposals_view(lesson: Lesson) -> WeightProposalsView:
     )
 
 
-def _require_creator_or_admin(lesson: Lesson, user: AuthenticatedUser) -> None:
-    if user.user_role is UserRole.ADMIN:
-        return
-    if user.user_role is UserRole.INSTRUCTOR and user.user_id == lesson.created_by_user_id:
-        return
-    raise ForbiddenForRoleError(
-        f"the weights of lesson {lesson.lesson_id} may be changed by its creator or an ADMIN only"
-    )
-
-
 async def _load(uow: UnitOfWork, lesson_id: LessonId, *, for_update: bool = False) -> Lesson:
     if for_update:
         lesson = await uow.lessons.get_for_update(lesson_id)
@@ -166,7 +154,7 @@ class RequestWeightProposals:
     async def __call__(self, lesson_id: LessonId, user: AuthenticatedUser) -> WeightProposalsView:
         async with self._unit_of_work() as uow:
             lesson = await _load(uow, lesson_id)
-            _require_creator_or_admin(lesson, user)
+            require_creator_or_admin(lesson, user)  # I5 E39: NOT_RESOURCE_OWNER
             cards = await lesson_card_metadata(uow, lesson)
             await uow.commit()
 
@@ -219,7 +207,7 @@ class AcceptWeightProposals:
     ) -> WeightProposalsView:
         async with self._unit_of_work() as uow:
             lesson = await _load(uow, lesson_id, for_update=True)
-            _require_creator_or_admin(lesson, user)
+            require_creator_or_admin(lesson, user)  # I5 E39: NOT_RESOURCE_OWNER
             if lesson.weight_proposals is None:
                 raise WeightProposalsNotFoundError(lesson_id)
             accepted = lesson.accept_weights(frozenset(positions), self._clock.now())

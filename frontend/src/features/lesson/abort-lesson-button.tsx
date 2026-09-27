@@ -1,7 +1,8 @@
 // I3 E4b (70 §70.3.2): aborts the lesson and every non-terminal card session
 // (`CREATED|ACTIVE -> ABORTED`). Same confirm-dialog shape `features/instructor/abort-session-
 // button.tsx` uses for a single session — a required free-text reason, confirm disabled until it
-// is non-empty.
+// is non-empty. I5 E39: `disabled` for an instructor who did not create the lesson (the page
+// shows the hint).
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/ui/dialog';
@@ -14,9 +15,11 @@ import { ProblemError } from '@/shared/lib/api';
 interface AbortLessonButtonProps {
   lessonId: string;
   onAborted: (lesson: LessonDetail) => void;
+  /** I5 E39: the caller may not change this lesson (not its creator, not an ADMIN). */
+  disabled?: boolean;
 }
 
-export function AbortLessonButton({ lessonId, onAborted }: AbortLessonButtonProps) {
+export function AbortLessonButton({ lessonId, onAborted, disabled = false }: AbortLessonButtonProps) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [pending, setPending] = useState(false);
@@ -45,7 +48,7 @@ export function AbortLessonButton({ lessonId, onAborted }: AbortLessonButtonProp
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" variant="destructive" size="sm">
+        <Button type="button" variant="destructive" size="sm" disabled={disabled}>
           {t('lessonDetailAbortButton')}
         </Button>
       </DialogTrigger>

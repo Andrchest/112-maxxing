@@ -4,3 +4,4 @@
 export * from './auth-store';
 export * from './session-events-store';
 export * from './call-state-store';
+export * from './ownership'; // I5 E39

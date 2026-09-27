@@ -18,6 +18,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.scoring.score_session import (
     compute_report,
@@ -98,6 +99,12 @@ class RescoreSession:
             session = await uow.sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if persist:
+                # I5 E39 (Q-E9b-4 а): persisting overwrites the official result, so only the
+                # instructor who created the session (or an ADMIN); the dry run stays a read.
+                require_owner_or_admin(
+                    session.created_by_user_id, user, resource=f"the score of session {session_id}"
+                )
             if session.state is not SessionState.COMPLETED:
                 raise ReportNotReadyError(session_id, session.state)
 

@@ -10,7 +10,11 @@ the per-session release keeps its first release, and so does the lesson — and 
 from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
-from app.application.lessons.errors import LessonNotFoundError, LessonReportNotReadyError
+from app.application.lessons.errors import (
+    LessonNotFoundError,
+    LessonReportNotReadyError,
+    require_creator_or_admin,
+)
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.reports.release_report import ReleaseReportToTrainee
@@ -23,7 +27,7 @@ __all__ = ["ReleaseLessonReport"]
 
 
 class ReleaseLessonReport:
-    """`releaseLessonReport` (INSTRUCTOR / ADMIN)."""
+    """`releaseLessonReport` (INSTRUCTOR — the creator (I5 E39) — or ADMIN)."""
 
     def __init__(
         self,
@@ -45,6 +49,7 @@ class ReleaseLessonReport:
             lesson = await uow.lessons.get(lesson_id)
             if lesson is None:
                 raise LessonNotFoundError(lesson_id)
+            require_creator_or_admin(lesson, user)  # I5 E39: NOT_RESOURCE_OWNER
             if not lesson.is_terminal:
                 raise LessonReportNotReadyError(lesson_id, lesson.state)
             cards = await uow.lessons.list_cards(lesson_id)

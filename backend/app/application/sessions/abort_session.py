@@ -31,6 +31,8 @@ agent drops those calls too.
 
 from __future__ import annotations
 
+from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.operator.views import CallPhase, project_call_state
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -59,9 +61,19 @@ class AbortSession:
         self._voice_signals = voice_signals
 
     async def __call__(
-        self, session_id: SessionId, actor: ActorRef, reason: str
+        self,
+        session_id: SessionId,
+        actor: ActorRef,
+        reason: str,
+        *,
+        caller: AuthenticatedUser | None = None,
     ) -> SimulationSession:
-        """Fire `abort`; returns the `ABORTED` aggregate or raises `InvalidTransitionError`."""
+        """Fire `abort`; returns the `ABORTED` aggregate or raises `InvalidTransitionError`.
+
+        `caller` (I5 E39) is the account behind an `abortSession` request: an INSTRUCTOR who did
+        not create the session is refused with `403 NOT_RESOURCE_OWNER`. `abortLesson` passes
+        none — it has already checked the lesson's creator, who created every card.
+        """
         # Imported here, not at the top: `app.application.dds` reaches `app.application.sessions`
         # through the operator slice, and this module is part of that package's import.
         from app.application.dds.dds_call_flow import end_live_calls, publish_signals
@@ -70,6 +82,10 @@ class AbortSession:
             session = await uow.sessions.get_for_update(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if caller is not None:
+                require_owner_or_admin(
+                    session.created_by_user_id, caller, resource=f"session {session_id}"
+                )
 
             log = await uow.events.read(session_id)
             runtime = build_guard_runtime(log, scenario_valid=True, inference_ready=False)

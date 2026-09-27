@@ -33,6 +33,7 @@ at the log's last offset, so a card that is `COMPLETED`, `REFUSED`, `NOT_COMPLET
 from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.ports.clock import Clock
 from app.application.ports.session_repository import ReportRelease
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -64,6 +65,10 @@ class ReleaseReportToTrainee:
             session = await uow.sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            # I5 E39 (Q-E9b-4 а): only the instructor who created the session (or an ADMIN).
+            require_owner_or_admin(
+                session.created_by_user_id, user, resource=f"the report of session {session_id}"
+            )
             if session.state is not SessionState.COMPLETED:
                 raise ReportNotReadyError(session_id, session.state)
             release = await uow.sessions.release_report(

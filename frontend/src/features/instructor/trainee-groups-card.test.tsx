@@ -1,9 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TraineeGroupsCard } from './trainee-groups-card';
 import { ru } from '@/shared/i18n/ru';
+import { useAuthStore } from '@/entities/session';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -28,9 +29,21 @@ function renderCard() {
   );
 }
 
+/** I5 E39: the signed-in instructor; `instr-1` creates the groups below. */
+function signIn(id: string): void {
+  useAuthStore.setState({
+    isAuthenticated: true,
+    token: 'jwt-token',
+    user: { id, username: id, display_name_ru: 'Instructor', user_role: 'INSTRUCTOR', created_at: '2026-09-21T00:00:00Z' },
+  });
+}
+
 describe('TraineeGroupsCard — instructor trainee groups (70 §70.3.7)', () => {
+  beforeEach(() => signIn('instr-1'));
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
   });
 
   it('creates a group of the ticked trainees, lists it and deletes it', async () => {
@@ -82,5 +95,31 @@ describe('TraineeGroupsCard — instructor trainee groups (70 §70.3.7)', () => 
 
     await user.click(screen.getByRole('button', { name: ru.traineeGroupDeleteButton }));
     await waitFor(() => expect(screen.getByText(ru.traineeGroupsEmpty)).toBeInTheDocument());
+  });
+  it("I5 E39: another instructor's group is listed, but its edit and delete are disabled with the hint", async () => {
+    signIn('instr-2');
+    const group = {
+      group_id: 'group-1',
+      name_ru: 'Shift A',
+      created_by_user_id: 'instr-1',
+      created_at: '2026-09-24T00:00:00Z',
+      members: [],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/users?role=TRAINEE') return jsonResponse(TRAINEES);
+        if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse({ items: [group], total: 1 });
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderCard();
+
+    expect(await screen.findByText('Shift A')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: ru.traineeGroupEditButton })).toBeDisabled();
+    expect(screen.getByRole('button', { name: ru.traineeGroupDeleteButton })).toBeDisabled();
+    expect(screen.getByText(ru.ownershipHintGroup)).toBeInTheDocument();
   });
 });

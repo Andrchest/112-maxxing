@@ -30,6 +30,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.handoff.prefab_handoff import materialise_prefab_handoff
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
@@ -112,17 +114,26 @@ class StartSession:
         actor: ActorRef,
         *,
         lesson_arrival: Mapping[str, Any] | None = None,
+        caller: AuthenticatedUser | None = None,
     ) -> SimulationSession:
         """Fire `start`; returns the `ACTIVE` aggregate or raises `InvalidTransitionError`.
 
         `lesson_arrival` (`{kind, due_offset_ms, fired_offset_ms}`, lesson wall ms) is passed by
         the `LessonRunner` when it starts a lesson card (HLD 70 §70.3.3) and recorded in
         `SESSION_STARTED.lesson_arrival`.
+
+        `caller` (I5 E39) is the account behind a `startSession` request: an INSTRUCTOR who did
+        not create the session is refused with `403 NOT_RESOURCE_OWNER` before anything else is
+        checked. The `LessonRunner` passes none — it starts a card as the lesson's creator.
         """
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get_for_update(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if caller is not None:
+                require_owner_or_admin(
+                    session.created_by_user_id, caller, resource=f"session {session_id}"
+                )
 
             if not await self._inference_ready():
                 raise InferenceNotReadyError(session_id)

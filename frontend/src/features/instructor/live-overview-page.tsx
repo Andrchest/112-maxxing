@@ -12,6 +12,10 @@
 // COMPLETED/ABORTED (no early return on a terminal state) — for COMPLETED it additionally links to
 // the report, which is where the release control lives (`features/report/report-page.tsx`);
 // nothing here duplicates that control.
+//
+// I5 E39 (Q-E9b-4 variant а): the abort control is disabled, with «Изменять может только
+// преподаватель, создавший занятие», for an instructor who did not create the session
+// (`SessionDetail.created_by_user_id`); the overview itself stays open to every instructor.
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -19,7 +23,7 @@ import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { useAuthStore } from '@/entities/session';
+import { canChangeOwned, useAuthStore } from '@/entities/session';
 import { getInstructorSessionOverview, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { WsClient, type ConnectionStatus } from '@/shared/realtime/ws-client';
@@ -45,6 +49,7 @@ export function InstructorLiveOverviewPage() {
   const token = useAuthStore((state) => state.token);
   const userLabel = useAuthStore((state) => state.user?.display_name_ru);
   const userRole = useAuthStore((state) => state.user?.user_role);
+  const user = useAuthStore((state) => state.user);
   const roleLabel = userRole ? t(USER_ROLE_LABEL_KEY[userRole]) : undefined;
   const canAbort = userRole === 'INSTRUCTOR' || userRole === 'ADMIN';
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
@@ -112,6 +117,7 @@ export function InstructorLiveOverviewPage() {
   }
 
   const isTerminal = overview.session.state === 'COMPLETED' || overview.session.state === 'ABORTED';
+  const canChange = canChangeOwned(user, overview.session.created_by_user_id);
 
   return (
     <AppShell
@@ -125,7 +131,14 @@ export function InstructorLiveOverviewPage() {
         <h1 className="font-heading text-lg font-medium">{t('instructorLiveOverviewTitle')}</h1>
         <div className="flex items-center gap-2">
           {!isTerminal && canAbort ? (
-            <AbortSessionButton sessionId={sessionId} onAborted={() => void overviewQuery.refetch()} />
+            <>
+              {!canChange ? (
+                <span className="text-xs text-muted-foreground" data-slot="ownership-hint">
+                  {t('ownershipHintLesson')}
+                </span>
+              ) : null}
+              <AbortSessionButton sessionId={sessionId} onAborted={() => void overviewQuery.refetch()} disabled={!canChange} />
+            </>
           ) : null}
           {isTerminal ? (
             <Button asChild size="sm">

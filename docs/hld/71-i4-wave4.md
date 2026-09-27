@@ -796,3 +796,36 @@ For the manager (not decided by E24):
 - `docs/hld/puml/i4-audit-sequence.puml`: one audited request, a login failure and the S5 read.
 - `docs/hld/puml/i4-tls-edge-topology.puml`: S3, with the Caddy edge and the named fallback.
 - `docs/hld/puml/i4-backup-restore.puml`: S2 backup loop, restore, and the S5 purge guard.
+
+## 71.18.2 I5 E39 — Instructors see everything, change only their own
+
+Sources: Q-E9b-4 (answer 2026-09-26, variant а); ТЗ ¶245; Q&A L786–789; I3 E9a (shared groups).
+
+- Owner = the row's `created_by_user_id` (lessons, sessions, trainee groups — all `NOT NULL`).
+  One rule, `app.application.auth.ownership.require_owner_or_admin`: ADMIN passes; an INSTRUCTOR
+  passes on their own row or on a row with no recorded owner (`None`, the legacy/seed rule — no
+  such row exists today, the branch is kept in the pure function); another INSTRUCTOR gets
+  `403 NOT_RESOURCE_OWNER` (new `ProblemCode`, under `Forbidden`); a TRAINEE keeps
+  `403 FORBIDDEN_FOR_ROLE`. The check runs after the row is loaded (`404` first) and before any
+  state check or write.
+- Guarded operations: `startSession`, `abortSession` (a `caller` keyword; the `LessonRunner` and
+  `abortLesson`'s card cascade pass none), `continueToNextStage` (its instructor path only),
+  `releaseReportToTrainee`, `rescoreSession` with `persist: true` (the dry run stays a read),
+  `startLesson`, `abortLesson`, `releaseLessonReport`, `requestWeightProposals`,
+  `acceptWeightProposals` (the lesson plan's only edit), `updateTraineeGroup`,
+  `deleteTraineeGroup`. `startLesson`/`abortLesson`/weights already had a creator-or-ADMIN check
+  answering `FORBIDDEN_FOR_ROLE`; it now answers `NOT_RESOURCE_OWNER`.
+- Unchanged: every read (overview, reports, lists, CSV, weight proposals), the append-only result
+  comments (E32), `createLesson`/`createSession`/`createTraineeGroup`, ADMIN, scenario
+  archive/unarchive (no uploader is recorded) and `generateReportExplanation`.
+- Timer override, participants and the plan are fixed at creation: no endpoint changes them after
+  it, so none is guarded beyond `acceptWeightProposals`.
+- Contract: `LessonDetail.created_by_user_id` (additive, required) so the UI knows the owner;
+  `SessionDetail`, `SessionReport.session` and `TraineeGroup` already carried it. No migration.
+- UI: `canChangeOwned` (`entities/session/ownership.ts`) mirrors the rule; for a non-owner the
+  lesson page's start/abort/release and weight controls, the live overview's abort and the
+  report's release are disabled with «Изменять может только преподаватель, создавший занятие»,
+  and a group's edit/delete with «Изменять может только преподаватель, создавший группу».
+- Tests: `backend/tests/api/ownership/test_resource_ownership.py` (every guarded operation × owner
+  / other instructor / admin; reads and comments by another instructor; a refused change writes
+  nothing), `backend/tests/unit/application/auth/test_ownership.py` (the rule, incl. no owner).

@@ -6,7 +6,8 @@
 // (COMPLETED/ABORTED — `abortSession` itself refuses those with `409 INVALID_TRANSITION`, this
 // only avoids offering a button the backend would refuse). Same confirm-dialog shape as
 // `features/dds/close-dialog.tsx`: a required free-text field, the confirm button disabled until
-// it is non-empty.
+// it is non-empty. I5 E39: `disabled` for an instructor who did not create the session (the page
+// shows the hint).
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/ui/dialog';
@@ -19,9 +20,11 @@ import { ProblemError } from '@/shared/lib/api';
 interface AbortSessionButtonProps {
   sessionId: string;
   onAborted: (session: SessionDetail) => void;
+  /** I5 E39: the caller may not change this session (not its creator, not an ADMIN). */
+  disabled?: boolean;
 }
 
-export function AbortSessionButton({ sessionId, onAborted }: AbortSessionButtonProps) {
+export function AbortSessionButton({ sessionId, onAborted, disabled = false }: AbortSessionButtonProps) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [pending, setPending] = useState(false);
@@ -50,7 +53,7 @@ export function AbortSessionButton({ sessionId, onAborted }: AbortSessionButtonP
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" variant="destructive" size="sm">
+        <Button type="button" variant="destructive" size="sm" disabled={disabled}>
           {t('instructorAbortButton')}
         </Button>
       </DialogTrigger>

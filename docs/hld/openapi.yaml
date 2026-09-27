@@ -3417,6 +3417,8 @@ components:
         `FORBIDDEN_FOR_ROLE` — the caller's user role, or the participant assignment to the
         active `RoleStage`, does not permit this operation. Also `REPORT_NOT_RELEASED`;
         (additive, I3 E5a) `FORBIDDEN_FOR_SERVICE` — the leg is bound to another ДДС participant.
+        (additive, I5 E39) `NOT_RESOURCE_OWNER` — an INSTRUCTOR changing a lesson, session, report
+        or trainee group another instructor created (reads stay open; ADMIN is exempt).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -3519,6 +3521,7 @@ components:
         - MATERIAL_TYPE_NOT_ALLOWED    # additive, I4 E34
         - MATERIAL_TOO_LARGE           # additive, I4 E34
         - BACKUP_REQUIRED              # additive, I4 E29
+        - NOT_RESOURCE_OWNER           # additive, I5 E39
 
     Problem:
       type: object
@@ -6309,7 +6312,7 @@ components:
     LessonDetail:
       type: object
       additionalProperties: false
-      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at, group_id]
+      required: [lesson_id, title_ru, session_mode, state, participants, scenario_plan, sessions, created_at, started_at, completed_at, report_released_at, group_id, created_by_user_id]
       properties:
         lesson_id: { type: string, format: uuid }
         title_ru: { type: string }
@@ -6331,6 +6334,12 @@ components:
         group_id:
           description: (additive, I3 E9a) The trainee group the lesson was created for, or `null`.
           type: [string, 'null']
+          format: uuid
+        created_by_user_id:
+          description: >-
+            (additive, I5 E39) The lesson's owner — the instructor who created it. Only this
+            instructor or an ADMIN may change the lesson (`403 NOT_RESOURCE_OWNER` otherwise).
+          type: string
           format: uuid
     LessonReport:
       type: object

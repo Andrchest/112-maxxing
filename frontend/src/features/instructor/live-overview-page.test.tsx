@@ -105,10 +105,25 @@ describe('InstructorLiveOverviewPage — one getInstructorSessionOverview fetch,
   it('shows the abort button for an INSTRUCTOR on a non-terminal session', async () => {
     signIn();
     vi.stubGlobal('WebSocket', InertSocket);
-    const overview = makeInstructorSessionOverview({ session: makeSessionDetail({ state: 'ACTIVE' }) });
+    const overview = makeInstructorSessionOverview({
+      session: makeSessionDetail({ state: 'ACTIVE', created_by_user_id: 'instr-1' }),
+    });
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
     renderPage();
-    expect(await screen.findByRole('button', { name: ru.instructorAbortButton })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: ru.instructorAbortButton })).toBeEnabled();
+    expect(screen.queryByText(ru.ownershipHintLesson)).not.toBeInTheDocument();
+  });
+
+  it('I5 E39: disables the abort button, with the ownership hint, on another instructor\'s session', async () => {
+    signIn();
+    vi.stubGlobal('WebSocket', InertSocket);
+    const overview = makeInstructorSessionOverview({
+      session: makeSessionDetail({ state: 'ACTIVE', created_by_user_id: 'instr-2' }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(overview)));
+    renderPage();
+    expect(await screen.findByRole('button', { name: ru.instructorAbortButton })).toBeDisabled();
+    expect(screen.getByText(ru.ownershipHintLesson)).toBeInTheDocument();
   });
 
   it('hides the abort button once the session is terminal', async () => {

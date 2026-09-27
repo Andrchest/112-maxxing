@@ -37,11 +37,13 @@ function mockReportFetch(report: ReturnType<typeof makeSessionReport>): (input: 
   });
 }
 
-function signIn(userRole: 'TRAINEE' | 'INSTRUCTOR' | 'ADMIN'): void {
+function signIn(userRole: 'TRAINEE' | 'INSTRUCTOR' | 'ADMIN', id = 'instructor-1'): void {
   useAuthStore.setState({
     isAuthenticated: true,
     token: 'jwt-token',
-    user: { id: 'u1', username: 'test-user', display_name_ru: 'Test User', user_role: userRole, created_at: '2026-09-21T00:00:00Z' },
+    // I5 E39: `instructor-1` is the fixture session's creator (`makeSessionDetail`), so an
+    // INSTRUCTOR signed in here owns it and may release its report.
+    user: { id, username: 'test-user', display_name_ru: 'Test User', user_role: userRole, created_at: '2026-09-21T00:00:00Z' },
   });
 }
 
@@ -121,6 +123,14 @@ describe('ReportPage — orchestrates one getSessionReport fetch, one component 
     // The trailing colon narrows the match to the released-at paragraph — the release button's
     // own label starts with the same word (reportReleaseButton) and would otherwise also match.
     await waitFor(() => expect(screen.getByText(new RegExp(`${ru.reportReleasedAtLabel}:`))).toBeInTheDocument());
+  });
+
+  it('I5 E39: disables the release button, with the ownership hint, for another instructor', async () => {
+    signIn('INSTRUCTOR', 'instructor-2');
+    vi.stubGlobal('fetch', mockReportFetch(makeSessionReport()));
+    renderPage();
+    expect(await screen.findByRole('button', { name: ru.reportReleaseButton })).toBeDisabled();
+    expect(screen.getByText(ru.ownershipHintLesson)).toBeInTheDocument();
   });
 
   it('does not show the release button for a TRAINEE', async () => {

@@ -3,6 +3,8 @@
 // proposal beside the card's current weight and its reason, ticks the ones to take and accepts
 // them. The server stores proposals and applies nothing until `acceptWeightProposals`; this card
 // never computes a weight, it only shows the server's numbers (scoring stays deterministic, D11).
+// I5 E39: read-only (controls disabled, with the ownership hint) for an instructor who did not
+// create the lesson.
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
@@ -45,9 +47,11 @@ interface WeightProposalsCardProps {
   /** The plan entry's scenario title (and difficulty) for a position — rendered by the page. */
   renderCardLabel: (position: number, scenarioVersionId: string) => ReactNode;
   onWeightsChanged?: () => void;
+  /** I5 E39: the caller may change this lesson (its creator or an ADMIN). */
+  canChange?: boolean;
 }
 
-export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChanged }: WeightProposalsCardProps) {
+export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChanged, canChange = true }: WeightProposalsCardProps) {
   const queryClient = useQueryClient();
   const [chosen, setChosen] = useState<Set<number>>(new Set());
 
@@ -111,11 +115,16 @@ export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChange
             size="sm"
             variant="outline"
             onClick={() => requestMutation.mutate()}
-            disabled={requestMutation.isPending}
+            disabled={requestMutation.isPending || !canChange}
           >
             {requestMutation.isPending ? t('weightProposalsRequesting') : t('weightProposalsRequestButton')}
           </Button>
         </div>
+        {!canChange ? (
+          <p className="text-xs text-muted-foreground" data-slot="ownership-hint">
+            {t('ownershipHintLesson')}
+          </p>
+        ) : null}
         {requestMutation.error ? (
           <p role="alert" className="text-sm text-destructive">
             {problemText(requestMutation.error)}
@@ -165,6 +174,7 @@ export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChange
                             className="size-4 accent-primary"
                             aria-label={`${t('weightProposalsColumnAccept')} ${line.position}`}
                             checked={chosen.has(line.position)}
+                            disabled={!canChange}
                             onChange={() => toggle(line.position)}
                           />
                         )}
@@ -179,7 +189,7 @@ export function WeightProposalsCard({ lessonId, renderCardLabel, onWeightsChange
                 type="button"
                 size="sm"
                 onClick={() => acceptMutation.mutate([...chosen].sort((a, b) => a - b))}
-                disabled={chosen.size === 0 || acceptMutation.isPending}
+                disabled={chosen.size === 0 || acceptMutation.isPending || !canChange}
               >
                 {acceptMutation.isPending ? t('weightProposalsAccepting') : t('weightProposalsAcceptButton')}
               </Button>

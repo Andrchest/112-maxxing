@@ -166,7 +166,7 @@ async def start_session(
     `REQUIRE_INFERENCE_READY=true` (D8, SPEC §37). Adoption happens only after the use case's
     transaction has committed, so the runner never ticks a session a rollback removed.
     """
-    started = await container.start_session()(SessionId(session_id), actor_of(user))
+    started = await container.start_session()(SessionId(session_id), actor_of(user), caller=user)
     if container.settings.runner_enabled:
         container.runner.adopt(started.id)
     return await _detail(container, started, user)
@@ -189,7 +189,9 @@ async def abort_session(
 
     "Simulation data is preserved: the event log is closed, never deleted (SPEC §39, §42 test 14)."
     """
-    aborted = await container.abort_session()(SessionId(session_id), actor_of(user), body.reason)
+    aborted = await container.abort_session()(
+        SessionId(session_id), actor_of(user), body.reason, caller=user
+    )
     if container.settings.runner_enabled:
         await container.runner.release(aborted.id)
     return await _detail(container, aborted, user)

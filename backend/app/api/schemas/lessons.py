@@ -212,6 +212,9 @@ class LessonDetailSchema(ApiModel):
     completed_at: datetime | None
     report_released_at: datetime | None
     group_id: UUID | None
+    # (additive, I5 E39, Q-E9b-4 а) the lesson's owner: only this instructor (or an ADMIN) may
+    # change it; the UI disables the controls for everyone else.
+    created_by_user_id: UUID
 
 
 class UnscoredCardTimesSchema(ApiModel):
@@ -357,6 +360,7 @@ def lesson_detail_schema(view: LessonDetailView) -> LessonDetailSchema:
         completed_at=lesson.completed_at,
         report_released_at=lesson.report_released_at,
         group_id=None if lesson.group_id is None else UUID(str(lesson.group_id)),
+        created_by_user_id=UUID(str(lesson.created_by_user_id)),
     )
 
 

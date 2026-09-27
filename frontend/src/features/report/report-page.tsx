@@ -4,6 +4,10 @@
 // viewer may not see comes back empty/null from the API and is hidden, never shown as an error
 // (R3) — this page never filters anything itself (see `no-score-math-guard.test.ts` for the
 // numeric half of that guarantee).
+//
+// I5 E39 (Q-E9b-4 variant а): the release control is disabled, with «Изменять может только
+// преподаватель, создавший занятие», for an instructor who did not create the session
+// (`SessionReport.session.created_by_user_id`); the report and its comments stay open.
 import { useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,7 +16,7 @@ import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { useAuthStore } from '@/entities/session';
+import { canChangeOwned, useAuthStore } from '@/entities/session';
 import { getSessionReport, releaseReportToTrainee, problemMessageRu, queryKeys, type ProblemCode, type ReportReleaseView, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
@@ -123,6 +127,8 @@ export function ReportPage() {
     return null;
   }
 
+  const canChange = canChangeOwned(user, report.session.created_by_user_id);
+
   return (
     <AppShell title={t('reportTitle')} role={roleLabel} userLabel={userLabel}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -130,9 +136,14 @@ export function ReportPage() {
         {canManage ? (
           <div className="flex items-center gap-2">
             <Badge variant={report.released ? 'default' : 'outline'}>{report.released ? t('reportReleasedBadge') : t('reportNotReleasedBadge')}</Badge>
-            <Button type="button" size="sm" disabled={releasePending} onClick={() => void handleRelease()}>
+            <Button type="button" size="sm" disabled={releasePending || !canChange} onClick={() => void handleRelease()}>
               {t('reportReleaseButton')}
             </Button>
+            {!canChange ? (
+              <span className="text-xs text-muted-foreground" data-slot="ownership-hint">
+                {t('ownershipHintLesson')}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>

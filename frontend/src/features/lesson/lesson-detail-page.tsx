@@ -13,6 +13,11 @@
 // I4 E33 (71 §71.10): the scored cards are a table with each card's failed rules, critical errors
 // and times against the system's norms, and «Скачать CSV» downloads the same report as a file
 // (`lesson-report-table.tsx`).
+//
+// I5 E39 (Q-E9b-4 variant а): every instructor sees the lesson, but only its creator
+// (`LessonDetail.created_by_user_id`) or an ADMIN changes it — for anyone else the start, abort,
+// release and weight controls are disabled with «Изменять может только преподаватель, создавший
+// занятие». Comments stay open to every instructor.
 import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +27,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
-import { useAuthStore } from '@/entities/session';
+import { canChangeOwned, useAuthStore } from '@/entities/session';
 import { formatCallDurationMs } from '@/entities/call';
 import {
   getLesson,
@@ -223,6 +228,8 @@ export function LessonDetailPage() {
 
   if (!lessonId) return null;
 
+  const canChange = canChangeOwned(user, lesson?.created_by_user_id);
+
   const scenarioVersionIdByPosition = new Map(
     (lesson?.scenario_plan ?? []).map((entry) => [entry.position, entry.scenario_version_id]),
   );
@@ -294,19 +301,24 @@ export function LessonDetailPage() {
 
               <div className="flex flex-wrap items-center gap-2" data-slot="lesson-actions">
                 {lesson.state === 'CREATED' ? (
-                  <Button type="button" size="sm" onClick={() => void handleStart()} disabled={starting}>
+                  <Button type="button" size="sm" onClick={() => void handleStart()} disabled={starting || !canChange}>
                     {starting ? t('lessonDetailStarting') : t('lessonDetailStartButton')}
                   </Button>
                 ) : null}
                 {lesson.state === 'CREATED' || lesson.state === 'ACTIVE' ? (
-                  <AbortLessonButton lessonId={lessonId} onAborted={applyUpdate} />
+                  <AbortLessonButton lessonId={lessonId} onAborted={applyUpdate} disabled={!canChange} />
                 ) : null}
                 {(lesson.state === 'COMPLETED' || lesson.state === 'ABORTED') && !lesson.report_released_at ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => void handleRelease()}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleRelease()} disabled={!canChange}>
                     {t('lessonDetailReleaseButton')}
                   </Button>
                 ) : null}
               </div>
+              {!canChange ? (
+                <p className="text-xs text-muted-foreground" data-slot="ownership-hint">
+                  {t('ownershipHintLesson')}
+                </p>
+              ) : null}
               {startError ? (
                 <p role="alert" className="text-sm text-destructive">
                   {startError instanceof ProblemError ? problemMessageRu(startError.code as ProblemCode) : t('problemUnknown')}
@@ -362,6 +374,7 @@ export function LessonDetailPage() {
 
           <WeightProposalsCard
             lessonId={lessonId}
+            canChange={canChange}
             onWeightsChanged={() => setLessonOverride(null)}
             renderCardLabel={(position, scenarioVersionId) => (
               <span className="flex flex-col">

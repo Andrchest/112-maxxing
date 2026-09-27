@@ -2,6 +2,9 @@
 // trainee groups — a name and a set of trainees, created, renamed, re-staffed and deleted here.
 // A lesson form offers every group; picking one pre-fills the lesson's participants. Deleting a
 // group changes no lesson (the server keeps each lesson's own participants).
+// I5 E39 (Q-E9b-4 variant а): every instructor sees and uses every group, but only its creator
+// (`TraineeGroup.created_by_user_id`) or an ADMIN edits or deletes it — for anyone else those two
+// buttons are disabled with «Изменять может только преподаватель, создавший группу».
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
@@ -9,6 +12,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { canChangeOwned, useAuthStore } from '@/entities/session';
 import { ProblemError } from '@/shared/lib/api';
 import {
   createTraineeGroup,
@@ -35,6 +39,7 @@ function problemText(error: unknown): string {
 
 export function TraineeGroupsCard() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((state) => state.user);
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const groupsQuery = useQuery({ queryKey: queryKeys.traineeGroups.list(), queryFn: listTraineeGroups });
@@ -153,37 +158,45 @@ export function TraineeGroupsCard() {
           <p className="text-sm text-muted-foreground">{t('traineeGroupsEmpty')}</p>
         ) : null}
         <ul className="flex flex-col gap-2">
-          {(groupsQuery.data?.items ?? []).map((group) => (
-            <li
-              key={group.group_id}
-              className="flex items-center justify-between gap-2 rounded-md border border-border p-2"
-              data-slot="trainee-group-row"
-            >
-              <div>
-                <p className="text-sm font-medium">{group.name_ru}</p>
-                <p className="text-xs text-muted-foreground">
-                  {t('traineeGroupMembersPrefix')}:{' '}
-                  {group.members.length > 0
-                    ? group.members.map((member) => member.display_name_ru).join(', ')
-                    : t('traineeGroupNoMembers')}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => edit(group)}>
-                  {t('traineeGroupEditButton')}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => deleteMutation.mutate(group.group_id)}
-                  disabled={deleteMutation.isPending}
-                >
-                  {t('traineeGroupDeleteButton')}
-                </Button>
-              </div>
-            </li>
-          ))}
+          {(groupsQuery.data?.items ?? []).map((group) => {
+            const canChange = canChangeOwned(user, group.created_by_user_id);
+            return (
+              <li
+                key={group.group_id}
+                className="flex items-center justify-between gap-2 rounded-md border border-border p-2"
+                data-slot="trainee-group-row"
+              >
+                <div>
+                  <p className="text-sm font-medium">{group.name_ru}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('traineeGroupMembersPrefix')}:{' '}
+                    {group.members.length > 0
+                      ? group.members.map((member) => member.display_name_ru).join(', ')
+                      : t('traineeGroupNoMembers')}
+                  </p>
+                  {!canChange ? (
+                    <p className="text-xs text-muted-foreground" data-slot="ownership-hint">
+                      {t('ownershipHintGroup')}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => edit(group)} disabled={!canChange}>
+                    {t('traineeGroupEditButton')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => deleteMutation.mutate(group.group_id)}
+                    disabled={deleteMutation.isPending || !canChange}
+                  >
+                    {t('traineeGroupDeleteButton')}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
         {deleteMutation.error ? (
           <p role="alert" className="text-sm text-destructive">

@@ -40,6 +40,7 @@ report.
 from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.auth.ownership import require_owner_or_admin
 from app.application.handoff.complete_session import SYSTEM_ACTOR
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -98,8 +99,12 @@ def _authorise(session: SimulationSession, user: AuthenticatedUser) -> None:
     stage, so a caller with no participant row at all still gets `PARTICIPANT_NOT_ASSIGNED`
     rather than the vaguer role refusal: the two answers are D8's, and they are different
     questions.
+
+    I5 E39 (Q-E9b-4 а): an instructor continues only a session they created (an ADMIN any);
+    another instructor is refused with `403 NOT_RESOURCE_OWNER`.
     """
     if user.is_instructor_or_admin:
+        require_owner_or_admin(session.created_by_user_id, user, resource=f"session {session.id}")
         return
     participant = resolve_participant(session, user)
     next_stage = _next_stage(session)

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from app.application.ports.scenario_repository import StoredScenarioVersion
 from app.application.testing.fakes import InMemoryScoreRepository
-from app.domain.common.ids import EventId, ScenarioVersionId, SessionId
+from app.domain.common.ids import EventId, ScenarioVersionId, SessionId, UserId
 from app.domain.enums import SessionState
 from app.domain.events.session_event import DomainEvent, SessionEvent
 from app.domain.scenario.version import ScenarioVersion
@@ -106,9 +106,14 @@ class FakeScenarioRepository:
 
 @dataclass
 class StubSession:
-    """The one field `rescore_session`'s state gate reads — not a real `SimulationSession`."""
+    """The fields `rescore_session`'s gates read — not a real `SimulationSession`.
+
+    `created_by_user_id` (I5 E39) defaults to `None`: no recorded owner, so the `persist: true`
+    ownership check lets any instructor through, as it does for a legacy row.
+    """
 
     state: SessionState
+    created_by_user_id: UserId | None = None
 
 
 class FakeSessionRepository:

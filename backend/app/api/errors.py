@@ -68,6 +68,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     "REPORT_NOT_RELEASED": 403,
     # 403 — I3 addition to Forbidden (`i3-openapi-delta.yaml` `ForbiddenI3`, E5a)
     "FORBIDDEN_FOR_SERVICE": 403,
+    # 403 — I5 E39 addition to Forbidden (Q-E9b-4 а): an instructor changing another's resource
+    "NOT_RESOURCE_OWNER": 403,
     # 404 — components/responses/NotFound
     "NOT_FOUND": 404,
     # 404 — I3 E6e addition to NotFound (`i3-telephony-openapi-delta.yaml` `NotFoundE6`)

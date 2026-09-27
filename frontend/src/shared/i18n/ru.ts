@@ -1171,4 +1171,8 @@ export const ru = {
   textQualitySourceDdsCardIssueComment: 'Комментарий к замечанию по карточке (ДДС)',
   textQualitySourceDdsCloseComment: 'Комментарий закрытия происшествия (ДДС)',
   lessonReportTableColumnTextQuality: 'Грамотность',
+  // -- I5 E39: instructors change only their own (Q-E9b-4 variant а) ----------------------------
+  problemNotResourceOwner: 'Изменять может только преподаватель, который это создал.',
+  ownershipHintLesson: 'Изменять может только преподаватель, создавший занятие',
+  ownershipHintGroup: 'Изменять может только преподаватель, создавший группу',
 } as const;

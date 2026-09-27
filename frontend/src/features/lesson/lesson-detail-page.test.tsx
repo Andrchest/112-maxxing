@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LessonDetailPage } from './lesson-detail-page';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
@@ -73,6 +73,7 @@ function makeLesson(overrides: Partial<LessonDetail>): LessonDetail {
     completed_at: null,
     report_released_at: null,
     group_id: null,
+    created_by_user_id: 'instructor-1',
     ...overrides,
   };
 }
@@ -90,7 +91,18 @@ function renderPage() {
   );
 }
 
+/** I5 E39: the signed-in account; `instructor-1` is `makeLesson`'s owner. */
+function signIn(id: string, userRole: 'INSTRUCTOR' | 'ADMIN' = 'INSTRUCTOR'): void {
+  useAuthStore.setState({
+    isAuthenticated: true,
+    token: 'jwt-token',
+    user: { id, username: id, display_name_ru: 'Instructor', user_role: userRole, created_at: '2026-09-21T00:00:00Z' },
+  });
+}
+
 describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () => {
+  beforeEach(() => signIn('instructor-1'));
+
   afterEach(() => {
     vi.unstubAllGlobals();
     useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
@@ -325,5 +337,45 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
     });
     expect(JSON.parse(acceptCall[1].body as string)).toEqual({ positions: [1, 3] });
     expect(await screen.findAllByText(ru.weightProposalsAccepted)).toHaveLength(2);
+  });
+  it('I5 E39: another instructor sees the lesson, but its controls are disabled with the ownership hint', async () => {
+    signIn('instructor-2');
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/lessons/lesson-1' && method === 'GET') return jsonResponse(makeLesson({}));
+      if (url === '/api/v1/scenarios/versions/v1/summary' && method === 'GET') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/lessons/lesson-1/weight-proposals') return notFound();
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: ru.lessonDetailStartButton })).toBeDisabled();
+    expect(screen.getByRole('button', { name: ru.lessonDetailAbortButton })).toBeDisabled();
+    expect(screen.getByRole('button', { name: ru.weightProposalsRequestButton })).toBeDisabled();
+    expect(screen.getAllByText(ru.ownershipHintLesson).length).toBeGreaterThan(0);
+  });
+
+  it('I5 E39: an ADMIN changes any lesson', async () => {
+    signIn('admin-1', 'ADMIN');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/lessons/lesson-1') return jsonResponse(makeLesson({}));
+        if (url === '/api/v1/scenarios/versions/v1/summary') return jsonResponse(SCENARIO_SUMMARY_RESPONSE);
+        if (url === '/api/v1/users?role=TRAINEE') return jsonResponse({ items: [], total: 0 });
+        if (url === '/api/v1/lessons/lesson-1/weight-proposals') return notFound();
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: ru.lessonDetailStartButton })).toBeEnabled();
+    expect(screen.queryByText(ru.ownershipHintLesson)).not.toBeInTheDocument();
   });
 });

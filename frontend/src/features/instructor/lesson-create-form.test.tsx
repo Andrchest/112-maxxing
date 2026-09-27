@@ -72,6 +72,7 @@ function makeLesson(): LessonDetail {
     completed_at: null,
     report_released_at: null,
     group_id: null,
+    created_by_user_id: 'instructor-1',
   };
 }
 
