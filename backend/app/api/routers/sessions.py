@@ -102,6 +102,7 @@ async def create_session(
                 if assignment.assigned_service_id is not None
             },
             timers=None if body.timers is None else body.timers.to_domain(),
+            pass_criteria=(None if body.pass_criteria is None else body.pass_criteria.to_domain()),
         )
     )
     return await _detail(container, session, user)

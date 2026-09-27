@@ -69,6 +69,10 @@ class TraineeStatisticsRowSchema(ApiModel):
     played."""
     reaction_to_status_ms_avg: float | None
     """(I5 E36, Q-E12-1) The mean of delivery → the leg's first primary decision."""
+    pass_count: int = Field(ge=0)
+    """(I5 E38, Q-E9b-3) The sessions whose «сдал / не сдал» verdict is «сдал»."""
+    pass_rate: float | None = Field(ge=0, le=100)
+    """(I5 E38) `100 · pass_count / session_count`; `null` without a session."""
 
 
 class TraineeStatisticsSchema(ApiModel):
@@ -125,6 +129,8 @@ def trainee_statistics_row_schema(row: TraineeStatisticsRowView) -> TraineeStati
         fill_deviation_ms_avg=row.fill_deviation_ms_avg,
         reaction_to_open_ms_avg=row.reaction_to_open_ms_avg,
         reaction_to_status_ms_avg=row.reaction_to_status_ms_avg,
+        pass_count=row.pass_count,
+        pass_rate=row.pass_rate,
     )
 
 

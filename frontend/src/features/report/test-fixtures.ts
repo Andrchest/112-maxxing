@@ -11,6 +11,7 @@ import type {
   InferenceMetricView,
   InferenceMetricsPage,
   OperatorCardView,
+  PassVerdictView,
   ReportExplanation,
   ResourceTimelineEntryView,
   ScoreCategoryTotalView,
@@ -289,6 +290,19 @@ export function makeSessionDetail(overrides: Partial<SessionDetail> = {}): Sessi
   };
 }
 
+// I5 E38 (Q-E9b-3): a passed verdict under the defaults (70 %, no rule limit, critical fails).
+export function makePassVerdict(overrides: Partial<PassVerdictView> = {}): PassVerdictView {
+  return {
+    passed: true,
+    failed_criteria: [],
+    criteria: { min_score_percent: 70, max_failed_rules: null, fail_on_critical: true },
+    score_percent: 80,
+    failed_rule_count: 1,
+    critical_error_count: 0,
+    ...overrides,
+  };
+}
+
 export function makeSessionReport(overrides: Partial<SessionReport> = {}): SessionReport {
   return {
     session_id: 'session-1',
@@ -307,6 +321,7 @@ export function makeSessionReport(overrides: Partial<SessionReport> = {}): Sessi
     released: false,
     dds_participant_totals: [],
     text_quality: makeTextQualityReport(),
+    pass_verdict: makePassVerdict(),
     ...overrides,
   };
 }

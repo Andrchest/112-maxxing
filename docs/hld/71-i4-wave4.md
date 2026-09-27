@@ -1003,3 +1003,69 @@ and «Рабочее место».
 
 **Not built (owner questions).** None outstanding for this epic — Q-E9b-2, Q-E12-1, Q-E12-2 and
 Q-E12-3 are now implemented (`docs/owner-decisions.md` marked "Сделано: I5 E36.").
+
+## 71.18.5 I5 E38 — Configurable «сдал / не сдал»
+
+**Purpose.** The owner's answer to Q-E9b-3 (variant г, 2026-09-26): a pass/fail verdict that
+combines a score threshold, a limit of failed rules and critical errors, each switchable, with the
+defaults and the level (lesson / session) left to the stage — decided by the manager as below.
+
+**Sources:** Q-E9b-3 (`docs/owner-decisions.md`); ТЗ ¶241.
+
+**Design.**
+- `domain/session/pass_criteria.py` (new, pure): `PassCriteria` — `min_score_percent` (int
+  0…100 or `null` = off), `max_failed_rules` (int ≥ 0 or `null` = off), `fail_on_critical` (bool);
+  defaults `70`, `null`, `true`; all three off is `PassCriteriaError` (`422 VALIDATION_ERROR`).
+  `pass_verdict(criteria, total_points, total_max_points, failed_rule_count, critical_error_count)`
+  is PASS iff every enabled criterion holds, and names the ones that did not (`PassCriterion`:
+  `MIN_SCORE_PERCENT`, `MAX_FAILED_RULES`, `CRITICAL_ERRORS`). The percent is `score_percent` —
+  `100 · total / max` clamped to 0…100, the statistics' own percent (`session_percent` now calls
+  it); no maximum → no percent → the threshold, when on, is not met. A failed rule is a stored
+  result that did not pass; a critical error is a stored result with `critical_failure` (the
+  lesson report's existing counters).
+- Recorded like I4 E31's timers: `createSession(…, pass_criteria)` / `createLesson(…,
+  pass_criteria)` (the lesson's criteria for every card) → `SESSION_CREATED.pass_criteria`
+  (additive catalog key; `None` records the defaults). A log without the key (every session created
+  before this epic) reads as the defaults (`application/reports/pass_verdict.recorded_pass_criteria`).
+- Derived at report time, stored nowhere: `GetSessionReport` sets `SessionReportView.pass_verdict`
+  over the **whole** stored report's totals/counters after `score_report`/`checksum` are fixed;
+  `getLessonReport` carries it per scored card (an ABORTED card: none, «—»). The statistics
+  (`statistics_row`) count `pass_count` / `pass_rate` (`100 · pass_count / session_count`) over the
+  same sessions as every other number, each judged by its own recorded criteria; the rating carries
+  the same two numbers as an additional column, the ranking unchanged. Nothing in
+  `app.domain.scoring` imports the criteria (asserted), so a score, its checksum and a rescore are
+  unchanged by construction.
+- CSV: the lesson report gains «Итог» («Сдал» / «Не сдал»; empty for an unscored card, the file's
+  "not measured" convention), after «Критических ошибок»; the statistics and rating files gain
+  «Сдано» and «Доля сдачи, %».
+- Frontend: both instructor forms (single session, lesson) get the three controls (checkbox +
+  number for the threshold and the limit, checkbox for critical errors; defaults preselected; all
+  off or a bad number disables «Создать»); a request at the defaults sends no `pass_criteria`. The
+  session report header shows «Итог: Сдал / Не сдал», the failed criteria with their numbers and
+  the criteria applied (`entities/pass-verdict`); the lesson report table gets an «Итог» column (an
+  unscored card reads «Итог: —»); `/instructor/statistics` gets «Сдано» («N (P%)») in both tables.
+
+**Data / DB.** None (no migration): the criteria are an additive `SESSION_CREATED` payload key.
+
+**API** (additive, `docs/hld/openapi.yaml`, section `# --- I5 E38`):
+- `PassCriteriaRequest` on `SessionCreateRequest.pass_criteria` and
+  `LessonCreateRequest.pass_criteria` (omitted key = its default; explicit `null`/`false` = off).
+- `PassVerdictView` (`passed`, `failed_criteria`, `criteria: PassCriteriaView`, `score_percent`,
+  `failed_rule_count`, `critical_error_count`) on `SessionReport.pass_verdict` (required, nullable)
+  and `LessonReport.cards.items.pass_verdict` (`null` for an unscored card).
+- `TraineeStatisticsRow` and `TraineeRatingRow` gain `pass_count` / `pass_rate`.
+
+**Acceptance.**
+- Verdict matrix: each criterion alone, combined, all-off rejected
+  (`tests/unit/domain/session/test_pass_criteria.py`).
+- A session without recorded criteria is judged by the defaults, over HTTP
+  (`tests/api/lessons/test_pass_verdict.py`).
+- The same actions under two criteria: identical score rows and checksum, both rescores
+  `identical_to_stored`, no score row moved by any verdict-bearing read
+  (`tests/api/lessons/test_pass_verdict.py`, `tests/invariants/test_inv_09_pass_criteria.py`).
+- The lesson report, statistics and rating CSVs parse back to the JSON's verdict and pass numbers.
+
+**Choices recorded (technical).** The threshold compares the unrounded clamped percent
+(`percent ≥ threshold`); the UI truncates (never rounds up) the percent it prints beside a failed
+threshold. A request at the defaults sends no `pass_criteria` (the server records the same
+defaults). The criteria are not shown on the lesson detail page (not asked for).

@@ -10,12 +10,15 @@
 // `ACCEPT`, same measured moment, the 3-minute limit); a «Время реакции» column from
 // `LessonReport.cards[].reaction_times` (delivery → open / delivery → first status, no norm); a
 // «Рабочее место» column, the card's participants' logins (`LessonReport.cards[].workstation`).
+// I5 E38 (Q-E9b-3): an «Итог» column — «Сдал» / «Не сдал» and the failed criteria, exactly as
+// `LessonReport.cards[].pass_verdict` says; «—» for a card without a verdict.
 import { useState } from 'react';
 import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { formatCallDurationMs } from '@/entities/call';
 import { serviceLabelRu } from '@/entities/service-catalog';
 import { formatDeviationMs } from '@/entities/statistics';
+import { failedCriteriaLines, passVerdictLabel } from '@/entities/pass-verdict';
 import { textQualityFlaggedCount } from '@/entities/text-quality';
 import {
   getLessonReportCsv,
@@ -128,6 +131,7 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
           <th className="p-2 font-medium">{t('lessonReportTableColumnWeight')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnFailedRules')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnCriticalErrors')}</th>
+          <th className="p-2 font-medium">{t('lessonReportTableColumnVerdict')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnNorms')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnReactionTimes')}</th>
           <th className="p-2 font-medium">{t('lessonReportTableColumnTextQuality')}</th>
@@ -138,6 +142,7 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
           const norms = card.norms ?? [];
           const reactionTimes = card.reaction_times ?? [];
           const textQualityCount = textQualityFlaggedCount(card.text_quality);
+          const verdict = card.pass_verdict ?? null;
           return (
             <tr key={card.session_id} className="border-b border-border/60 align-top" data-slot="lesson-report-row">
               <td className="p-2">{card.position}</td>
@@ -155,6 +160,18 @@ export function LessonReportTable({ cards }: { cards: LessonReport['cards'] }) {
               </td>
               <td className="p-2 tabular-nums" data-slot="report-card-critical-errors">
                 {card.critical_error_count ?? t('lessonReportNormNone')}
+              </td>
+              <td className="p-2" data-slot="report-card-verdict">
+                <span className={verdict && !verdict.passed ? 'font-medium text-destructive' : 'font-medium'}>
+                  {passVerdictLabel(verdict)}
+                </span>
+                {verdict && verdict.failed_criteria.length > 0 ? (
+                  <ul className="mt-0.5 flex flex-col gap-0.5 text-xs text-muted-foreground">
+                    {failedCriteriaLines(verdict).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                ) : null}
               </td>
               <td className="p-2">
                 {norms.length === 0 ? (

@@ -44,6 +44,8 @@ const STATISTICS: TraineeStatistics = {
       fill_deviation_ms_avg: 31_000,
       reaction_to_open_ms_avg: 6_000,
       reaction_to_status_ms_avg: 25_000,
+      pass_count: 3,
+      pass_rate: 75,
     },
     {
       trainee_user_id: 'trainee-2',
@@ -56,13 +58,17 @@ const STATISTICS: TraineeStatistics = {
       fill_deviation_ms_avg: null,
       reaction_to_open_ms_avg: null,
       reaction_to_status_ms_avg: null,
+      pass_count: 0,
+      pass_rate: null,
     },
   ],
 };
 
 // I5 E36, Q-E12-2: the rating, best trainee first.
 const RATING: TraineeRating = {
-  rows: [{ rank: 1, trainee_user_id: 'trainee-1', display_name_ru: 'Trainee One', average_percent: 72.6 }],
+  rows: [
+    { rank: 1, trainee_user_id: 'trainee-1', display_name_ru: 'Trainee One', average_percent: 72.6, pass_count: 3, pass_rate: 75 },
+  ],
 };
 
 const GROUPS = { items: [{ group_id: 'group-1', name_ru: 'Group A', created_by_user_id: 'instr-1', members: [], created_at: '2026-09-21T00:00:00Z' }], total: 1 };
@@ -100,12 +106,19 @@ describe('StatisticsPage', () => {
     expect(first).toHaveTextContent(`${ru.scoringCategoryWorkflow}: 1`);
     expect(second).toHaveTextContent('Trainee Two');
     expect(second).not.toHaveTextContent('%');
+    // (I5 E38, Q-E9b-3) sessions judged passed, and their share.
+    expect(first?.querySelector('[data-slot="statistics-passed"]')).toHaveTextContent('3 (75%)');
+    expect(second?.querySelector('[data-slot="statistics-passed"]')).toHaveTextContent(`0 (${ru.statisticsNoValue})`);
+    // one «Сдано» column in the statistics table and one in the rating table
+    expect(screen.getAllByRole('columnheader', { name: ru.statisticsColumnPassed })).toHaveLength(2);
 
     // (I5 E36, Q-E12-2) the rating table, ranked.
     const [ratingRow] = screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'statistics-rating-row');
     expect(ratingRow).toHaveTextContent('1');
     expect(ratingRow).toHaveTextContent('Trainee One');
     expect(ratingRow).toHaveTextContent('73%');
+    // (I5 E38) the additional column; the order is the server's.
+    expect(ratingRow?.querySelector('[data-slot="statistics-rating-passed"]')).toHaveTextContent('3 (75%)');
   });
 
   it('asks for one group and downloads the same rows as CSV', async () => {

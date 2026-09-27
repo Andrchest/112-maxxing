@@ -9,6 +9,8 @@
    - the lesson-wide variants request overridden switch by switch by the entry's,
    - the entry's timer override (`PlanEntry.timers`, I4 E31, HLD 71 §71.8), resolved against the
      scenario's timers by `createSession` and recorded in `SESSION_CREATED.timers`,
+   - the lesson's pass criteria (`LessonCreateRequest.pass_criteria`, I5 E38, Q-E9b-3), the same
+     for every card, recorded in `SESSION_CREATED.pass_criteria` (`None` = the defaults),
    - `lesson_id` / `lesson_position` set,
    so each card is validated exactly as a single session would be (version valid, variants
    implemented and supported, participants assignable under `session_mode`) and ends `READY`;
@@ -39,6 +41,7 @@ from app.domain.common.ids import LessonId, TraineeGroupId
 from app.domain.enums import SessionMode
 from app.domain.lesson.lesson import Lesson, create_lesson
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry
+from app.domain.session.pass_criteria import PassCriteria
 from app.domain.session.variants import SWITCHES, PartialVariants
 
 __all__ = ["CreateLesson", "CreateLessonCommand", "merge_variants"]
@@ -57,6 +60,8 @@ class CreateLessonCommand:
     time_scale: float = 1.0
     group_id: TraineeGroupId | None = None
     """I3 E9a: the trainee group the lesson is created for (recorded, not expanded)."""
+    pass_criteria: PassCriteria | None = None
+    """(I5 E38) «Сдал / не сдал» for every card of the lesson; `None` = the defaults."""
 
 
 def merge_variants(lesson: PartialVariants, entry: PartialVariants | None) -> PartialVariants:
@@ -146,6 +151,7 @@ class CreateLesson:
                     time_scale=command.time_scale,
                     variants=merge_variants(lesson.variants, entry.variants),
                     timers=entry.timers,
+                    pass_criteria=command.pass_criteria,
                     lesson_id=lesson.lesson_id,
                     lesson_position=entry.position,
                 )

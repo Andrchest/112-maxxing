@@ -108,6 +108,10 @@ function UnscoredReportCard({ position, unscored }: { position: number; unscored
         </span>
         <span className="flex items-center gap-2">
           <Badge variant="outline">{t('lessonReportCardUnscored')}</Badge>
+          {/* I5 E38 (Q-E9b-3): an unscored card has no «сдал / не сдал» verdict. */}
+          <span className="text-xs text-muted-foreground" data-slot="report-card-unscored-verdict">
+            {t('passVerdictTitle')}: {t('passVerdictNone')}
+          </span>
           <span className="text-xs text-muted-foreground" data-slot="report-card-elapsed">
             {elapsedMs === null
               ? t('lessonReportCardNotStarted')

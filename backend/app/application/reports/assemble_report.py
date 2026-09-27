@@ -48,6 +48,12 @@ participants' logins (`SessionDetailView.participants[].username`, Q-E12-3's «�
 results — a `TextCheckerPort | None` cannot move either (report-only, no score effect until the
 owner answers Q-E11-1). Gated per source the same way `norms` is gated per kind: the 112-card
 fields with the operator sections, the ДДС comments with the ДДС ones.
+
+**«Сдал / не сдал» (I5 E38, Q-E9b-3).** `pass_verdict` is `pass_verdict.session_pass_verdict`:
+the session's recorded criteria (`SESSION_CREATED.pass_criteria`, defaults for an old log) over the
+**whole** stored report's totals and counters — like `failed_rule_count`, never the viewer's
+filtered list. Derived after `score_report`/`checksum` are fixed and stored nowhere, so it cannot
+move the score, the checksum or a rescore.
 """
 
 from __future__ import annotations
@@ -81,6 +87,7 @@ from app.application.reports.norms import (
     critical_error_count,
     failed_rule_count,
 )
+from app.application.reports.pass_verdict import session_pass_verdict
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
 from app.application.reports.text_quality import (
     TextQualityReport,
@@ -116,6 +123,7 @@ from app.domain.scoring.context import build_context
 from app.domain.scoring.engine import report_checksum
 from app.domain.scoring.results import ScoreCategoryTotal, ScoreReport, ScoreResult
 from app.domain.scoring.rules import ScoringRule
+from app.domain.session.pass_criteria import PassVerdict
 from app.domain.session.session import SimulationSession
 
 __all__ = [
@@ -183,6 +191,9 @@ class SessionReportView:
     part of `checksum`: it is built after `score_report`/`checksum` from a wholly separate read
     (the card's texts and the ДДС comments), so a checker's presence or absence cannot move
     either."""
+    pass_verdict: PassVerdict | None = None
+    """(I5 E38, Q-E9b-3) «Сдал / не сдал» under the session's recorded criteria — derived, never
+    stored, never part of `checksum` (module doc). `None` only for a view built without it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +340,14 @@ class GetSessionReport:
             service_names_ru=service_names,
             failed_rule_count=failed_rule_count(score_report.results),
             critical_error_count=critical_error_count(score_report.results),
+            # (I5 E38) Over the whole stored report, after `score_report`/`checksum` are fixed.
+            pass_verdict=session_pass_verdict(
+                events,
+                total_points=score_report.total_points,
+                total_max_points=score_report.total_max_points,
+                failed_rule_count=failed_rule_count(score_report.results),
+                critical_error_count=critical_error_count(score_report.results),
+            ),
             # (I4 E35) Built from `card`/`events` alone, after `score_report`/`checksum` are
             # already fixed above — the checker's presence can only add or remove `text_quality`
             # itself, never move the score or the checksum (§71.12's own acceptance item).

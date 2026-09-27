@@ -32,6 +32,7 @@ import {
 import { ProblemError } from '@/shared/lib/api';
 import { saveBlob } from '@/shared/lib/download';
 import { failedRulesLines, formatMeanDeviationMs, formatMeanDurationMs, formatPercent } from '@/entities/statistics';
+import { formatPassCount } from '@/entities/pass-verdict';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -169,6 +170,7 @@ export function StatisticsPage() {
                   <th className="p-2 font-medium">{t('statisticsColumnSessions')}</th>
                   <th className="p-2 font-medium">{t('statisticsColumnLessons')}</th>
                   <th className="p-2 font-medium">{t('statisticsColumnAverage')}</th>
+                  <th className="p-2 font-medium">{t('statisticsColumnPassed')}</th>
                   <th className="p-2 font-medium">{t('statisticsColumnAcceptDeviation')}</th>
                   <th className="p-2 font-medium">{t('statisticsColumnFillDeviation')}</th>
                   <th className="p-2 font-medium">{t('statisticsColumnReactionToOpen')}</th>
@@ -186,6 +188,9 @@ export function StatisticsPage() {
                       <td className="p-2 tabular-nums">{row.lesson_count}</td>
                       <td className="p-2 tabular-nums" data-slot="statistics-average">
                         {formatPercent(row.average_percent)}
+                      </td>
+                      <td className="p-2 tabular-nums" data-slot="statistics-passed">
+                        {formatPassCount(row.pass_count, row.pass_rate)}
                       </td>
                       <td className="p-2 tabular-nums">{formatMeanDeviationMs(row.accept_deviation_ms_avg)}</td>
                       <td className="p-2 tabular-nums">{formatMeanDeviationMs(row.fill_deviation_ms_avg)}</td>
@@ -240,6 +245,7 @@ export function StatisticsPage() {
                   <th className="p-2 font-medium">{t('statisticsRatingColumnRank')}</th>
                   <th className="p-2 font-medium">{t('statisticsRatingColumnTrainee')}</th>
                   <th className="p-2 font-medium">{t('statisticsRatingColumnAverage')}</th>
+                  <th className="p-2 font-medium">{t('statisticsRatingColumnPassed')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -248,6 +254,9 @@ export function StatisticsPage() {
                     <td className="p-2 tabular-nums">{row.rank}</td>
                     <td className="p-2">{row.display_name_ru}</td>
                     <td className="p-2 tabular-nums">{formatPercent(row.average_percent)}</td>
+                    <td className="p-2 tabular-nums" data-slot="statistics-rating-passed">
+                      {formatPassCount(row.pass_count, row.pass_rate)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

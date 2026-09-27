@@ -64,6 +64,7 @@ from app.domain.events.types import EventType
 from app.domain.routing.catalog import ReferencePackRecord
 from app.domain.session.guards import TERMINAL_STAGE_STATES
 from app.domain.session.machine import SESSION_STATE_MACHINE
+from app.domain.session.pass_criteria import DEFAULT_PASS_CRITERIA, PassCriteria
 from app.domain.session.policy import SESSION_POLICIES, ParticipantAssignmentRule, SessionPolicy
 from app.domain.session.variants import (
     PartialVariants,
@@ -823,6 +824,7 @@ def create_session(
     timers: CardTimers | None = None,
     lesson_id: LessonId | None = None,
     lesson_position: int | None = None,
+    pass_criteria: PassCriteria | None = None,
 ) -> tuple[SimulationSession, list[DomainEvent]]:
     """Build a `CREATED` session with its one `Incident` and one `RoleStage` per entry of the
     **effective** role chain, and return it with the `SESSION_CREATED` event (§10.8, §10.10, D6,
@@ -841,6 +843,9 @@ def create_session(
     `lesson_id` / `lesson_position` name the lesson card this session is (§70.3.2, both or
     neither); `SESSION_CREATED` records all three. `assigned_services` binds ДДС participants to
     services (`user_id → service_id`, HLD 70 §70.4.5); `validate` checks the binding.
+    `pass_criteria` (I5 E38, Q-E9b-3) is «сдал / не сдал»'s configuration; `None` = the defaults
+    (`DEFAULT_PASS_CRITERIA`). `SESSION_CREATED.pass_criteria` records it; the verdict is derived
+    from it at report time and never feeds the score.
 
     Every id is passed in: the domain calls neither `uuid4` nor a clock. `session_seed` defaults to
     `scenario_version.deterministic_seed` (D7, SPEC §42 test 7).
@@ -890,6 +895,8 @@ def create_session(
         raise ValueError("create_session needs lesson_id and lesson_position together, or neither")
     if timers is None:
         timers = scenario_version.card_timers
+    if pass_criteria is None:
+        pass_criteria = DEFAULT_PASS_CRITERIA
     created_by_user_id = created_by.actor_id
     if created_by_user_id is None:
         raise ValueError("create_session needs a created_by ActorRef carrying an actor_id")
@@ -958,6 +965,8 @@ def create_session(
         "timers": timers.model_dump(mode="json"),
         "lesson_id": str(lesson_id) if lesson_id is not None else None,
         "lesson_position": lesson_position,
+        # Additive, I5 E38 (Q-E9b-3): «сдал / не сдал»'s criteria; an old log without it = defaults.
+        "pass_criteria": pass_criteria.model_dump(mode="json"),
     }
     validate_payload(EventType.SESSION_CREATED, payload)
     event = DomainEvent(

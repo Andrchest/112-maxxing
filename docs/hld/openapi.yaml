@@ -4399,6 +4399,11 @@ components:
           oneOf:
             - $ref: '#/components/schemas/CardTimersRequest'
             - type: 'null'
+        pass_criteria:
+          description: (additive, I5 E38, Q-E9b-3) «Сдал / не сдал», recorded in `SESSION_CREATED.pass_criteria`; absent = the defaults (70 %, no failed-rule limit, a critical error fails).
+          oneOf:
+            - $ref: '#/components/schemas/PassCriteriaRequest'
+            - type: 'null'
 
     SessionParticipantView:
       type: object
@@ -5789,6 +5794,7 @@ components:
         - released
         - dds_participant_totals
         - text_quality
+        - pass_verdict
       properties:
         session_id: { type: string, format: uuid }
         session: { $ref: '#/components/schemas/SessionDetail' }
@@ -5839,6 +5845,11 @@ components:
           description: (additive, I4 E35, §71.12) «Грамотность и адреса» — report-only, no score effect (D35).
           allOf:
             - $ref: '#/components/schemas/TextQualityReportView'
+        pass_verdict:
+          description: (additive, I5 E38, Q-E9b-3) «Сдал / не сдал» under the session's recorded criteria — derived at report time, never stored, never part of the checksum.
+          oneOf:
+            - $ref: '#/components/schemas/PassVerdictView'
+            - type: 'null'
 
     RescoreRequest:
       type: object
@@ -6376,6 +6387,11 @@ components:
           description: (additive, I3 E9a) The trainee group the lesson is created for — recorded; the participants are the request's own (`404` for an unknown group).
           type: [string, 'null']
           format: uuid
+        pass_criteria:
+          description: (additive, I5 E38, Q-E9b-3) «Сдал / не сдал» for every card of the lesson, recorded in each card's `SESSION_CREATED.pass_criteria`; absent = the defaults.
+          oneOf:
+            - $ref: '#/components/schemas/PassCriteriaRequest'
+            - type: 'null'
     LessonSessionView:
       type: object
       additionalProperties: false
@@ -6478,6 +6494,11 @@ components:
               workstation:
                 description: (additive, I5 E36, Q-E12-3) The card's participants' logins, joined with ", "; "" for an unscored card.
                 type: string
+              pass_verdict:
+                description: (additive, I5 E38, Q-E9b-3) «Итог» — «сдал / не сдал» under the card's recorded criteria; `null` for an unscored card, exactly like `score`.
+                oneOf:
+                  - $ref: '#/components/schemas/PassVerdictView'
+                  - type: 'null'
         weighted_total: { type: number, description: Scored cards only (unchanged). }
         weighted_max: { type: number }
     # ------------------------------------------- I3 E9a: weights & groups ----
@@ -6732,6 +6753,15 @@ components:
         reaction_to_status_ms_avg:
           description: (additive, I5 E36, Q-E12-1) Mean delivery → the leg's first primary decision.
           type: [number, 'null']
+        pass_count:
+          description: (additive, I5 E38, Q-E9b-3) The sessions whose «сдал / не сдал» verdict is «сдал».
+          type: integer
+          minimum: 0
+        pass_rate:
+          description: (additive, I5 E38) `100 · pass_count / session_count`; `null` without a session.
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
     TraineeStatistics:
       description: (I4 E33) `getTraineeStatistics`.
       type: object
@@ -6774,6 +6804,15 @@ components:
         trainee_user_id: { type: string, format: uuid }
         display_name_ru: { type: string }
         average_percent: { type: number, minimum: 0, maximum: 100 }
+        pass_count:
+          description: (additive, I5 E38, Q-E9b-3) The trainee's sessions judged «сдал» — an additional column; the ranking is unchanged.
+          type: integer
+          minimum: 0
+        pass_rate:
+          description: (additive, I5 E38) `100 · pass_count / session_count`.
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
     TraineeRating:
       description: (additive, I5 E36, Q-E12-2) `getTraineeRating`.
       type: object
@@ -6854,3 +6893,62 @@ components:
         unavailable_message_ru:
           type: [string, 'null']
           description: '«Проверка недоступна: словарь/справочник не установлен» when `available` is `false`, else `null`.'
+    # --- I5 E38 ---------------------------------------- «сдал / не сдал» (Q-E9b-3 variant г) ----
+    PassCriteriaRequest:
+      description: |
+        (I5 E38, Q-E9b-3) The configurable pass criteria. An omitted key takes its default; an
+        explicit `null` (or `false`) switches that criterion off. At least one criterion must be on
+        (`422 VALIDATION_ERROR` otherwise).
+      type: object
+      additionalProperties: false
+      properties:
+        min_score_percent:
+          description: The session's score percent (`100 · total_points / total_max_points`, clamped to 0…100) must be at least this; `null` = off.
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+          default: 70
+        max_failed_rules:
+          description: At most this many rules may have failed; `null` = off.
+          type: [integer, 'null']
+          minimum: 0
+          default: null
+        fail_on_critical:
+          description: Any critical error means «не сдал»; `false` = off.
+          type: boolean
+          default: true
+    PassCriteriaView:
+      description: (I5 E38) The criteria a session was created with (`SESSION_CREATED.pass_criteria`; the defaults for a session created before I5 E38).
+      type: object
+      additionalProperties: false
+      required: [min_score_percent, max_failed_rules, fail_on_critical]
+      properties:
+        min_score_percent: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        max_failed_rules: { type: [integer, 'null'], minimum: 0 }
+        fail_on_critical: { type: boolean }
+    PassCriterion:
+      description: (I5 E38) One criterion of `PassCriteriaView`.
+      type: string
+      enum: [MIN_SCORE_PERCENT, MAX_FAILED_RULES, CRITICAL_ERRORS]
+    PassVerdictView:
+      description: |
+        (I5 E38, Q-E9b-3) «Сдал / не сдал»: `passed` iff every enabled criterion holds over the
+        stored totals and counters. Derived at report time — never stored, never part of the
+        score checksum, never changes a score or a rescore.
+      type: object
+      additionalProperties: false
+      required: [passed, failed_criteria, criteria, score_percent, failed_rule_count, critical_error_count]
+      properties:
+        passed: { type: boolean }
+        failed_criteria:
+          description: The enabled criteria that did not hold, in `PassCriterion` order; `[]` when `passed`.
+          type: array
+          items: { $ref: '#/components/schemas/PassCriterion' }
+        criteria: { $ref: '#/components/schemas/PassCriteriaView' }
+        score_percent:
+          description: The percent the verdict read; `null` when the maximum is 0 (then `MIN_SCORE_PERCENT`, if on, fails).
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+        failed_rule_count: { type: integer, minimum: 0 }
+        critical_error_count: { type: integer, minimum: 0 }

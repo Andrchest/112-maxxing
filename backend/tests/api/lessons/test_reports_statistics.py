@@ -202,6 +202,7 @@ async def test_the_lesson_report_csv_parses_back_to_the_same_numbers(
         "Максимум баллов",
         "Нарушено правил",
         "Критических ошибок",
+        "Итог",  # (I5 E38, Q-E9b-3)
         "Норматив",
         "Служба",
         "Время, мс",
@@ -245,6 +246,7 @@ async def test_the_lesson_report_csv_parses_back_to_the_same_numbers(
     assert aborted_row["Состояние"] == "Прервано"
     assert aborted_row["Баллы"] == "" and aborted_row["Норматив"] == ""
     assert aborted_row["Рабочее место"] == ""
+    assert aborted_row["Итог"] == "", "(I5 E38) an unscored card has no verdict"
     assert _number(total["Баллы"]) == report["weighted_total"]
     assert _number(total["Максимум баллов"]) == report["weighted_max"]
 

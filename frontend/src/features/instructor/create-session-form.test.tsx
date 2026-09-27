@@ -267,6 +267,47 @@ describe('CreateSessionForm', () => {
     await screen.findByText(`${ru.instructorSessionStateLabel}: ${ru.sessionStateActive}`);
   });
 
+  it('sends the pass criteria the instructor set, and none at the defaults (I5 E38)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/health/ready' && method === 'GET') return jsonResponse(HEALTH_READY_RESPONSE);
+      if (url === '/api/v1/sessions' && method === 'POST') return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await fillInScenarioVersionAndParticipant(user);
+
+    const minScoreOn = screen.getByRole('checkbox', { name: ru.passCriteriaMinScoreLabel });
+    const critical = screen.getByRole('checkbox', { name: ru.passCriteriaFailOnCriticalLabel });
+    await user.click(minScoreOn);
+    await user.click(critical);
+    expect(screen.getByRole('button', { name: ru.instructorCreateButton })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent(ru.passCriteriaNoneEnabled);
+
+    await user.click(critical);
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/sessions' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string).pass_criteria).toEqual({
+      min_score_percent: null,
+      max_failed_rules: null,
+      fail_on_critical: true,
+    });
+  });
+
   it('renders the Russian INFERENCE_NOT_READY message when start is refused', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

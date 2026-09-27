@@ -80,6 +80,7 @@ async def create_lesson(
             ),
             time_scale=body.time_scale,
             group_id=body.domain_group_id(),
+            pass_criteria=(None if body.pass_criteria is None else body.pass_criteria.to_domain()),
         )
     )
     return await _detail(container, lesson)

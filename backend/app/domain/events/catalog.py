@@ -74,6 +74,9 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
             "timers": "CardTimers",
             "lesson_id": "uuid | null",
             "lesson_position": "int | null",
+            # Additive, I5 E38 (Q-E9b-3): «сдал / не сдал»'s criteria; a log written before this
+            # key existed ran with the defaults (`app.domain.session.pass_criteria`).
+            "pass_criteria": "PassCriteria",
         },
         visible_to=frozenset({_INSTRUCTOR}),
     ),

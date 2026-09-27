@@ -21,6 +21,7 @@ import { getSessionReport, releaseReportToTrainee, problemMessageRu, queryKeys, 
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
 import { TotalsSection } from './totals-section';
+import { PassVerdictSection } from './pass-verdict-section';
 import { CategoriesSection } from './categories-section';
 import { CriticalErrorsSection } from './critical-errors-section';
 import { TimelineSection } from './timeline-section';
@@ -158,6 +159,7 @@ export function ReportPage() {
         </p>
       ) : null}
 
+      <PassVerdictSection verdict={report.pass_verdict} />
       <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TotalsSection scoreReport={report.score_report} />
         <CategoriesSection byCategory={report.score_report.by_category} />

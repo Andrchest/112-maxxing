@@ -23,6 +23,10 @@ class TraineeRatingRowSchema(ApiModel):
     trainee_user_id: UUID
     display_name_ru: str
     average_percent: float = Field(ge=0, le=100)
+    pass_count: int = Field(ge=0)
+    """(additive, I5 E38, Q-E9b-3) Sessions judged «сдал» — shown, never sorted by."""
+    pass_rate: float | None = Field(ge=0, le=100)
+    """(additive, I5 E38) `100 · pass_count / session_count`."""
 
 
 class TraineeRatingSchema(ApiModel):
@@ -39,6 +43,8 @@ def trainee_rating_schema(view: TraineeRatingView) -> TraineeRatingSchema:
                 trainee_user_id=UUID(str(row.trainee_user_id)),
                 display_name_ru=row.display_name_ru,
                 average_percent=row.average_percent,
+                pass_count=row.pass_count,
+                pass_rate=row.pass_rate,
             )
             for row in view.rows
         ]

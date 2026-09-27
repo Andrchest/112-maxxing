@@ -1144,3 +1144,9 @@ export function listAdminAlerts(): Promise<{ items: AdminAlertView[] }> {
 export function getBackupStatus(): Promise<BackupStatus> {
   return apiFetch('/admin/backup-status');
 }
+
+// --- I5 E38: «сдал / не сдал» — configurable pass criteria (Q-E9b-3 variant г) ----------------
+export type PassCriteriaRequest = components['schemas']['PassCriteriaRequest'];
+export type PassCriteriaView = components['schemas']['PassCriteriaView'];
+export type PassCriterion = components['schemas']['PassCriterion'];
+export type PassVerdictView = components['schemas']['PassVerdictView'];

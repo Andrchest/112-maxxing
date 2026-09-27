@@ -10,6 +10,8 @@ of none is a count).
 (the JSON `TraineeStatisticsRow` does not carry it — item 4's decision names only this file, the
 lesson report table and its CSV). (I5 E36, Q-E12-1) The two reaction-time averages ride beside the
 existing deviation averages; no `DDS_FILL` average — see `trainee_statistics`'s module doc.
+(I5 E38, Q-E9b-3) «Сдано» / «Доля сдачи, %» — the row's `pass_count` / `pass_rate` — follow
+«Средний процент».
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ STATISTICS_CSV_HEADER: tuple[str, ...] = (
     "Сессий",
     "Занятий",
     "Средний процент",
+    "Сдано",
+    "Доля сдачи, %",
     "Среднее отклонение принятия решения, мс",
     "Среднее отклонение заполнения карточки, мс",
     "Среднее время реакции: открытие карточки, мс",
@@ -60,6 +64,8 @@ def statistics_csv(view: TraineeStatisticsView) -> bytes:
                 str(row.session_count),
                 str(row.lesson_count),
                 csv_number(row.average_percent),
+                str(row.pass_count),
+                csv_number(row.pass_rate),
                 csv_number(row.accept_deviation_ms_avg),
                 csv_number(row.fill_deviation_ms_avg),
                 csv_number(row.reaction_to_open_ms_avg),

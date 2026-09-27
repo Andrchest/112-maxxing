@@ -43,6 +43,11 @@ I4 E31 (HLD 71 §71.8, D34): `timers` — `SessionCreateRequest.timers` or a les
 `PlanEntry.timers` — overrides the version's timers key by key (scenario ← override,
 `resolve_card_timers`), and `SESSION_CREATED.timers` records the result. A result that breaks R39
 is `422 VALIDATION_ERROR`.
+
+I5 E38 (Q-E9b-3): `pass_criteria` — `SessionCreateRequest.pass_criteria` or the lesson's
+`LessonCreateRequest.pass_criteria` (every card) — is recorded in `SESSION_CREATED.pass_criteria`;
+`None` records the defaults (`DEFAULT_PASS_CRITERIA`). «Сдал / не сдал» is derived from it at
+report time (`app.application.reports.pass_verdict`) and never feeds the score.
 """
 
 from __future__ import annotations
@@ -79,6 +84,7 @@ from app.domain.routing.catalog import ReferenceCatalog
 from app.domain.scenario.timers import CardTimersOverride, resolve_card_timers
 from app.domain.scenario.validation import validate_scenario_version
 from app.domain.scenario.version import ScenarioVersion
+from app.domain.session.pass_criteria import PassCriteria
 from app.domain.session.session import SimulationSession, create_session
 from app.domain.session.variants import PartialVariants, effective_role_chain, resolve_variants
 
@@ -157,6 +163,9 @@ class CreateSessionCommand:
     timers: CardTimersOverride | None = None
     """(I4 E31) `SessionCreateRequest.timers` / `PlanEntry.timers`: the per-key override of the
     version's timers; `None` keeps them (HLD 71 §71.8)."""
+    pass_criteria: PassCriteria | None = None
+    """(I5 E38) `SessionCreateRequest.pass_criteria` / `LessonCreateRequest.pass_criteria`;
+    `None` = the defaults. Recorded in `SESSION_CREATED.pass_criteria`."""
 
 
 class CreateSession:
@@ -223,6 +232,7 @@ class CreateSession:
             timers=timers,
             lesson_id=command.lesson_id,
             lesson_position=command.lesson_position,
+            pass_criteria=command.pass_criteria,
         )
         # `now_ms=0`: nothing before `SESSION_STARTED` has a timeline to be offset against —
         # `session_offset_ms(now, started_at=None)` is `0` — and the offset is never taken from a

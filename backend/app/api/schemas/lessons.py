@@ -16,9 +16,11 @@ from pydantic import Field, model_validator
 
 from app.api.schemas.common import ApiModel
 from app.api.schemas.reports import (
+    PassVerdictViewSchema,
     ScoreReportViewSchema,
     TextQualityReportViewSchema,
     TimelineEntryViewSchema,
+    pass_verdict_schema,
     score_report_view_schema,
     text_quality_report_schema,
     timeline_entry_schema,
@@ -26,6 +28,7 @@ from app.api.schemas.reports import (
 from app.api.schemas.sessions import (
     CardTimersRequestSchema,
     ParticipantAssignmentSchema,
+    PassCriteriaRequestSchema,
     SessionVariantsSchema,
     VariantsRequestSchema,
 )
@@ -157,6 +160,8 @@ class LessonCreateRequestSchema(ApiModel):
     time_scale: float = Field(default=1.0, ge=0.1, le=10)
     group_id: UUID | None = None
     """I3 E9a: the trainee group the lesson is created for (recorded; `404` when unknown)."""
+    pass_criteria: PassCriteriaRequestSchema | None = None
+    """(additive, I5 E38) «Сдал / не сдал» for every card; absent = the defaults."""
 
     def domain_group_id(self) -> TraineeGroupId | None:
         return None if self.group_id is None else TraineeGroupId(self.group_id)
@@ -260,6 +265,9 @@ class LessonReportCardSchema(ApiModel):
     reaction_times: list[LegReactionTimeViewSchema]
     # (I5 E36, Q-E12-3) The card's participants' logins, joined; «» for an unscored card.
     workstation: str
+    # (I5 E38, Q-E9b-3) «Сдал / не сдал» under the card's recorded criteria; `null` for an
+    # unscored card, exactly like `score`.
+    pass_verdict: PassVerdictViewSchema | None
 
 
 class LessonReportSchema(ApiModel):
@@ -426,6 +434,7 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
                     else [leg_reaction_time_schema(r) for r in report.reaction_times]
                 ),
                 workstation="" if report is None else ", ".join(report.workstations),
+                pass_verdict=None if report is None else pass_verdict_schema(report.pass_verdict),
             )
         )
     return LessonReportSchema(

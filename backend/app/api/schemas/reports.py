@@ -67,6 +67,7 @@ from app.domain.enums import (
 from app.domain.events.types import EventType
 from app.domain.scoring.results import ScoreCategoryTotal, ScoreEvidence, ScoreReport, ScoreResult
 from app.domain.scoring.rules import ScoringRule
+from app.domain.session.pass_criteria import PassCriteria, PassCriterion, PassVerdict
 
 __all__ = [
     "AudioSegmentRefSchema",
@@ -77,6 +78,8 @@ __all__ = [
     "InferenceMetricViewSchema",
     "InferenceMetricsPageSchema",
     "MisspelledSpanViewSchema",
+    "PassCriteriaViewSchema",
+    "PassVerdictViewSchema",
     "ReportExplanationSchema",
     "ReportReleaseViewSchema",
     "RescoreDifferenceSchema",
@@ -101,6 +104,7 @@ __all__ = [
     "inference_metric_schema",
     "inference_metrics_page_schema",
     "misspelled_span_schema",
+    "pass_verdict_schema",
     "report_explanation_schema",
     "report_release_schema",
     "rescore_result_schema",
@@ -421,6 +425,27 @@ class TruthVsCardDiffEntrySchema(ApiModel):
     verdict: Verdict
 
 
+class PassCriteriaViewSchema(ApiModel):
+    """`openapi.yaml`'s `PassCriteriaView` (I5 E38): the criteria a session was created with
+    (`SESSION_CREATED.pass_criteria`, or the defaults for an old log)."""
+
+    min_score_percent: int | None = Field(ge=0, le=100)
+    max_failed_rules: int | None = Field(ge=0)
+    fail_on_critical: bool
+
+
+class PassVerdictViewSchema(ApiModel):
+    """`openapi.yaml`'s `PassVerdictView` (I5 E38, Q-E9b-3): «сдал / не сдал», derived at report
+    time — never stored, never part of the checksum."""
+
+    passed: bool
+    failed_criteria: list[PassCriterion]
+    criteria: PassCriteriaViewSchema
+    score_percent: float | None = Field(ge=0, le=100)
+    failed_rule_count: int = Field(ge=0)
+    critical_error_count: int = Field(ge=0)
+
+
 class SessionReportSchema(ApiModel):
     """`openapi.yaml`'s `SessionReport` — every SPEC §29 item, in SPEC's own order."""
 
@@ -441,6 +466,8 @@ class SessionReportSchema(ApiModel):
     dds_participant_totals: list[DdsParticipantTotalsViewSchema]
     text_quality: TextQualityReportViewSchema
     """(additive, I4 E35) «Грамотность и адреса» — report-only, no score effect (D35)."""
+    pass_verdict: PassVerdictViewSchema | None
+    """(additive, I5 E38) «Сдал / не сдал» under the session's recorded criteria."""
 
 
 class MisspelledSpanViewSchema(ApiModel):
@@ -702,6 +729,28 @@ def text_quality_report_schema(report: TextQualityReport) -> TextQualityReportVi
     )
 
 
+def pass_criteria_view_schema(criteria: PassCriteria) -> PassCriteriaViewSchema:
+    return PassCriteriaViewSchema(
+        min_score_percent=criteria.min_score_percent,
+        max_failed_rules=criteria.max_failed_rules,
+        fail_on_critical=criteria.fail_on_critical,
+    )
+
+
+def pass_verdict_schema(verdict: PassVerdict | None) -> PassVerdictViewSchema | None:
+    """`PassVerdict` -> `PassVerdictView`; `None` stays `null` (an unscored card)."""
+    if verdict is None:
+        return None
+    return PassVerdictViewSchema(
+        passed=verdict.passed,
+        failed_criteria=list(verdict.failed_criteria),
+        criteria=pass_criteria_view_schema(verdict.criteria),
+        score_percent=verdict.score_percent,
+        failed_rule_count=verdict.failed_rule_count,
+        critical_error_count=verdict.critical_error_count,
+    )
+
+
 def session_report_schema(view: SessionReportView) -> SessionReportSchema:
     """`SessionReportView` -> the wire model — every §29 item, none of them omitted."""
     rules_by_id = {rule.rule_id: rule for rule in view.scoring_rules}
@@ -733,6 +782,7 @@ def session_report_schema(view: SessionReportView) -> SessionReportSchema:
             dds_participant_totals_schema(totals) for totals in view.dds_participant_totals
         ],
         text_quality=text_quality_report_schema(view.text_quality),
+        pass_verdict=pass_verdict_schema(view.pass_verdict),
     )
 
 

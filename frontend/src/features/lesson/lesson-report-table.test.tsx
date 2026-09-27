@@ -45,6 +45,14 @@ const CARDS: LessonReport['cards'] = [
       { service_id: 'POLICE', to_open_ms: null, to_first_status_ms: null },
     ],
     workstation: 'trainee2',
+    pass_verdict: {
+      passed: false,
+      failed_criteria: ['CRITICAL_ERRORS'],
+      criteria: { min_score_percent: 70, max_failed_rules: null, fail_on_critical: true },
+      score_percent: 80,
+      failed_rule_count: 3,
+      critical_error_count: 1,
+    },
   },
   {
     position: 2,
@@ -58,6 +66,7 @@ const CARDS: LessonReport['cards'] = [
     text_quality: null,
     reaction_times: [],
     workstation: '',
+    pass_verdict: null,
   },
 ];
 
@@ -93,6 +102,33 @@ describe('LessonReportTable', () => {
     expect(reactions[0]).toHaveTextContent(`${ru.lessonReportReactionToOpen} (${ru.serviceTypeFireRescue}): 00:05`);
     expect(reactions[0]).toHaveTextContent(`${ru.lessonReportReactionToStatus}: 00:42`);
     expect(reactions[1]).toHaveTextContent(ru.lessonReportNormNotMeasured);
+  });
+
+  it('shows the verdict of each scored card with the criteria it failed, as sent (I5 E38)', () => {
+    const [scoredCard] = CARDS;
+    const failedVerdict = scoredCard?.pass_verdict;
+    if (!scoredCard || !failedVerdict) throw new Error('fixture has a scored card with a verdict');
+    const passed: LessonReport['cards'][number] = {
+      ...scoredCard,
+      session_id: 'sess-3',
+      position: 3,
+      pass_verdict: { ...failedVerdict, passed: true, failed_criteria: [] },
+    };
+    render(<LessonReportTable cards={[...CARDS, passed]} />);
+    const verdicts = document.querySelectorAll('[data-slot="report-card-verdict"]');
+    expect(verdicts).toHaveLength(2);
+    expect(verdicts[0]).toHaveTextContent(ru.passVerdictFailed);
+    expect(verdicts[0]).toHaveTextContent(`${ru.passVerdictCriterionCriticalErrors}: 1`);
+    expect(verdicts[1]).toHaveTextContent(ru.passVerdictPassed);
+    expect(verdicts[1]).not.toHaveTextContent(ru.passVerdictCriterionCriticalErrors);
+    expect(screen.getByRole('columnheader', { name: ru.lessonReportTableColumnVerdict })).toBeInTheDocument();
+  });
+
+  it('shows a dash for a scored card the server sent no verdict for', () => {
+    const [scoredCard] = CARDS;
+    if (!scoredCard) throw new Error('fixture has a scored card');
+    render(<LessonReportTable cards={[{ ...scoredCard, pass_verdict: undefined }]} />);
+    expect(document.querySelector('[data-slot="report-card-verdict"]')).toHaveTextContent(ru.passVerdictNone);
   });
 
   it('downloads the report CSV with the bearer token and hands it to the browser', async () => {

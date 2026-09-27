@@ -18,6 +18,10 @@ failed rules are stored results that did not pass, and the norm deviations are
   reaction times (`norms.card_reaction_times`) over the same legs `accept_deviation_ms_avg`
   attributes to this trainee — no `DDS_FILL` deviation average: it measures the same moment as
   `ACCEPT` against a different limit, so a third average of it would repeat, not add, information.
+* `pass_count` / `pass_rate` (I5 E38, Q-E9b-3) — the sessions whose «сдал / не сдал» verdict
+  (`pass_verdict.session_pass_verdict`: the session's recorded criteria over its stored totals and
+  counters) is «сдал», and their share of `session_count` in percent (`None` without a session).
+  Derived, like every number here — no evaluator runs, nothing is stored.
 
 Who played what is read from the session, never guessed: the 112 card is filled by the
 participant covering `OPERATOR_112` (an explicit `assigned_role_type`, or none under
@@ -53,6 +57,7 @@ from app.application.reports.norms import (
     card_norms,
     card_reaction_times,
 )
+from app.application.reports.pass_verdict import session_pass_verdict
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.statistics.ports import (
     ScoredSession,
@@ -65,6 +70,7 @@ from app.domain.common.ids import LessonId, SessionId, UserId
 from app.domain.dds.response import LegResponder
 from app.domain.enums import RoleType
 from app.domain.events.types import EventType
+from app.domain.session.pass_criteria import PassVerdict, score_percent
 from app.domain.session.policy import SESSION_POLICIES
 
 __all__ = [
@@ -75,6 +81,7 @@ __all__ = [
     "StatisticsSubjectNotFoundError",
     "TraineeStatisticsRowView",
     "TraineeStatisticsView",
+    "session_pass",
     "session_percent",
     "statistics_row",
 ]
@@ -107,6 +114,10 @@ class TraineeStatisticsRowView:
     played."""
     reaction_to_status_ms_avg: float | None
     """(I5 E36, Q-E12-1) The mean delivery → the leg's first primary decision."""
+    pass_count: int = 0
+    """(I5 E38, Q-E9b-3) The sessions whose verdict is «сдал»."""
+    pass_rate: float | None = None
+    """(I5 E38) `100 · pass_count / session_count`; `None` without a session."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,11 +152,20 @@ class MyHistoryView:
 
 
 def session_percent(session: ScoredSession) -> float | None:
-    """`100 · total_points / total_max_points`, clamped to 0…100; `None` for a zero maximum."""
-    if session.total_max_points <= 0:
-        return None
-    percent = 100.0 * session.total_points / session.total_max_points
-    return min(100.0, max(0.0, percent))
+    """`100 · total_points / total_max_points`, clamped to 0…100; `None` for a zero maximum
+    (`pass_criteria.score_percent` — the one percent the verdict reads too, I5 E38)."""
+    return score_percent(session.total_points, session.total_max_points)
+
+
+def session_pass(session: ScoredSession) -> PassVerdict:
+    """(I5 E38) The session's «сдал / не сдал»: its recorded criteria over its stored numbers."""
+    return session_pass_verdict(
+        session.events,
+        total_points=session.total_points,
+        total_max_points=session.total_max_points,
+        failed_rule_count=session.failed_rule_count,
+        critical_error_count=session.critical_error_count,
+    )
 
 
 def visible_to_trainee(session: ScoredSession) -> bool:
@@ -181,6 +201,7 @@ def statistics_row(
             if reaction.to_first_status_ms is not None:
                 to_status.append(reaction.to_first_status_ms)
     lessons = {session.lesson_id for session in sessions if session.lesson_id is not None}
+    passes = sum(1 for session in sessions if session_pass(session).passed)
     return TraineeStatisticsRowView(
         trainee_user_id=trainee.user_id,
         display_name_ru=trainee.display_name_ru,
@@ -193,6 +214,8 @@ def statistics_row(
         fill_deviation_ms_avg=fmean(fill) if fill else None,
         reaction_to_open_ms_avg=fmean(to_open) if to_open else None,
         reaction_to_status_ms_avg=fmean(to_status) if to_status else None,
+        pass_count=passes,
+        pass_rate=100.0 * passes / len(sessions) if sessions else None,
     )
 
 

@@ -28,6 +28,8 @@ import {
 } from '@/shared/api';
 import { sessionStateLabelRu } from './instructor-labels';
 import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
+import { PassCriteriaFields } from './pass-criteria-fields';
+import { DEFAULT_PASS_CRITERIA_DRAFT, passCriteriaField, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -167,6 +169,8 @@ export function CreateSessionForm() {
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
   const [variants, setVariants] = useState<SessionVariants | null>(null);
   const [session, setSession] = useState<SessionDetail | null>(null);
+  // I5 E38 (Q-E9b-3): the pass/fail criteria — sent only when they differ from the server's defaults.
+  const [passDraft, setPassDraft] = useState<PassCriteriaDraft>(DEFAULT_PASS_CRITERIA_DRAFT);
 
   const scenariosQuery = useQuery({
     queryKey: queryKeys.scenarios.list(),
@@ -314,6 +318,7 @@ export function CreateSessionForm() {
     if (!versionId || participants.length === 0 || participants.some((row) => row.userId.trim() === '')) {
       return;
     }
+    if (passCriteriaProblem(passDraft) !== null) return;
     createMutation.mutate({
       scenario_version_id: versionId,
       session_mode: sessionMode,
@@ -331,6 +336,7 @@ export function CreateSessionForm() {
       // `default: 1` does not make a property optional) — pass the same value explicitly.
       time_scale: 1,
       ...(variants ? { variants } : {}),
+      ...passCriteriaField(passDraft),
     });
   }
 
@@ -343,6 +349,7 @@ export function CreateSessionForm() {
     versionId !== '' &&
     participants.length > 0 &&
     participants.every((row) => row.userId.trim() !== '') &&
+    passCriteriaProblem(passDraft) === null &&
     !createMutation.isPending;
   const canStart =
     session !== null && session.state === 'READY' && !startMutation.isPending && readinessSatisfied;
@@ -522,6 +529,15 @@ export function CreateSessionForm() {
             ) : null}
           </div>
         ) : null}
+
+        <PassCriteriaFields
+          idPrefix="instructor"
+          draft={passDraft}
+          onChange={(draft) => {
+            setPassDraft(draft);
+            setSession(null);
+          }}
+        />
 
         <ProblemAlert error={createMutation.error} />
         <ProblemAlert error={startMutation.error} />

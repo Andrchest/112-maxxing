@@ -28,6 +28,7 @@ from app.domain.enums import (
     SessionState,
 )
 from app.domain.scenario.timers import CardTimersOverride
+from app.domain.session.pass_criteria import DEFAULT_MIN_SCORE_PERCENT, PassCriteria
 from app.domain.session.session import RoleStage
 from app.domain.session.variants import (
     CardSource,
@@ -42,6 +43,7 @@ __all__ = [
     "AbortSessionRequestSchema",
     "CardTimersRequestSchema",
     "ParticipantAssignmentSchema",
+    "PassCriteriaRequestSchema",
     "RoleStageViewSchema",
     "SessionCreateRequestSchema",
     "SessionDetailSchema",
@@ -131,6 +133,24 @@ class CardTimersRequestSchema(ApiModel):
         )
 
 
+class PassCriteriaRequestSchema(ApiModel):
+    """`openapi.yaml`'s `PassCriteriaRequest` (I5 E38, Q-E9b-3): «сдал / не сдал». An omitted key
+    takes its default (`70`, `null`, `true`); an explicit `null` / `false` switches a criterion
+    off. All three off is `422 VALIDATION_ERROR` (`PassCriteria`'s own rule, raised by
+    `to_domain`)."""
+
+    min_score_percent: int | None = Field(default=DEFAULT_MIN_SCORE_PERCENT, ge=0, le=100)
+    max_failed_rules: int | None = Field(default=None, ge=0)
+    fail_on_critical: bool = True
+
+    def to_domain(self) -> PassCriteria:
+        return PassCriteria(
+            min_score_percent=self.min_score_percent,
+            max_failed_rules=self.max_failed_rules,
+            fail_on_critical=self.fail_on_critical,
+        )
+
+
 class SessionCreateRequestSchema(ApiModel):
     """`openapi.yaml`'s `SessionCreateRequest`."""
 
@@ -142,6 +162,9 @@ class SessionCreateRequestSchema(ApiModel):
     variants: VariantsRequestSchema | None = None
     timers: CardTimersRequestSchema | None = None
     """(additive, I4 E31) Override of the scenario timers, recorded in `SESSION_CREATED.timers`."""
+    pass_criteria: PassCriteriaRequestSchema | None = None
+    """(additive, I5 E38) «Сдал / не сдал», recorded in `SESSION_CREATED.pass_criteria`; absent =
+    the defaults."""
 
 
 class AbortSessionRequestSchema(ApiModel):

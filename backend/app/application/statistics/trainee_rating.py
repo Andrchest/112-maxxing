@@ -16,6 +16,10 @@ name collision) — ranks are the plain sequence `1..N`, not a competition rank 
 different numbers). A negative total already reads 0 % (`session_percent`'s clamp, Q-E33-1) before
 it ever reaches this module.
 
+**«Сдал / не сдал» (I5 E38, Q-E9b-3).** Each row also carries the trainee's `pass_count` /
+`pass_rate` — the same numbers as their statistics row — as an additional column; the ranking is
+unchanged (still by `average_percent`).
+
 **Who sees it.** INSTRUCTOR / ADMIN only (`403 FORBIDDEN_FOR_ROLE` for a TRAINEE) — the rating is
 an instructor's view of the whole class, never a trainee's own.
 """
@@ -46,6 +50,10 @@ class TraineeRatingRowView:
     trainee_user_id: UserId
     display_name_ru: str
     average_percent: float
+    pass_count: int = 0
+    """(I5 E38) `TraineeStatisticsRowView.pass_count` — shown, never sorted by."""
+    pass_rate: float | None = None
+    """(I5 E38) `TraineeStatisticsRowView.pass_rate`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +106,8 @@ def _ranked(rows: list[TraineeStatisticsRowView]) -> tuple[TraineeRatingRowView,
             trainee_user_id=row.trainee_user_id,
             display_name_ru=row.display_name_ru,
             average_percent=percent,
+            pass_count=row.pass_count,
+            pass_rate=row.pass_rate,
         )
         for index, (row, percent) in enumerate(ordered)
     )

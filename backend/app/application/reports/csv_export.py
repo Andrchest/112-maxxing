@@ -15,7 +15,10 @@ Q-E12-1 — the "Норматив" cell names which reaction it is and "Норм
 мс" stay empty, a reaction time has neither), then the weighted total. Every row of a card repeats
 its «Рабочее место» (I5 E36, Q-E12-3). Rows are built as `{column: cell}` maps and read out in
 `LESSON_REPORT_CSV_HEADER`'s order (`_row`), so a column added or reordered cannot silently
-misalign an existing one. The statistics' file is rendered in
+misalign an existing one. «Итог» (I5 E38, Q-E9b-3) is the card's «сдал / не сдал» verdict
+(`PASS_VERDICT_LABELS_RU`), repeated on every row of the card like «Рабочее место»; an unscored
+card has no verdict and the cell is empty (the file's own "not measured" convention — the screen
+shows «—»). The statistics' file is rendered in
 `app.application.statistics.statistics_csv` with the same helpers.
 """
 
@@ -34,6 +37,7 @@ __all__ = [
     "CSV_MEDIA_TYPE",
     "LESSON_REPORT_CSV_HEADER",
     "NORM_KIND_LABELS_RU",
+    "PASS_VERDICT_LABELS_RU",
     "REACTION_TO_OPEN_LABEL_RU",
     "REACTION_TO_STATUS_LABEL_RU",
     "csv_number",
@@ -55,6 +59,9 @@ REACTION_TO_STATUS_LABEL_RU = "Время реакции: первый стат�
 """(I5 E36, Q-E12-1) The two reaction times' own row labels, in the «Норматив» column — they carry
 no norm, so «Норма, мс» / «Отклонение от нормы, мс» are empty on their rows."""
 
+PASS_VERDICT_LABELS_RU: Mapping[bool, str] = {True: "Сдал", False: "Не сдал"}
+"""(I5 E38, Q-E9b-3) The «Итог» cell by `PassVerdict.passed` — the frontend's `ru.ts` words."""
+
 _STATE_LABELS_RU: Mapping[SessionState, str] = {
     SessionState.COMPLETED: "Завершено",
     SessionState.ABORTED: "Прервано",
@@ -69,6 +76,7 @@ _POINTS = "Баллы"
 _MAX_POINTS = "Максимум баллов"
 _FAILED_RULES = "Нарушено правил"
 _CRITICAL_ERRORS = "Критических ошибок"
+_VERDICT = "Итог"
 _NORM_KIND = "Норматив"
 _SERVICE = "Служба"
 _MEASURED_MS = "Время, мс"
@@ -85,6 +93,7 @@ LESSON_REPORT_CSV_HEADER: tuple[str, ...] = (
     _MAX_POINTS,
     _FAILED_RULES,
     _CRITICAL_ERRORS,
+    _VERDICT,
     _NORM_KIND,
     _SERVICE,
     _MEASURED_MS,
@@ -160,6 +169,11 @@ def _card_cells(card: LessonReportCard, norm: CardNorm | None) -> dict[str, str]
         _MAX_POINTS: "" if report is None else csv_number(report.score_report.total_max_points),
         _FAILED_RULES: "" if report is None else str(report.failed_rule_count),
         _CRITICAL_ERRORS: "" if report is None else str(report.critical_error_count),
+        _VERDICT: (
+            ""
+            if report is None or report.pass_verdict is None
+            else PASS_VERDICT_LABELS_RU[report.pass_verdict.passed]
+        ),
         _NORM_KIND: "" if norm is None else NORM_KIND_LABELS_RU[norm.kind],
         _SERVICE: (
             ""

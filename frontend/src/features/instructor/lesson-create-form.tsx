@@ -16,6 +16,10 @@
 // I4 E31 (71 §71.8, D34; ТЗ ¶240): each entry may override the scenario's per-card timers
 // (`PlanEntry.timers`, entered in seconds, sent in session ms). An empty field keeps the scenario's
 // value — the backend resolves scenario ← entry and refuses a result that breaks R39.
+//
+// I5 E38 (Q-E9b-3 variant г): «сдал / не сдал»'s three criteria for the whole lesson
+// (`LessonCreateRequest.pass_criteria`, every card) — sent only when they differ from the server's
+// defaults.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
@@ -52,6 +56,8 @@ import {
 } from '@/shared/api';
 import { arrivalKindLabelRu } from '@/features/lesson/lesson-labels';
 import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
+import { PassCriteriaFields } from './pass-criteria-fields';
+import { DEFAULT_PASS_CRITERIA_DRAFT, passCriteriaField, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -466,6 +472,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
   const [groupId, setGroupId] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState<number | null>(null);
+  const [passDraft, setPassDraft] = useState<PassCriteriaDraft>(DEFAULT_PASS_CRITERIA_DRAFT);
 
   const groupsQuery = useQuery({ queryKey: queryKeys.traineeGroups.list(), queryFn: listTraineeGroups });
   const selectedGroup = (groupsQuery.data?.items ?? []).find((group) => group.group_id === groupId) ?? null;
@@ -626,6 +633,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
     entriesValid &&
     participants.length > 0 &&
     participants.every((row) => row.userId.trim() !== '') &&
+    passCriteriaProblem(passDraft) === null &&
     !createMutation.isPending;
 
   function handleCreate() {
@@ -661,6 +669,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
         ...timersField(row.timerSeconds),
       })),
       ...(groupId !== '' ? { group_id: groupId } : {}),
+      ...passCriteriaField(passDraft),
     };
     createMutation.mutate(body);
   }
@@ -885,6 +894,8 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
             ) : null}
           </fieldset>
         ) : null}
+
+        <PassCriteriaFields idPrefix="lesson" draft={passDraft} onChange={setPassDraft} />
 
         <ProblemAlert error={createMutation.error} />
       </CardContent>

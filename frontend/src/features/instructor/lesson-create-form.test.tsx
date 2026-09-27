@@ -198,6 +198,71 @@ describe('LessonCreateForm — the instructor plan editor (70 §70.3.1-§70.3.3)
     expect(body.scenario_plan[0].timers).toEqual({ accept_within_ms: 45_000 });
   });
 
+  it('sends the lesson-wide pass criteria, and refuses to create with every criterion off (I5 E38)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios?limit=200' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/trainee-groups?limit=200' && method === 'GET') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/lessons' && method === 'POST') return jsonResponse(makeLesson(), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+
+    await user.type(screen.getByLabelText(ru.lessonFormTitleFieldLabel), 'Pass criteria');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryScenarioLabel), 's1');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryVersionLabel), 'v1');
+    const participantSelect = await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`);
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(participantSelect, 'trainee-1');
+
+    // The defaults are shown: 70 %, no failed-rule limit, a critical error fails.
+    const minScoreOn = screen.getByRole('checkbox', { name: ru.passCriteriaMinScoreLabel });
+    const minScore = screen.getByRole('textbox', { name: ru.passCriteriaMinScoreLabel });
+    const maxFailedOn = screen.getByRole('checkbox', { name: ru.passCriteriaMaxFailedRulesLabel });
+    const maxFailed = screen.getByRole('textbox', { name: ru.passCriteriaMaxFailedRulesLabel });
+    const critical = screen.getByRole('checkbox', { name: ru.passCriteriaFailOnCriticalLabel });
+    expect(minScoreOn).toBeChecked();
+    expect(minScore).toHaveValue('70');
+    expect(maxFailedOn).not.toBeChecked();
+    expect(maxFailed).toBeDisabled();
+    expect(critical).toBeChecked();
+
+    // Every criterion off: refused before any request.
+    await user.click(minScoreOn);
+    await user.click(critical);
+    expect(screen.getByRole('button', { name: ru.lessonFormCreateButton })).toBeDisabled();
+    expect(screen.getByText(ru.passCriteriaNoneEnabled)).toBeInTheDocument();
+
+    // An enabled limit needs a whole number.
+    await user.click(maxFailedOn);
+    expect(screen.getByRole('button', { name: ru.lessonFormCreateButton })).toBeDisabled();
+    expect(screen.getByText(ru.passCriteriaInvalidValue)).toBeInTheDocument();
+    await user.type(maxFailed, '2');
+    await user.click(minScoreOn);
+    await user.clear(minScore);
+    await user.type(minScore, '60');
+
+    await user.click(screen.getByRole('button', { name: ru.lessonFormCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/lessons' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    const body = JSON.parse(createCall[1].body as string);
+    expect(body.pass_criteria).toEqual({ min_score_percent: 60, max_failed_rules: 2, fail_on_critical: false });
+  });
+
   it('an entry switched to the picker has no phone: ON becomes OFF, is disabled, and is sent OFF (R41, D28)', async () => {
     // `street-rubbish-fire`'s shape since I4 E21: a memo scenario whose phone is ON by default.
     const phoneDefault = {
