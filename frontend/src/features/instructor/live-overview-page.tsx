@@ -18,7 +18,7 @@
 // (`SessionDetail.created_by_user_id`); the overview itself stays open to every instructor.
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { AppShell } from '@/shared/ui/app-shell';
 import { t } from '@/shared/i18n';
@@ -34,6 +34,7 @@ import { GateTurnsSection } from './gate-turns-section';
 import { LiveOperatorCardSection } from './live-operator-card-section';
 import { HandoffSnapshotSection } from './handoff-snapshot-section';
 import { DdsWorkItemsSection } from './dds-work-items-section';
+import { DdsLegStatusesSection } from './dds-leg-statuses-section';
 import { CallStateSection } from './call-state-section';
 import { InferenceHealthSection } from './inference-health-section';
 import { AbortSessionButton } from './abort-session-button';
@@ -54,6 +55,7 @@ export function InstructorLiveOverviewPage() {
   const canAbort = userRole === 'INSTRUCTOR' || userRole === 'ADMIN';
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const wsClientRef = useRef<WsClient | null>(null);
+  const queryClient = useQueryClient();
 
   const overviewQuery = useQuery({
     queryKey: queryKeys.instructor.overview(sessionId ?? ''),
@@ -84,6 +86,8 @@ export function InstructorLiveOverviewPage() {
       lastSeqNo: overview.last_seq_no,
       onEvent: () => {
         void overviewQuery.refetch();
+        // I6 FIX1: the services' memo statuses are a separate read — follow every frame too.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.dds.legs(overview.session.id) });
       },
       onStatusChange: setConnectionStatus,
     });
@@ -192,6 +196,9 @@ export function InstructorLiveOverviewPage() {
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <LiveOperatorCardSection card={overview.card} />
         <HandoffSnapshotSection handoff={overview.handoff} card={overview.card} />
+      </div>
+      <div className="mt-4">
+        <DdsLegStatusesSection sessionId={overview.session.id} />
       </div>
       <div className="mt-4">
         <DdsWorkItemsSection assignments={overview.assignments} resources={overview.resources} />

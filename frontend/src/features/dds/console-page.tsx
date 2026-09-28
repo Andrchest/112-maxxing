@@ -88,8 +88,10 @@ export function DdsConsolePage() {
     enabled: sessionId !== undefined,
     // I6 UX: while there is no work item yet (the lesson not started, the card's arrival offset
     // not reached, the 112 stage not handed off), re-read the snapshot so the card appears by
-    // itself. The realtime channel alone does not deliver it: this viewer's event stream skips the
-    // seq_nos it may not see, and the client's gap re-resume jumps past the handoff events.
+    // itself. I6 FIX1: `WsClient` now delivers the events after a hole in this viewer's filtered
+    // stream (it used to drop them), so HANDOFF_RECEIVED reaches the page live; this poll stays
+    // for the not-yet-started case — a `READY` session whose card has not been issued yet, where
+    // the page must not depend on the socket (or its first event) to notice the start.
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data || data.work_item !== null) return false;

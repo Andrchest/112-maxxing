@@ -223,6 +223,7 @@ export function UsersTab() {
   const queryClient = useQueryClient();
   const [roleFilter, setRoleFilter] = useState<UserRole | ''>('');
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [search, setSearch] = useState('');
 
   const usersQuery = useQuery({
     queryKey: queryKeys.admin.users(roleFilter || undefined, includeInactive),
@@ -238,7 +239,13 @@ export function UsersTab() {
     onSuccess: invalidateUsers,
   });
 
-  const users = usersQuery.data?.items ?? [];
+  // I6 FIX1: every page is loaded (`listUsers` walks them), newest account first, so a just-created
+  // user is on top; «Поиск по логину» narrows by a case-insensitive substring of the login.
+  const allUsers = usersQuery.data?.items ?? [];
+  const needle = search.trim().toLowerCase();
+  const users = allUsers
+    .filter((row) => needle === '' || row.username.toLowerCase().includes(needle))
+    .sort((left, right) => right.created_at.localeCompare(left.created_at) || left.username.localeCompare(right.username));
 
   return (
     <Card data-slot="admin-users">
@@ -258,6 +265,16 @@ export function UsersTab() {
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="admin-users-search">{t('adminUsersSearchLabel')}</Label>
+          <Input
+            id="admin-users-search"
+            type="search"
+            className="w-56"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -283,7 +300,15 @@ export function UsersTab() {
             {problemText(updateMutation.error)}
           </p>
         ) : null}
-        {usersQuery.data && users.length === 0 ? <p className="text-sm text-muted-foreground">{t('adminUsersEmpty')}</p> : null}
+        {usersQuery.data && allUsers.length === 0 ? <p className="text-sm text-muted-foreground">{t('adminUsersEmpty')}</p> : null}
+        {allUsers.length > 0 && users.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t('adminUsersSearchEmpty')}</p>
+        ) : null}
+        {users.length > 0 ? (
+          <p className="mb-2 text-xs text-muted-foreground" data-slot="admin-users-count">
+            {t('adminUsersCountLabel')}: {users.length} / {allUsers.length}
+          </p>
+        ) : null}
         {users.length > 0 ? (
           <table className="w-full border-collapse text-sm" data-slot="admin-users-table">
             <thead>

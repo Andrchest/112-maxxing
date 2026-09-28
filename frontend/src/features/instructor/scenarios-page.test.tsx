@@ -123,4 +123,27 @@ describe('ScenariosPage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/scenarios/s1/archive', expect.objectContaining({ method: 'POST' })));
   });
+
+  it('the show-archived checkbox refetches with include_archived and shows the archived scenario', async () => {
+    const user = userEvent.setup();
+    signIn();
+    const archived = { ...SCENARIOS_RESPONSE.items[0], scenario_id: 's2', slug: 'old', title_ru: 'Archived scenario', archived_at: '2026-09-25T00:00:00Z' };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('include_archived=true')) {
+        return jsonResponse({ items: [...SCENARIOS_RESPONSE.items, archived], total: 2 });
+      }
+      return jsonResponse(SCENARIOS_RESPONSE);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    await screen.findByText('Fire test scenario');
+    expect(screen.queryByText('Archived scenario')).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(ru.scenarioShowArchivedLabel));
+
+    expect(await screen.findByText('Archived scenario')).toBeInTheDocument();
+    expect(screen.getByText(ru.scenarioArchivedBadge)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: ru.scenarioUnarchiveButton })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('include_archived=true'), expect.anything());
+  });
 });

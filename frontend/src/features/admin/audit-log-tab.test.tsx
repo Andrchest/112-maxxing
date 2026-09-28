@@ -56,8 +56,41 @@ describe('AuditLogTab', () => {
     expect(await screen.findByText('10.0.0.5')).toBeInTheDocument();
     const row = screen.getByText('10.0.0.5').closest('tr');
     expect(row).toHaveTextContent(ru.adminAuditActionLoginSucceeded);
-    expect(row).toHaveTextContent('INSTRUCTOR');
+    expect(row).toHaveTextContent(ru.userRoleInstructor);
     expect(row).toHaveTextContent(ru.adminAuditOutcomeOk);
+  });
+
+  // I6 FIX1: the «Пользователь» cell names the account (login and display name), never the bare
+  // role enum; a failed login names the attempted login.
+  it('names the acting account, and the attempted login for a failed one', async () => {
+    const named: AuditEntryView = { ...ENTRY, id: 'audit-2', username: 'instructor', display_name_ru: 'Ivanov', client_ip: '10.0.0.6' };
+    const failed: AuditEntryView = {
+      ...ENTRY,
+      id: 'audit-3',
+      user_id: null,
+      role: null,
+      action: 'LOGIN_FAILED',
+      status: 401,
+      outcome: 'DENIED',
+      target_ids: { username: 'nobody' },
+      client_ip: '10.0.0.7',
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ items: [named, failed], total: 2 })),
+    );
+
+    renderTab();
+
+    expect(await screen.findByText('10.0.0.6')).toBeInTheDocument();
+    const namedCell = screen.getByText('10.0.0.6').closest('tr')?.querySelectorAll('td')[1];
+    expect(namedCell).toHaveTextContent('instructor');
+    expect(namedCell).toHaveTextContent('Ivanov');
+    expect(namedCell).toHaveTextContent(ru.userRoleInstructor);
+    expect(namedCell).not.toHaveTextContent('INSTRUCTOR');
+    const failedCell = screen.getByText('10.0.0.7').closest('tr')?.querySelectorAll('td')[1];
+    expect(failedCell).toHaveTextContent('nobody');
+    expect(failedCell).toHaveTextContent(ru.adminAuditAttemptedLogin);
   });
 
   it('shows the empty state for no entries', async () => {

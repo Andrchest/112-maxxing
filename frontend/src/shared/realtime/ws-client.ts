@@ -11,6 +11,13 @@
 //     at the replay/live seam is a no-op, not a second apply);
 //   - a `seq_no` gap, or a `heartbeat` whose `last_seq_no` is ahead of what we've applied,
 //     re-sends `resume` instead of accepting a hole in the stream;
+//   - (I6 FIX1) a role-filtered stream has holes by design (§40.4: a ДДС trainee never receives
+//     the events it may not see), so a jump is not proof of loss. The event after a jump is still
+//     delivered at once (never dropped); the re-`resume` makes the server replay everything this
+//     role may see after the last contiguous `seq_no`, delivered by `seq_no` idempotency, and
+//     `resume_complete.last_seq_no` (the raw log position the replay covered) then becomes the
+//     cursor. Only one `resume` is outstanding at a time, so a burst of holes never trips the
+//     §40.2 frame rate limit (`4429`).
 //   - exponential reconnect backoff on an abnormal close;
 //   - no reconnect on `4401`/`4403`/`4404` (HLD §40.1: these will not resolve by retrying).
 import { WS_BASE_PATH } from '@/shared/config';
@@ -105,7 +112,12 @@ export class WsClient {
   private readonly random: () => number;
   private socket: WebSocketLike | null = null;
   private status: ConnectionStatus = 'idle';
+  /** The cursor: every event this role may see up to here has been delivered. */
   private lastSeqNo: number;
+  /** Events delivered past a hole, above `lastSeqNo` — skipped when a replay sends them again. */
+  private readonly deliveredAhead = new Set<number>();
+  /** A `resume` was sent on this socket and its `resume_complete` has not arrived yet. */
+  private resumePending = false;
   private backoffMs: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByCaller = false;
@@ -155,7 +167,13 @@ export class WsClient {
 
   private sendResume(): void {
     // The only frame this client ever sends (D8, HLD §40.2).
+    this.resumePending = true;
     this.socket?.send(JSON.stringify({ type: 'resume', after_seq_no: this.lastSeqNo }));
+  }
+
+  /** Re-resume after a detected gap, unless one is already on its way. */
+  private requestResume(): void {
+    if (!this.resumePending) this.sendResume();
   }
 
   private handleMessage(raw: string): void {
@@ -171,7 +189,10 @@ export class WsClient {
         return;
       case 'resume_complete':
         this.setStatus('open');
-        this.lastSeqNo = frame.last_seq_no;
+        this.resumePending = false;
+        // The replay covered the log up to `last_seq_no` (withheld rows included, §40.3), and
+        // every row this role may see in it has been delivered — now or before, past a hole.
+        this.advanceCursorTo(Math.max(this.lastSeqNo, frame.last_seq_no));
         this.options.onResumeComplete?.({
           replayedCount: frame.replayed_count,
           lastSeqNo: frame.last_seq_no,
@@ -182,7 +203,7 @@ export class WsClient {
         // A cheap gap detector (HLD §40.2): a heartbeat ahead of what we've applied means we
         // missed something and re-resume rather than waiting for the next event to reveal it.
         if (frame.last_seq_no > this.lastSeqNo) {
-          this.sendResume();
+          this.requestResume();
         }
         return;
       case 'error':
@@ -192,17 +213,20 @@ export class WsClient {
   }
 
   private handleEvent(frame: EventFrame): void {
-    if (frame.seq_no <= this.lastSeqNo) {
-      // Already-applied event — the replay/live seam duplicate HLD §40.3 warns about. Idempotent
-      // no-op, not a second apply.
+    if (frame.seq_no <= this.lastSeqNo || this.deliveredAhead.has(frame.seq_no)) {
+      // Already-applied event — the replay/live seam duplicate HLD §40.3 warns about, or a replay
+      // of one delivered past a hole. Idempotent no-op, not a second apply.
       return;
     }
-    if (frame.seq_no !== this.lastSeqNo + 1) {
-      // A gap: re-resume from our last contiguous seq_no instead of accepting a hole (HLD §40.3).
-      this.sendResume();
-      return;
+    if (frame.seq_no === this.lastSeqNo + 1) {
+      this.advanceCursorTo(frame.seq_no);
+    } else {
+      // A gap: either rows this role may not see or a lost message — the client cannot tell. The
+      // event is delivered now; a re-resume from the last contiguous seq_no fills whatever was
+      // lost (HLD §40.3), and its `resume_complete` moves the cursor past the withheld rows.
+      this.deliveredAhead.add(frame.seq_no);
+      this.requestResume();
     }
-    this.lastSeqNo = frame.seq_no;
     this.options.onEvent({
       seq_no: frame.seq_no,
       event_type: frame.event_type,
@@ -215,8 +239,20 @@ export class WsClient {
     });
   }
 
+  /** Move the cursor to `seqNo`, then over any run of events already delivered past a hole. */
+  private advanceCursorTo(seqNo: number): void {
+    this.lastSeqNo = seqNo;
+    while (this.deliveredAhead.has(this.lastSeqNo + 1)) {
+      this.lastSeqNo += 1;
+    }
+    for (const delivered of this.deliveredAhead) {
+      if (delivered <= this.lastSeqNo) this.deliveredAhead.delete(delivered);
+    }
+  }
+
   private handleClose(code: number): void {
     this.socket = null;
+    this.resumePending = false;
     if (this.closedByCaller || NO_RECONNECT_CLOSE_CODES.has(code)) {
       this.setStatus('closed');
       return;

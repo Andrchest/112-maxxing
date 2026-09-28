@@ -12,7 +12,16 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
-import { listAuditLog, problemMessageRu, queryKeys, type AuditAction, type AuditOutcome, type ProblemCode } from '@/shared/api';
+import {
+  listAuditLog,
+  problemMessageRu,
+  queryKeys,
+  type AuditAction,
+  type AuditEntryView,
+  type AuditOutcome,
+  type ProblemCode,
+  type UserRole,
+} from '@/shared/api';
 
 const ACTION_LABEL_KEY: Record<AuditAction, keyof typeof ru> = {
   HTTP_REQUEST: 'adminAuditActionHttpRequest',
@@ -30,6 +39,42 @@ const OUTCOME_LABEL_KEY: Record<AuditOutcome, keyof typeof ru> = {
 };
 
 const PAGE_SIZE = 50;
+
+const ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
+  TRAINEE: 'userRoleTrainee',
+  INSTRUCTOR: 'userRoleInstructor',
+  ADMIN: 'userRoleAdmin',
+};
+
+// I6 FIX1: «Пользователь» names who acted — login and display name (joined server-side), with the
+// role as a Russian word under it; a row with no account (an anonymous request, a failed login)
+// shows the attempted login from `target_ids.username` when there is one.
+function ActorCell({ entry }: { entry: AuditEntryView }) {
+  if (entry.username) {
+    const roleKey = entry.role ? ROLE_LABEL_KEY[entry.role as UserRole] : undefined;
+    return (
+      <div className="flex flex-col">
+        <span>
+          <span className="font-medium">{entry.username}</span>
+          {entry.display_name_ru ? <span className="text-muted-foreground"> · {entry.display_name_ru}</span> : null}
+        </span>
+        {roleKey ? <span className="text-xs text-muted-foreground">{t(roleKey)}</span> : null}
+      </div>
+    );
+  }
+  const attempted = entry.target_ids.username;
+  if (attempted) {
+    return (
+      <div className="flex flex-col">
+        <span className="font-medium">{attempted}</span>
+        <span className="text-xs text-muted-foreground">{t('adminAuditAttemptedLogin')}</span>
+      </div>
+    );
+  }
+  // An account row the server could not name (e.g. before the join existed): the role, in Russian.
+  if (entry.role) return <span>{t(ROLE_LABEL_KEY[entry.role as UserRole])}</span>;
+  return <span className="text-muted-foreground">{t('adminAuditAnonymous')}</span>;
+}
 
 function dayStartIso(day: string): string | undefined {
   return day ? new Date(`${day}T00:00:00`).toISOString() : undefined;
@@ -127,7 +172,9 @@ export function AuditLogTab() {
               {items.map((entry) => (
                 <tr key={entry.id} className="border-b border-border/60" data-slot="admin-audit-row">
                   <td className="p-2 tabular-nums">{formatTimestampRu(entry.ts)}</td>
-                  <td className="p-2">{entry.role ?? entry.user_id ?? t('statisticsNoValue')}</td>
+                  <td className="p-2">
+                    <ActorCell entry={entry} />
+                  </td>
                   <td className="p-2">{t(ACTION_LABEL_KEY[entry.action])}</td>
                   <td className="p-2 font-mono text-xs">
                     {entry.method} {entry.path_template}

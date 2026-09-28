@@ -114,7 +114,7 @@ describe('WsClient', () => {
     expect(onEvent).toHaveBeenCalledWith(envelope);
   });
 
-  it('re-sends resume on a seq_no gap instead of applying the event', () => {
+  it('re-sends resume on a seq_no gap, and still delivers the event after the gap', () => {
     const { client, onEvent } = makeClient();
     client.connect();
     sockets[0]!.simulateOpen();
@@ -123,8 +123,72 @@ describe('WsClient', () => {
 
     sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(7) }); // skipped seq_no 6
 
-    expect(onEvent).not.toHaveBeenCalled();
+    expect(onEvent.mock.calls.map(([event]) => event.seq_no)).toEqual([7]);
     expect(sockets[0]!.sent).toEqual([{ type: 'resume', after_seq_no: 5 }]);
+  });
+
+  // I6 FIX1: a role-filtered stream (§40.4) has holes by design — the ДДС trainee received 2, 3,
+  // then 25…30. The old client dropped 25…30 and jumped its cursor to 30 on `resume_complete`, so
+  // e.g. HANDOFF_RECEIVED never reached the page.
+  it('delivers every event of a role-filtered stream with permanent holes', () => {
+    const { client, onEvent } = makeClient({ lastSeqNo: 3 });
+    client.connect();
+    sockets[0]!.simulateOpen();
+    sockets[0]!.simulateMessage({ type: 'resume_complete', replayed_count: 0, last_seq_no: 3, live: true });
+    sockets[0]!.sent = [];
+
+    // Live: 25 arrives after withheld 4…24, then 26…30 while the re-resume is outstanding.
+    for (const seqNo of [25, 26, 27]) sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(seqNo) });
+    expect(sockets[0]!.sent).toEqual([{ type: 'resume', after_seq_no: 3 }]); // one resume, not three
+    // The server restarts from 3 and replays what this role may see: 25…30.
+    for (const seqNo of [25, 26, 27, 28, 29, 30]) sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(seqNo) });
+    sockets[0]!.simulateMessage({ type: 'resume_complete', replayed_count: 6, last_seq_no: 30, live: true });
+
+    expect(onEvent.mock.calls.map(([event]) => event.seq_no)).toEqual([25, 26, 27, 28, 29, 30]);
+
+    // The cursor is now the log's 30: the next contiguous live event needs no resume, and a
+    // heartbeat at 30 is not a gap.
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(31) });
+    sockets[0]!.simulateMessage({ type: 'heartbeat', server_time_utc: '2026-09-21T10:00:15.000Z', last_seq_no: 31 });
+    expect(onEvent.mock.calls.map(([event]) => event.seq_no)).toEqual([25, 26, 27, 28, 29, 30, 31]);
+    expect(sockets[0]!.sent).toEqual([{ type: 'resume', after_seq_no: 3 }]);
+  });
+
+  it('fills a genuinely lost event from the replay without re-delivering the one after it', () => {
+    const { client, onEvent } = makeClient();
+    client.connect();
+    sockets[0]!.simulateOpen();
+    sockets[0]!.simulateMessage({ type: 'resume_complete', replayed_count: 0, last_seq_no: 5, live: true });
+    sockets[0]!.sent = [];
+
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(7) }); // 6 lost on the bus
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(6) }); // replayed from PostgreSQL
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(7) }); // replayed again — a duplicate
+    sockets[0]!.simulateMessage({ type: 'resume_complete', replayed_count: 2, last_seq_no: 7, live: true });
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(8) });
+
+    expect(onEvent.mock.calls.map(([event]) => event.seq_no)).toEqual([7, 6, 8]);
+    expect(sockets[0]!.sent).toEqual([{ type: 'resume', after_seq_no: 5 }]);
+  });
+
+  it('after a reconnect resumes from the cursor and delivers what was missed while away', () => {
+    const { client, onEvent } = makeClient({ lastSeqNo: 3 });
+    client.connect();
+    sockets[0]!.simulateOpen();
+    sockets[0]!.simulateMessage({ type: 'resume_complete', replayed_count: 0, last_seq_no: 3, live: true });
+    sockets[0]!.simulateMessage({ type: 'event', ...makeEnvelope(10) }); // past a hole, resume outstanding
+    sockets[0]!.simulateAbnormalClose(1006); // dropped before the resume_complete
+
+    vi.advanceTimersByTime(500);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.simulateOpen();
+    expect(sockets[1]!.sent).toEqual([{ type: 'resume', after_seq_no: 3 }]);
+    for (const seqNo of [10, 12, 15]) sockets[1]!.simulateMessage({ type: 'event', ...makeEnvelope(seqNo) });
+    sockets[1]!.simulateMessage({ type: 'resume_complete', replayed_count: 3, last_seq_no: 16, live: true });
+    sockets[1]!.simulateMessage({ type: 'event', ...makeEnvelope(17) });
+
+    expect(onEvent.mock.calls.map(([event]) => event.seq_no)).toEqual([10, 12, 15, 17]);
+    expect(sockets[1]!.sent).toEqual([{ type: 'resume', after_seq_no: 3 }]);
   });
 
   it('re-sends resume when a heartbeat is ahead of the applied seq_no', () => {

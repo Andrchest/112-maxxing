@@ -146,6 +146,9 @@ async def test_list_audit_log_pages_admin_only(
     body = response.json()
     assert body["total"] >= 1
     assert all(item["user_id"] == str(users["trainee1"]) for item in body["items"])
+    # I6 FIX1: the acting account's login and display name, not only its role.
+    assert all(item["username"] == "trainee1" for item in body["items"])
+    assert all(item["display_name_ru"] == "Стажёр" for item in body["items"])
 
 
 async def test_list_audit_log_is_forbidden_for_non_admin(

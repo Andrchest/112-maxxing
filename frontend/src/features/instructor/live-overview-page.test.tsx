@@ -6,6 +6,7 @@ import { InstructorLiveOverviewPage } from './live-overview-page';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
 import { makeInstructorSessionOverview, makeSessionDetail } from './test-fixtures';
+import { makeLeg } from '@/features/dds/test-fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -238,5 +239,57 @@ describe('InstructorLiveOverviewPage — one getInstructorSessionOverview fetch,
     });
 
     await waitFor(() => expect(overviewCalls).toBeGreaterThan(1));
+  });
+
+  // I6 FIX1: each ДДС service's current memo status with its time, following the trainee live.
+  it('shows each DDS service\'s memo status with its time and updates it on a realtime frame', async () => {
+    signIn();
+    const sockets: InertSocket[] = [];
+    class CapturingSocket extends InertSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal('WebSocket', CapturingSocket);
+    let legsStatus: 'ACCEPTED' | 'COMPLETED' = 'ACCEPTED';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/dds/legs')) {
+          return jsonResponse([
+            makeLeg({ service_name_ru: 'Fire service', response_status: legsStatus, response_status_at_offset_ms: 65000 }),
+          ]);
+        }
+        return jsonResponse(makeInstructorSessionOverview());
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText(ru.instructorDdsLegStatusesTitle)).toBeInTheDocument();
+    const row = await screen.findByText('Fire service');
+    expect(row.closest('li')).toHaveTextContent(ru.serviceResponseStatusAccepted);
+    expect(row.closest('li')).toHaveTextContent('01:05');
+
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ type: 'resume_complete', replayed_count: 0, last_seq_no: 12, live: true }) });
+    legsStatus = 'COMPLETED';
+    socket.onmessage?.({
+      data: JSON.stringify({
+        seq_no: 13,
+        type: 'event',
+        event_type: 'DDS_SERVICE_STATUS_CHANGED',
+        timestamp_utc: '2026-09-21T10:00:05.000Z',
+        monotonic_offset_ms: 61000,
+        payload: {},
+        actor_type: 'TRAINEE',
+        correlation_id: null,
+        redacted_keys: [],
+      }),
+    });
+
+    await waitFor(() => expect(screen.getByText('Fire service').closest('li')).toHaveTextContent(ru.serviceResponseStatusCompleted));
   });
 });

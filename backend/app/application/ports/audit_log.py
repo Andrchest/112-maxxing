@@ -77,10 +77,17 @@ class AuditEntry:
 
 @dataclass(frozen=True)
 class StoredAuditEntry:
-    """An `AuditEntry` as read back, with its row id."""
+    """An `AuditEntry` as read back, with its row id.
+
+    `username`/`display_name_ru` (I6 FIX1) name the acting account — resolved at read time by a
+    join on `entry.user_id`, never stored in the row; both `None` when there is no acting account
+    (an anonymous or failed login, whose attempted username stays in `target_ids["username"]`).
+    """
 
     id: UUID
     entry: AuditEntry
+    username: str | None = None
+    display_name_ru: str | None = None
 
 
 @dataclass(frozen=True)

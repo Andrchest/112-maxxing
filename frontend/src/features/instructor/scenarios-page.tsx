@@ -89,7 +89,7 @@ function UploadCard() {
     mutationFn: () => importScenarioVersion({ format: format ?? 'YAML', content: content ?? '', source_path: fileName ?? undefined }),
     onSuccess: async () => {
       setImportedRu(t('scenarioUploadImportedRu'));
-      await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.list() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.all() });
     },
     onError: (err: unknown) => {
       setError(err instanceof ProblemError ? problemMessageRu(err.code as ProblemCode) : t('problemUnknown'));
@@ -164,7 +164,7 @@ function ArchiveAction({ scenario }: { scenario: ScenarioSummary }) {
   const mutation = useMutation({
     mutationFn: () => (scenario.archived_at ? unarchiveScenario(scenario.scenario_id) : archiveScenario(scenario.scenario_id)),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.list() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.all() });
     },
   });
 
@@ -178,7 +178,7 @@ function ArchiveAction({ scenario }: { scenario: ScenarioSummary }) {
 function ScenarioListCard() {
   const [showArchived, setShowArchived] = useState(false);
   const scenariosQuery = useQuery({
-    queryKey: queryKeys.scenarioPicker.list(),
+    queryKey: queryKeys.scenarioPicker.list(showArchived),
     queryFn: () => listScenarioPage({ limit: 200, includeArchived: showArchived }),
   });
 

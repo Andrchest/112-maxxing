@@ -33,6 +33,7 @@ from app.application.ports.audit_log import (
 )
 from app.application.ports.user_repository import UserRole
 from app.db.models.events import AuditLog as AuditLogRow
+from app.db.models.reference import User as UserRow
 from app.domain.common.ids import UserId
 
 __all__ = ["SqlAlchemyAuditLog"]
@@ -40,6 +41,7 @@ __all__ = ["SqlAlchemyAuditLog"]
 logger = logging.getLogger(__name__)
 
 _AUDIT_LOG = AuditLogRow.__table__
+_USERS = UserRow.__table__
 
 
 class SqlAlchemyAuditLog:
@@ -72,8 +74,15 @@ class SqlAlchemyAuditLog:
         if audit_filter.to_ts is not None:
             conditions.append(_AUDIT_LOG.c.ts < audit_filter.to_ts)
 
+        # The acting account's login and name are joined in at read time (I6 FIX1): the journal
+        # shows who acted, not only the role. LEFT JOIN — an anonymous row has no account.
         rows_query = (
-            sa.select(_AUDIT_LOG)
+            sa.select(
+                _AUDIT_LOG,
+                _USERS.c.username.label("actor_username"),
+                _USERS.c.display_name_ru.label("actor_display_name_ru"),
+            )
+            .select_from(_AUDIT_LOG.outerjoin(_USERS, _USERS.c.id == _AUDIT_LOG.c.user_id))
             .where(*conditions)
             .order_by(_AUDIT_LOG.c.ts.desc(), _AUDIT_LOG.c.id.desc())
             .limit(audit_filter.limit)
@@ -118,4 +127,6 @@ def _stored_of(row: Any) -> StoredAuditEntry:
             client_ip=row["client_ip"],
             outcome=AuditOutcome(row["outcome"]),
         ),
+        username=row["actor_username"],
+        display_name_ru=row["actor_display_name_ru"],
     )

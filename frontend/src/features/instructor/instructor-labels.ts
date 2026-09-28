@@ -18,7 +18,24 @@ import type {
   SessionState,
   RoleType,
   StageState,
+  ServiceResponseStatus,
 } from '@/shared/api';
+
+// I6 FIX1: the memo's per-leg vocabulary (70 §70.4.1, D16) for the live overview's service list.
+export const SERVICE_RESPONSE_STATUS_LABEL_KEY: Record<ServiceResponseStatus, keyof typeof ru> = {
+  ADDED: 'serviceResponseStatusAdded',
+  RECEIVED: 'serviceResponseStatusReceived',
+  ACCEPTED: 'serviceResponseStatusAccepted',
+  NOT_ACCEPTED: 'serviceResponseStatusNotAccepted',
+  RESPONSE_STARTED: 'serviceResponseStatusResponseStarted',
+  ARRIVED: 'serviceResponseStatusArrived',
+  WORKING: 'serviceResponseStatusWorking',
+  COMPLETED: 'serviceResponseStatusCompleted',
+  REFUSED: 'serviceResponseStatusRefused',
+};
+export function serviceResponseStatusLabelRu(value: ServiceResponseStatus): string {
+  return t(SERVICE_RESPONSE_STATUS_LABEL_KEY[value]);
+}
 
 export const SESSION_STATE_LABEL_KEY: Record<SessionState, keyof typeof ru> = {
   CREATED: 'sessionStateCreated',

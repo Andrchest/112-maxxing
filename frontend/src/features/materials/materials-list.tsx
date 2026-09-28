@@ -23,13 +23,14 @@ function problemText(error: unknown): string {
   return error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
 }
 
-/** Opens a PDF inline, downloads everything else — `URL.revokeObjectURL` after a delay long
- * enough for the browser to have started acting on it (the same margin `report-audio.ts` uses for
- * its own object URLs). */
-async function openOrDownload(material: TrainingMaterialView) {
+/** Opens a PDF inline (unless `download`), downloads everything else — `URL.revokeObjectURL`
+ * after a delay long enough for the browser to have started acting on it (the same margin
+ * `report-audio.ts` uses for its own object URLs). I6 FIX1: a PDF also has «Скачать», saving it
+ * under its own file name, for a browser (or a tester) that does not show a new tab. */
+async function openOrDownload(material: TrainingMaterialView, download = false) {
   const blob = await getMaterialFile(material.material_id);
   const url = URL.createObjectURL(blob);
-  if (material.content_type === 'application/pdf') {
+  if (material.content_type === 'application/pdf' && !download) {
     window.open(url, '_blank', 'noopener');
   } else {
     const link = document.createElement('a');
@@ -64,9 +65,9 @@ export function MaterialsList({ canManage }: MaterialsListProps) {
     },
   });
 
-  function open(material: TrainingMaterialView) {
+  function open(material: TrainingMaterialView, download = false) {
     setOpenError(null);
-    openOrDownload(material).catch(setOpenError);
+    openOrDownload(material, download).catch(setOpenError);
   }
 
   return (
@@ -116,6 +117,11 @@ export function MaterialsList({ canManage }: MaterialsListProps) {
                 <Button type="button" size="sm" variant="outline" onClick={() => open(material)}>
                   {material.content_type === 'application/pdf' ? t('materialsOpenButton') : t('materialsDownloadButton')}
                 </Button>
+                {material.content_type === 'application/pdf' ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => open(material, true)}>
+                    {t('materialsDownloadButton')}
+                  </Button>
+                ) : null}
                 {canManage && !material.archived_at ? (
                   <Button
                     type="button"

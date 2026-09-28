@@ -129,4 +129,58 @@ describe('UsersTab', () => {
       click.mockRestore();
     }
   });
+
+  // I6 FIX1 (S10): with more accounts than one page (server default 50), a newly created blocked
+  // user sorted by login behind older ones was never shown. Every page is loaded now, newest first,
+  // and «Поиск по логину» narrows the table.
+  it('loads every page, lists the newest account first and filters by login', async () => {
+    const older: UserAccountI4[] = Array.from({ length: 120 }, (_, index) => ({
+      id: `old-${index}`,
+      username: `e2e-a${String(index).padStart(3, '0')}-tempuser`,
+      display_name_ru: `Old ${index}`,
+      user_role: 'TRAINEE',
+      created_at: `2026-09-01T10:${String(index % 60).padStart(2, '0')}:00Z`,
+      is_active: false,
+    }));
+    const newest: UserAccountI4 = {
+      id: 'new-1',
+      username: 'zz-newest-blocked',
+      display_name_ru: 'Newest',
+      user_role: 'TRAINEE',
+      created_at: '2026-09-28T12:00:00Z',
+      is_active: false,
+    };
+    const roster = [...older, newest]; // `username` order, as the server pages it
+    const requested: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost');
+      requested.push(url.pathname + url.search);
+      if (url.pathname === '/api/v1/users') {
+        const offset = Number(url.searchParams.get('offset') ?? '0');
+        return jsonResponse({ items: roster.slice(offset, offset + 50), total: roster.length });
+      }
+      throw new Error(`unexpected fetch: ${url.pathname}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderTab();
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText(ru.adminUsersIncludeInactiveLabel));
+
+    expect(await screen.findByText('zz-newest-blocked')).toBeInTheDocument();
+    const rows = screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'admin-user-row');
+    expect(rows).toHaveLength(121);
+    expect(rows[0]).toHaveTextContent('zz-newest-blocked');
+    expect(requested).toContain('/api/v1/users?include_inactive=true&offset=100');
+
+    await user.type(screen.getByLabelText(ru.adminUsersSearchLabel), 'NEWEST');
+    await waitFor(() =>
+      expect(screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'admin-user-row')).toHaveLength(1),
+    );
+    expect(screen.getByText('zz-newest-blocked')).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText(ru.adminUsersSearchLabel));
+    await user.type(screen.getByLabelText(ru.adminUsersSearchLabel), 'no-such-login');
+    expect(await screen.findByText(ru.adminUsersSearchEmpty)).toBeInTheDocument();
+  });
 });

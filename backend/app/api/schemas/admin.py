@@ -115,6 +115,8 @@ class AuditEntryViewSchema(ApiModel):
     status: int
     client_ip: str | None
     outcome: AuditOutcome
+    username: str | None = None
+    display_name_ru: str | None = None
 
 
 def audit_entry_view_schema(stored: StoredAuditEntry) -> AuditEntryViewSchema:
@@ -133,6 +135,8 @@ def audit_entry_view_schema(stored: StoredAuditEntry) -> AuditEntryViewSchema:
         status=entry.status,
         client_ip=entry.client_ip,
         outcome=entry.outcome,
+        username=stored.username,
+        display_name_ru=stored.display_name_ru,
     )
 
 

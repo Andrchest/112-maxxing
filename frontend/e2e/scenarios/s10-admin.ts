@@ -81,9 +81,22 @@ export const S10 = scenario(
         await page.getByRole('checkbox', { name: 'Показывать заблокированных' }).check();
       },
       expect: [
-        check('строка проверяемого пользователя снова видна, статус «Заблокирован», кнопка «Разблокировать»', async (page, ctx, { expect, timeout }) => {
+        check('строка проверяемого пользователя снова видна (новые пользователи — сверху таблицы), статус «Заблокирован», кнопка «Разблокировать»', async (page, ctx, { expect, timeout }) => {
           await expect(userRow(page, ctx)).toContainText('Заблокирован', { timeout });
           await expect(userRow(page, ctx).getByRole('button', { name: 'Разблокировать', exact: true })).toBeVisible({ timeout });
+        }),
+      ],
+    },
+    {
+      actor: 'admin',
+      do: 'Над таблицей в поле «Поиск по логину» ввести логин проверяемого пользователя `e2e-<суффикс>-tempuser`.',
+      action: async (page, ctx) => {
+        await page.getByLabel('Поиск по логину', { exact: true }).fill(ctx.vars['tempUser.username'] ?? '');
+      },
+      expect: [
+        check('в таблице осталась одна строка — проверяемого пользователя, со статусом «Заблокирован»', async (page, ctx, { expect, timeout }) => {
+          await expect(page.locator('[data-slot="admin-user-row"]')).toHaveCount(1, { timeout });
+          await expect(userRow(page, ctx)).toContainText('Заблокирован', { timeout });
         }),
       ],
     },
@@ -150,6 +163,10 @@ export const S10 = scenario(
           await expect(row).toContainText('POST /api/v1/auth/login', { timeout });
           await expect(row).toContainText('401', { timeout });
         }),
+        check('в колонке «Пользователь» у неудачного входа проверяемого пользователя — его логин `e2e-<суффикс>-tempuser` с пометкой «попытка входа под этим логином»', async (page, ctx, { expect, timeout }) => {
+          const row = page.getByRole('row').filter({ hasText: ctx.vars['tempUser.username'] ?? '' }).first();
+          await expect(row).toContainText('попытка входа под этим логином', { timeout });
+        }),
       ],
     },
     tabStep('Статистика', [
@@ -181,10 +198,13 @@ export const S10 = scenario(
       }),
     ]),
     tabStep('Журнал', [
-      check('в колонке «Пользователь» у строк администратора — кто это (логин или «Администратор»), а не служебное слово «ADMIN»', async (page, _ctx, { expect, timeout }) => {
+      check('в колонке «Пользователь» у строк администратора — его логин (admin) и отображаемое имя, под ними роль «Администратор»; служебного слова «ADMIN» нет', async (page, ctx, { expect, timeout }) => {
         const row = page.getByRole('row').filter({ hasText: 'PATCH /api/v1/admin/users/{user_id}' }).first();
         await expect(row).toBeVisible({ timeout });
-        await expect(row.getByRole('cell').nth(1)).not.toHaveText(/^(ADMIN|INSTRUCTOR|TRAINEE)$/, { timeout });
+        const cell = row.getByRole('cell').nth(1);
+        await expect(cell).toContainText(ctx.credentials('admin').username, { timeout });
+        await expect(cell).toContainText('Администратор', { timeout });
+        await expect(cell).not.toContainText('ADMIN', { timeout });
       }),
     ]),
   ],

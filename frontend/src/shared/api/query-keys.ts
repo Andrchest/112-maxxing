@@ -71,7 +71,10 @@ export const queryKeys = {
     detail: (lessonId: string) => ['lessons', lessonId, 'weight-proposals'] as const,
   },
   scenarioPicker: {
-    list: () => ['scenarios', 'picker'] as const,
+    /** Prefix of every scenario list below — invalidate this after archive/unarchive/upload. */
+    all: () => ['scenarios', 'picker'] as const,
+    /** The checkbox «Показывать архивные» is part of the key, so toggling it refetches. */
+    list: (includeArchived = false) => ['scenarios', 'picker', includeArchived] as const,
   },
   // -- I4 E34: methodical materials, «Справочная база» (HLD 71 §71.11) ------------------------
   materials: {

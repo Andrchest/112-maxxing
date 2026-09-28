@@ -323,3 +323,30 @@ async def test_the_reader_pages_what_the_writer_wrote(
     assert all(item.entry.user_id == users["trainee2"] for item in page.items)
     assert page.items[0].entry.ts >= page.items[1].entry.ts
     assert page.items[0].entry.operation_id == "getCurrentUser"
+
+
+async def test_the_reader_names_the_acting_account(
+    client: httpx.AsyncClient,
+    container: Container,
+    tokens: dict[str, str],
+    users: dict[str, UserId],
+) -> None:
+    """I6 FIX1: the journal names who acted — login and display name joined from `users` at read
+    time; an entry with no account (a failed login) has neither, only `target_ids["username"]`."""
+    await client.get("/api/v1/auth/me", headers=auth(tokens["trainee2"]))
+    page = await container.audit_reader.page(
+        AuditFilter(user_id=users["trainee2"], action=AuditAction.HTTP_REQUEST, limit=1)
+    )
+    (item,) = page.items
+    assert (item.username, item.display_name_ru) == ("trainee2", "Стажёр 2")
+
+    await client.post(
+        "/api/v1/auth/login", json={"username": "trainee2", "password": _PROBE_PASSWORD}
+    )
+    failed = await container.audit_reader.page(
+        AuditFilter(action=AuditAction.LOGIN_FAILED, limit=1)
+    )
+    (failure,) = failed.items
+    assert failure.entry.user_id is None
+    assert (failure.username, failure.display_name_ru) == (None, None)
+    assert failure.entry.target_ids == {"username": "trainee2"}

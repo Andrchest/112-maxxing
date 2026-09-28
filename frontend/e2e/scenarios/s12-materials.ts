@@ -1,5 +1,7 @@
 // S12: materials: the trainee's «Справочная база» lists the ДДС memo, the classifier and «КАРТОЧКА
-// 112» and each opens or downloads; the instructor uploads a PDF and archives it.
+// 112» and each downloads; the instructor uploads a PDF and archives it. I6 FIX1: the PDF is
+// verified through «Скачать» (file name and type), never through a new browser tab — a
+// screen-reading tester's browser may not show one.
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -37,8 +39,10 @@ function downloadStep(title: string, extension: string): StepDefinition {
       ctx.vars.downloaded = file.fileName;
     },
     expect: [
-      check(`браузер скачал файл с расширением ${extension}`, async (_page, ctx) => {
-        if (!(ctx.vars.downloaded ?? '').endsWith(extension)) throw new Error(`скачан «${ctx.vars.downloaded}»`);
+      check(`браузер скачал файл с расширением ${extension}; его имя — то, что написано в строке материала под названием`, async (page, ctx, { expect, timeout }) => {
+        const name = ctx.vars.downloaded ?? '';
+        if (!name.endsWith(extension)) throw new Error(`скачан «${name}»`);
+        await expect(materialRow(page, title)).toContainText(name, { timeout });
       }),
     ],
   };
@@ -58,9 +62,10 @@ export const S12 = scenario(
       },
       expect: [
         heading('Справочная база'),
-        check(`памятка ДДС «${MEMO}» (файл .pdf) с кнопкой «Открыть»`, async (page, _ctx, { expect, timeout }) => {
+        check(`памятка ДДС «${MEMO}» (файл .pdf) с кнопками «Открыть» и «Скачать»`, async (page, _ctx, { expect, timeout }) => {
           await expect(materialRow(page, MEMO)).toContainText('.pdf', { timeout });
           await expect(materialRow(page, MEMO).getByRole('button', { name: 'Открыть', exact: true })).toBeVisible({ timeout });
+          await expect(materialRow(page, MEMO).getByRole('button', { name: 'Скачать', exact: true })).toBeVisible({ timeout });
         }),
         check(`классификатор «${CLASSIFIER}» (файл .xlsx) с кнопкой «Скачать»`, async (page, _ctx, { expect, timeout }) => {
           await expect(materialRow(page, CLASSIFIER)).toContainText('.xlsx', { timeout });
@@ -76,24 +81,7 @@ export const S12 = scenario(
         }),
       ],
     },
-    {
-      actor: 'trainee',
-      do: `У памятки «${MEMO}» нажать «Открыть».`,
-      action: async (page, ctx) => {
-        const [popup] = await Promise.all([
-          page.context().waitForEvent('page'),
-          materialRow(page, MEMO).getByRole('button', { name: 'Открыть', exact: true }).click(),
-        ]);
-        await popup.waitForLoadState('domcontentloaded').catch(() => {});
-        ctx.vars.popupUrl = popup.url();
-        await popup.close();
-      },
-      expect: [
-        check('PDF открылся в новой вкладке браузера', async (_page, ctx) => {
-          if (!(ctx.vars.popupUrl ?? '').startsWith('blob:')) throw new Error(`новая вкладка: ${ctx.vars.popupUrl}`);
-        }),
-      ],
-    },
+    downloadStep(MEMO, '.pdf'),
     downloadStep(CLASSIFIER, '.xlsx'),
     downloadStep(CARD, '.docx'),
     ...loginSteps('instructor', 'INSTRUCTOR', 'преподавателя (instructor)'),
@@ -187,7 +175,7 @@ export const S12 = scenario(
   ],
   {
     purpose:
-      'Стажёр в «Справочная база» видит памятку ДДС, классификатор и «КАРТОЧКА 112» и может их открыть/скачать; преподаватель в «Материалы» загружает PDF (стажёр его видит) и архивирует его (у стажёра он пропадает).',
+      'Стажёр в «Справочная база» видит памятку ДДС, классификатор и «КАРТОЧКА 112» и может их скачать (PDF проверяется кнопкой «Скачать», не новой вкладкой); преподаватель в «Материалы» загружает PDF (стажёр его видит) и архивирует его (у стажёра он пропадает).',
     preconditions: [
       'Вход ещё не выполнен ни в одной вкладке (или нажмите «Выйти» во всех).',
       'На стенде загружены три материала организатора (seed-materials). Под рукой любой небольшой PDF-файл.',

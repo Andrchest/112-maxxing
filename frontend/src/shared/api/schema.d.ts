@@ -2761,6 +2761,10 @@ export interface components {
             status: number;
             client_ip: string | null;
             outcome: components["schemas"]["AuditOutcome"];
+            /** @description (additive, I6) The acting account's login, joined from `users` at read time; `null` when `user_id` is `null` (for LOGIN_* the attempted username is `target_ids.username`). */
+            username?: string | null;
+            /** @description (additive, I6) The acting account's display name, joined like `username`. */
+            display_name_ru?: string | null;
         };
         /** @description (I4 E29) `getUsageStats`'s response. */
         UsageStats: {

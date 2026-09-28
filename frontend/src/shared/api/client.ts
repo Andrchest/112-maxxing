@@ -504,14 +504,27 @@ export function getCurrentUser(): Promise<UserAccount> {
  * param is optional and defaults to omitted (server default `false`). Items are `UserAccountI4`
  * (adds `is_active`) since E28 landed — the wider type is additive over the plain `UserAccount`
  * every pre-I4 caller already reads. */
-export function listUsers(
+export async function listUsers(
   params: { role?: UserRole; includeInactive?: boolean } = {},
 ): Promise<{ items: UserAccountI4[]; total: number }> {
-  const query = new URLSearchParams();
-  if (params.role) query.set('role', params.role);
-  if (params.includeInactive) query.set('include_inactive', 'true');
-  const qs = query.toString();
-  return apiFetch(`/users${qs ? `?${qs}` : ''}`);
+  // I6 FIX1: the endpoint pages (server default `limit` 50, `username` order), and a single call
+  // silently dropped every account past the first page — e.g. a newly created blocked user behind
+  // older `e2e-…` logins. Walk the pages (by `offset`) until `total` is reached so every caller
+  // sees the whole roster; the first request is unchanged.
+  const items: UserAccountI4[] = [];
+  let total: number;
+  for (;;) {
+    const query = new URLSearchParams();
+    if (params.role) query.set('role', params.role);
+    if (params.includeInactive) query.set('include_inactive', 'true');
+    if (items.length > 0) query.set('offset', String(items.length));
+    const qs = query.toString();
+    const page = await apiFetch<{ items: UserAccountI4[]; total: number }>(`/users${qs ? `?${qs}` : ''}`);
+    items.push(...page.items);
+    total = page.total;
+    if (page.items.length === 0 || items.length >= total) break;
+  }
+  return { items, total };
 }
 
 /**
