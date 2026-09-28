@@ -20,6 +20,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
+import { isSecureContext } from '@/shared/lib/secure-context';
 import { useCallStateStore, type CallStateView } from '@/entities/session';
 import { formatCallDurationMs, useMediaStateStore } from '@/entities/call';
 import { useCardStore } from '@/entities/card';
@@ -123,6 +124,10 @@ export function PhoneWidget({ sessionId, monotonicOffsetMs }: PhoneWidgetProps) 
   useEffect(() => {
     const media = callMediaRef.current;
     if (!media) return;
+    // I6 HTTP: never join LiveKit over an insecure context — the answer button that could bring
+    // the call to CONNECTED is hidden below, but this also covers a call already CONNECTED before
+    // the page lost its secure context.
+    if (!isSecureContext()) return;
     const callId = callState?.call_id ?? null;
 
     if (phase === 'CONNECTED' && callId && joinedCallIdRef.current !== callId) {
@@ -189,6 +194,7 @@ export function PhoneWidget({ sessionId, monotonicOffsetMs }: PhoneWidgetProps) 
   }
 
   const durationMs = callState?.duration_ms ?? connectedElapsedMs;
+  const secure = isSecureContext();
 
   return (
     <Card>
@@ -196,63 +202,71 @@ export function PhoneWidget({ sessionId, monotonicOffsetMs }: PhoneWidgetProps) 
         <h2 className="font-heading text-base leading-snug font-medium">{t('operatorPhoneTitle')}</h2>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <span className={`size-2.5 rounded-full ${PHASE_DOT_CLASS[phase]}`} aria-hidden="true" />
-          <span className="text-sm font-medium" data-slot="call-phase">
-            {t(PHASE_LABEL_KEY[phase])}
-          </span>
-        </div>
-        {callState?.caller_display_ru ? (
-          <p className="text-sm text-muted-foreground">{callState.caller_display_ru}</p>
-        ) : null}
-        {phase === 'CONNECTED' || (phase === 'ENDED' && callState?.duration_ms != null) ? (
-          <p className="font-mono text-lg" data-slot="call-timer">
-            {formatCallDurationMs(durationMs)}
+        {!secure ? (
+          <p className="text-sm text-muted-foreground" data-slot="operator-phone-insecure-notice">
+            {t('secureContextRequiredNotice')}
           </p>
-        ) : null}
-        {callState?.caller_speaking ? (
-          <p className="text-xs text-emerald-600" data-slot="caller-speaking">
-            {t('operatorCallerSpeaking')}
-          </p>
-        ) : null}
-        {mediaPhase === 'reconnecting' ? (
-          <p className="text-xs text-amber-600" data-slot="media-reconnecting">
-            {t('operatorCallReconnecting')}
-          </p>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-2">
-          {answerAction ? (
-            <Button type="button" disabled={pending} onClick={() => void handleAnswer()}>
-              {answerAction.label_ru}
-            </Button>
-          ) : null}
-          {/* D11: once the call itself has ended (`CallStateView.phase === 'ENDED'`), never offer
-              to end it again — even if the stage's own `available_actions` still lists `end_call`
-              for a moment (e.g. before the next snapshot refresh). */}
-          {endCallAction && phase !== 'ENDED' ? (
-            <Button type="button" variant="destructive" disabled={pending} onClick={() => void handleHangup()}>
-              {endCallAction.label_ru}
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={mediaPhase === 'idle' || mediaPhase === 'failed'}
-            aria-pressed={muted}
-            onClick={handleToggleMute}
-          >
-            {muted ? t('operatorUnmuteButton') : t('operatorMuteButton')}
-          </Button>
-          <span className="text-xs text-muted-foreground" data-slot="level-meter">
-            {t('operatorLevelMeterLabel')}: {mediaPhase === 'connected' ? Math.round(level * 100) : '—'}
-          </span>
-        </div>
-        {micPermissionDenied ? (
-          <p role="alert" className="text-sm text-destructive" data-slot="mic-permission-denied">
-            {t('operatorMicPermissionDenied')}
-          </p>
-        ) : null}
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <span className={`size-2.5 rounded-full ${PHASE_DOT_CLASS[phase]}`} aria-hidden="true" />
+              <span className="text-sm font-medium" data-slot="call-phase">
+                {t(PHASE_LABEL_KEY[phase])}
+              </span>
+            </div>
+            {callState?.caller_display_ru ? (
+              <p className="text-sm text-muted-foreground">{callState.caller_display_ru}</p>
+            ) : null}
+            {phase === 'CONNECTED' || (phase === 'ENDED' && callState?.duration_ms != null) ? (
+              <p className="font-mono text-lg" data-slot="call-timer">
+                {formatCallDurationMs(durationMs)}
+              </p>
+            ) : null}
+            {callState?.caller_speaking ? (
+              <p className="text-xs text-emerald-600" data-slot="caller-speaking">
+                {t('operatorCallerSpeaking')}
+              </p>
+            ) : null}
+            {mediaPhase === 'reconnecting' ? (
+              <p className="text-xs text-amber-600" data-slot="media-reconnecting">
+                {t('operatorCallReconnecting')}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              {answerAction ? (
+                <Button type="button" disabled={pending} onClick={() => void handleAnswer()}>
+                  {answerAction.label_ru}
+                </Button>
+              ) : null}
+              {/* D11: once the call itself has ended (`CallStateView.phase === 'ENDED'`), never
+                  offer to end it again — even if the stage's own `available_actions` still lists
+                  `end_call` for a moment (e.g. before the next snapshot refresh). */}
+              {endCallAction && phase !== 'ENDED' ? (
+                <Button type="button" variant="destructive" disabled={pending} onClick={() => void handleHangup()}>
+                  {endCallAction.label_ru}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={mediaPhase === 'idle' || mediaPhase === 'failed'}
+                aria-pressed={muted}
+                onClick={handleToggleMute}
+              >
+                {muted ? t('operatorUnmuteButton') : t('operatorMuteButton')}
+              </Button>
+              <span className="text-xs text-muted-foreground" data-slot="level-meter">
+                {t('operatorLevelMeterLabel')}: {mediaPhase === 'connected' ? Math.round(level * 100) : '—'}
+              </span>
+            </div>
+            {micPermissionDenied ? (
+              <p role="alert" className="text-sm text-destructive" data-slot="mic-permission-denied">
+                {t('operatorMicPermissionDenied')}
+              </p>
+            ) : null}
+          </>
+        )}
         {errorMessage ? (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage}

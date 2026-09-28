@@ -35,6 +35,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
+import { isSecureContext } from '@/shared/lib/secure-context';
 import { currentDdsCall, formatCallDurationMs, formatDialedRu, useDdsCallStore, type DdsCallView } from '@/entities/call';
 import { useWorkItemStore } from '@/entities/work-item';
 import {
@@ -145,6 +146,10 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
   useEffect(() => {
     const media = callMediaRef.current;
     if (!media) return;
+    // I6 HTTP: never join LiveKit over an insecure context — the call buttons that could start a
+    // BROWSER call are hidden below, but this guard also covers a call already CONNECTED before
+    // the page lost its secure context (e.g. a proxy change mid-session).
+    if (!isSecureContext()) return;
     if (liveCallId && joinedCallIdRef.current !== liveCallId) {
       joinedCallIdRef.current = liveCallId;
       void (async () => {
@@ -237,10 +242,16 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
       ? call.ended_at_offset_ms - call.answered_at_offset_ms
       : null;
 
+  const secure = isSecureContext();
+
   return (
     <section className="flex flex-wrap items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm" data-slot="dds-phone-widget">
       <span className="font-medium">{t('ddsPhoneTitle')}</span>
-      {call ? (
+      {!secure ? (
+        <span className="text-muted-foreground" data-slot="dds-call-insecure-notice">
+          {t('secureContextRequiredNotice')}
+        </span>
+      ) : call ? (
         <>
           <span className="flex items-center gap-2">
             <span className={`size-2.5 rounded-full ${STATE_DOT_CLASS[call.state]}`} aria-hidden="true" />
@@ -268,7 +279,7 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
         </span>
       )}
       <span className="flex flex-wrap gap-2">
-        {callServiceHead
+        {!secure ? null : callServiceHead
           ? myLegs.map((leg) => (
               <Button
                 key={leg.assignment_id}
@@ -282,38 +293,38 @@ export function DdsPhoneWidget({ sessionId }: DdsPhoneWidgetProps) {
               </Button>
             ))
           : null}
-        {call && answer ? (
+        {secure && call && answer ? (
           <Button type="button" size="sm" disabled={pending} onClick={() => void handleAnswer(call.call_id)}>
             {answer.label_ru}
           </Button>
         ) : null}
-        {callClaimant ? (
+        {secure && callClaimant ? (
           <Button type="button" size="sm" disabled={pending} onClick={() => void handleCallClaimant()}>
             {callClaimant.label_ru}
           </Button>
         ) : null}
-        {callClaimant && claimantNumber ? (
+        {secure && callClaimant && claimantNumber ? (
           <span className="self-center text-muted-foreground" data-slot="dds-claimant-number">
             {t('ddsPhoneClaimantNumberLabel')} {formatDialedRu(claimantNumber)}
           </span>
         ) : null}
-        {call112 ? (
+        {secure && call112 ? (
           <Button type="button" size="sm" disabled={pending} data-slot="dds-call-112" onClick={() => void handleCall112()}>
             {call112.label_ru}
           </Button>
         ) : null}
-        {call && hangUp ? (
+        {secure && call && hangUp ? (
           <Button type="button" size="sm" variant="destructive" disabled={pending} onClick={() => void handleHangUp(call.call_id)}>
             {hangUp.label_ru}
           </Button>
         ) : null}
       </span>
-      {call && call.endpoint === 'SIP' && call.state !== 'ENDED' ? (
+      {secure && call && call.endpoint === 'SIP' && call.state !== 'ENDED' ? (
         <p className="w-full text-xs text-muted-foreground" data-slot="dds-call-on-softphone">
           {t('ddsPhoneOnSoftphone')}
         </p>
       ) : null}
-      {liveCallId && mediaPhase === 'failed' ? (
+      {secure && liveCallId && mediaPhase === 'failed' ? (
         <p className="w-full text-xs text-amber-700" data-slot="dds-call-media-failed">
           {t('ddsPhoneMediaFailed')}
         </p>

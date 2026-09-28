@@ -26,7 +26,14 @@ export function scenarioFileName(scenario: Scenario): string {
   return `${scenario.id}.md`;
 }
 
-export function renderScenario(scenario: Scenario): string {
+/** I6 HTTP: `omitSecureOnly` drops every `secureOnly` step (the http bundle) instead of just
+ * marking it — step ids never shift, since `scenario()` numbers them before this filter runs. */
+export interface RenderOptions {
+  omitSecureOnly?: boolean;
+}
+
+export function renderScenario(scenario: Scenario, options: RenderOptions = {}): string {
+  const steps = options.omitSecureOnly ? scenario.steps.filter((step) => !step.secureOnly) : scenario.steps;
   const lines: string[] = [
     `# ${scenario.id}. ${scenario.title}`,
     '',
@@ -49,8 +56,8 @@ export function renderScenario(scenario: Scenario): string {
     '| Шаг | Что сделать | Должно быть видно |',
     '|---|---|---|',
   ];
-  for (const step of scenario.steps) {
-    const todo = `**${actorLabel(step.actor)}:** ${step.do}`;
+  for (const step of steps) {
+    const todo = `**${actorLabel(step.actor)}:** ${step.do}${step.secureOnly ? ' *(только https)*' : ''}`;
     const seen = [
       ...(step.wait ? [`*Ждать до ${Math.round(step.wait.timeoutMs / 1000)} с: ${step.wait.why}.*`] : []),
       ...step.expect.map((item) => `• ${item.see}`),
@@ -154,9 +161,11 @@ export function renderInstructions(scenarios: Scenario[]): string {
   ].join('\n');
 }
 
-/** Every file of `docs/test-scenarios/`, by name. */
-export function renderAll(scenarios: Scenario[]): Map<string, string> {
+/** Every file of `docs/test-scenarios/`, by name. `options.omitSecureOnly` (I6 HTTP) renders the
+ * http-only variant (build-bundle.sh's `--http`): the instructions file is unchanged, each
+ * scenario file drops its `secureOnly` steps. */
+export function renderAll(scenarios: Scenario[], options: RenderOptions = {}): Map<string, string> {
   const files = new Map<string, string>([['00-instructions.md', renderInstructions(scenarios)]]);
-  for (const item of scenarios) files.set(scenarioFileName(item), renderScenario(item));
+  for (const item of scenarios) files.set(scenarioFileName(item), renderScenario(item, options));
   return files;
 }

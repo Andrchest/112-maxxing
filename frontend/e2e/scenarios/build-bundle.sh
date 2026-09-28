@@ -5,15 +5,36 @@
 # The passwords are read at build time from the demo stand's env file (outside the repo; never
 # written into the repo) and access.md is created with mode 600.
 #
-#   frontend/e2e/scenarios/build-bundle.sh [BUNDLE_DIR]      (make e2e-scenarios-bundle)
+#   frontend/e2e/scenarios/build-bundle.sh [BUNDLE_DIR]         (make e2e-scenarios-bundle)
+#   frontend/e2e/scenarios/build-bundle.sh --http [BUNDLE_DIR]  (make e2e-scenarios-bundle-http)
 #
-# Env: DEMO_ENV (default /home/andreipc/112-demo/.env), E2E_BASE_URL (default the tailnet demo).
+# I6 HTTP: --http builds the variant for the temporary tailnet-only http endpoint (owner request:
+# "временно" http, phone/microphone off). It renders scenario text fresh with every `secureOnly`
+# step OMITTED (step ids keep their SNN.MM — no renumbering, see dsl.ts/doc.ts) instead of copying
+# docs/test-scenarios/ verbatim, defaults BUNDLE_DIR to .../e2e-bundle-http, and access.md's
+# address to E2E_HTTP_BASE_URL. docs/test-scenarios/ and the plain https bundle are untouched.
+#
+# Env: DEMO_ENV (default /home/andreipc/112-demo/.env), E2E_BASE_URL (default the tailnet https
+# demo), E2E_HTTP_BASE_URL (default the tailnet http demo, --http only).
 set -euo pipefail
 
+HTTP=0
+if [ "${1:-}" = "--http" ]; then
+  HTTP=1
+  shift
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-BUNDLE_DIR="${1:-/home/andreipc/112-demo/e2e-bundle}"
+BUNDLE_DIR="${1:-$([ "$HTTP" = 1 ] && echo /home/andreipc/112-demo/e2e-bundle-http || echo /home/andreipc/112-demo/e2e-bundle)}"
 DEMO_ENV="${DEMO_ENV:-/home/andreipc/112-demo/.env}"
-BASE_URL="${E2E_BASE_URL:-https://home-pc.tailca038a.ts.net:10443}"
+if [ "$HTTP" = 1 ]; then
+  # Port 10080, the manager's stated default, is on Chromium's and Firefox's built-in
+  # restricted-port list (net::ERR_UNSAFE_PORT in every real browser) — 10081 is the port
+  # 112-demo/start.sh actually opens; keep this in sync with it.
+  BASE_URL="${E2E_HTTP_BASE_URL:-http://home-pc.tailca038a.ts.net:10081}"
+else
+  BASE_URL="${E2E_BASE_URL:-https://home-pc.tailca038a.ts.net:10443}"
+fi
 SOURCE="$ROOT/docs/test-scenarios"
 
 env_value() {
@@ -30,6 +51,13 @@ env_value() {
 
 [ -f "$SOURCE/00-instructions.md" ] || { echo "build-bundle: no $SOURCE (make e2e-scenarios-doc)" >&2; exit 1; }
 [ -r "$DEMO_ENV" ] || { echo "build-bundle: cannot read $DEMO_ENV" >&2; exit 1; }
+
+if [ "$HTTP" = 1 ]; then
+  HTTP_SOURCE="$(mktemp -d)"
+  trap 'rm -rf "$HTTP_SOURCE"' EXIT
+  (cd "$ROOT/frontend" && SCENARIO_DOC_WRITE_HTTP=1 SCENARIO_DOC_HTTP_DIR="$HTTP_SOURCE" npx vitest run e2e/scenarios/doc.test.ts) >&2
+  SOURCE="$HTTP_SOURCE"
+fi
 
 ADMIN_PASS="$(env_value SIM_SEED_ADMIN_PASSWORD)"
 INSTRUCTOR_PASS="$(env_value SIM_SEED_INSTRUCTOR_PASSWORD)"
@@ -99,6 +127,21 @@ e2e-scenarios-doc`) и проверен автоматическим прого�
 каждая строка «Должно быть видно» — это проверка, которая выполнялась. Обновить комплект:
 `make e2e-scenarios-bundle`.
 EOF
+
+if [ "$HTTP" = 1 ]; then
+  cat >> "$BUNDLE_DIR/README.md" <<'EOF'
+
+## Внимание: этот комплект — для временного http-адреса
+
+Адрес в `access.md` — временный, без TLS (http, не https). Телефон и микрофон ДДС по http не
+работают: интерфейс сам их скрывает, показывая «Недоступно по http: телефон и микрофон работают
+только по https-адресу». Поэтому шаги, которые проверяют телефон или микрофон (в комплекте по
+https они помечены «(только https)»), из этого комплекта ПРОПУЩЕНЫ — номера шагов не менялись,
+просто в таблице их нет (например, после S02.07 сразу может идти S02.09). Всё остальное (вход,
+статусы ДДС, отчёты, администрирование, выгрузки) проверяется как обычно. Чтобы проверить телефон
+и микрофон, используйте https-адрес и обычный комплект (`make e2e-scenarios-bundle`).
+EOF
+fi
 
 echo "bundle: $BUNDLE_DIR"
 ls -l "$BUNDLE_DIR"

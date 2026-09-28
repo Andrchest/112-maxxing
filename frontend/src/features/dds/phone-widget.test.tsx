@@ -106,3 +106,45 @@ describe('DdsPhoneWidget — the DDS phone (I3 E6b, 80 par.80.3, par.80.5)', () 
     expect(await screen.findByRole('alert')).toHaveTextContent(ru.problemDdsLineBusy);
   });
 });
+
+// I6 HTTP: the phone widget switches off at runtime when the page is not a secure context
+// (window.isSecureContext false — a plain http origin) — shared/lib/secure-context.ts.
+describe('DdsPhoneWidget — insecure context (I6 HTTP)', () => {
+  afterEach(() => {
+    useWorkItemStore.getState().reset();
+    useDdsCallStore.getState().reset();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows only the title and the Russian notice, and offers no call button', async () => {
+    vi.stubGlobal('isSecureContext', false);
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([])));
+    useWorkItemStore.setState({ availableActions: [...ACTIONS_BY_DDS_STAGE_STATE.ACKNOWLEDGED, CALL_CLAIMANT] });
+
+    renderWidget();
+
+    expect(await screen.findByText(ru.secureContextRequiredNotice)).toBeInTheDocument();
+    expect(screen.queryByText(ru.ddsPhoneIdle)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: CALL_CLAIMANT.label_ru })).not.toBeInTheDocument();
+  });
+
+  it('never joins LiveKit even for a call already CONNECTED (restored from listDdsCalls)', async () => {
+    vi.stubGlobal('isSecureContext', false);
+    const connected = makeDdsCall({ state: 'CONNECTED', endpoint: 'BROWSER' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/dds-calls')) return jsonResponse([connected]);
+        throw new Error(`unexpected fetch over an insecure context: ${url}`);
+      }),
+    );
+    useWorkItemStore.setState({ availableActions: [] });
+
+    renderWidget();
+
+    expect(await screen.findByText(ru.secureContextRequiredNotice)).toBeInTheDocument();
+    // No voice-token mint, no hang-up button — the call state itself is not rendered.
+    expect(screen.queryByText(ru.ddsPhoneConnected)).not.toBeInTheDocument();
+  });
+});

@@ -404,3 +404,47 @@ describe('PhoneWidget — LiveKit call media (SPEC §15, §32, §34; D9, D12)', 
     await waitFor(() => expect(roomInstances[0]!.disconnected).toBe(true));
   });
 });
+
+// I6 HTTP: the operator phone widget switches off at runtime when the page is not a secure
+// context (window.isSecureContext false — a plain http origin) — shared/lib/secure-context.ts.
+describe('PhoneWidget — insecure context (I6 HTTP)', () => {
+  afterEach(() => {
+    cleanup();
+    useCallStateStore.setState({ callState: null });
+    useStageStore.getState().reset();
+    useMediaStateStore.getState().reset();
+    roomInstances.length = 0;
+    nextRoomConfig.denyMic = false;
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('shows only the title and the Russian notice, and offers no answer/hang-up/mute button', () => {
+    vi.stubGlobal('isSecureContext', false);
+    useCallStateStore.setState({ callState: makeCallState({ phase: 'RINGING', caller_display_ru: 'Caller X' }) });
+    useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.RINGING });
+
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
+
+    expect(screen.getByText(ru.secureContextRequiredNotice)).toBeInTheDocument();
+    expect(screen.queryByText('Caller X')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Answer' })).not.toBeInTheDocument();
+  });
+
+  it('never joins the LiveKit room even when the call is already CONNECTED', async () => {
+    vi.stubGlobal('isSecureContext', false);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      throw new Error(`unexpected fetch over an insecure context: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useCallStateStore.setState({ callState: makeCallState({ phase: 'CONNECTED', call_id: 'call-1', answered_at_offset_ms: 0 }) });
+    useStageStore.setState({ availableActions: ACTIONS_BY_STAGE_STATE.CONNECTED });
+
+    render(<PhoneWidget sessionId="sess-1" monotonicOffsetMs={0} />);
+    await Promise.resolve();
+
+    expect(screen.getByText(ru.secureContextRequiredNotice)).toBeInTheDocument();
+    expect(roomInstances).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

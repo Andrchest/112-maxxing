@@ -86,6 +86,11 @@ export interface StepDefinition {
   action?: (page: Page, ctx: ScenarioContext) => Promise<void>;
   expect: Expectation[];
   wait?: Wait;
+  /** I6 HTTP: the step needs a secure context (the phone/microphone) and does not exist on the
+   * temporary http demo. The doc generator marks it «(только https)»; the http bundle and, with
+   * `E2E_SKIP_SECURE_ONLY=1`, the runner itself, skip it — the step's id is still reserved by its
+   * position (`scenario()` numbers before any filtering), so ids never shift. */
+  secureOnly?: boolean;
 }
 
 export interface Step extends StepDefinition {

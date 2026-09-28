@@ -12,6 +12,7 @@ import {
   createLessonSteps,
   createUserSteps,
   ddsCardExpectations,
+  ddsCardPhoneAvailableStep,
   legStatusStep,
   lessonCardRow,
   loginSteps,
@@ -69,6 +70,7 @@ export const S02 = scenario(
       },
       expect: ddsCardExpectations(),
     },
+    ddsCardPhoneAvailableStep('newTrainee'),
     legStatusStep('newTrainee', FIRE_SERVICE, 'Принята', { order: 'Н-101', comment: 'Наряд выслан' }, [
       check('в истории над вкладкой: «Получена службой» и «Принята · Номер наряда: Н-101»', async (page, _ctx, { expect, timeout }) => {
         await expect(page.getByText('Получена службой')).toBeVisible({ timeout });

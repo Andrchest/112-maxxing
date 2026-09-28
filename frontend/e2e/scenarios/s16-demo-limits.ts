@@ -30,6 +30,7 @@ export const S16 = scenario(
         text('в блоке «Телефон» — «Разговор» (перед этим может мелькнуть «Набор номера…»); собеседник молчит — это ожидаемо', 'Разговор'),
         button('Положить трубку'),
       ],
+      secureOnly: true,
     },
     {
       actor: 'newTrainee',
@@ -38,6 +39,7 @@ export const S16 = scenario(
         await page.getByRole('button', { name: 'Положить трубку', exact: true }).click();
       },
       expect: [text('в блоке «Телефон» — «Звонок завершён»', 'Звонок завершён'), text('и «трубка положена · <длительность>»', /трубка положена/)],
+      secureOnly: true,
     },
     legStatusStep('newTrainee', FIRE_SERVICE, 'Не принята', { comment: 'Проверка ограничений' }),
     ...OTHER_SERVICES.map((service) => legStatusStep('newTrainee', service, 'Не принята', { comment: 'Не требуется' })),

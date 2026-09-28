@@ -1256,4 +1256,7 @@ export const ru = {
   appNavInstructorMaterials: 'Материалы',
   appNavAdmin: 'Администрирование',
   appBackLink: '← Назад',
+  // --- I6 HTTP: features that need a secure context (phone, microphone) are hidden at runtime
+  // when window.isSecureContext is false (shared/lib/secure-context.ts) ---
+  secureContextRequiredNotice: 'Недоступно по http: телефон и микрофон работают только по https-адресу',
 } as const;

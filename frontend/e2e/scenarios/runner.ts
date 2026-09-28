@@ -24,6 +24,9 @@ export interface ScenarioResult {
   status: 'РАБОТАЕТ' | 'СЛОМАН';
   stepsTotal: number;
   stepsPassed: number;
+  /** I6 HTTP: steps skipped because `E2E_SKIP_SECURE_ONLY=1` and `step.secureOnly` (the http
+   * demo has no phone/microphone) — 0 in the ordinary https run. */
+  stepsSkipped: number;
   durationMs: number;
   failure?: {
     stepId: string;
@@ -207,17 +210,28 @@ export async function runScenario(browser: Browser, scenario: Scenario, env: Run
     },
   };
 
+  // I6 HTTP: the http demo has no phone/microphone (§ frontend runtime feature gate on
+  // window.isSecureContext) — `E2E_SKIP_SECURE_ONLY=1` skips every `secureOnly` step instead of
+  // failing on a now-hidden button, so the rest of the scenario (unaffected by the skip: no
+  // secureOnly step sets a `ctx.vars` a later step needs) can still be proven against it.
+  const skipSecureOnly = process.env.E2E_SKIP_SECURE_ONLY === '1';
+
   const result: ScenarioResult = {
     id: scenario.id,
     title: scenario.title,
     status: 'РАБОТАЕТ',
     stepsTotal: scenario.steps.length,
     stepsPassed: 0,
+    stepsSkipped: 0,
     durationMs: 0,
     cleanup: [],
   };
 
   for (const step of scenario.steps) {
+    if (step.secureOnly && skipSecureOnly) {
+      result.stepsSkipped += 1;
+      continue;
+    }
     const page = await ctx.page(step.actor);
     const timeout = step.wait?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     page.context().setDefaultTimeout(timeout);

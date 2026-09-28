@@ -429,7 +429,9 @@ export function traineeOpensCardStep(trainee: Actor): StepDefinition {
   };
 }
 
-/** The ДДС card has arrived: the workstation's key blocks. */
+/** The ДДС card has arrived: the workstation's key blocks. The phone's call buttons are a
+ * separate list ({@link ddsCardPhoneExpectations}) — I6 HTTP: they need a secure context and are
+ * hidden on the temporary http demo, while everything here keeps working over plain http too. */
 export function ddsCardExpectations(): Expectation[] {
   return [
     text('вверху слева «Этап: Получено»', /Этап:\s*Получено/),
@@ -437,10 +439,6 @@ export function ddsCardExpectations(): Expectation[] {
     notVisible('кнопки «Закрыть происшествие» пока нет (она появится после решения по службе)', (page) =>
       page.getByRole('button', { name: 'Закрыть происшествие', exact: true }),
     ),
-    text('блок «Телефон» — «Нет звонка»', 'Нет звонка'),
-    button(`Позвонить старшему · ${FIRE_SERVICE}`, `кнопки «Позвонить старшему · …» для каждой службы (например, «Позвонить старшему · ${FIRE_SERVICE}»)`),
-    button('Позвонить заявителю'),
-    button('Позвонить в 112'),
     text('«Заявка от оператора 112»', 'Заявка от оператора 112'),
     text('раздел «ЗАЯВИТЕЛЬ»', 'ЗАЯВИТЕЛЬ'),
     text('раздел «АДРЕС»', 'АДРЕС'),
@@ -455,6 +453,30 @@ export function ddsCardExpectations(): Expectation[] {
       }),
     ),
   ];
+}
+
+/** I6 HTTP: the ДДС phone's call buttons — need a secure context (LiveKit), hidden over plain
+ * http behind the note «Недоступно по http…» (ru.ts `secureContextRequiredNotice`). Used only by
+ * {@link ddsCardPhoneAvailableStep}, a `secureOnly` step, so an http tester never sees them. */
+export function ddsCardPhoneExpectations(): Expectation[] {
+  return [
+    text('блок «Телефон» — «Нет звонка»', 'Нет звонка'),
+    button(`Позвонить старшему · ${FIRE_SERVICE}`, `кнопки «Позвонить старшему · …» для каждой службы (например, «Позвонить старшему · ${FIRE_SERVICE}»)`),
+    button('Позвонить заявителю'),
+    button('Позвонить в 112'),
+  ];
+}
+
+/** I6 HTTP: `secureOnly` step checking the phone's call buttons on the already-arrived ДДС card
+ * (no action — the card is already on screen). Omitted from the http bundle and, with
+ * `E2E_SKIP_SECURE_ONLY=1`, from the runner. */
+export function ddsCardPhoneAvailableStep(trainee: Actor): StepDefinition {
+  return {
+    actor: trainee,
+    do: 'Посмотреть на блок «Телефон» на уже открытой карточке (ничего не нажимать).',
+    expect: ddsCardPhoneExpectations(),
+    secureOnly: true,
+  };
 }
 
 /** Opens a service tab's popup if it is closed, then «Изменить статус». */
@@ -572,6 +594,7 @@ export function startedLessonSteps(options: Omit<LessonOptions, 'instructor' | '
       wait: CARD_ARRIVAL_WAIT,
       expect: [...traineeOpensCardStep('newTrainee').expect, ...ddsCardExpectations()],
     },
+    ddsCardPhoneAvailableStep('newTrainee'),
   ];
 }
 

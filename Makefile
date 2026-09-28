@@ -39,7 +39,7 @@ SCRATCH_DATABASE_URL := postgresql+asyncpg://sim:sim@localhost:55432/$(SCRATCH_D
 export SIM_API_HOST ?= 127.0.0.1
 export SIM_API_PORT ?= 8100
 
-.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs settings-import e2e-scenarios e2e-scenarios-doc e2e-scenarios-bundle
+.PHONY: deps deps-models deps-livekit models-silero models-llm test-models infra-up infra-down dev-infra-up dev-infra-down fmt lint typecheck boundaries scenarios migrate db-check run-api seed-users test-backend gate-backend gate-frontend gate test deps-tts-qwen3 models-tts-qwen3 run-tts-qwen3 test-tts-qwen3 models-piper deps-tts-piper compose-check profile-env preflight run-llama-server run-voice-agent up down models-llm-qwen35 models-llm-qwen3-8b models-warmup models-layout models bench-asr bench-llm bench-tts bench-e2e bench-vram bench-all demo-db demo-init demo-inject backup-now restore backup-verify certs settings-import e2e-scenarios e2e-scenarios-doc e2e-scenarios-bundle e2e-scenarios-bundle-http
 # `--inexact` matches every other sync target in this file: without it `uv sync` PRUNES the
 # environment down to the base dependency set, silently uninstalling the ML extras a previous
 # `make deps-models` / `deps-tts-piper` / `deps-livekit` installed (E20-A, R4). Re-run those
@@ -487,11 +487,19 @@ settings-import:
 # `e2e-scenarios-doc` rewrites the Russian text in docs/test-scenarios/ from the definitions
 # (the vitest check `e2e/scenarios/doc.test.ts` fails when they drift).
 # `e2e-scenarios-bundle` copies the text for a tester on another machine to BUNDLE_DIR.
+# I6 HTTP: `E2E_SKIP_SECURE_ONLY=1 make e2e-scenarios` skips every `secureOnly` step (the phone,
+# needs a secure context) instead of failing on it — for a run against the temporary http demo.
+# `e2e-scenarios-bundle-http` builds the http-only bundle (`secureOnly` steps omitted, access.md's
+# address from E2E_HTTP_BASE_URL) to BUNDLE_DIR_HTTP, leaving docs/test-scenarios/ and the plain
+# https bundle untouched.
 BUNDLE_DIR ?= /home/andreipc/112-demo/e2e-bundle
+BUNDLE_DIR_HTTP ?= /home/andreipc/112-demo/e2e-bundle-http
 e2e-scenarios:
 	cd frontend && E2E_SCENARIO="$(SCENARIO)" npx playwright test -c e2e/scenarios/playwright.config.ts
 e2e-scenarios-doc:
 	cd frontend && SCENARIO_DOC_WRITE=1 npx vitest run e2e/scenarios/doc.test.ts
 e2e-scenarios-bundle:
 	frontend/e2e/scenarios/build-bundle.sh "$(BUNDLE_DIR)"
+e2e-scenarios-bundle-http:
+	frontend/e2e/scenarios/build-bundle.sh --http "$(BUNDLE_DIR_HTTP)"
 # --- end I6 SCENARIOS ---------------------------------------------------------------------------
