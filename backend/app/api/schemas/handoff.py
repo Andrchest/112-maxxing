@@ -37,6 +37,7 @@ from app.domain.enums import (
 
 __all__ = [
     "CreateHandoffRequestSchema",
+    "DdsCardMarksSchema",
     "DdsWorkItemSchema",
     "HandoffCreatedViewSchema",
     "HandoffSnapshotViewSchema",
@@ -79,6 +80,13 @@ class HandoffCreatedViewSchema(ApiModel):
     session_state: SessionState
 
 
+class DdsCardMarksSchema(ApiModel):
+    """`openapi.yaml`'s `DdsCardMarks` — the ДДС's «ЧС» / «ЧП» marks (I7 E55)."""
+
+    chs: bool
+    chp: bool
+
+
 class DdsWorkItemSchema(ApiModel):
     """`openapi.yaml`'s `DdsWorkItem` (`x-source: HANDOFF_SNAPSHOT`)."""
 
@@ -101,6 +109,9 @@ class DdsWorkItemSchema(ApiModel):
     missing_field_paths: list[str]
     card_schema: str = "v1"
     field_specs: list[CardFieldSpecSchema] = Field(default_factory=list)
+    dds_marks: DdsCardMarksSchema = Field(
+        default_factory=lambda: DdsCardMarksSchema(chs=False, chp=False)
+    )
 
 
 def handoff_snapshot_schema(view: HandoffSnapshotView) -> HandoffSnapshotViewSchema:
@@ -150,4 +161,5 @@ def dds_work_item_schema(view: DdsWorkItemView) -> DdsWorkItemSchema:
         missing_field_paths=list(view.missing_field_paths),
         card_schema=view.card_schema,
         field_specs=[card_field_spec_schema(spec) for spec in view.field_specs],
+        dds_marks=DdsCardMarksSchema(chs=view.dds_marks.chs, chp=view.dds_marks.chp),
     )

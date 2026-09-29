@@ -107,6 +107,8 @@ PAYLOAD_LABELS_RU: Mapping[str, str] = {
     "scenario_title": "сценарий",
     "service_type": "служба",
     "matches_snapshot": "совпадает с карточкой",
+    "chs": "ЧС",  # I7 E55
+    "chp": "ЧП",  # I7 E55
     "value_ru": "сказано",
     "session_mode": "режим",
     "status": "статус",
@@ -241,6 +243,8 @@ SUMMARY_TEMPLATES: Mapping[EventType, SummaryTemplate] = {
     EventType.DDS_CARD_ISSUE_FLAGGED: SummaryTemplate(
         "ДДС отметила ошибку в карточке", ("issue_kind", "field_path")
     ),
+    # I7 E55: the ДДС screen's «ЧС» / «ЧП» marks (not scored).
+    EventType.DDS_CARD_MARKS_SET: SummaryTemplate("ДДС изменила отметки ЧС / ЧП", ("chs", "chp")),
     # I3 E6b (HLD 80 §80.6.1): the ДДС phone line.
     EventType.DDS_CALL_STARTED: SummaryTemplate("ДДС начала звонок", ("dialed",)),
     EventType.DDS_CALL_ANSWERED: SummaryTemplate("Звонок ДДС принят"),

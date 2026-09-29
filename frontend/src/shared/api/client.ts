@@ -1243,6 +1243,19 @@ export function exportSettingsXml(): Promise<Blob> {
 // `listAuditLog`'s `withChanges` filter is above. ---
 export type AuditChangeView = components['schemas']['AuditChangeView'];
 
+// --- I7 E55: the ДДС's «ЧС» / «ЧП» marks (owner decision Q9) ---
+export type DdsCardMarks = components['schemas']['DdsCardMarks'];
+export type SetDdsCardMarksRequest = components['schemas']['SetDdsCardMarksRequest'];
+
+/** `POST /dds/card-marks` (`setDdsCardMarks`, I7 E55) — memo mode, any ДДС participant; answers
+ * with the work item, `dds_marks` included. Not scored. */
+export function setDdsCardMarks(sessionId: string, body: SetDdsCardMarksRequest): Promise<DdsWorkItem> {
+  return apiFetch(`/sessions/${encodeURIComponent(sessionId)}/dds/card-marks`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 // --- I7 E53: scenario categories (G13), «Скачать» a scenario version (G14a) ---
 export type ScenarioCategory = components['schemas']['ScenarioCategory'];
 export type ScenarioDocumentFormat = 'yaml' | 'json';

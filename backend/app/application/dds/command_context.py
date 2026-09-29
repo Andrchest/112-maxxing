@@ -63,9 +63,11 @@ from app.application.dds.leg_for import project_legs
 from app.application.dds.views import DdsStageView, dds_stage_view
 from app.application.handoff.work_item import (
     DdsWorkItemView,
+    for_viewer,
     legs_in_recipient_order,
     primary_leg,
     with_card_schema,
+    with_dds_marks,
     work_item_view,
 )
 from app.application.operator.command_context import SessionNotActiveError
@@ -461,8 +463,10 @@ class DdsCommandContext:
     # -- the view ------------------------------------------------------------------------------
 
     def work_item(self) -> DdsWorkItemView:
-        """The stage-wide `DdsWorkItem` as it stands now."""
-        return work_item_of(self.snapshot, self.projected_legs, self.card_schema)
+        """The stage-wide `DdsWorkItem` as it stands now, as this command's trainee reads it
+        (`for_viewer`: the 03 service's 100-character description, I7 E55)."""
+        view = work_item_of(self.snapshot, self.projected_legs, self.card_schema)
+        return for_viewer(with_dds_marks(view, self.full_log), self.legs, self.actor.actor_id)
 
     async def stage_view(self) -> DdsStageView:
         """The `DdsStageView` this command answers with (D8)."""

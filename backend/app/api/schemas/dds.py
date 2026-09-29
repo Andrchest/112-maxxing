@@ -124,6 +124,13 @@ class SetServiceStatusRequestSchema(ApiModel):
     `DDS_CALL_STATUS_PROPOSED` of this leg (`422 PROPOSAL_UNKNOWN`)."""
 
 
+class SetDdsCardMarksRequestSchema(ApiModel):
+    """`openapi.yaml`'s `SetDdsCardMarksRequest` — the ДДС's «ЧС» / «ЧП» marks (I7 E55)."""
+
+    chs: bool
+    chp: bool
+
+
 class FlagCardIssueRequestSchema(ApiModel):
     """`openapi.yaml`'s `FlagCardIssueRequest` — «Отметить ошибку в карточке» (I3 E5b)."""
 

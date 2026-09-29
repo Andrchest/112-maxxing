@@ -57,6 +57,13 @@ export function DdsWorkItemsSection({ assignments, resources }: DdsWorkItemsSect
                   ) : null}
                   {assignment.closure_reason ? <span>{closureReasonLabelRu(assignment.closure_reason)}</span> : null}
                 </div>
+                {assignment.dds_marks ? (
+                  // I7 E55: the ДДС's «ЧС» / «ЧП», read-only here.
+                  <p className="text-xs" data-slot="dds-marks-readonly">
+                    {t('ddsMarksLabel')}: {t('ddsMarkChs')} {assignment.dds_marks.chs ? t('factBooleanYes') : t('factBooleanNo')} · {t('ddsMarkChp')}{' '}
+                    {assignment.dds_marks.chp ? t('factBooleanYes') : t('factBooleanNo')}
+                  </p>
+                ) : null}
                 {assignment.missing_field_paths.length > 0 ? (
                   <p className="text-xs text-amber-600">
                     {t('instructorDdsMissingFieldsLabel')}: {assignment.missing_field_paths.map((path) => missingFieldLabel(assignment, path)).join(', ')}

@@ -166,6 +166,22 @@ async def test_a_hidden_field_is_accepted(v2_interview: OperatorFlow) -> None:
     assert response.json()["revision"]["field_path"] == "q.fire.offence"
 
 
+async def test_a_description_over_1999_characters_is_refused(v2_interview: OperatorFlow) -> None:
+    """I7 E55: «Описание со слов заявителя» takes at most 1999 characters (the «0 / 1999»
+    counter, `max_length`); a longer value is `422 CARD_VALUE_TYPE_MISMATCH` and writes nothing."""
+    accepted = await v2_interview.set_field("description.text", "ы" * 1999)
+    assert accepted.status_code == 200, accepted.text
+    refused = await v2_interview.set_field("description.text", "ы" * 2000)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "CARD_VALUE_TYPE_MISMATCH"
+    card = await v2_interview.get("/operator/card")
+    assert card.json()["values"]["description.text"] == "ы" * 1999
+    spec = next(
+        item for item in card.json()["field_specs"] if item["field_path"] == "description.text"
+    )
+    assert spec["max_length"] == 1999
+
+
 async def _example_version_id(
     unit_of_work: Callable[[], SqlAlchemyUnitOfWork], demo_version_id: ScenarioVersionId
 ) -> ScenarioVersionId:
@@ -244,7 +260,7 @@ async def test_the_generated_card_reaches_the_dds_in_the_v2_layout(
 async def test_get_card_schema_serves_v1_and_v2(
     client: httpx.AsyncClient, tokens: dict[str, str]
 ) -> None:
-    for schema_id, count in (("v1", 38), ("v2", 58)):
+    for schema_id, count in (("v1", 38), ("v2", 61)):
         response = await client.get(
             f"/api/v1/reference/card-schema/{schema_id}", headers=auth(tokens["trainee1"])
         )

@@ -70,6 +70,7 @@ class CardFieldSpecView(_View):
     visible_when: dict[str, Any] | None = None
     required_in_block: bool = False
     routing_relevant: bool = False
+    max_length: int | None = None
 
 
 class CardSchemaView(_View):
@@ -119,6 +120,7 @@ def field_spec_views(schema: CardSchema) -> tuple[CardFieldSpecView, ...]:
                 ),
                 required_in_block=spec.required_in_block,
                 routing_relevant=spec.routing_relevant,
+                max_length=spec.max_length,
             )
             for spec in schema.fields
         )

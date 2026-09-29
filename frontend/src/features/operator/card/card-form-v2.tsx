@@ -22,7 +22,7 @@ interface CardFormV2Props {
 }
 
 const LEFT_COLUMN_GROUPS = ['applicant', 'address', 'description'];
-const RIGHT_COLUMN_GROUPS = ['incident', 'q_fire', 'q_gas', 'q_explosion'];
+const RIGHT_COLUMN_GROUPS = ['incident', 'q_fire', 'q_gas', 'q_explosion', 'q_ambulance'];
 const KNOWN_GROUPS = new Set(['header', 'flags', ...LEFT_COLUMN_GROUPS, ...RIGHT_COLUMN_GROUPS, 'services']);
 
 // Manager review (I3 E3b): the applicant block is one inline row (gsi image1) and every
@@ -33,6 +33,8 @@ const GROUP_LAYOUT: Record<string, FieldGroupLayout> = {
   q_fire: 'row',
   q_gas: 'row',
   q_explosion: 'row',
+  // I7 E55: the 103 block («Происшествие 103», instr fig. 16) — only «Отказ от реагирования» so far.
+  q_ambulance: 'row',
 };
 
 export function CardFormV2({ sessionId, card, disabled, onCommit, answeredAtOffsetMs, monotonicOffsetMs }: CardFormV2Props) {

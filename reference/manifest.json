@@ -15,8 +15,8 @@
   },
   "files": {
     "card-schema/v1.yaml": "d8e93bb32a9087f6db257237e8ff39d5a5ca1d7307c40050c1a8da94ebdfedfd",
-    "card-schema/v2.yaml": "0a8f13d560070e28e7944018914543582b829c201f71b83d99df8a911a5363e5",
-    "card-schema/conditions.fixtures.json": "23a484d5e4454f6d7606fb5a8c6b15661b91809d5d2f1cd58f33db0d0dec77dc",
+    "card-schema/v2.yaml": "66ab455440ba2eefe0ba405039951bb2d3088bcb7f437eb26e53cd02ef921a45",
+    "card-schema/conditions.fixtures.json": "2370486e3a9d56e054c04dbd9f574716792a600fe57396cb11858805792cc6c8",
     "classifier/v046_24.json": "3662af593eec0b59b3d47b097b88a2c7c2b984655312496e5f297697cbd35273",
     "classifier/v046_24.columns.json": "a05cde7051ddd237aec6bd2db90ffbaa05d5d0b5068c7701448d1df0312a9641",
     "services/v1.yaml": "77eb36eee144a4291e9e01067cf63c877012022698a6b713cc3936debbc59c8b",

@@ -41,8 +41,10 @@ from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.dds.leg_for import project_legs
 from app.application.handoff.work_item import (
     DdsWorkItemView,
+    for_viewer,
     legs_in_recipient_order,
     with_card_schema,
+    with_dds_marks,
     work_item_view,
 )
 from app.application.operator.views import (
@@ -65,7 +67,7 @@ from app.application.sessions.queries import (
     assemble_session_detail,
 )
 from app.application.sessions.start_session import SessionNotFoundError
-from app.domain.common.ids import SessionId
+from app.domain.common.ids import SessionId, UserId
 from app.domain.enums import DDSStageState, Operator112StageState, RoleType
 from app.domain.layers.card_schema import CardSchema
 from app.domain.roles.registry import ROLE_MODULES
@@ -153,7 +155,15 @@ class GetSnapshot:
                 and stage.role_type is RoleType.DDS
                 and VisibilitySource.HANDOFF_SNAPSHOT in sources
             ):
-                work_item = await _work_item(uow, session, stage, card_schema)
+                work_item = await _work_item(
+                    uow,
+                    session,
+                    stage,
+                    card_schema,
+                    None if user.is_instructor_or_admin else user.user_id,
+                )
+                if work_item is not None:
+                    work_item = with_dds_marks(work_item, events)  # I7 E55
 
             await uow.commit()
 
@@ -174,7 +184,11 @@ class GetSnapshot:
 
 
 async def _work_item(
-    uow: UnitOfWork, session: SimulationSession, stage: RoleStage, card_schema: CardSchema
+    uow: UnitOfWork,
+    session: SimulationSession,
+    stage: RoleStage,
+    card_schema: CardSchema,
+    viewer_id: UserId | None,
 ) -> DdsWorkItemView | None:
     """The DDS stage's work item, from its legs and their snapshot and from nothing else (D3).
 
@@ -188,6 +202,9 @@ async def _work_item(
     snapshot would show an empty selection where `getDdsWorkItem` shows a full one, and a console
     that reloads after a refresh would lose what the trainee had picked — which is precisely what
     §42 test 13 exists to prevent.
+
+    `viewer_id` is the reading ДДС trainee (`None` for the instructor): `for_viewer` gives the 03
+    service the first 100 characters of the description, as `getDdsWorkItem` does (I7 E55).
     """
     legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
     if not legs:
@@ -200,7 +217,8 @@ async def _work_item(
         await uow.resources.list_for_session(session.id),
         await uow.resources.dispatch_history(session.id),
     )
-    return with_card_schema(work_item_view(snapshot, projected), snapshot, card_schema)
+    view = with_card_schema(work_item_view(snapshot, projected), snapshot, card_schema)
+    return for_viewer(view, legs, viewer_id)
 
 
 def _my_role_type(session: SimulationSession, user: AuthenticatedUser) -> RoleType | None:

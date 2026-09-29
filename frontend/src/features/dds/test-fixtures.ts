@@ -81,6 +81,26 @@ export const Q_FIRE_WHERE_FIELD_SPEC: CardFieldSpec = {
   options: [{ code: 'на улице', label_ru: 'Улица' }],
 };
 
+// I7 E55: the 103 entry of «Что случилось» (`reference/card-schema/v2.yaml`: `{code: '22',
+// label_ru: '103'}`) and the 103 questionnaire's «Отказ от реагирования» (group `q_ambulance`).
+export const AMBULANCE_INCIDENT_TYPES_FIELD_SPEC: CardFieldSpec = {
+  ...INCIDENT_TYPES_CHIP_FIELD_SPEC,
+  options: [{ code: '22', label_ru: '103' }],
+};
+
+export const RESPONSE_REFUSED_FIELD_SPEC: CardFieldSpec = {
+  field_path: 'flags.response_refused',
+  value_type: 'BOOLEAN',
+  enum_name: null,
+  label_ru: 'Отказ от реагирования',
+  scoring_relevant: false,
+  required_for_handoff: false,
+  group: 'q_ambulance',
+  control: 'CHECKBOX',
+  options: [{ code: 'RESPONSE_REFUSED', label_ru: 'Отказ от реагирования Скорой', routing: 'none' }],
+  visible_when: { field_path: 'incident.types', op: 'CONTAINS', value: '22' },
+};
+
 export function makeWorkItem(overrides: Partial<DdsWorkItem> = {}): DdsWorkItem {
   return {
     assignment_id: 'assign-1',

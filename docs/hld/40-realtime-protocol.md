@@ -260,6 +260,7 @@ session mode (`ASSESSMENT` sets it false, §10.10).
 | 57 | `DDS_CALL_ENDED` | — | ✔ | ✔ | — (I3 E6b: TRAINEE, SIMULATION or SYSTEM) |
 | 58 | `DDS_CALL_STATUS_PROPOSED` | — | ✔ | ✔ | — (I3 E6c: SIMULATION; the service head reported a due script step on a call — a proposal the trainee confirms through `setDdsServiceStatus {proposed_by_call_id}`, 80 §80.4.2; never a not-yet-due step) |
 | 59 | `DDS_CALL_ASSERTION` | — | — | ✔ | — (I3 E6c: MODEL; a card fact the trainee stated on a call, matched by code against the handoff snapshot — the instructor's and the scorer's, 80 §80.4.2; I3 E6d: also each REQ-5332 checklist item stated on a call to 112, 80 §80.3.4) |
+| 60 | `DDS_CARD_MARKS_SET` | — | ✔ | ✔ | — (I7 E55: TRAINEE; a ДДС participant set the card's «ЧС» / «ЧП» marks in memo mode — broadcast to every ДДС participant, never scored, 71 §71.19.55) |
 
 **Call-scoped rows (I3 E6b, `80-telephony.md` §80.6.2).** Rows 6, 7, 8, 9, 12, 13, 14, 47 and 48
 (`USER_SPEECH_*`, `ASR_*`, `CALLER_TTS_*`, `CALLER_UTTERANCE_INTERRUPTED`, `TRANSPORT_*`) carry `▲`

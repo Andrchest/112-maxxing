@@ -96,9 +96,17 @@ export function CardHeaderStrip({
       </div>
       {flagFields.length > 0 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('operatorGroupFlags')}>
-          {flagFields.map((spec) => (
-            <CardFieldControl key={spec.field_path} spec={spec} confirmedValue={card.values[spec.field_path]} disabled={disabled} onCommit={onCommit} />
-          ))}
+          {flagFields.map((spec) =>
+            // I7 E55: the injured count (`flags.casualties_count`, shown once `flags.casualties` is
+            // on, card instruction fig. 36) is a short number box beside the toggles.
+            spec.control === 'NUMBER' ? (
+              <div key={spec.field_path} className="w-28">
+                <CardFieldControl spec={spec} confirmedValue={card.values[spec.field_path]} disabled={disabled} onCommit={onCommit} />
+              </div>
+            ) : (
+              <CardFieldControl key={spec.field_path} spec={spec} confirmedValue={card.values[spec.field_path]} disabled={disabled} onCommit={onCommit} />
+            ),
+          )}
         </div>
       ) : null}
     </div>

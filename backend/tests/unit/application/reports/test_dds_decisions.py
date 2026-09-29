@@ -319,3 +319,17 @@ def test_an_unrelated_event_type_contributes_nothing() -> None:
     )
     assert decision.dispatch_events == ()
     assert decision.status_updates == ()
+
+
+def test_every_leg_carries_the_cards_last_marks() -> None:
+    """I7 E55: the ДДС's «ЧС» / «ЧП» are the card's, so every leg shows the same last pair."""
+    legs = [
+        _leg(FIRE, ServiceId("FIRE_RESCUE"), received_at_offset_ms=0),
+        _leg(AMBULANCE, ServiceId("AMBULANCE"), received_at_offset_ms=0),
+    ]
+    assert {(d.dds_marks.chs, d.dds_marks.chp) for d in dds_decisions(legs, [])} == {(False, False)}
+    log = [
+        _event(1, EventType.DDS_CARD_MARKS_SET, chs=True, chp=False),
+        _event(2, EventType.DDS_CARD_MARKS_SET, chs=True, chp=True),
+    ]
+    assert {(d.dds_marks.chs, d.dds_marks.chp) for d in dds_decisions(legs, log)} == {(True, True)}

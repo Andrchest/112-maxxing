@@ -37,11 +37,12 @@ refusals and completions, and their card-issue flags. Both are pure folds over t
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
 from uuid import UUID
 
 from app.application.dds.views import CardIssueView, ServiceStatusEntryView, StatusUpdateView
+from app.application.handoff.work_item import DdsMarksView, dds_marks_of
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.card_issue import CardIssueKind
 from app.domain.dds.response import LegResponder, ServiceResponseStatus, StatusSource
@@ -100,6 +101,9 @@ class DdsDecision:
     """ADDITIVE (I3 E5b): every `DDS_SERVICE_STATUS_SET` of the leg, in log order."""
     card_issues: tuple[CardIssueView, ...] = ()
     """ADDITIVE (I3 E5b): every `DDS_CARD_ISSUE_FLAGGED` raised on the leg."""
+    dds_marks: DdsMarksView = field(default_factory=DdsMarksView)
+    """ADDITIVE (I7 E55): the card's «ЧС» / «ЧП» marks at the end of the log — the same on every
+    leg (the marks are the card's, not a leg's); shown read-only, never scored."""
 
 
 class DdsParticipant(NamedTuple):
@@ -148,6 +152,7 @@ def dds_decisions(
     comments = _closure_comments_by_assignment(events)
     history = _status_history_by_assignment(events, display_names or {}, service_names or {})
     issues = _card_issues_by_assignment(events)
+    marks = dds_marks_of(events)
     ordered = sorted(legs, key=lambda leg: (leg.received_at_offset_ms, str(leg.assignment_id)))
     return tuple(
         DdsDecision(
@@ -164,6 +169,7 @@ def dds_decisions(
             bound_user_id=None if leg.bound_user_id is None else UUID(str(leg.bound_user_id)),
             status_history=history.get(UUID(str(leg.assignment_id)), ()),
             card_issues=issues.get(UUID(str(leg.assignment_id)), ()),
+            dds_marks=marks,
         )
         for leg in ordered
     )

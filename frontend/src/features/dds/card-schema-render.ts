@@ -79,6 +79,7 @@ const INCIDENT_TYPES_OPTION_LABEL_OVERRIDE: Record<string, keyof typeof ru> = {
   '1': 'operatorGroupQFire',
   '13': 'operatorGroupQGas',
   '3': 'operatorGroupQExplosion',
+  '22': 'operatorGroupQAmbulance', // I7 E55: «Происшествие 103» (instr fig. 16)
 };
 
 /** An option's `label_ru` by `code`, or the raw code when the spec carries no matching option

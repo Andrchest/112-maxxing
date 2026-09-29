@@ -332,6 +332,7 @@ class DDSModule:
                     EventType.DDS_CARD_OPENED,  # I3 E5a (HLD 70 §70.7)
                     EventType.DDS_SERVICE_STATUS_SET,  # I3 E5a (HLD 70 §70.7)
                     EventType.DDS_CARD_ISSUE_FLAGGED,  # I3 E5b (HLD 70 §70.7)
+                    EventType.DDS_CARD_MARKS_SET,  # I7 E55 (HLD 71 §71.19.55)
                     # I3 E6b (HLD 80 §80.6): the ДДС phone line, and the per-turn pipeline events
                     # of a DDS call — delivered call-scoped by `realtime/redaction.py` (`▲`).
                     EventType.DDS_CALL_STARTED,

@@ -129,15 +129,26 @@ export function CardFieldControl({ spec, confirmedValue, disabled, onCommit, hid
       </select>
     );
   } else if (control === 'TEXTAREA') {
+    // I7 E55: a `max_length` (the reference's «0 / 1999» under «Описание со слов заявителя») caps
+    // the input and shows the reference's own counter at the bottom right.
+    const maxLength = spec.max_length ?? undefined;
     field = (
-      <textarea
-        id={inputId}
-        className="min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-        value={draft}
-        disabled={disabled || pending}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => void commit(draft)}
-      />
+      <>
+        <textarea
+          id={inputId}
+          className="min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          value={draft}
+          maxLength={maxLength}
+          disabled={disabled || pending}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => void commit(draft)}
+        />
+        {maxLength !== undefined ? (
+          <span className="self-end text-xs text-muted-foreground" data-slot="card-field-counter">
+            {draft.length} / {maxLength}
+          </span>
+        ) : null}
+      </>
     );
   } else {
     // TEXT, NUMBER, PHONE — a masked phone input is E7a's look; the value itself is free text.
@@ -146,6 +157,7 @@ export function CardFieldControl({ spec, confirmedValue, disabled, onCommit, hid
         id={inputId}
         type={control === 'NUMBER' ? 'number' : 'text'}
         value={draft}
+        maxLength={spec.max_length ?? undefined}
         disabled={disabled || pending}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => void commit(draft)}

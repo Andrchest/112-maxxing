@@ -59,7 +59,9 @@ from app.application.dds.command_context import dds_stage_of
 from app.application.dds.leg_for import project_legs
 from app.application.dds.views import EmergencyResourceView, resource_views
 from app.application.handoff.work_item import (
+    DdsMarksView,
     DdsWorkItemView,
+    dds_marks_of,
     legs_in_recipient_order,
     missing_field_paths,
 )
@@ -196,7 +198,7 @@ class GetInstructorSessionOverview:
 
             card = await uow.operator_cards.get(incident_id)
             handoff = await _handoff(uow, events)
-            assignments = await _assignments(uow, session, card_schema)
+            assignments = await _assignments(uow, session, card_schema, dds_marks_of(events))
             resources = await _resources(uow, session, self._clock)
             fact_labels_ru = await _fact_labels_ru(uow, session)
 
@@ -238,7 +240,7 @@ async def _handoff(uow: UnitOfWork, events: Sequence[SessionEvent]) -> HandoffSn
 
 
 async def _assignments(
-    uow: UnitOfWork, session: SimulationSession, card_schema: CardSchema
+    uow: UnitOfWork, session: SimulationSession, card_schema: CardSchema, marks: DdsMarksView
 ) -> tuple[DdsWorkItemView, ...]:
     """Every leg of every DDS stage, verbatim (the instructor's reading of `DdsWorkItem`, see the
     module docstring). At most one DDS stage exists today (SPEC §13); the loop is written for the
@@ -259,7 +261,9 @@ async def _assignments(
             await uow.resources.dispatch_history(session.id),
         )
         missing = missing_field_paths(snapshot, card_schema)
-        items.extend(_leg_work_item(leg, snapshot, missing, card_schema) for leg in projected)
+        items.extend(
+            _leg_work_item(leg, snapshot, missing, card_schema, marks) for leg in projected
+        )
     return tuple(items)
 
 
@@ -268,6 +272,7 @@ def _leg_work_item(
     snapshot: HandoffSnapshot,
     missing: tuple[str, ...],
     card_schema: CardSchema,
+    marks: DdsMarksView,
 ) -> DdsWorkItemView:
     """One `DdsWorkItem` per leg, every field the leg's own — the mirror image of
     `work_item_view`'s primary-leg/min/union projection (see the module docstring)."""
@@ -291,6 +296,7 @@ def _leg_work_item(
         missing_field_paths=missing,
         card_schema=card_schema.schema_id,
         field_specs=field_spec_views(card_schema),
+        dds_marks=marks,  # I7 E55: the card's «ЧС» / «ЧП», read-only here
     )
 
 

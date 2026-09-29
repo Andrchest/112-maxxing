@@ -124,6 +124,17 @@ describe('applyWorkItemEvent', () => {
     expect(unrelated).toBe(previous);
   });
 
+  it('I7 E55: DDS_CARD_MARKS_SET overwrites dds_marks (another DDS participant set them)', () => {
+    const previous = makeWorkItem({ dds_marks: { chs: false, chp: false } });
+    const event = makeEvent({
+      event_type: 'DDS_CARD_MARKS_SET',
+      payload: { previous_chs: false, previous_chp: false, chs: true, chp: false, actor_user_id: 'u2', at_offset_ms: 3000 },
+    });
+    const next = applyWorkItemEvent(previous, event);
+    expect(next?.dds_marks).toEqual({ chs: true, chp: false });
+    expect(applyWorkItemEvent(next, event)).toEqual(next);
+  });
+
   it('HANDOFF_RECEIVED is a documented pass-through — the page re-fetches instead', () => {
     const previous = makeWorkItem();
     const next = applyWorkItemEvent(previous, makeEvent({ event_type: 'HANDOFF_RECEIVED', payload: { snapshot_id: 'snap-2', assignment_id: 'assign-2', role_stage_id: 'stage-dds-1', service_type: 'AMBULANCE', at_offset_ms: 1000 } }));

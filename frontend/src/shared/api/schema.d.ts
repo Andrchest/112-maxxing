@@ -808,8 +808,10 @@ export interface paths {
          *     §70.5.4) — and the value must match that field's `value_type`; otherwise
          *     `422 CARD_FIELD_UNKNOWN` or `422 CARD_VALUE_TYPE_MISMATCH`. (Additive, I3 E3a) a value
          *     that is not one of the field's `options` codes (a v2 select or toggle set) is
-         *     `422 CARD_OPTION_UNKNOWN`. A field hidden by `visible_when` is accepted — visibility is
-         *     advisory. Setting a field to its current value is a no-op: it returns `revision: null`,
+         *     `422 CARD_OPTION_UNKNOWN`. (Additive, I7 E55) a string longer than the field's
+         *     `max_length` (`description.text`: 1999) is `422 CARD_VALUE_TYPE_MISMATCH`. A field hidden
+         *     by `visible_when` is accepted — visibility is advisory. Setting a field to its current
+         *     value is a no-op: it returns `revision: null`,
          *     appends no revision and emits no event.
          *
          *     `recipients.services` is **not** settable here; use the service commands.
@@ -1405,6 +1407,34 @@ export interface paths {
          *     outside the session's card schema ⇒ `422 CARD_FIELD_UNKNOWN`.
          */
         post: operations["flagDdsCardIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/dds/card-marks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The ДДС sets the card's «ЧС» / «ЧП» marks (memo mode; not scored).
+         * @description (additive, I7 E55; owner decision 2026-09-29, Q9) The pencil beside «ЧС» / «ЧП» on the
+         *     ДДС screen (`СКРИНШОТ ДДСГСИ.docx` image6, REQ-3040). The marks are the ДДС's own, not the
+         *     112 card's: any ДДС participant of a `dds_mode: MEMO_STATUSES` session sets them while the
+         *     stage still holds the card (whenever `set_service_status` or `close` is offered — so not
+         *     once the stage is `CLOSED`); both default to `false`. A change appends one
+         *     `DDS_CARD_MARKS_SET` (TRAINEE); the same pair again appends nothing. Picker mode or a
+         *     closed stage ⇒ `409 ACTION_NOT_AVAILABLE`; an instructor or a non-ДДС caller ⇒ `403`.
+         *     Answers with the work item, `dds_marks` included. Not read by any scoring rule. The audit
+         *     row carries `dds_card.chs` / `dds_card.chp` before → after (I7 E43).
+         */
+        post: operations["setDdsCardMarks"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2698,7 +2728,7 @@ export interface components {
          *     21 additive members of D5, then I3's additive members (70 §70.7).
          * @enum {string}
          */
-        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED" | "DDS_CALL_STARTED" | "DDS_CALL_ANSWERED" | "DDS_CALL_ENDED" | "DDS_CALL_STATUS_PROPOSED" | "DDS_CALL_ASSERTION";
+        EventType: "SESSION_CREATED" | "SESSION_STARTED" | "ROLE_STAGE_STARTED" | "CALL_RINGING" | "CALL_ANSWERED" | "USER_SPEECH_STARTED" | "USER_SPEECH_ENDED" | "ASR_PARTIAL" | "ASR_FINAL" | "CALLER_RESPONSE_PLANNED" | "CALLER_RESPONSE_GENERATED" | "CALLER_TTS_STARTED" | "CALLER_TTS_ENDED" | "CALLER_UTTERANCE_INTERRUPTED" | "CARD_FIELD_CHANGED" | "SERVICE_SELECTED" | "HANDOFF_CREATED" | "HANDOFF_RECEIVED" | "DDS_ACKNOWLEDGED" | "RESOURCE_SELECTED" | "RESOURCE_DISPATCHED" | "RESOURCE_STATUS_CHANGED" | "WORLD_EVENT_TRIGGERED" | "ROLE_STAGE_COMPLETED" | "SCORING_RULE_EVALUATED" | "SESSION_COMPLETED" | "MODEL_FALLBACK_USED" | "MODEL_ERROR" | "SESSION_ABORTED" | "STAGE_STATE_CHANGED" | "ROLE_TRANSITION_STARTED" | "ROLE_TRANSITION_COMPLETED" | "SERVICE_DESELECTED" | "RESOURCE_DESELECTED" | "DDS_STATUS_UPDATE_SENT" | "DDS_INCIDENT_CLOSED" | "NOTIFICATION_CREATED" | "NOTIFICATION_ACKNOWLEDGED" | "RADIO_MESSAGE_CREATED" | "WORLD_TRUTH_MUTATED" | "CALLER_BELIEF_MUTATED" | "CALLER_EMOTION_CHANGED" | "CALL_ENDED" | "DIALOGUE_INTERPRETED" | "FACT_GATE_EVALUATED" | "FACTS_DELIVERED" | "TRANSPORT_DISCONNECTED" | "TRANSPORT_RECONNECTED" | "INFERENCE_HEALTH_CHANGED" | "DDS_CARD_STATUS_CHANGED" | "RECIPIENTS_RESOLVED" | "DDS_CARD_OPENED" | "DDS_SERVICE_STATUS_SET" | "DDS_CARD_ISSUE_FLAGGED" | "DDS_CARD_MARKS_SET" | "DDS_CALL_STARTED" | "DDS_CALL_ANSWERED" | "DDS_CALL_ENDED" | "DDS_CALL_STATUS_PROPOSED" | "DDS_CALL_ASSERTION";
         /**
          * @description `FactValue = str | int | float | bool | list[str] | None` — the value domain shared by
          *     `WorldTruth.facts`, `CallerBelief.facts` and `OperatorCard.values`
@@ -3406,6 +3436,12 @@ export interface components {
             visible_when?: components["schemas"]["CardCondition"] | null;
             required_in_block?: boolean;
             routing_relevant?: boolean;
+            /**
+             * @description (additive, I7 E55) The longest `STRING` value the field takes — the card's «0 / 1999»
+             *     counter on «Описание со слов заявителя»; `null` = unbounded. A longer value ⇒
+             *     `422 CARD_VALUE_TYPE_MISMATCH`.
+             */
+            max_length?: number | null;
         };
         /**
          * @description Additive, I3 E3a (70 §70.5.2) — how the UI renders a card field.
@@ -3594,7 +3630,12 @@ export interface components {
             snapshot_id: string;
             service_type: components["schemas"]["ServiceType"];
             state: components["schemas"]["DDSStageState"];
-            /** @description The frozen trainee entries, verbatim from the snapshot. */
+            /**
+             * @description The frozen trainee entries, verbatim from the snapshot. (additive, I7 E55) For a ДДС
+             *     trainee whose own legs are all the 03 service (`AMBULANCE`), `description.text` is its
+             *     first 100 characters (card instruction: «в службу 03 передаются только первые 100
+             *     символов»); every other reader gets it whole.
+             */
             card_values: {
                 [key: string]: components["schemas"]["FactValue"];
             };
@@ -3627,6 +3668,24 @@ export interface components {
              *     before E3c keep compiling.
              */
             field_specs?: components["schemas"]["CardFieldSpec"][];
+            /**
+             * @description (additive, I7 E55) The ДДС screen's «ЧС» / «ЧП» marks, set by a ДДС participant with
+             *     `setDdsCardMarks` (the last `DDS_CARD_MARKS_SET` wins; both `false` before the first).
+             *     Read-only everywhere else (instructor overview, report); never scored.
+             */
+            dds_marks?: components["schemas"]["DdsCardMarks"];
+        };
+        /** @description (additive, I7 E55) The ДДС's «ЧС» / «ЧП» marks on the received card. */
+        DdsCardMarks: {
+            /** @description ЧС */
+            chs: boolean;
+            /** @description ЧП */
+            chp: boolean;
+        };
+        /** @description (additive, I7 E55) The pencil beside «ЧС» / «ЧП» — both marks, as they should now be. */
+        SetDdsCardMarksRequest: {
+            chs: boolean;
+            chp: boolean;
         };
         /** @description `EtaProfile` — the only ETA input; `ScenarioDefinedEta` reads these verbatim (D7, SPEC §11). */
         EtaProfileView: {
@@ -3980,6 +4039,11 @@ export interface components {
             status_history: components["schemas"]["ServiceStatusEntryView"][];
             /** @description (additive, I3 E5b) The card issues flagged on this leg (`dds_card_check: ON`). */
             card_issues: components["schemas"]["CardIssueView"][];
+            /**
+             * @description (additive, I7 E55) The card's «ЧС» / «ЧП» marks at the end of the session — the same on
+             *     every leg (they are the card's, not a leg's); shown read-only, never scored.
+             */
+            dds_marks?: components["schemas"]["DdsCardMarks"] | null;
         };
         /** @description One `RESOURCE_STATUS_CHANGED` step — the resource timeline of SPEC §29. */
         ResourceTimelineEntryView: {
@@ -6748,6 +6812,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CardIssueView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    setDdsCardMarks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDdsCardMarksRequest"];
+            };
+        };
+        responses: {
+            /** @description The work item with its marks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DdsWorkItem"];
                 };
             };
             401: components["responses"]["Unauthorized"];

@@ -40,6 +40,17 @@ renders the snapshot's values (and their option labels) from data, not from a ha
 list (`with_card_schema`). The pack is the one `SESSION_CREATED.reference_pack` recorded
 (`app.application.reference.card_schemas.pack_card_schema`): the log and the reference catalog,
 never the `ScenarioVersion` (INV 3).
+
+**«в службу 03 передаются только первые 100 символов» (I7 E55).** The card instruction's note on
+«Описание со слов заявителя» (instr ¶257): `for_viewer` cuts `description.text` to its first
+100 characters for a ДДС trainee whose own legs are all the 03 service (`AMBULANCE`). Everyone
+else — another service, a trainee who plays every (unbound) leg, the instructor — reads it whole.
+The snapshot itself is untouched (its `content_sha256` still covers the full text).
+
+**«ЧС» / «ЧП» (I7 E55, owner decision 2026-09-29 Q9).** The ДДС screen's two marks with the
+pencil are the ДДС's own, not the 112 card's: `setDdsCardMarks` appends `DDS_CARD_MARKS_SET`, and
+`dds_marks_of` folds the log into `DdsWorkItemView.dds_marks` (the last event wins; both `false`
+before the first). Read from the log only — like everything else here, never world truth.
 """
 
 from __future__ import annotations
@@ -50,20 +61,28 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from app.application.reference.card_schemas import CardFieldSpecView, field_spec_views
-from app.domain.common.ids import ResourceId
+from app.domain.common.ids import ResourceId, UserId
 from app.domain.common.values import FactValue
 from app.domain.dds.assignment import DDSAssignment
+from app.domain.dds.response import LegResponder
 from app.domain.enums import ClosureReason, DDSStageState, ServiceId
+from app.domain.events.session_event import SessionEvent
+from app.domain.events.types import EventType
 from app.domain.layers.card_schema import CardSchema
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import CARD_FIELDS, CARD_SCHEMA_V1
 
 __all__ = [
+    "DESCRIPTION_LIMIT_CHARS",
+    "DdsMarksView",
     "DdsWorkItemView",
+    "dds_marks_of",
+    "for_viewer",
     "legs_in_recipient_order",
     "missing_field_paths",
     "primary_leg",
     "with_card_schema",
+    "with_dds_marks",
     "work_item_view",
 ]
 
@@ -71,6 +90,31 @@ REQUIRED_FOR_HANDOFF: tuple[str, ...] = tuple(
     spec.field_path for spec in CARD_FIELDS if spec.required_for_handoff
 )
 """The `CARD_FIELDS` paths marked `required_for_handoff`, in §10.6 order."""
+
+DESCRIPTION_PATH = "description.text"
+DESCRIPTION_LIMITED_SERVICE = ServiceId("AMBULANCE")
+DESCRIPTION_LIMIT_CHARS = 100
+"""instr ¶257: «в службу 03 передаются только первые 100 символов» (I7 E55)."""
+
+
+class DdsMarksView(BaseModel):
+    """`openapi.yaml`'s `DdsCardMarks` — the ДДС screen's «ЧС» / «ЧП» marks (I7 E55)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    chs: bool = False
+    chp: bool = False
+
+
+def dds_marks_of(events: Iterable[SessionEvent]) -> DdsMarksView:
+    """The marks the last `DDS_CARD_MARKS_SET` of `events` set; both `False` before the first."""
+    marks = DdsMarksView()
+    for event in events:
+        if event.event_type is EventType.DDS_CARD_MARKS_SET:
+            marks = DdsMarksView(
+                chs=bool(event.payload.get("chs")), chp=bool(event.payload.get("chp"))
+            )
+    return marks
 
 
 class DdsWorkItemView(BaseModel):
@@ -97,6 +141,8 @@ class DdsWorkItemView(BaseModel):
     missing_field_paths: tuple[str, ...]
     card_schema: str = "v1"
     field_specs: tuple[CardFieldSpecView, ...] = ()
+    dds_marks: DdsMarksView = DdsMarksView()
+    """(I7 E55) The ДДС's «ЧС» / «ЧП» marks — `with_dds_marks` fills them from the log."""
 
 
 def missing_field_paths(
@@ -194,6 +240,37 @@ def with_card_schema(
             "card_schema": schema.schema_id,
             "field_specs": field_spec_views(schema),
             "missing_field_paths": missing_field_paths(snapshot, schema),
+        }
+    )
+
+
+def with_dds_marks(view: DdsWorkItemView, events: Iterable[SessionEvent]) -> DdsWorkItemView:
+    """`view` with the marks the session's log holds (`dds_marks_of`, I7 E55)."""
+    return view.model_copy(update={"dds_marks": dds_marks_of(events)})
+
+
+def for_viewer(
+    view: DdsWorkItemView, legs: Sequence[DDSAssignment], viewer_id: UserId | None
+) -> DdsWorkItemView:
+    """`view` as the ДДС trainee `viewer_id` reads it: `description.text` cut to its first
+    `DESCRIPTION_LIMIT_CHARS` characters when every leg bound to the viewer is the 03 service
+    (instr ¶257, I7 E55). `None` (the instructor, an observer) and any other viewer read it whole;
+    an unbound leg is everyone's, so it never narrows the viewer to 03."""
+    if viewer_id is None:
+        return view
+    mine = {
+        leg.service_type
+        for leg in legs
+        if leg.responder is LegResponder.TRAINEE and leg.bound_user_id == viewer_id
+    }
+    if mine != {DESCRIPTION_LIMITED_SERVICE}:
+        return view
+    text = view.card_values.get(DESCRIPTION_PATH)
+    if not isinstance(text, str) or len(text) <= DESCRIPTION_LIMIT_CHARS:
+        return view
+    return view.model_copy(
+        update={
+            "card_values": {**view.card_values, DESCRIPTION_PATH: text[:DESCRIPTION_LIMIT_CHARS]}
         }
     )
 

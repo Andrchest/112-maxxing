@@ -262,7 +262,7 @@ export function DdsConsolePage() {
           ) : null}
           <div className="flex flex-col gap-4">
             {workItem ? <DdsHeaderStrip sessionId={sessionId} workItem={workItem} /> : null}
-            <WorkItemPanel />
+            <WorkItemPanel sessionId={sessionId} />
           </div>
         </div>
         <LegsPanel sessionId={sessionId} />

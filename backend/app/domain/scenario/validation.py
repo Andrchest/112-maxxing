@@ -49,7 +49,12 @@ from app.domain.enums import (
 )
 from app.domain.facts.definitions import AvailableAfter, FactDefinition
 from app.domain.facts.gate import unsupported_available_after_leaves
-from app.domain.layers.card_schema import CardOptionUnknownError, CardSchema, check_value
+from app.domain.layers.card_schema import (
+    CardOptionUnknownError,
+    CardSchema,
+    CardValueTooLongError,
+    check_value,
+)
 from app.domain.roles import ROLE_MODULES
 from app.domain.roles.module import RoleModule
 from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
@@ -382,6 +387,11 @@ def _check_card_field_paths(
             out.append(
                 f"R14: expected_response.prefab_handoff.card_values['{path}'] value {value!r} "
                 f"is not an option of the field (card schema {schema.schema_id})"
+            )
+        except CardValueTooLongError:
+            out.append(
+                f"R14: expected_response.prefab_handoff.card_values['{path}'] is longer than "
+                f"{spec.max_length} characters (card schema {schema.schema_id})"
             )
         except CardFieldError:
             out.append(

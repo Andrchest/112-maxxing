@@ -11,34 +11,45 @@ Pure tests over `app.application.handoff.work_item` — no database, no HTTP. Wh
 * the projection's inputs are a snapshot and its legs, and nothing else can enter (D3): the
   structural half of that is `test_inv_03_dds_never_reads_world_truth.py`, and this file is the
   behavioural half at the unit level — a world value of "27" is nowhere in the result because
-  nothing ever handed one in.
+  nothing ever handed one in;
+* (I7 E55) `for_viewer`: a ДДС trainee whose own legs are all the 03 service reads the first 100
+  characters of `description.text`; every other reader reads it whole.
 """
 
 from __future__ import annotations
 
 import typing
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from app.application.handoff.work_item import (
+    DESCRIPTION_LIMIT_CHARS,
     REQUIRED_FOR_HANDOFF,
+    DdsMarksView,
+    dds_marks_of,
+    for_viewer,
     missing_field_paths,
     primary_leg,
+    with_dds_marks,
     work_item_view,
 )
 from app.domain.common.ids import (
     AssignmentId,
     CardId,
     CardRevisionId,
+    EventId,
     IncidentId,
     ResourceId,
     RoleStageId,
+    SessionId,
     SnapshotId,
     UserId,
 )
 from app.domain.dds.assignment import DDSAssignment
-from app.domain.enums import ClosureReason, DDSStageState, ServiceId
+from app.domain.enums import ActorType, ClosureReason, DDSStageState, ServiceId
+from app.domain.events.session_event import SessionEvent
+from app.domain.events.types import EventType
 from app.domain.layers.handoff import HandoffSnapshot
 from app.domain.layers.operator_card import CARD_FIELDS
 from pydantic import BaseModel
@@ -305,3 +316,97 @@ def test_a_complete_snapshot_has_no_missing_field(
     )
 
     assert missing_field_paths(complete) == ()
+
+
+# ---------------------------------------------------------------------------------------------
+# «в службу 03 передаются только первые 100 символов» (I7 E55)
+# ---------------------------------------------------------------------------------------------
+
+LONG_DESCRIPTION = "Горит квартира на третьем этаже, " * 10
+
+
+def _described(snapshot: HandoffSnapshot) -> HandoffSnapshot:
+    return snapshot.model_copy(
+        update={"card_values": {**snapshot.card_values, "description.text": LONG_DESCRIPTION}}
+    )
+
+
+def test_the_03_service_reads_the_first_100_characters_of_the_description(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId
+) -> None:
+    snapshot = _described(snapshot)
+    medic, firefighter = UserId(uuid4()), UserId(uuid4())
+    legs = [
+        _leg(snapshot, role_stage_id, FIRE, bound_user_id=firefighter),
+        _leg(snapshot, role_stage_id, AMBULANCE, bound_user_id=medic),
+    ]
+    view = work_item_view(snapshot, legs)
+    assert len(LONG_DESCRIPTION) > DESCRIPTION_LIMIT_CHARS
+
+    cut = for_viewer(view, legs, medic)
+    assert cut.card_values["description.text"] == LONG_DESCRIPTION[:DESCRIPTION_LIMIT_CHARS]
+    # Nothing else moves, and the snapshot's own hash still covers the whole text.
+    assert {k: v for k, v in cut.card_values.items() if k != "description.text"} == CARD_VALUES
+    assert cut.handoff_content_sha256 == view.handoff_content_sha256
+    # The other service, and the instructor (`None`), read it whole.
+    assert for_viewer(view, legs, firefighter).card_values["description.text"] == LONG_DESCRIPTION
+    assert for_viewer(view, legs, None).card_values["description.text"] == LONG_DESCRIPTION
+
+
+def test_a_viewer_of_more_than_the_03_service_reads_the_whole_description(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId
+) -> None:
+    snapshot = _described(snapshot)
+    trainee = UserId(uuid4())
+    bound_to_both = [
+        _leg(snapshot, role_stage_id, FIRE, bound_user_id=trainee),
+        _leg(snapshot, role_stage_id, AMBULANCE, bound_user_id=trainee),
+    ]
+    unbound = [_leg(snapshot, role_stage_id, FIRE), _leg(snapshot, role_stage_id, AMBULANCE)]
+    for legs in (bound_to_both, unbound):
+        view = for_viewer(work_item_view(snapshot, legs), legs, trainee)
+        assert view.card_values["description.text"] == LONG_DESCRIPTION
+
+
+def test_a_short_description_reaches_the_03_service_whole(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId
+) -> None:
+    medic = UserId(uuid4())
+    short = snapshot.model_copy(
+        update={"card_values": {**snapshot.card_values, "description.text": "Пожар в квартире"}}
+    )
+    legs = [_leg(short, role_stage_id, AMBULANCE, bound_user_id=medic)]
+    view = work_item_view(short, legs)
+    assert for_viewer(view, legs, medic) == view
+
+
+# ---------------------------------------------------------------------------------------------
+# «ЧС» / «ЧП» (I7 E55)
+# ---------------------------------------------------------------------------------------------
+
+
+def _marks_event(seq_no: int, *, chs: bool, chp: bool) -> SessionEvent:
+    return SessionEvent(
+        id=EventId(uuid4()),
+        session_id=SessionId(uuid4()),
+        seq_no=seq_no,
+        event_type=EventType.DDS_CARD_MARKS_SET,
+        timestamp_utc=datetime(2026, 9, 29, tzinfo=UTC),
+        monotonic_offset_ms=seq_no * 1_000,
+        actor_type=ActorType.TRAINEE,
+        actor_id=UserId(uuid4()),
+        payload={"chs": chs, "chp": chp},
+    )
+
+
+def test_the_marks_default_off_and_the_last_event_wins(
+    snapshot: HandoffSnapshot, role_stage_id: RoleStageId
+) -> None:
+    assert dds_marks_of([]) == DdsMarksView(chs=False, chp=False)
+    log = [_marks_event(1, chs=True, chp=True), _marks_event(2, chs=False, chp=True)]
+    assert dds_marks_of(log) == DdsMarksView(chs=False, chp=True)
+    view = work_item_view(snapshot, [_leg(snapshot, role_stage_id, FIRE)])
+    assert view.dds_marks == DdsMarksView()
+    marked = with_dds_marks(view, log)
+    assert marked.dds_marks == DdsMarksView(chs=False, chp=True)
+    assert marked.model_copy(update={"dds_marks": DdsMarksView()}) == view

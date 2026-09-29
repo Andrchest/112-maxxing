@@ -61,6 +61,7 @@ from app.application.dds.open_card import OpenDdsCard
 from app.application.dds.open_resource_selection import OpenDdsResourceSelection
 from app.application.dds.select_resource import SelectDdsResource
 from app.application.dds.send_status_update import SendDdsStatusUpdate
+from app.application.dds.set_card_marks import SetDdsCardMarks  # I7 E55
 from app.application.dds.set_service_status import SetDdsServiceStatus
 from app.application.dds.stage_automation import DdsStageAutomation
 from app.application.dds.start_dds_call import StartDdsCall
@@ -1072,6 +1073,11 @@ class Container:
     def flag_dds_card_issue(self) -> FlagDdsCardIssue:
         """`flagDdsCardIssue` (I3 E5b)."""
         return FlagDdsCardIssue(self.dds_command_gate())
+
+    # --- I7 E55 ---
+    def set_dds_card_marks(self) -> SetDdsCardMarks:
+        """`setDdsCardMarks` (I7 E55): the ДДС's «ЧС» / «ЧП» marks."""
+        return SetDdsCardMarks(self.dds_command_gate(), changes=self._audit_changes())
 
     def close_dds_incident(self) -> CloseDdsIncident:
         """`closeDdsIncident`."""

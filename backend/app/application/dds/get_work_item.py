@@ -28,7 +28,7 @@ from app.application.dds.command_context import (
     work_item_of,
 )
 from app.application.dds.leg_for import project_legs
-from app.application.handoff.work_item import DdsWorkItemView
+from app.application.handoff.work_item import DdsWorkItemView, for_viewer, with_dds_marks
 from app.application.ports.reference import ReferencePort
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.reference.card_schemas import pack_card_schema
@@ -95,7 +95,10 @@ class GetDdsWorkItem:
             log = await uow.events.read(session_id)
             await uow.commit()
         schema = pack_card_schema(reference_catalog(self._reference), log)
-        return work_item_of(snapshot, project_legs(legs, board, dispatched), schema)
+        view = with_dds_marks(
+            work_item_of(snapshot, project_legs(legs, board, dispatched), schema), log
+        )
+        return for_viewer(view, legs, None if user.is_instructor_or_admin else user.user_id)
 
 
 def _any_dds_stage(session: SimulationSession) -> RoleStage | None:

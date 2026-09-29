@@ -28,6 +28,7 @@ const GROUP_LABEL_KEY: Record<string, keyof typeof ru> = {
   q_fire: 'operatorGroupQFire',
   q_gas: 'operatorGroupQGas',
   q_explosion: 'operatorGroupQExplosion',
+  q_ambulance: 'operatorGroupQAmbulance', // I7 E55
   services: 'operatorGroupServices',
 };
 

@@ -77,6 +77,8 @@ class EventType(str, Enum):
     """One leg's `ServiceResponseStatus` moved one step (§70.4.2); TRAINEE or SIMULATION (E5a)."""
     DDS_CARD_ISSUE_FLAGGED = "DDS_CARD_ISSUE_FLAGGED"
     """The ДДС flagged an error in the received card (`dds_card_check: ON`); TRAINEE (E5b)."""
+    DDS_CARD_MARKS_SET = "DDS_CARD_MARKS_SET"
+    """The ДДС set the card's «ЧС» / «ЧП» marks (memo mode, not scored); TRAINEE (I7 E55)."""
 
     # Additive per D5, I3 H2 telephony (HLD 80 §80.6.1).
     DDS_CALL_STARTED = "DDS_CALL_STARTED"
@@ -154,6 +156,7 @@ ADDITIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.DDS_CARD_OPENED,
         EventType.DDS_SERVICE_STATUS_SET,
         EventType.DDS_CARD_ISSUE_FLAGGED,
+        EventType.DDS_CARD_MARKS_SET,
         EventType.DDS_CALL_STARTED,
         EventType.DDS_CALL_ANSWERED,
         EventType.DDS_CALL_ENDED,

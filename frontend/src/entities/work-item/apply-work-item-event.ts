@@ -40,6 +40,10 @@ interface DdsIncidentClosedPayload {
   closure_reason: ClosureReason;
   at_offset_ms: number;
 }
+interface DdsCardMarksSetPayload {
+  chs: boolean;
+  chp: boolean;
+}
 interface StageStateChangedPayload {
   role_stage_id: string;
   role_type: RoleType;
@@ -96,6 +100,11 @@ export function applyWorkItemEvent(
       const payload = event.payload as unknown as DdsIncidentClosedPayload;
       if (payload.assignment_id !== previous.assignment_id) return previous;
       return { ...previous, closed_at_offset_ms: payload.at_offset_ms, closure_reason: payload.closure_reason };
+    }
+    case 'DDS_CARD_MARKS_SET': {
+      // I7 E55: the card's «ЧС» / «ЧП» — another ДДС participant's pencil reaches this screen live.
+      const payload = event.payload as unknown as DdsCardMarksSetPayload;
+      return { ...previous, dds_marks: { chs: payload.chs, chp: payload.chp } };
     }
     case 'STAGE_STATE_CHANGED': {
       const payload = event.payload as unknown as StageStateChangedPayload;

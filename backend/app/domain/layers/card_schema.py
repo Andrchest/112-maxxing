@@ -7,10 +7,11 @@ turns a schema *document* (the parsed YAML mapping) into a `CardSchema`. It does
 file-backed reference adapter reads the file and hands the mapping in (D2).
 
 **Additive `CardFieldSpec` properties (§70.5.2).** `group`, `order`, `control`, `options`,
-`visible_when`, `required_in_block`, `routing_relevant`. A v1 document carries only the six
-original keys and gets the neutral values the contract names: `group: null`, `order` = position,
-`control` by value type (`SELECT` for an enum, `CHECKBOX` for a boolean, else `TEXT`),
-`options: null`, `visible_when: null`, `required_in_block: false`, `routing_relevant: false`.
+`visible_when`, `required_in_block`, `routing_relevant` (and, I7 E55, `max_length`). A v1 document
+carries only the six original keys and gets the neutral values the contract names: `group: null`,
+`order` = position, `control` by value type (`SELECT` for an enum, `CHECKBOX` for a boolean, else
+`TEXT`), `options: null`, `visible_when: null`, `required_in_block: false`,
+`routing_relevant: false`, `max_length: null`.
 
 **Options and the classifier binding (D18, B1 §4).** A v2 option's `code` is a classifier
 identifier: a questionnaire chip's code is the признак text as `v046_24.json` carries it, a yes/no
@@ -59,6 +60,7 @@ __all__ = [
     "CardOptionUnknownError",
     "CardSchema",
     "CardSchemaError",
+    "CardValueTooLongError",
     "ConditionOp",
     "build_card_schema",
     "check_value",
@@ -84,6 +86,11 @@ class CardSchemaError(ValueError):
 
 class CardOptionUnknownError(CardFieldError):
     """A value is not one of the field's option codes (`422 CARD_OPTION_UNKNOWN`)."""
+
+
+class CardValueTooLongError(CardFieldError):
+    """A `STRING` value is longer than the field's `max_length` (I7 E55; the card's «0 / 1999»
+    counter). A `CardFieldError`, so `setCardField` answers `422 CARD_VALUE_TYPE_MISMATCH`."""
 
 
 class CardControl(str, Enum):
@@ -258,6 +265,8 @@ class CardFieldSpec(BaseModel):
     visible_when: CardCondition | None = None
     required_in_block: bool = False
     routing_relevant: bool = False
+    max_length: int | None = Field(default=None, ge=1)
+    """The longest `STRING` value the field takes (I7 E55); `None`: unbounded."""
 
     @model_validator(mode="before")
     @classmethod
@@ -274,6 +283,8 @@ class CardFieldSpec(BaseModel):
 
     @model_validator(mode="after")
     def _options_fit_the_type(self) -> CardFieldSpec:
+        if self.max_length is not None and self.value_type is not ValueType.STRING:
+            raise ValueError(f"{self.field_path}: only a STRING field takes max_length")
         if self.options is None:
             if self.value_type is ValueType.ENUM and self.enum_name is None:
                 raise ValueError(f"{self.field_path}: an ENUM field needs enum_name or options")
@@ -443,12 +454,18 @@ def _matches_type(value: FactValue, spec: CardFieldSpec) -> bool:
 def check_value(spec: CardFieldSpec, value: FactValue) -> None:
     """Raise unless `value` fits `spec`: `CardFieldError` for a `value_type` mismatch,
     `CardOptionUnknownError` for a code that is not one of the field's options (a v2 `ENUM`, or
-    an item of a `STRING_LIST` with options). A `BOOLEAN` field's single option is its code, not
-    a value set, so it constrains nothing here."""
+    an item of a `STRING_LIST` with options), `CardValueTooLongError` for a string longer than the
+    field's `max_length`. A `BOOLEAN` field's single option is its code, not a value set, so it
+    constrains nothing here."""
     if not _matches_type(value, spec):
         raise CardFieldError(
             f"value {value!r} does not match value_type {spec.value_type!r} "
             f"for field {spec.field_path!r}"
+        )
+    if spec.max_length is not None and isinstance(value, str) and len(value) > spec.max_length:
+        raise CardValueTooLongError(
+            f"a value of {len(value)} characters is longer than max_length {spec.max_length} "
+            f"of field {spec.field_path!r}"
         )
     if spec.options is None or spec.value_type is ValueType.BOOLEAN:
         return

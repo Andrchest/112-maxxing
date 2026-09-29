@@ -55,6 +55,7 @@ from app.api.schemas.dds import (
     RadioMessagePageSchema,
     ResourcePageSchema,
     ResourceSelectionRequestSchema,
+    SetDdsCardMarksRequestSchema,
     SetServiceStatusRequestSchema,
     StatusUpdateRequestSchema,
     StatusUpdateViewSchema,
@@ -262,6 +263,28 @@ async def flag_dds_card_issue(
     )
     await tick(SessionId(session_id))
     return card_issue_schema(view)
+
+
+@router.post(
+    "/{session_id}/dds/card-marks",
+    operation_id="setDdsCardMarks",
+    summary="The ДДС sets the card's «ЧС» / «ЧП» marks (memo mode; not scored).",
+    response_model=DdsWorkItemSchema,
+    status_code=200,
+)
+async def set_dds_card_marks(
+    session_id: UUID,
+    body: SetDdsCardMarksRequestSchema,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    tick: TickAfterCommandDep,
+) -> DdsWorkItemSchema:
+    """The pencil beside «ЧС» / «ЧП» — at most one `DDS_CARD_MARKS_SET` (I7 E55)."""
+    view = await container.set_dds_card_marks()(
+        SessionId(session_id), user, chs=body.chs, chp=body.chp
+    )
+    await tick(SessionId(session_id))
+    return dds_work_item_schema(view)
 
 
 @router.post(

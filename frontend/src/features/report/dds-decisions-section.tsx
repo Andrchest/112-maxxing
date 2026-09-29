@@ -95,6 +95,13 @@ export function DdsDecisionsSection({ decisions }: DdsDecisionsSectionProps) {
                     </ul>
                   </div>
                 ) : null}
+                {decision.dds_marks ? (
+                  // I7 E55: the ДДС's «ЧС» / «ЧП» at the end of the session, read-only.
+                  <p className="text-xs" data-slot="dds-marks-readonly">
+                    {t('ddsMarksLabel')}: {t('ddsMarkChs')} {decision.dds_marks.chs ? t('factBooleanYes') : t('factBooleanNo')} · {t('ddsMarkChp')}{' '}
+                    {decision.dds_marks.chp ? t('factBooleanYes') : t('factBooleanNo')}
+                  </p>
+                ) : null}
                 {decision.card_issues.length > 0 ? (
                   <div className="flex flex-col gap-1">
                     <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('reportDdsCardIssuesLabel')}</span>

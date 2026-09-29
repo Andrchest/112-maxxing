@@ -1865,3 +1865,86 @@ title source for a materials batch, whether to keep the validate step for a scen
 «новая версия» vs «загружен» rule) was a technical implementation detail with an unambiguous
 answer from the existing data model (`ScenarioVersionListItem.version`, materials' lack of a
 version concept), not a product-level one.
+## 71.19.55 I7 E55 — Card v2 fields of the card instruction (G16) + the owner's answers to the 11 organizer questions
+
+**Purpose.** ТЗ gap G16 (E42 §2 item 11): the v2 card lacked what «Инструкция_по_заведению_
+карточки_2507ГСИ.docx» (the card instruction) defines — the full caller-status list, «Канал
+связи», the number of injured, the 103 «Отказ от реагирования», the 1999-character description and
+the «first 100 characters to 03» rule. The organizers never answered the 11 questions of
+2026-09-25; the owner decided them on 2026-09-29 (`docs/owner-decisions.md`, «Решения владельца от
+2026-09-29 (вместо ответа организаторов)»). Scoring untouched.
+
+**Design (as built).**
+- `reference/card-schema/v2.yaml` (manifest re-pinned, 58 → 61 fields), labels verbatim from the
+  instruction (cited in the file as "instr ¶N" = the N-th `<w:p>` of its `word/document.xml`, and
+  "instr fig. N"):
+  - `caller.status` — six options (instr ¶271–277): `EYEWITNESS` очевидец (unchanged), `VICTIM`
+    пострадавший, `RELATIVE` родственник, `ACQUAINTANCE` знакомый, `CHILD` ребенок, `PARTICIPANT`
+    участник;
+  - `applicant.channel` «Канал связи» (ENUM/SELECT, group `applicant`, right after the status as
+    fig. 16 shows it) — the nine channels the instruction names (fig. 8 + ¶118), alphabetical, and
+    `OTHER` «Другое» last (the full list is in no source; decision No. 12 of 2026-09-29);
+  - `flags.casualties_count` «Количество» (INTEGER/NUMBER, group `flags`, instr ¶285–290, fig. 36),
+    `visible_when: flags.casualties EQ true`;
+  - group `q_ambulance` «Происшествие 103» with `flags.response_refused` «Отказ от реагирования»
+    (BOOLEAN, one option `RESPONSE_REFUSED` «Отказ от реагирования Скорой», `routing: none`; instr
+    ¶170, fig. 16), `visible_when: incident.types CONTAINS '22'`; not routed, not scored. The rest
+    of the 103 questionnaire and the other missing branches are not authored (owner decision Q8);
+  - `description.text` `max_length: 1999`.
+- `CardFieldSpec.max_length` (domain `card_schema.py`, additive, `null` = unbounded, STRING only);
+  `check_value` raises `CardValueTooLongError` (a `CardFieldError`) — `setCardField` answers
+  `422 CARD_VALUE_TYPE_MISMATCH`, scenario validation reports R14. Contract: `CardFieldSpec.
+  max_length` (openapi, `CardFieldSpecView`, `CardFieldSpecSchema`, `schema.d.ts`).
+- `conditions.fixtures.json`: five cases for the two new `visible_when`s (backend and frontend
+  evaluators both run them).
+- ДДС, instr ¶257 «в службу 03 передаются только первые 100 символов»:
+  `application/handoff/work_item.py::for_viewer(view, legs, viewer_id)` cuts `description.text` to
+  100 characters when every leg bound to the viewer (`responder TRAINEE`, `bound_user_id ==
+  viewer`) is `AMBULANCE`; applied by `getDdsWorkItem`, the DDS command context's `work_item()`
+  (every `DdsStageView`) and `getSessionSnapshot.work_item`. The instructor, another service and a
+  trainee who plays unbound legs read the whole text; the snapshot and its hash are untouched.
+- ДДС screen «[ВИС] Класс.:» (owner decision Q9, REQ-3040): `work-item-panel.tsx` renders the
+  existing `incident.classifier_code` row under the reference's label «[ВИС] Класс.» (ru.ts
+  `ddsVisClassifierLabel`), read-only, kept (empty) when unset for a schema that has the field.
+  The 103 block is a dark bar like 101/104/Взрыв; a one-option BOOLEAN that is on reads as its
+  option («Отказ от реагирования Скорой»).
+- 112 card UI: `q_ambulance` is a right-column row block; the description textarea takes
+  `maxLength` and shows the reference's «N / 1999» counter; the injured count is a short number
+  box in the flags row.
+- «112 Мос. обл.» (owner decision Q11): already the catalog's and the UI's spelling — no change.
+
+**ЧС / ЧП (owner decision Q9; design accepted by the manager after the first E55 pass).**
+- Command `setDdsCardMarks` — `POST /api/v1/sessions/{id}/dds/card-marks`, body
+  `SetDdsCardMarksRequest {chs, chp}`, answers `DdsWorkItem`
+  (`application/dds/set_card_marks.py`). Gate: `DdsCommandGate.open` with any of
+  `set_service_status` / `close` — the memo actions present while the stage still holds the card
+  (`RECEIVED` … `RESOLVED`), so no new row in the §10.9 / §70.4.4 action tables; then memo mode
+  only (picker ⇒ `409 ACTION_NOT_AVAILABLE`). Any ДДС participant (the memo `may_command`); an
+  instructor ⇒ `403`. A changed pair appends one `DDS_CARD_MARKS_SET` (TRAINEE; `previous_chs`,
+  `previous_chp`, `chs`, `chp`, `actor_user_id`, `at_offset_ms`; visible to DDS + INSTRUCTOR —
+  `catalog.py`, `roles/dds.py`, HLD 10 §10.13 row, HLD 40 row 60, openapi `EventType`, timeline
+  summary «ДДС изменила отметки ЧС / ЧП»); the same pair appends nothing. Audit «было → стало»:
+  `dds_card.chs` / `dds_card.chp` (E43 collector).
+- Projection: `work_item.py::dds_marks_of(events)` (the last event wins, default both `false`) →
+  `DdsWorkItemView.dds_marks` (`DdsCardMarks`), filled by `with_dds_marks` in `getDdsWorkItem`,
+  every `DdsStageView`, `getSessionSnapshot` and the instructor overview's `assignments`; the
+  report's `DdsDecisionView.dds_marks` (the same card-level pair on every leg). Read-only
+  everywhere but the ДДС console.
+- Not scored: no evaluator reads the event; `test_inv_09_card_v2_e55_fields.py` appends it to all
+  108 ticket logs — same report and checksum.
+- UI: `work-item-panel.tsx` `DdsCardMarks` — «ЧС» / «ЧП» toggle buttons (ЧП orange when on, as
+  the reference) with a pencil beside the flags line, memo console only; the toggles are disabled
+  until the pencil is pressed, and the pencil exists only when the caller is offered
+  `set_service_status` / `close`. Each toggle sends the whole pair once. Live: `applyWorkItemEvent`
+  folds `DDS_CARD_MARKS_SET` from the session WebSocket (another ДДС's pencil). The instructor
+  overview and the report print «Отметки ДДС: ЧС да/нет · ЧП да/нет».
+
+**Tests.** `tests/unit/domain/layers/test_card_schema_v2_e55.py`;
+`tests/unit/application/handoff/test_work_item_projection.py` (`for_viewer`, `dds_marks_of`);
+`tests/unit/application/reports/test_dds_decisions.py` (marks on every leg);
+`tests/api/dds/test_card_marks.py` (set, idempotent repeat, every reader, audit, `403`, `409`);
+`tests/invariants/test_inv_09_card_v2_e55_fields.py` (all 108 tickets: the same report and checksum
+with every E55 field filled and both marks set, rescore included); `tests/api/dds/test_description_03.py`;
+`tests/api/operator/test_card_schema_v2.py` (61 fields, the 1999 cap over HTTP);
+`card-form-v2-e55.test.tsx`, `work-item-panel.test.tsx`, `apply-work-item-event.test.ts`
+(vitest).

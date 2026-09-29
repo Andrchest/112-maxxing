@@ -62,6 +62,7 @@ export const EVENT_TYPE_LABEL_KEY: Record<EventType, keyof typeof ru> = {
   DDS_CARD_OPENED: 'eventTypeDdsCardOpened', // I3 E5a
   DDS_SERVICE_STATUS_SET: 'eventTypeDdsServiceStatusSet', // I3 E5a
   DDS_CARD_ISSUE_FLAGGED: 'eventTypeDdsCardIssueFlagged', // I3 E5b
+  DDS_CARD_MARKS_SET: 'eventTypeDdsCardMarksSet', // I7 E55
   DDS_CALL_STARTED: 'eventTypeDdsCallStarted', // I3 E6b
   DDS_CALL_ANSWERED: 'eventTypeDdsCallAnswered', // I3 E6b
   DDS_CALL_ENDED: 'eventTypeDdsCallEnded', // I3 E6b

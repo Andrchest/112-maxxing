@@ -851,6 +851,21 @@ EVENT_PAYLOAD_CATALOG: Mapping[EventType, EventSpec] = {
         },
         visible_to=frozenset({_DDS, _INSTRUCTOR}),
     ),
+    EventType.DDS_CARD_MARKS_SET: EventSpec(
+        # I7 E55 (owner decision 2026-09-29, Q9): the ДДС screen's «ЧС» / «ЧП» marks with the
+        # pencil — set by a ДДС participant in memo mode, default off, never scored.
+        event_type=EventType.DDS_CARD_MARKS_SET,
+        actor_types=frozenset({ActorType.TRAINEE}),
+        payload_keys={
+            "previous_chs": "bool",
+            "previous_chp": "bool",
+            "chs": "bool",
+            "chp": "bool",
+            "actor_user_id": "uuid",
+            "at_offset_ms": "int",
+        },
+        visible_to=frozenset({_DDS, _INSTRUCTOR}),
+    ),
     # -----------------------------------------------------------------------------------------
     # I3 H2 telephony (HLD 80 §80.6.1): the ДДС phone line (E6b)
     # -----------------------------------------------------------------------------------------

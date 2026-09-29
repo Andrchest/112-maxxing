@@ -93,6 +93,7 @@ class CardFieldSpecSchema(ApiModel):
     visible_when: dict[str, Any] | None = None
     required_in_block: bool = False
     routing_relevant: bool = False
+    max_length: int | None = Field(default=None, ge=1)
 
 
 class OperatorCardViewSchema(ApiModel):

@@ -26,7 +26,11 @@ from app.api.schemas.dds import (
     status_entry_schema,
     status_update_schema,
 )
-from app.api.schemas.handoff import HandoffSnapshotViewSchema, handoff_snapshot_schema
+from app.api.schemas.handoff import (
+    DdsCardMarksSchema,
+    HandoffSnapshotViewSchema,
+    handoff_snapshot_schema,
+)
 from app.api.schemas.operator import (
     FactValueSchema,
     OperatorCardViewSchema,
@@ -390,6 +394,7 @@ class DdsDecisionViewSchema(ApiModel):
     bound_user_id: UUID | None
     status_history: list[ServiceStatusEntryViewSchema]
     card_issues: list[CardIssueViewSchema]
+    dds_marks: DdsCardMarksSchema | None = None  # I7 E55
 
 
 class DdsParticipantTotalsViewSchema(ApiModel):
@@ -658,6 +663,7 @@ def dds_decision_schema(decision: DdsDecision) -> DdsDecisionViewSchema:
         bound_user_id=decision.bound_user_id,
         status_history=[status_entry_schema(entry) for entry in decision.status_history],
         card_issues=[card_issue_schema(issue) for issue in decision.card_issues],
+        dds_marks=DdsCardMarksSchema(chs=decision.dds_marks.chs, chp=decision.dds_marks.chp),
     )
 
 

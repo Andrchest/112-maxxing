@@ -1193,8 +1193,10 @@ paths:
         §70.5.4) — and the value must match that field's `value_type`; otherwise
         `422 CARD_FIELD_UNKNOWN` or `422 CARD_VALUE_TYPE_MISMATCH`. (Additive, I3 E3a) a value
         that is not one of the field's `options` codes (a v2 select or toggle set) is
-        `422 CARD_OPTION_UNKNOWN`. A field hidden by `visible_when` is accepted — visibility is
-        advisory. Setting a field to its current value is a no-op: it returns `revision: null`,
+        `422 CARD_OPTION_UNKNOWN`. (Additive, I7 E55) a string longer than the field's
+        `max_length` (`description.text`: 1999) is `422 CARD_VALUE_TYPE_MISMATCH`. A field hidden
+        by `visible_when` is accepted — visibility is advisory. Setting a field to its current
+        value is a no-op: it returns `revision: null`,
         appends no revision and emits no event.
 
         `recipients.services` is **not** settable here; use the service commands.
@@ -1962,6 +1964,43 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CardIssueView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  # --- I7 E55 ---
+  /api/v1/sessions/{session_id}/dds/card-marks:
+    post:
+      tags: [dds]
+      operationId: setDdsCardMarks
+      summary: The ДДС sets the card's «ЧС» / «ЧП» marks (memo mode; not scored).
+      description: |
+        (additive, I7 E55; owner decision 2026-09-29, Q9) The pencil beside «ЧС» / «ЧП» on the
+        ДДС screen (`СКРИНШОТ ДДСГСИ.docx` image6, REQ-3040). The marks are the ДДС's own, not the
+        112 card's: any ДДС participant of a `dds_mode: MEMO_STATUSES` session sets them while the
+        stage still holds the card (whenever `set_service_status` or `close` is offered — so not
+        once the stage is `CLOSED`); both default to `false`. A change appends one
+        `DDS_CARD_MARKS_SET` (TRAINEE); the same pair again appends nothing. Picker mode or a
+        closed stage ⇒ `409 ACTION_NOT_AVAILABLE`; an instructor or a non-ДДС caller ⇒ `403`.
+        Answers with the work item, `dds_marks` included. Not read by any scoring rule. The audit
+        row carries `dds_card.chs` / `dds_card.chp` before → after (I7 E43).
+      x-action: set_service_status
+      x-emits: [DDS_CARD_MARKS_SET]
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetDdsCardMarksRequest' }
+      responses:
+        '200':
+          description: The work item with its marks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DdsWorkItem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -4099,6 +4138,7 @@ components:
         - DDS_CARD_OPENED              # additive, I3 E5a
         - DDS_SERVICE_STATUS_SET       # additive, I3 E5a
         - DDS_CARD_ISSUE_FLAGGED       # additive, I3 E5b
+        - DDS_CARD_MARKS_SET           # additive, I7 E55
         - DDS_CALL_STARTED             # additive, I3 E6b
         - DDS_CALL_ANSWERED            # additive, I3 E6b
         - DDS_CALL_ENDED               # additive, I3 E6b
@@ -5111,6 +5151,14 @@ components:
             - type: 'null'
         required_in_block: { type: boolean }
         routing_relevant: { type: boolean }
+        # --- I7 E55 ---
+        max_length:
+          type: [integer, 'null']
+          minimum: 1
+          description: |
+            (additive, I7 E55) The longest `STRING` value the field takes — the card's «0 / 1999»
+            counter on «Описание со слов заявителя»; `null` = unbounded. A longer value ⇒
+            `422 CARD_VALUE_TYPE_MISMATCH`.
 
     CardControl:
       type: string
@@ -5408,7 +5456,11 @@ components:
         state: { $ref: '#/components/schemas/DDSStageState' }
         card_values:
           type: object
-          description: The frozen trainee entries, verbatim from the snapshot.
+          description: |
+            The frozen trainee entries, verbatim from the snapshot. (additive, I7 E55) For a ДДС
+            trainee whose own legs are all the 03 service (`AMBULANCE`), `description.text` is its
+            first 100 characters (card instruction: «в службу 03 передаются только первые 100
+            символов»); every other reader gets it whole.
           additionalProperties: { $ref: '#/components/schemas/FactValue' }
         recipient_services:
           type: array
@@ -5449,6 +5501,32 @@ components:
             (and their option labels) from data. Always sent; not in `required` so clients built
             before E3c keep compiling.
           items: { $ref: '#/components/schemas/CardFieldSpec' }
+        # --- I7 E55 ---
+        dds_marks:
+          description: |
+            (additive, I7 E55) The ДДС screen's «ЧС» / «ЧП» marks, set by a ДДС participant with
+            `setDdsCardMarks` (the last `DDS_CARD_MARKS_SET` wins; both `false` before the first).
+            Read-only everywhere else (instructor overview, report); never scored.
+          allOf:
+            - $ref: '#/components/schemas/DdsCardMarks'
+
+    # --- I7 E55 ---
+    DdsCardMarks:
+      description: (additive, I7 E55) The ДДС's «ЧС» / «ЧП» marks on the received card.
+      type: object
+      additionalProperties: false
+      required: [chs, chp]
+      properties:
+        chs: { type: boolean, description: 'ЧС' }
+        chp: { type: boolean, description: 'ЧП' }
+    SetDdsCardMarksRequest:
+      description: (additive, I7 E55) The pencil beside «ЧС» / «ЧП» — both marks, as they should now be.
+      type: object
+      additionalProperties: false
+      required: [chs, chp]
+      properties:
+        chs: { type: boolean }
+        chp: { type: boolean }
 
     EtaProfileView:
       type: object
@@ -5980,6 +6058,14 @@ components:
           description: '(additive, I3 E5b) The card issues flagged on this leg (`dds_card_check: ON`).'
           type: array
           items: { $ref: '#/components/schemas/CardIssueView' }
+        # --- I7 E55 ---
+        dds_marks:
+          description: |
+            (additive, I7 E55) The card's «ЧС» / «ЧП» marks at the end of the session — the same on
+            every leg (they are the card's, not a leg's); shown read-only, never scored.
+          oneOf:
+            - $ref: '#/components/schemas/DdsCardMarks'
+            - type: 'null'
 
     ResourceTimelineEntryView:
       type: object

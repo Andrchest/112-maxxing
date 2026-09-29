@@ -1442,4 +1442,16 @@ export const ru = {
   scenarioBatchImporting: 'Импорт файлов…',
   materialsBatchFileCount: 'Выбрано файлов: {n}',
   materialsBatchUploading: 'Загрузка файлов…',
+  // --- I7 E55: card v2 fields of the card instruction (G16) and the ДДС «[ВИС] Класс.:» row ---
+  // The 103 questionnaire block's title (instr fig. 16: «Происшествие 103»).
+  operatorGroupQAmbulance: 'Происшествие 103',
+  // The ДДС screen's read-only row of the 112 card's classifier code (owner decision Q9).
+  ddsVisClassifierLabel: '[ВИС] Класс.',
+  // The ДДС screen's «ЧС» / «ЧП» marks with the pencil (owner decision Q9; setDdsCardMarks).
+  ddsMarkChs: 'ЧС',
+  ddsMarkChp: 'ЧП',
+  ddsMarksEditButton: 'Изменить отметки ЧС / ЧП',
+  ddsMarksDoneButton: 'Готово',
+  ddsMarksLabel: 'Отметки ДДС',
+  eventTypeDdsCardMarksSet: 'ДДС изменила отметки ЧС / ЧП',
 } as const;
