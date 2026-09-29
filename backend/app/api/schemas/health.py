@@ -56,7 +56,14 @@ class HealthReadyResponseSchema(ApiModel):
     components: list[ComponentHealthSchema]
     required_components: list[str]
     require_inference_ready: bool
-    model_profile: Literal["DEV_3060TI", "FINAL_3080TI_12GB", "FINAL_3080TI_16GB"]
+    model_profile: Literal[
+        "DEV_3060TI",
+        "DEV_3060TI_SHARED",
+        "DEV_3060TI_VOICE",
+        "CPU",
+        "FINAL_3080TI_12GB",
+        "FINAL_3080TI_16GB",
+    ]
 
 
 def component_health_schema(reading: ComponentReading) -> ComponentHealthSchema:

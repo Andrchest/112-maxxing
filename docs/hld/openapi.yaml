@@ -6691,7 +6691,7 @@ components:
           description: '`REQUIRE_INFERENCE_READY` (default true; tests set it false explicitly).'
         model_profile:
           type: string
-          enum: [DEV_3060TI, DEV_3060TI_SHARED, FINAL_3080TI_12GB, FINAL_3080TI_16GB]
+          enum: [DEV_3060TI, DEV_3060TI_SHARED, DEV_3060TI_VOICE, CPU, FINAL_3080TI_12GB, FINAL_3080TI_16GB]
 
     # ------------------------------------------------------------- admin ----
     PurgeRecordingsRequest:

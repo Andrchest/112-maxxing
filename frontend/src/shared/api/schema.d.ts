@@ -4431,7 +4431,7 @@ export interface components {
             /** @description `REQUIRE_INFERENCE_READY` (default true; tests set it false explicitly). */
             require_inference_ready: boolean;
             /** @enum {string} */
-            model_profile: "DEV_3060TI" | "DEV_3060TI_SHARED" | "FINAL_3080TI_12GB" | "FINAL_3080TI_16GB";
+            model_profile: "DEV_3060TI" | "DEV_3060TI_SHARED" | "DEV_3060TI_VOICE" | "CPU" | "FINAL_3080TI_12GB" | "FINAL_3080TI_16GB";
         };
         PurgeRecordingsRequest: {
             /**
