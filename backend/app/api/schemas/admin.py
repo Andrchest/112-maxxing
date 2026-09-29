@@ -215,10 +215,15 @@ def server_load_schema(result: ServerLoadResult) -> ServerLoadSchema:
 
 
 class ErrorRecordViewSchema(ApiModel):
-    """`openapi.yaml`'s `ErrorRecordView`."""
+    """`openapi.yaml`'s `ErrorRecordView`.
+
+    `VOICE_AGENT_LOG`/`SIP_GATEWAY_LOG` additive, I7 E51 (G6).
+    """
 
     ts: datetime
-    source: Literal["BACKEND_LOG", "MODEL_ERROR", "INFERENCE_FATAL"]
+    source: Literal[
+        "BACKEND_LOG", "VOICE_AGENT_LOG", "SIP_GATEWAY_LOG", "MODEL_ERROR", "INFERENCE_FATAL"
+    ]
     message: str
     session_id: UUID | None
 

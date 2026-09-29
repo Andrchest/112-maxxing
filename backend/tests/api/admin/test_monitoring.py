@@ -89,8 +89,20 @@ def _write_backup_status(path: Path, *, finished_at: datetime, status: str = "ok
     )
 
 
-def _write_log_line(log_dir: str, *, level: str, message: str, ts: datetime | None = None) -> None:
-    """One `backend.log` JSON line, shaped as `app.infrastructure.logging.JsonFormatter` writes."""
+def _write_log_line(
+    log_dir: str,
+    *,
+    level: str,
+    message: str,
+    ts: datetime | None = None,
+    file_name: str = "backend.log",
+    service: str = "backend",
+) -> None:
+    """One JSON line, shaped as `app.infrastructure.logging.JsonFormatter` writes.
+
+    `file_name`/`service` (I7 E51, G6) let a test write into `voice-agent.log`/`sip-gateway.log`
+    too — the same rotated-file layout the compose `logs-data` volume gives all three processes.
+    """
     directory = Path(log_dir)
     directory.mkdir(parents=True, exist_ok=True)
     line = json.dumps(
@@ -99,10 +111,10 @@ def _write_log_line(log_dir: str, *, level: str, message: str, ts: datetime | No
             "level": level,
             "logger": "app.test",
             "message": message,
-            "service": "backend",
+            "service": service,
         }
     )
-    with (directory / "backend.log").open("a", encoding="utf-8") as handle:
+    with (directory / file_name).open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
 
 
@@ -240,6 +252,49 @@ async def test_get_error_report_merges_backend_log_and_model_error(
     model_error = next(item for item in items if item["source"] == "MODEL_ERROR")
     assert model_error["session_id"] == created["id"]
     assert "e29-probe-model-error" in model_error["message"]
+
+
+async def test_get_error_report_reads_the_voice_agent_and_sip_gateway_logs(
+    client: httpx.AsyncClient, api_settings: Settings, tokens: dict[str, str]
+) -> None:
+    """I7 E51 (G6, ТЗ ¶207): the compose `logs-data` volume puts `voice-agent.log` and
+    `sip-gateway.log` next to `backend.log`, in the same `SIM_LOG_DIR` — `getErrorReport` merges
+    all three."""
+    _write_log_line(
+        api_settings.log_dir,
+        level="ERROR",
+        message="e51-probe-voice-agent-log",
+        file_name="voice-agent.log",
+        service="voice-agent",
+    )
+    _write_log_line(
+        api_settings.log_dir,
+        level="ERROR",
+        message="e51-probe-sip-gateway-log",
+        file_name="sip-gateway.log",
+        service="sip-gateway",
+    )
+
+    response = await client.get("/api/v1/admin/errors", headers=auth(tokens["admin1"]))
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    by_message = {item["message"]: item["source"] for item in items}
+    assert by_message["e51-probe-voice-agent-log"] == "VOICE_AGENT_LOG"
+    assert by_message["e51-probe-sip-gateway-log"] == "SIP_GATEWAY_LOG"
+
+
+async def test_get_error_report_is_unaffected_by_an_absent_voice_agent_log(
+    client: httpx.AsyncClient, tokens: dict[str, str]
+) -> None:
+    """No `voice-agent.log`/`sip-gateway.log` on disk (the file handler is off unless that
+    process's own `SIM_LOG_DIR` is set) contributes nothing — not an error."""
+    response = await client.get("/api/v1/admin/errors", headers=auth(tokens["admin1"]))
+
+    assert response.status_code == 200, response.text
+    sources = {item["source"] for item in response.json()["items"]}
+    assert "VOICE_AGENT_LOG" not in sources
+    assert "SIP_GATEWAY_LOG" not in sources
 
 
 # -- listAdminAlerts --------------------------------------------------------------------------

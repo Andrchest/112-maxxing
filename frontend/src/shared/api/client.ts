@@ -913,6 +913,7 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
   MATERIAL_TOO_LARGE: 'problemMaterialTooLarge', // additive, I4 E34
   BACKUP_REQUIRED: 'problemBackupRequired', // additive, I4 E29
   NOT_RESOURCE_OWNER: 'problemNotResourceOwner', // additive, I5 E39
+  LOGIN_THROTTLED: 'problemLoginThrottled', // additive, I7 E51 (G5)
 };
 
 /** Russian message for a backend `ProblemCode` (D12 design decision #5). Every UI surface that
@@ -920,6 +921,18 @@ const PROBLEM_MESSAGE_KEYS: Record<ProblemCode, keyof typeof ru> = {
  * this message for the trainee/instructor. */
 export function problemMessageRu(code: ProblemCode): string {
   return ru[PROBLEM_MESSAGE_KEYS[code]];
+}
+
+/** I7 E51 (G5, ТЗ ¶295): the login page's own `LOGIN_THROTTLED` message, with the wait time
+ * `app.api.errors._extra_of` puts on `retry_after_s` (the same value as the `Retry-After`
+ * header, repeated in the body for a client — like this one — that only reads JSON). Falls back
+ * to `problemLoginThrottled`'s generic wording if the field is somehow missing. */
+export function loginThrottledMessageRu(problem: ProblemDetails): string {
+  const retryAfterS = problem.retry_after_s;
+  if (typeof retryAfterS !== 'number' || !Number.isFinite(retryAfterS) || retryAfterS <= 0) {
+    return ru.problemLoginThrottled;
+  }
+  return `Слишком много попыток входа. Повторите через ${Math.ceil(retryAfterS)} с.`;
 }
 
 // --- I4 E31: per-card timers and unfinished lesson cards (71 §71.8, D34) ---------------------------

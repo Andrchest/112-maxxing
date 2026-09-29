@@ -7,6 +7,13 @@ from app.infrastructure.logging.json_formatter import (
     JsonFormatter,
     build_log_config,
     configure_logging,
+    log_file_name,
 )
 
-__all__ = ["BACKEND_LOG_FILE", "JsonFormatter", "build_log_config", "configure_logging"]
+__all__ = [
+    "BACKEND_LOG_FILE",
+    "JsonFormatter",
+    "build_log_config",
+    "configure_logging",
+    "log_file_name",
+]

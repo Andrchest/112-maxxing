@@ -123,6 +123,8 @@ STATUS_BY_CODE: Mapping[str, int] = {
     # 503 — components/responses/ServiceUnavailable
     "INFERENCE_NOT_READY": 503,
     "LLM_UNAVAILABLE": 503,
+    # 429 — I7 E51 addition (`TooManyRequests`, G5, ТЗ ¶295): `loginUser` only.
+    "LOGIN_THROTTLED": 429,
 }
 
 #: Domain errors that predate the API layer and carry no `code`. Mapping them here rather than
@@ -141,6 +143,7 @@ _TITLE_BY_STATUS: Mapping[int, str] = {
     410: "Gone",
     416: "Range Not Satisfiable",
     422: "Unprocessable Entity",
+    429: "Too Many Requests",
     500: "Internal Server Error",
     503: "Service Unavailable",
 }
@@ -245,10 +248,16 @@ def _headers_of(error: DomainError) -> Mapping[str, str] | None:
     `RangeNotSatisfiableError` (`app.application.reports.serve_audio_segment`) parks the
     `Content-Range: bytes */<total>` value RFC 9110 §14.4 requires on a `416` on its own
     `content_range` attribute; this is the one place that value reaches the response (E16 R7).
+
+    `LoginThrottledError` (I7 E51, G5) parks the wait in seconds on `retry_after_s`; RFC 9110
+    §10.2.3 lets `Retry-After` be a plain integer, so it is rendered here the same way.
     """
     content_range = getattr(error, "content_range", None)
     if isinstance(content_range, str):
         return {"Content-Range": content_range}
+    retry_after_s = getattr(error, "retry_after_s", None)
+    if isinstance(retry_after_s, int):
+        return {"Retry-After": str(retry_after_s)}
     return None
 
 
@@ -258,12 +267,18 @@ def _extra_of(error: DomainError) -> Mapping[str, Any] | None:
     `SCENARIO_INVALID` is `ScenarioProblem`: "the problem carries the complete
     `validation_report`" (`openapi.yaml`). Rendering it here rather than in the router is what
     makes an import failure and a validation failure produce the same document.
+
+    `LOGIN_THROTTLED` (I7 E51, G5) repeats its `retry_after_s` in the body too, so a client that
+    does not read response headers (the login page's own `apiFetch`) can still show the wait.
     """
     if isinstance(error, ScenarioDocumentInvalidError):
         from app.api.schemas.scenarios import validation_report_schema
 
         schema = validation_report_schema(error.report)
         return {"validation_report": schema.model_dump(mode="json")}
+    retry_after_s = getattr(error, "retry_after_s", None)
+    if isinstance(retry_after_s, int):
+        return {"retry_after_s": retry_after_s}
     return None
 
 

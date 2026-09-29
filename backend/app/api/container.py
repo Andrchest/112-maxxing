@@ -38,6 +38,7 @@ from app.application.admin.get_usage_stats import GetUsageStats
 from app.application.admin.list_admin_alerts import ListAdminAlerts
 from app.application.auth.list_users import ListUsers
 from app.application.auth.login import Login
+from app.application.auth.login_guard import LoginGuard
 from app.application.dds.acknowledge import AcknowledgeDdsAssignment
 from app.application.dds.acknowledge_notification import AcknowledgeNotification
 from app.application.dds.answer_dds_call import AnswerDdsCall
@@ -127,6 +128,7 @@ from app.application.ports.idempotency_store import IdempotencyStore
 from app.application.ports.inference_readiness import InferenceReadiness
 from app.application.ports.last_seq_no_cache import LastSeqNoCache
 from app.application.ports.llm import LLMClient
+from app.application.ports.login_attempts import LoginAttemptStore
 from app.application.ports.mp3_encoder import Mp3Encoder
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
@@ -219,6 +221,7 @@ from app.infrastructure.persistence.statistics_reader import SqlAlchemyStatistic
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
 from app.infrastructure.realtime.redis_last_seq_no_cache import RedisLastSeqNoCache
+from app.infrastructure.realtime.redis_login_attempts import RedisLoginAttemptStore
 from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock, lesson_runner_lock_key
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
@@ -293,6 +296,8 @@ class Container:
         text_checker: TextCheckerPort | None = None,
         # --- I7 E46b Excel/PDF export: appended, never inserted among the params above ---------
         report_exporter: ReportExporter | None = None,
+        # --- I7 E51 login throttling: appended, never inserted among the params above ----------
+        login_attempts: LoginAttemptStore | None = None,
     ) -> None:
         self.settings = settings
         #: False when a test handed in its own engine/Redis and will close them itself.
@@ -513,6 +518,11 @@ class Container:
             report_exporter if report_exporter is not None else StandardReportExporter()
         )
         # --- end I7 E46b ------------------------------------------------------------------------
+        # --- I7 E51 login throttling (G5, ТЗ ¶295) ----------------------------------------------
+        self.login_attempts: LoginAttemptStore = (
+            login_attempts if login_attempts is not None else RedisLoginAttemptStore(self.redis)
+        )
+        # --- end I7 E51 -------------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
 
@@ -530,6 +540,15 @@ class Container:
     def login(self) -> Login:
         """`loginUser`."""
         return Login(self.unit_of_work, self.hasher, self.tokens)
+
+    def login_guard(self) -> LoginGuard:
+        """I7 E51 (G5, ТЗ ¶295): brute-force protection wrapped around `login()` by the router."""
+        return LoginGuard(
+            self.login_attempts,
+            max_failures=self.settings.sim_login_max_failures,
+            max_failures_per_ip=self.settings.sim_login_max_failures_per_ip,
+            window_s=self.settings.sim_login_window_s,
+        )
 
     def list_users(self) -> ListUsers:
         """`listUsers` (additive, E7)."""

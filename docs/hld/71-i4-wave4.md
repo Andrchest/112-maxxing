@@ -1695,3 +1695,86 @@ several assertions match on the literal names. Proved with
 now all pass, both directions and together with the whole suite).
 
 `docs/owner-decisions.md`: Q-E31-1, Q-E31-2, Q-E27-1 marked «Сделано (I7 E49)».
+## 71.19.51 I7 E51 — Login throttling (G5) + error report log sources (G6)
+
+**Purpose.** Two remaining MANDATORY gaps from the E42 analysis, both with the manager's designs
+amended by the owner: G5 — ТЗ ¶295 «Защита от несанкционированного доступа» had no brute-force
+protection on `/api/v1/auth/login`; G6 — ТЗ ¶207 «Формировать отчеты об ошибках и сбоях» had no log
+file for `getErrorReport` to read in the shipped compose.
+
+**G5 — design (as built).**
+- Application: port `application/ports/login_attempts.py` (`LoginAttemptStore`: `count`,
+  `increment(key, window_s=)`, `clear`); `application/auth/login_guard.py`:
+  - `LoginGuard.check(username, client_ip)` reads both counters
+    (`login_throttle:username:{username.lower()}`, `login_throttle:ip:{client_ip}`) and raises
+    `LoginThrottledError(retry_after_s)` — a `DomainError` with `code = "LOGIN_THROTTLED"` — when
+    either is at or past `SIM_LOGIN_MAX_FAILURES` (default 5), incrementing the blocked key(s) so a
+    client that ignores `Retry-After` sees the wait grow;
+  - `retry_after_s = min(5 * 2**(count - max_failures), 60)` — 5, 10, 20, 40, 60 s, capped;
+  - `record_failure` increments both counters (creating each with a `SIM_LOGIN_WINDOW_S`-second
+    window, default 600, on its first increment); `record_success` clears the **username's**
+    counter only — a shared IP (a classroom NAT) trying many accounts stays tracked even after one
+    of them succeeds.
+- Infrastructure: `infrastructure/realtime/redis_login_attempts.py` `RedisLoginAttemptStore` — one
+  Lua script per increment (`INCR`, then `EXPIRE` only on the increment that created the key, same
+  idiom as `redis_runner_lock`'s scripts). Every method swallows a Redis error and degrades to "not
+  throttled" (`0` / an uncounted increment), the same non-authoritative posture as
+  `RedisIdempotencyStore`: losing the counter costs a weaker throttle for one window, never a login
+  the account owner cannot retry.
+- API: `routers/auth.py`'s `login_user` calls `LoginGuard.check` **before** `Login` verifies
+  anything — a throttled request never pays the password hasher's work and never learns whether the
+  password would have matched. A real failure feeds `record_failure` (unchanged `LOGIN_FAILED`
+  audit row); a success feeds `record_success`. `errors.py`: `LOGIN_THROTTLED → 429`, `Retry-After`
+  header and `retry_after_s` body field both taken generically from a `retry_after_s` attribute on
+  the raised error (the same pattern `RangeNotSatisfiableError`/`Content-Range` already uses).
+  Audit: one `LOGIN_THROTTLED` row per throttled attempt (`target_ids = {username, retry_after_s}`,
+  no password, `container.py:login_guard()`).
+- Contract: `docs/hld/openapi.yaml` — `ProblemCode.LOGIN_THROTTLED`, `components/responses/
+  TooManyRequests` (`LoginThrottledProblem = Problem + retry_after_s`), `loginUser` gains `429`.
+- Settings: `SIM_LOGIN_MAX_FAILURES=5`, `SIM_LOGIN_WINDOW_S=600` (`.env.example` own section).
+- UI: `login-page.tsx` shows `loginThrottledMessageRu` (client.ts) — the generic
+  `problemLoginThrottled` (ru.ts) with the wait time interpolated from `retry_after_s` — instead of
+  the plain `problemUnauthenticated` text when `code === 'LOGIN_THROTTLED'`.
+- **Seeding/e2e risk, checked and clear**: only `frontend/e2e/scenarios/s01-login-logout.ts` submits
+  a deliberately wrong password, once per role, never repeated — none of the demo scenarios or
+  seeding scripts come close to 5 failures for one username/IP inside 600 s.
+- **Tests**: `tests/unit/application/auth/test_login_guard.py` (fake store + `expire_now`, the
+  doubling/cap sequence, key independence, case-insensitive username, window lapse);
+  `tests/api/test_login_throttle.py` (real Redis: threshold, no-password-check-when-throttled,
+  doubling, success-clears-username-only, IP-shared-across-usernames, the audit row); `client.
+  test.ts`/`login-page.test.tsx` (the interpolated message, the generic fallback).
+
+**G6 — design (as built).**
+- `infrastructure/logging/json_formatter.py`: the rotated file's name is now `log_file_name(service)`
+  = `f"{service}.log"` (`"backend"` still gives `BACKEND_LOG_FILE` itself — no behaviour change for
+  the backend). `workers/voice_agent/{main,sip_gateway}.py` now pass `log_dir=SIM_LOG_DIR` to
+  `configure_logging`, opening `voice-agent.log`/`sip-gateway.log` only when that process's own
+  `SIM_LOG_DIR` is set (unset ⇒ console only, unchanged).
+- `application/admin/get_error_report.py`: `_LOG_FILE_SOURCES` lists `(file stem, source)` for all
+  three processes; `GetErrorReport` reads every rotated file under one `SIM_LOG_DIR` and merges them
+  — additive, an absent file (the other process's handler off) contributes nothing.
+- Contract: `ErrorRecordView.source` gains `VOICE_AGENT_LOG`, `SIP_GATEWAY_LOG` (openapi.yaml,
+  `api/schemas/admin.py`'s `Literal`); UI (`errors-tab.tsx`/`ru.ts`) labels them «Журнал голосового
+  агента» / «Журнал SIP-шлюза».
+- Compose (`infra/docker-compose.yml`, main compose only): named volume `logs-data`, mounted at
+  `/var/log/sim` on `backend`, `voice-agent` and `sip-gateway`, each with `SIM_LOG_DIR=/var/log/sim`
+  — the three processes' rotated logs land in the same directory `getErrorReport` reads.
+  `make compose-check` (both the base and the `+gpu` render) passes unchanged.
+- **Tests**: `tests/api/admin/test_monitoring.py` (merges `VOICE_AGENT_LOG`/`SIP_GATEWAY_LOG`,
+  absent files contribute nothing); `tests/unit/infra/test_compose_file.py` (the shared volume and
+  `SIM_LOG_DIR` on all three services; the SIP-gateway TLS-mount test adjusted for the new plain
+  volume entry alongside its two bind mounts).
+
+**Migration.** `0021_login_throttled_audit_action` (down `0020_lesson_shuffle_seed`, I7 E53 — E53
+landed first and took `0020`): replaces `audit_log`'s `action` CHECK with the same list plus
+`LOGIN_THROTTLED` — no column, no backfill.
+
+**Manager follow-up (2026-09-29).** Per-IP threshold split from the username one: a classroom
+sits behind one NAT address, so the 5-failure username threshold applied to the IP counter too
+would lock the whole class after a handful of trainees mistyped a password once each.
+`SIM_LOGIN_MAX_FAILURES` (5) now governs the username counter only; a new
+`SIM_LOGIN_MAX_FAILURES_PER_IP` (default 30) governs the client-IP counter, same window, same
+Retry-After doubling formula. `LoginGuard.check`/`__init__` take both thresholds; `Container.
+login_guard()` reads both settings. Tests added: the username counter still locks at 5; the IP
+counter tolerates 5 different usernames failing once each (unit + API); the IP counter locks at
+its own 30 (unit + API).

@@ -92,6 +92,7 @@ paths:
               schema: { $ref: '#/components/schemas/TokenResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '429': { $ref: '#/components/responses/TooManyRequests' } # additive, I7 E51 (G5)
 
   /api/v1/auth/me:
     get:
@@ -3720,6 +3721,13 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: |
+        (additive, I7 E51, G5, ТЗ ¶295) `LOGIN_THROTTLED` — too many failed logins for this
+        username or client IP; `Retry-After` (seconds) is also on the response header.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/LoginThrottledProblem' }
 
   schemas:
 
@@ -3772,6 +3780,7 @@ components:
         - MATERIAL_TOO_LARGE           # additive, I4 E34
         - BACKUP_REQUIRED              # additive, I4 E29
         - NOT_RESOURCE_OWNER           # additive, I5 E39
+        - LOGIN_THROTTLED              # additive, I7 E51 (G5)
 
     Problem:
       type: object
@@ -3794,6 +3803,15 @@ components:
           required: [validation_report]
           properties:
             validation_report: { $ref: '#/components/schemas/ScenarioValidationReport' }
+
+    LoginThrottledProblem:
+      description: (additive, I7 E51, G5) A `LOGIN_THROTTLED` problem; `retry_after_s` repeats the `Retry-After` header.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [retry_after_s]
+          properties:
+            retry_after_s: { type: integer, minimum: 1 }
 
     # ------------------------------------------------------------- enums ----
     UserRole:
@@ -4315,7 +4333,7 @@ components:
       required: [ts, source, message, session_id]
       properties:
         ts: { type: string, format: date-time }
-        source: { type: string, enum: [BACKEND_LOG, MODEL_ERROR, INFERENCE_FATAL] }
+        source: { type: string, enum: [BACKEND_LOG, VOICE_AGENT_LOG, SIP_GATEWAY_LOG, MODEL_ERROR, INFERENCE_FATAL] } # VOICE_AGENT_LOG/SIP_GATEWAY_LOG additive, I7 E51 (G6)
         message: { type: string }
         session_id: { type: [string, 'null'], format: uuid }
     AdminAlertView:

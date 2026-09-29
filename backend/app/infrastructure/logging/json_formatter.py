@@ -35,6 +35,7 @@ __all__ = [
     "TextFormatter",
     "build_log_config",
     "configure_logging",
+    "log_file_name",
     "redact",
 ]
 
@@ -43,6 +44,15 @@ LOG_FORMATS: tuple[str, ...] = ("json", "text")
 
 #: The backend's rotated JSON log under `SIM_LOG_DIR`.
 BACKEND_LOG_FILE = "backend.log"
+
+
+def log_file_name(service: str) -> str:
+    """`{service}.log` — `"backend"` gives `BACKEND_LOG_FILE` itself; I7 E51 (G6, ТЗ ¶207) extends
+    the same rotated-file handler to the voice agent and the SIP gateway (`voice-agent.log`,
+    `sip-gateway.log`), which `GetErrorReport` also reads once `SIM_LOG_DIR` is set for them."""
+    return f"{service}.log"
+
+
 #: Rotation: ten files of 10 MiB each — bounded, and days of a classroom's volume.
 LOG_FILE_MAX_BYTES = 10 * 1024 * 1024
 LOG_FILE_BACKUP_COUNT = 10
@@ -131,7 +141,7 @@ def build_log_config(
         handlers["file"] = {
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "json",
-            "filename": str(directory / BACKEND_LOG_FILE),
+            "filename": str(directory / log_file_name(service)),
             "maxBytes": LOG_FILE_MAX_BYTES,
             "backupCount": LOG_FILE_BACKUP_COUNT,
             "encoding": "utf-8",

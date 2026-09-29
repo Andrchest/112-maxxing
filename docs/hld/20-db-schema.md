@@ -911,13 +911,18 @@ Telemetry, never read by scoring.
 PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts (ts)`,
 `ix_audit_log_user_ts (user_id, ts)`.
 `CHECK (role IS NULL OR role IN ('TRAINEE','INSTRUCTOR','ADMIN'))`;
-`CHECK (action IN ('HTTP_REQUEST','LOGIN_SUCCEEDED','LOGIN_FAILED','ACCESS_DENIED','WS_CONNECTED'))`;
+`CHECK (action IN ('HTTP_REQUEST','LOGIN_SUCCEEDED','LOGIN_FAILED','ACCESS_DENIED','WS_CONNECTED','LOGIN_THROTTLED'))`
+(`LOGIN_THROTTLED` additive, I7 E51, migration `0021_login_throttled_audit_action`);
 `CHECK (outcome IN ('OK','DENIED','ERROR'))`.
 
 - Written only by E25's ASGI middleware (after the response) and by `loginUser` (success and failure,
   which are unauthenticated). `user_id`/`role` are `NULL` for an unauthenticated request; for
   `LOGIN_*` the attempted username is `target_ids.username`. `target_ids` holds the request's path
   parameters. **No request or response body is ever stored** (passwords, personal data).
+- `LOGIN_THROTTLED` (I7 E51, G5, ТЗ ¶295): written by `loginUser` when `LoginGuard` (`application.
+  auth.login_guard`) refuses the attempt before `Login` runs — too many failures for this username
+  or client IP inside `SIM_LOGIN_WINDOW_S`. `user_id`/`role` are `NULL`, `status` is `429`,
+  `target_ids` is `{username, retry_after_s}`.
 - How E25 fills a row (`app.api.main.AuditMiddleware`): HTTP `401`/`403` → `ACCESS_DENIED`/`DENIED`;
   any other status → `HTTP_REQUEST`, `OK` below 400 and `ERROR` from 400 up (an escaped exception is
   `500`/`ERROR`). A WebSocket is recorded at its accept: `WS_CONNECTED`/`101`/`OK`; a socket
@@ -1244,3 +1249,14 @@ permuted order, so nothing re-applies the seed. A column rather than a key in an
 document: `variants` (`VariantsRequest`) and `scenario_plan` (`PlanEntry[]`) are closed shapes.
 `down_revision` = `0019_audit_changes`; downgrade drops the column.
 <!-- --- end I7 E53 --- -->
+<!-- --- I7 E51 --- -->
+## 20.12.51 I7 E51 — migration `0021_login_throttled_audit_action` (G5, ТЗ ¶295)
+
+| Migration | Epic | Change | Kind |
+|:--|:--|:--|:--|
+| `0021_login_throttled_audit_action` | I7 E51 | replaces `audit_log`'s `action` CHECK with the same list plus `LOGIN_THROTTLED` | additive enum member (no column, no backfill) |
+
+The CHECK is described with its table (`audit_log`, above; `LoginGuard`, `71-i4-wave4.md`
+§71.19.51). `down_revision` = `0020_lesson_shuffle_seed` (I7 E53, which took `0020`); downgrade
+restores the CHECK without the member.
+<!-- --- end I7 E51 --- -->

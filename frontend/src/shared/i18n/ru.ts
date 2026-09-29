@@ -1166,6 +1166,8 @@ export const ru = {
   adminErrorsColumnMessage: 'Сообщение',
   adminErrorsColumnSession: 'Сессия',
   adminErrorsSourceBackendLog: 'Журнал сервера',
+  adminErrorsSourceVoiceAgentLog: 'Журнал голосового агента', // additive, I7 E51 (G6)
+  adminErrorsSourceSipGatewayLog: 'Журнал SIP-шлюза', // additive, I7 E51 (G6)
   adminErrorsSourceModelError: 'Ошибка модели',
   adminErrorsSourceInferenceFatal: 'Критический отказ модели',
   adminErrorsOpenSession: 'Отчёт',
@@ -1421,4 +1423,9 @@ export const ru = {
   scenarioIssueR42: 'Неверная персона службы, способ доклада или шаг CALL_IN без телефона ДДС.',
   scenarioIssueR43: 'Неверное происхождение сценария: номер билета от 1 до 32, номер вызова от 1 до 3.',
   scenarioIssueR44: 'Таймер правила DEADLINE должен быть accept_within_ms или fill_within_ms.',
+
+  // --- I7 E51: login throttling (G5, ТЗ ¶295) ------------------------------------------------
+  // A generic fallback for any surface besides the login page that might see LOGIN_THROTTLED;
+  // the login page itself shows the wait time via `loginThrottledMessageRu` (client.ts).
+  problemLoginThrottled: 'Слишком много попыток входа. Подождите и попробуйте снова.',
 } as const;

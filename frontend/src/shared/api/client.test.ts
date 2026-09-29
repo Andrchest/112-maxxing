@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { problemMessageRu, type ProblemCode } from './client';
+import { loginThrottledMessageRu, problemMessageRu, type ProblemCode } from './client';
 
 // The complete `ProblemCode` enum (docs/hld/openapi.yaml `components.schemas.ProblemCode`).
 // `problemMessageRu`'s lookup table is `Record<ProblemCode, …>` (client.ts), so adding a member
@@ -44,4 +44,34 @@ describe('problemMessageRu', () => {
     const messages = ALL_PROBLEM_CODES.map((code) => problemMessageRu(code));
     expect(new Set(messages).size).toBe(ALL_PROBLEM_CODES.length);
   });
+});
+
+// I7 E51 (G5, ТЗ ¶295): the login page's throttled message carries the wait time the backend
+// puts on `retry_after_s`, distinct from the generic `problemLoginThrottled` fallback.
+describe('loginThrottledMessageRu', () => {
+  it('interpolates the wait time from retry_after_s', () => {
+    const message = loginThrottledMessageRu({
+      title: 'Too Many Requests',
+      status: 429,
+      code: 'LOGIN_THROTTLED',
+      retry_after_s: 10,
+    });
+
+    expect(message).toContain('10');
+    expect(message).not.toBe(problemMessageRu('LOGIN_THROTTLED'));
+  });
+
+  it.each([undefined, 0, -5, Number.NaN, 'not-a-number'])(
+    'falls back to the generic message when retry_after_s is %s',
+    (retryAfterS) => {
+      const message = loginThrottledMessageRu({
+        title: 'Too Many Requests',
+        status: 429,
+        code: 'LOGIN_THROTTLED',
+        retry_after_s: retryAfterS,
+      });
+
+      expect(message).toBe(problemMessageRu('LOGIN_THROTTLED'));
+    },
+  );
 });

@@ -53,6 +53,9 @@ class AuditAction(str, Enum):
     LOGIN_FAILED = "LOGIN_FAILED"
     ACCESS_DENIED = "ACCESS_DENIED"
     WS_CONNECTED = "WS_CONNECTED"
+    #: I7 E51 (G5, ТЗ ¶295): a login rejected by `LoginGuard` before `Login` ever saw the password —
+    #: `target_ids["username"]` only, never the password, same as `LOGIN_FAILED`.
+    LOGIN_THROTTLED = "LOGIN_THROTTLED"
 
 
 class AuditOutcome(str, Enum):

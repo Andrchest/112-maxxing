@@ -1115,9 +1115,15 @@ def main() -> None:
     """`python -m voice_agent.main`.
 
     I4 E25 (D31): one JSON object per log line under `SIM_LOG_FORMAT=json` (the default), in place
-    of the former `logging.basicConfig`.
+    of the former `logging.basicConfig`. I7 E51 (G6, ТЗ ¶207): `SIM_LOG_DIR`, when set, also opens
+    a rotated `voice-agent.log` — the same variable and file layout the backend already uses —
+    which `getErrorReport` reads once the compose volume mounts it there.
     """
-    configure_logging(read_env_value("SIM_LOG_FORMAT") or "json", service="voice-agent")
+    configure_logging(
+        read_env_value("SIM_LOG_FORMAT") or "json",
+        service="voice-agent",
+        log_dir=read_env_value("SIM_LOG_DIR") or None,
+    )
     asyncio.run(run())
 
 

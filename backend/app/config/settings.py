@@ -491,6 +491,18 @@ class Settings(BaseSettings):
     min_password_length: int = 8
     # --- end I4 E28 -------------------------------------------------------------------------------
 
+    # --- I7 E51: login throttling (G5, ТЗ ¶295 «Защита от несанкционированного доступа») ----------
+    #: `SIM_LOGIN_MAX_FAILURES`: failed logins allowed per username within the window before
+    #: `LoginGuard` starts answering `429 LOGIN_THROTTLED` (`app.application.auth.login_guard`).
+    sim_login_max_failures: int = 5
+    #: `SIM_LOGIN_MAX_FAILURES_PER_IP` (manager follow-up): the same, but for the client-IP
+    #: counter — higher than `sim_login_max_failures` because a classroom sits behind one NAT
+    #: address, and 20 trainees each failing a few times must not throttle the whole room.
+    sim_login_max_failures_per_ip: int = 30
+    #: `SIM_LOGIN_WINDOW_S`: the rolling window (seconds) each failure counter is kept for.
+    sim_login_window_s: int = 600
+    # --- end I7 E51 ---------------------------------------------------------------------------
+
 
 @lru_cache
 def get_settings() -> Settings:

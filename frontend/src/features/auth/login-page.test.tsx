@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LoginPage } from './login-page';
 import { useAuthStore } from '@/entities/session';
+import { loginThrottledMessageRu } from '@/shared/api';
 import { ru } from '@/shared/i18n/ru';
 
 function renderLoginPage() {
@@ -82,6 +83,36 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: ru.loginSubmit }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(ru.problemUnauthenticated);
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
+  it('shows the wait time when the login is throttled (I7 E51, G5)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            title: 'Too Many Requests',
+            status: 429,
+            code: 'LOGIN_THROTTLED',
+            retry_after_s: 10,
+          }),
+          { status: 429, headers: { 'content-type': 'application/problem+json', 'retry-after': '10' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderLoginPage();
+    await user.type(screen.getByLabelText(ru.loginUsernameLabel), 'instr');
+    await user.type(screen.getByLabelText(ru.loginPasswordLabel), 'wrong');
+    await user.click(screen.getByRole('button', { name: ru.loginSubmit }));
+
+    // The Russian wording itself (with the wait time interpolated) is asserted in
+    // `shared/api/client.test.ts`'s `loginThrottledMessageRu` suite — this only checks the page
+    // renders *that* function's output rather than the generic `problemLoginThrottled` fallback.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      loginThrottledMessageRu({ title: 'Too Many Requests', status: 429, code: 'LOGIN_THROTTLED', retry_after_s: 10 }),
+    );
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
   });
 });

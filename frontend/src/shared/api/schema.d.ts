@@ -2543,7 +2543,7 @@ export interface components {
          * @description The machine-readable error code carried by every RFC 7807 problem.
          * @enum {string}
          */
-        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE" | "BACKUP_REQUIRED" | "NOT_RESOURCE_OWNER";
+        ProblemCode: "UNAUTHENTICATED" | "FORBIDDEN_FOR_ROLE" | "NOT_FOUND" | "VALIDATION_ERROR" | "INVALID_TRANSITION" | "ACTION_NOT_AVAILABLE" | "PARTICIPANT_NOT_ASSIGNED" | "INFERENCE_NOT_READY" | "SCENARIO_INVALID" | "SCENARIO_VERSION_LOCKED" | "SCENARIO_VERSION_EXISTS" | "PREFAB_HANDOFF_REQUIRED" | "RECIPIENT_SERVICES_EMPTY" | "HANDOFF_ALREADY_CREATED" | "CARD_FIELD_UNKNOWN" | "CARD_VALUE_TYPE_MISMATCH" | "RESOURCE_UNAVAILABLE" | "SESSION_NOT_ACTIVE" | "REPORT_NOT_READY" | "REPORT_NOT_RELEASED" | "EXPLANATION_ALREADY_EXISTS" | "LLM_UNAVAILABLE" | "AUDIO_PURGED" | "RANGE_NOT_SATISFIABLE" | "VARIANT_NOT_SUPPORTED" | "VARIANT_NOT_AVAILABLE" | "REFERENCE_PACK_UNKNOWN" | "SERVICE_UNKNOWN" | "LESSON_NOT_ACTIVE" | "CARD_OPTION_UNKNOWN" | "SERVICE_REMOVAL_FORBIDDEN" | "COMMENT_REQUIRED" | "PROPOSAL_UNKNOWN" | "FORBIDDEN_FOR_SERVICE" | "DDS_LINE_BUSY" | "DIAL_NUMBER_UNKNOWN" | "NO_ACTIVE_DDS_SESSION" | "USERNAME_TAKEN" | "SELF_MODIFICATION_FORBIDDEN" | "LAST_ADMIN_REQUIRED" | "MATERIAL_TYPE_NOT_ALLOWED" | "MATERIAL_TOO_LARGE" | "BACKUP_REQUIRED" | "NOT_RESOURCE_OWNER" | "LOGIN_THROTTLED";
         /** @description RFC 7807 problem detail (D8). `code` is the contract; `title` and `detail` are prose. */
         Problem: {
             /**
@@ -2563,6 +2563,10 @@ export interface components {
         /** @description A `SCENARIO_INVALID` problem, carrying the complete validation report. */
         ScenarioProblem: components["schemas"]["Problem"] & {
             validation_report: components["schemas"]["ScenarioValidationReport"];
+        };
+        /** @description (additive, I7 E51, G5) A `LOGIN_THROTTLED` problem; `retry_after_s` repeats the `Retry-After` header. */
+        LoginThrottledProblem: components["schemas"]["Problem"] & {
+            retry_after_s: number;
         };
         /**
          * @description Account role (D8). Distinct from `RoleType`, which is a simulation role.
@@ -2868,7 +2872,7 @@ export interface components {
             /** Format: date-time */
             ts: string;
             /** @enum {string} */
-            source: "BACKEND_LOG" | "MODEL_ERROR" | "INFERENCE_FATAL";
+            source: "BACKEND_LOG" | "VOICE_AGENT_LOG" | "SIP_GATEWAY_LOG" | "MODEL_ERROR" | "INFERENCE_FATAL";
             message: string;
             /** Format: uuid */
             session_id: string | null;
@@ -4961,6 +4965,18 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /**
+         * @description (additive, I7 E51, G5, ТЗ ¶295) `LOGIN_THROTTLED` — too many failed logins for this
+         *     username or client IP; `Retry-After` (seconds) is also on the response header.
+         */
+        TooManyRequests: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["LoginThrottledProblem"];
+            };
+        };
     };
     parameters: {
         /** @description (additive, I3 E6b) A ДДС call's `call_id` (80 §80.3.1). */
@@ -5018,6 +5034,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             422: components["responses"]["UnprocessableEntity"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     getCurrentUser: {

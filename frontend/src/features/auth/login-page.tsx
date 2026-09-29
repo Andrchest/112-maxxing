@@ -6,7 +6,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
-import { login as loginRequest, problemMessageRu, type ProblemCode } from '@/shared/api';
+import { login as loginRequest, loginThrottledMessageRu, problemMessageRu, type ProblemCode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { useAuthStore, homeRouteForRole } from '@/entities/session';
 
@@ -34,7 +34,9 @@ export function LoginPage() {
 
   const errorMessage = mutation.isError
     ? mutation.error instanceof ProblemError
-      ? problemMessageRu(mutation.error.code as ProblemCode)
+      ? mutation.error.code === 'LOGIN_THROTTLED'
+        ? loginThrottledMessageRu(mutation.error.problem)
+        : problemMessageRu(mutation.error.code as ProblemCode)
       : t('problemUnknown')
     : null;
 

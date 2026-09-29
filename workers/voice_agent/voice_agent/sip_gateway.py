@@ -135,10 +135,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     # I4 E25 (D31): one JSON object per log line under `SIM_LOG_FORMAT=json` (the default);
     # `text` keeps the former `%(asctime)s %(levelname)s %(name)s: %(message)s` line.
+    # I7 E51 (G6, ТЗ ¶207): `SIM_LOG_DIR`, when set, also opens a rotated `sip-gateway.log`.
     configure_logging(
         read_env_value("SIM_LOG_FORMAT") or "json",
         service="sip-gateway",
         level=args.log_level,
+        log_dir=read_env_value("SIM_LOG_DIR") or None,
     )
     try:
         config = SipGatewayConfig.from_env()

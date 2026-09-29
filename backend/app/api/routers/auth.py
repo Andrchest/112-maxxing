@@ -16,6 +16,7 @@ from app.api.schemas.auth import (
 )
 from app.api.security import CurrentUserDep
 from app.application.auth.login import InvalidCredentialsError, LoginCommand, LoginResult
+from app.application.auth.login_guard import LoginThrottledError
 from app.application.ports.audit_log import AuditAction, AuditEntry, AuditOutcome
 from app.application.ports.token_service import InvalidTokenError
 
@@ -41,14 +42,28 @@ async def login_user(
     I4 E25: the attempt is audited here, not by the middleware, because it is unauthenticated —
     `LOGIN_SUCCEEDED` with the account, or `LOGIN_FAILED` with no user; the attempted username is
     `target_ids.username` and the password is never part of the entry.
+
+    I7 E51 (G5, ТЗ ¶295): `LoginGuard.check` runs first — a throttled username or client IP never
+    reaches `Login`, so it never pays the password hasher's work and never learns whether the
+    password would have matched. A real failure feeds the guard's counters; a success clears the
+    username's.
     """
+    client_ip = request.client.host if request.client is not None else None
+    guard = container.login_guard()
+    try:
+        await guard.check(username=body.username, client_ip=client_ip)
+    except LoginThrottledError as exc:
+        await _audit_login_throttled(request, container, body.username, exc)
+        raise
     try:
         result = await container.login()(
             LoginCommand(username=body.username, password=body.password)
         )
     except InvalidCredentialsError:
+        await guard.record_failure(username=body.username, client_ip=client_ip)
         await _audit_login(request, container, body.username, result=None)
         raise
+    await guard.record_success(username=body.username)
     await _audit_login(request, container, body.username, result=result)
     return token_response_schema(result)
 
@@ -71,6 +86,27 @@ async def _audit_login(
             role=result.user.user_role if result is not None else None,
             operation_id="loginUser",
             target_ids={"username": username},
+            client_ip=client.host if client is not None else None,
+        )
+    )
+    mark_recorded(request)
+
+
+async def _audit_login_throttled(
+    request: Request, container: Container, username: str, error: LoginThrottledError
+) -> None:
+    """One `LOGIN_THROTTLED` entry (I7 E51, G5) — no user, `429`, never the password."""
+    client = request.client
+    await container.audit_recorder.record(
+        AuditEntry(
+            ts=container.clock.now(),
+            action=AuditAction.LOGIN_THROTTLED,
+            method=request.method,
+            path_template=request.url.path,
+            status=429,
+            outcome=AuditOutcome.DENIED,
+            operation_id="loginUser",
+            target_ids={"username": username, "retry_after_s": str(error.retry_after_s)},
             client_ip=client.host if client is not None else None,
         )
     )

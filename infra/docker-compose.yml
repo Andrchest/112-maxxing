@@ -194,9 +194,14 @@ services:
       # the same `./backups/last.json` the `backup` service below writes, through a read-only bind
       # of the same host directory (the backup service does not mount a *named* volume for it).
       SIM_BACKUP_STATUS_PATH: /backups/last.json
+      # I7 E51 (G6, ТЗ ¶207): the «Ошибки» tab's `BACKEND_LOG` source has no file to read unless
+      # this is set — shared with `voice-agent`/`sip-gateway` below over one named volume so
+      # `getErrorReport` finds all three rotated logs in the same directory.
+      SIM_LOG_DIR: /var/log/sim
     volumes:
       - recordings-data:/data
       - ../backups:/backups:ro
+      - logs-data:/var/log/sim
     ports:
       - "${SIM_API_PORT:-8100}:8100"
     depends_on:
@@ -272,9 +277,13 @@ services:
       SIM_ASR_WARMUP_SAMPLE_PATH: /models/warmup/warmup_ru.wav
       # loopback only, INSIDE this container (R7 of the E18 brief) — never published to the host.
       SIM_VOICE_AGENT_HTTP_PORT: ${SIM_VOICE_AGENT_HTTP_PORT:-8113}
+      # I7 E51 (G6, ТЗ ¶207): opens the file handler (`voice-agent.log`, see `voice_agent/main.py`)
+      # onto the same named volume the backend reads back through `getErrorReport`.
+      SIM_LOG_DIR: /var/log/sim
     volumes:
       - ${MODELS_DIR:-../models}:/models:ro
       - recordings-data:/data
+      - logs-data:/var/log/sim
       # Read-only, for `make preflight` only (E20): under compose the preflight runs INSIDE this
       # container — the one vantage point that reaches every dependency (its own loopback 8113,
       # `llama-server:8080`, `/models`, the GPU) — and check #10 validates `scenarios/examples`
@@ -348,6 +357,10 @@ services:
       SIM_SIP_TLS_PORT: "5061"
       SIM_SIP_TLS_CERT: /certs/server.crt
       SIM_SIP_TLS_KEY: /certs/server.key
+      # I7 E51 (G6, ТЗ ¶207): opens the file handler (`sip-gateway.log`, see
+      # `voice_agent/sip_gateway.py`) onto the same named volume the backend reads back through
+      # `getErrorReport`.
+      SIM_LOG_DIR: /var/log/sim
     volumes:
       # The server certificate and key only (the CA key never enters a container), exactly as the
       # `edge` service below mounts them; `create_host_path: false` makes `up` name the missing
@@ -364,6 +377,7 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - logs-data:/var/log/sim
     ports:
       # SIP signalling (udp+tcp, and TLS on 5061) and the RTP/SRTP range, published so softphones
       # on other workstations reach them; SDP advertises SIM_SIP_MEDIA_IP (the host's LAN address).
@@ -546,3 +560,7 @@ volumes:
   # not a host bind mount, for the containerized stack — purge/retention runs inside the container
   # that holds it (`docker compose exec backend python -m app.cli purge_recordings`).
   recordings-data:
+  # I7 E51 (G6, ТЗ ¶207): the rotated JSON logs `getErrorReport`'s «Ошибки» tab reads — one named
+  # volume shared by `backend` (`backend.log`), `voice-agent` (`voice-agent.log`) and
+  # `sip-gateway` (`sip-gateway.log`), all mounted at `/var/log/sim`.
+  logs-data:

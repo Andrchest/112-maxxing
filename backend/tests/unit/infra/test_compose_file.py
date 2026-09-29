@@ -194,8 +194,20 @@ def test_the_sip_gateway_serves_tls_with_the_make_certs_server_certificate_only(
     assert environment["SIM_SIP_TLS_PORT"] == "5061"
     assert environment["SIM_SIP_TLS_CERT"] == "/certs/server.crt"
     assert environment["SIM_SIP_TLS_KEY"] == "/certs/server.key"
-    mounts = {volume["source"]: volume for volume in gateway["volumes"]}
+    # I7 E51 (G6) added a plain named-volume mount (`logs-data:/var/log/sim`) alongside these two
+    # long-form bind mounts; only the dict-shaped entries are bind mounts to check here.
+    mounts = {volume["source"]: volume for volume in gateway["volumes"] if isinstance(volume, dict)}
     assert set(mounts) == {"./certs/server.crt", "./certs/server.key"}
     for volume in mounts.values():
         assert volume["read_only"] is True
         assert volume["bind"]["create_host_path"] is False
+
+
+def test_backend_voice_agent_and_sip_gateway_share_one_logs_volume(compose_doc: dict) -> None:
+    """I7 E51 (G6, ТЗ ¶207): `getErrorReport`'s «Ошибки» tab has nothing to read unless
+    `SIM_LOG_DIR` is set and the three processes' rotated logs land in the same place."""
+    assert "logs-data" in compose_doc["volumes"]
+    for name in ("backend", "voice-agent", SIP_GATEWAY):
+        service = compose_doc["services"][name]
+        assert service["environment"]["SIM_LOG_DIR"] == "/var/log/sim"
+        assert "logs-data:/var/log/sim" in service["volumes"]

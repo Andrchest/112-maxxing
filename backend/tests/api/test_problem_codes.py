@@ -26,6 +26,7 @@ _RESPONSE_STATUS: dict[str, int] = {
     "Conflict": 409,
     "UnprocessableEntity": 422,
     "ServiceUnavailable": 503,
+    "TooManyRequests": 429,  # additive, I7 E51 (G5)
 }
 
 

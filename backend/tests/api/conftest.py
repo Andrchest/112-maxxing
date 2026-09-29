@@ -91,6 +91,31 @@ async def clean_database(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
         await connection.execute(_TRUNCATE_SESSION_TABLES)
 
 
+@pytest.fixture(autouse=True)
+async def _clean_login_throttle(redis_client: redis_asyncio.Redis) -> AsyncIterator[None]:
+    """I7 E51 (G5): `LoginGuard`'s Redis keys are namespaced by *username* and *client IP* — the
+    same usernames (`PASSWORDS`) and the same `httpx.ASGITransport` fake client IP
+    (`('127.0.0.1', 123)`, hence one shared `login_throttle:ip:127.0.0.1` key) repeat across this
+    whole package. Every other Redis-backed port here is keyed by a fresh UUID per test, so this
+    collision is new: without clearing it, one test's deliberate login failures could throttle
+    another's. Never a `FLUSHDB` — that would also drop the idempotency/runner-lock/... keys a
+    same-session test still needs.
+    """
+
+    async def _clear() -> None:
+        cursor = 0
+        while True:
+            cursor, keys = await redis_client.scan(cursor, match="login_throttle:*", count=500)
+            if keys:
+                await redis_client.delete(*keys)
+            if cursor == 0:
+                break
+
+    await _clear()
+    yield
+    await _clear()
+
+
 @pytest.fixture(scope="package", autouse=True)
 async def _reference_data_lifecycle(migrated_engine: AsyncEngine) -> AsyncIterator[None]:
     """Leave `users`/`scenarios` exactly as this package found them once every test here has run.

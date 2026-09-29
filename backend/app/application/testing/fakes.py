@@ -53,6 +53,7 @@ __all__ = [
     "InMemoryEventSubscription",
     "InMemoryIdempotencyStore",
     "InMemoryLastSeqNoCache",
+    "InMemoryLoginAttemptStore",
     "InMemoryReportExplanationRepository",
     "InMemoryRunnerLock",
     "InMemoryScoreRepository",
@@ -371,6 +372,36 @@ class InMemoryIdempotencyStore:
     def forget(self, key: str) -> None:
         """Drop the key, as a lapsed TTL or a `FLUSHALL` would (§40.6's documented loss)."""
         self.values.pop(key, None)
+
+
+class InMemoryLoginAttemptStore:
+    """A `LoginAttemptStore` that is a `dict` (I7 E51, G5).
+
+    No real TTL: a test that wants a key's window to have lapsed calls `expire_now`, which drops
+    the key — the same observable event a real `SIM_LOGIN_WINDOW_S` expiry produces, without
+    making the suite wait for it. The production adapter is
+    `app.infrastructure.realtime.redis_login_attempts.RedisLoginAttemptStore`.
+    """
+
+    def __init__(self) -> None:
+        #: `key -> current failure count`.
+        self.counts: dict[str, int] = {}
+
+    async def count(self, key: str) -> int:
+        return self.counts.get(key, 0)
+
+    async def increment(self, key: str, *, window_s: int) -> int:
+        del window_s  # no real expiry to schedule; see `expire_now`
+        new_value = self.counts.get(key, 0) + 1
+        self.counts[key] = new_value
+        return new_value
+
+    async def clear(self, key: str) -> None:
+        self.counts.pop(key, None)
+
+    def expire_now(self, key: str) -> None:
+        """Simulate the key's window lapsing, as a real `SIM_LOGIN_WINDOW_S` expiry would."""
+        self.counts.pop(key, None)
 
 
 # ---------------------------------------------------------------------------------------------

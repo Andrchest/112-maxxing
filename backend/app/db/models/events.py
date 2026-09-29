@@ -271,6 +271,7 @@ AUDIT_ACTIONS: tuple[str, ...] = (
     "LOGIN_FAILED",
     "ACCESS_DENIED",
     "WS_CONNECTED",
+    "LOGIN_THROTTLED",  # I7 E51 (G5, ТЗ ¶295), migration `0020`
 )
 #: `audit_log.outcome`, literal in the HLD (`app.application.ports.audit_log.AuditOutcome`).
 AUDIT_OUTCOMES: tuple[str, ...] = ("OK", "DENIED", "ERROR")

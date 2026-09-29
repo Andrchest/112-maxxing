@@ -15,6 +15,8 @@ import { getErrorReport, problemMessageRu, queryKeys, type ErrorRecordView, type
 
 const SOURCE_LABEL_KEY: Record<ErrorRecordView['source'], keyof typeof ru> = {
   BACKEND_LOG: 'adminErrorsSourceBackendLog',
+  VOICE_AGENT_LOG: 'adminErrorsSourceVoiceAgentLog', // additive, I7 E51 (G6)
+  SIP_GATEWAY_LOG: 'adminErrorsSourceSipGatewayLog', // additive, I7 E51 (G6)
   MODEL_ERROR: 'adminErrorsSourceModelError',
   INFERENCE_FATAL: 'adminErrorsSourceInferenceFatal',
 };
