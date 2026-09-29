@@ -159,6 +159,46 @@ describe('LessonReportTable', () => {
     }
   });
 
+  it('(I7 E46b) downloads the report as Excel or PDF, next to the CSV button', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const contentType = url.includes('format=pdf')
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      return new Response('x', { status: 200, headers: { 'content-type': contentType } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = vi.fn(() => 'blob:report');
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const anchors: HTMLAnchorElement[] = [];
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag);
+      if (tag === 'a') anchors.push(el as HTMLAnchorElement);
+      return el;
+    });
+
+    try {
+      render(<DownloadLessonReportCsvButton lessonId="lesson-1" />);
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole('button', { name: ru.reportDownloadExcel }));
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      expect(String(fetchMock.mock.calls[0]![0])).toBe('/api/v1/lessons/lesson-1/report.csv?format=xlsx');
+      expect(anchors[0]!.download).toBe('lesson-lesson-1-report.xlsx');
+
+      await user.click(screen.getByRole('button', { name: ru.reportDownloadPdf }));
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(2));
+      expect(String(fetchMock.mock.calls[1]![0])).toBe('/api/v1/lessons/lesson-1/report.csv?format=pdf');
+      expect(anchors[1]!.download).toBe('lesson-lesson-1-report.pdf');
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+    }
+  });
+
   it('shows the problem when the download is refused', async () => {
     vi.stubGlobal(
       'fetch',

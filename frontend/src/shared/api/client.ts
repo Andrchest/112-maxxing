@@ -1006,12 +1006,13 @@ export type TraineeRatingRow = components['schemas']['TraineeRatingRow'];
  * members, and a `completed_at` window (`from` inclusive, `to` exclusive, ISO date-times). */
 export type TraineeStatisticsQuery = NonNullable<operations['getTraineeStatistics']['parameters']['query']>;
 
-function statisticsQueryString(params: TraineeStatisticsQuery): string {
+function statisticsQueryString(params: TraineeStatisticsQuery, format?: ReportFileFormat): string {
   const query = new URLSearchParams();
   if (params.trainee_id) query.set('trainee_id', params.trainee_id);
   if (params.group_id) query.set('group_id', params.group_id);
   if (params.from) query.set('from', params.from);
   if (params.to) query.set('to', params.to);
+  if (format) query.set('format', format);
   const qs = query.toString();
   return qs ? `?${qs}` : '';
 }
@@ -1028,34 +1029,33 @@ export function getMyHistory(): Promise<MyHistory> {
   return apiFetch('/me/history');
 }
 
-/** A CSV download (`text/csv`, UTF-8 with BOM, `;`) as a `Blob` — like {@link getAudioSegment},
- * fetched directly because {@link apiFetch} assumes JSON. Throws {@link ProblemError} on a
- * problem+json answer. */
-async function fetchCsv(path: string): Promise<Blob> {
-  const headers: Record<string, string> = { Accept: 'text/csv, application/problem+json' };
-  const token = getAuthToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE_PATH}${path}`, { headers });
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/problem+json')) {
-      const problem = (await response.json()) as ProblemDetails;
-      throw new ProblemError(problem, response.status);
-    }
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
-  }
-  return await response.blob();
+/** (I7 E46b) The three downloadable formats every export endpoint answers — `csv` is the
+ * existing one (I4 E33 / I5 E36), `xlsx`/`pdf` are this epic's addition; the session report has
+ * no `csv` (see {@link getSessionReportExport}). */
+export type ReportFileFormat = 'csv' | 'xlsx' | 'pdf';
+
+const XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function mediaTypeOf(format: ReportFileFormat): string {
+  return format === 'csv' ? 'text/csv' : format === 'xlsx' ? XLSX_MEDIA_TYPE : 'application/pdf';
 }
 
-/** `getLessonReportCsv` — the lesson report as a file (same access and numbers as
- * {@link getLessonReport}). */
-export function getLessonReportCsv(lessonId: string): Promise<Blob> {
-  return fetchCsv(`/lessons/${encodeURIComponent(lessonId)}/report.csv`);
+/** `getLessonReportCsv` (`?format=`, I7 E46b) — the lesson report as a file, same access and
+ * numbers as {@link getLessonReport}; `format` defaults to `csv`, and the request URL for that
+ * default is unchanged since I4 E33 (no `?format=` at all — `format=csv` is the server's own
+ * default too). Fetched through {@link fetchFile} below, like the E37 downloads. */
+export function getLessonReportCsv(lessonId: string, format: ReportFileFormat = 'csv'): Promise<Blob> {
+  const query = format === 'csv' ? '' : `?format=${format}`;
+  return fetchFile(`/lessons/${encodeURIComponent(lessonId)}/report.csv${query}`, mediaTypeOf(format));
 }
 
-/** `getTraineeStatisticsCsv` — {@link getTraineeStatistics} as a file. */
-export function getTraineeStatisticsCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
-  return fetchCsv(`/statistics.csv${statisticsQueryString(params)}`);
+/** `getTraineeStatisticsCsv` (`?format=`, I7 E46b) — {@link getTraineeStatistics} as a file. */
+export function getTraineeStatisticsCsv(
+  params: TraineeStatisticsQuery = {},
+  format: ReportFileFormat = 'csv',
+): Promise<Blob> {
+  const path = `/statistics.csv${statisticsQueryString(params, format === 'csv' ? undefined : format)}`;
+  return fetchFile(path, mediaTypeOf(format));
 }
 
 /** `getTraineeRating` (I5 E36, Q-E12-2) — trainees ranked by average score percent, best first
@@ -1064,9 +1064,22 @@ export function getTraineeRating(params: TraineeStatisticsQuery = {}): Promise<T
   return apiFetch(`/statistics/rating${statisticsQueryString(params)}`);
 }
 
-/** `getTraineeRatingCsv` — {@link getTraineeRating} as a file. */
-export function getTraineeRatingCsv(params: TraineeStatisticsQuery = {}): Promise<Blob> {
-  return fetchCsv(`/statistics/rating.csv${statisticsQueryString(params)}`);
+/** `getTraineeRatingCsv` (`?format=`, I7 E46b) — {@link getTraineeRating} as a file. */
+export function getTraineeRatingCsv(
+  params: TraineeStatisticsQuery = {},
+  format: ReportFileFormat = 'csv',
+): Promise<Blob> {
+  const path = `/statistics/rating.csv${statisticsQueryString(params, format === 'csv' ? undefined : format)}`;
+  return fetchFile(path, mediaTypeOf(format));
+}
+
+/** `getSessionReportExport` (I7 E46b, owner item 6) — the session report as Excel or PDF, same
+ * access as {@link getSessionReport}. No CSV: the session report never had one to extend. */
+export function getSessionReportExport(
+  sessionId: string,
+  format: Extract<ReportFileFormat, 'xlsx' | 'pdf'>,
+): Promise<Blob> {
+  return fetchFile(`/reports/${encodeURIComponent(sessionId)}/export?format=${format}`, mediaTypeOf(format));
 }
 
 // --- I4 E30: Admin UI (71 §71.7) — typed wrappers over E28's accounts and E29's monitoring
@@ -1178,9 +1191,10 @@ export type PassVerdictView = components['schemas']['PassVerdictView'];
 // Q-E16-1) — the audit itself is server-side (E25's middleware); this section is the two new
 // downloads' typed wrappers.
 
-/** A file download as a `Blob`, like {@link fetchCsv} but for a caller-chosen `Accept` (JSON, XML)
- * — fetched directly because {@link apiFetch} assumes JSON *parsed*, not JSON *as a file*. Throws
- * {@link ProblemError} on a problem+json answer. */
+/** A file download as a `Blob` for a caller-chosen `Accept` (CSV, XLSX, PDF, JSON, XML — see the
+ * I7 E46b exports above and the E37 downloads below) — fetched directly because {@link apiFetch}
+ * assumes JSON *parsed*, not JSON *as a file*. Throws {@link ProblemError} on a problem+json
+ * answer. */
 async function fetchFile(path: string, accept: string): Promise<Blob> {
   const headers: Record<string, string> = { Accept: `${accept}, application/problem+json` };
   const token = getAuthToken();

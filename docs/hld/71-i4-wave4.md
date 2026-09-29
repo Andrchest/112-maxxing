@@ -1442,3 +1442,64 @@ new column.
 choices left open.
 
 **HLD gaps.** None found.
+## 71.19.1 I7 E46b — Excel and PDF export (owner item 6)
+
+**Purpose.** Every place that already offers a CSV (statistics, the trainee rating, the lesson
+report) gains «Excel» and «PDF» next to it, same view, same filters, same auth; the session
+report, which never had a CSV, gets the two directly.
+
+**Design.**
+- **Dependencies.** `openpyxl` moved from the workspace root's `tools` dependency group into
+  `backend/pyproject.toml`'s runtime dependencies (it renders the `.xlsx`); `reportlab` was added
+  there too (it renders the `.pdf`). `backend/app/infrastructure/export/fonts/` bundles
+  `DejaVuSans.ttf` + `DejaVuSans-Bold.ttf` (copied verbatim from this machine's `fonts-dejavu-core`
+  package) and their `LICENSE`, so the PDF's Cyrillic never depends on a system font being present.
+- **The port.** `app.application.ports.report_exporter.ReportExporter` (`render_xlsx`,
+  `render_pdf`) takes an `ExportDocument` — a title, a Russian filters line, a
+  `generated_at_moscow(clock)` stamp, and one `ExportTable` (header + typed rows) per XLSX
+  sheet / PDF section. Cells stay typed (`int`/`float`/`date`/`datetime`/`str`/`None`) all the way
+  to the adapter — never the CSV's decimal-comma strings — so `openpyxl` writes a genuine number or
+  date cell (D11: still a rendering of the same view, never a second computation). The one adapter,
+  `app.infrastructure.export.report_exporter.StandardReportExporter`, is stateless and wired in
+  `container.py`'s own `# --- I7 E46b ---` section (`self.report_exporter`, replaceable by a test).
+- **Document builders**, one per existing view, each producing the same numbers as its CSV
+  (`app.application.statistics.statistics_export`, `.trainee_rating_export`,
+  `app.application.reports.lesson_report_export`, `.session_report_export`). The lesson report and
+  the session report split into more than one sheet/section (cards vs. norms/reaction-times for the
+  lesson report; summary / categories / rule results / timeline / norms for the session report,
+  SPEC §29's scored numeric core — the report's nested free-text sections, final card values,
+  transcript, ДДС decisions' sub-lists, text quality spans, stay JSON/UI-only for now, a technical
+  scoping choice, not a product one).
+- **Endpoints.** `getTraineeStatisticsCsv`, `getTraineeRatingCsv` and `getLessonReportCsv` gained
+  an optional `format=csv|xlsx|pdf` query parameter (`csv` default, byte-identical to before this
+  epic — same route, same operationId, same response for the default case). The session report has
+  no CSV to extend, so it gets a sibling endpoint, `getSessionReportExport`
+  (`GET /api/v1/reports/{session_id}/export?format=xlsx|pdf`, `format` required, no default).
+  `Content-Disposition` on every xlsx/pdf response carries a Russian file name plus its ASCII-safe
+  fallback (`app.api.export_headers.content_disposition`, RFC 6266 §4.3 / RFC 5987 — the CSV
+  branch's own header is untouched).
+- **Audit.** None of the three original CSV endpoints write an audit row, so their new xlsx/pdf
+  branches do not either (the brief's own condition: "audited like the CSV export is, if it is").
+- **"History" has no CSV today** (`getMyHistory`, `/api/v1/me/history`) — the brief's own list
+  named it among the places to check, but there is nothing there to extend; not built, and not an
+  owner question either (a factual finding, not a product-level choice).
+
+**Data / DB.** None (no migration).
+
+**API** (additive, `docs/hld/openapi.yaml`): `format` query parameter on `getTraineeStatisticsCsv`
+/ `getTraineeRatingCsv` / `getLessonReportCsv` (`ExportFormatParam`, `csv|xlsx|pdf`, default `csv`);
+new `getSessionReportExport` (`ExportFormatXlsxPdfParam`, `xlsx|pdf`, required). No new
+`ProblemCode` (the existing per-endpoint auth/404/409 responses cover every format alike).
+
+**Acceptance.**
+- API tests per format: content type, an xlsx opens with `openpyxl` and its typed cells round-trip
+  the JSON's numbers, a pdf starts with `%PDF` (and is checked against `pypdf` for the Cyrillic
+  title when that package happens to be installed — never a hard new dependency, the brief's own
+  fallback to size/magic otherwise); the existing CSV assertions are unchanged, plus an explicit
+  byte-identity check between the default and an explicit `format=csv`.
+- vitest for the buttons: «Скачать CSV» / «Скачать Excel» / «Скачать PDF» on the statistics page
+  (both the statistics and the rating card), the lesson report table, and the session report page
+  (Excel/PDF only, no CSV button ever rendered there).
+
+**Not built (owner questions).** None — every choice CHANGE names is a technical implementation
+detail (endpoint shape, section split, file naming); no product-level question was met.

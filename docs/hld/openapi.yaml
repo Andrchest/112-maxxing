@@ -2324,6 +2324,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # --- I7 E46b (owner item 6): the session report has no CSV, so it goes straight to Excel/PDF ---
+  /api/v1/reports/{session_id}/export:
+    get:
+      tags: [reports]
+      operationId: getSessionReportExport
+      summary: (additive, I7 E46b) The session report as Excel or PDF — same access as getSessionReport.
+      description: |
+        `getSessionReport`'s own view, filtered per viewer the same way (SPEC §29's scored,
+        numeric core: totals, categories, the visible rule results, the visible timeline, norms
+        and reaction times — one sheet/section each). No CSV precedent to extend, so this is a
+        sibling endpoint rather than a `format=` addition to `getSessionReport` itself.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - $ref: '#/components/parameters/ExportFormatXlsxPdfParam'
+      responses:
+        '200':
+          description: The Excel or PDF file (`format`).
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  # --- end I7 E46b -----------------------------------------------------------------------------
+
   /api/v1/reports/{session_id}/rescore:
     post:
       tags: [reports]
@@ -3335,21 +3365,28 @@ paths:
     get:
       tags: [lessons]
       operationId: getLessonReportCsv
-      summary: (additive, I4 E33) The lesson report as CSV — ТЗ ¶360, ¶379.
+      summary: (additive, I4 E33; I7 E46b) The lesson report as CSV, Excel or PDF — ТЗ ¶360, ¶379.
       description: |
-        Same access and numbers as `getLessonReport`. UTF-8 with BOM, `;` separator, Russian
-        column headers, decimal comma; one row per card and norm (a card without a norm gets one
-        row), then the weighted total.
+        Same access and numbers as `getLessonReport`. `format=csv` (the default, unchanged since
+        I4 E33): UTF-8 with BOM, `;` separator, Russian column headers, decimal comma; one row per
+        card and norm (a card without a norm gets one row), then the weighted total. (I7 E46b)
+        `format=xlsx`/`pdf`: the same numbers as two sections ("Карточки", "Нормативы и время
+        реакции") instead of one wide table.
       x-action: '-'
       x-emits: []
       parameters:
         - $ref: '#/components/parameters/LessonIdParam'
+        - $ref: '#/components/parameters/ExportFormatParam'
       responses:
         '200':
-          description: The CSV file.
+          description: The CSV, Excel or PDF file (`format`).
           content:
             text/csv:
               schema: { type: string }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -3386,7 +3423,11 @@ paths:
     get:
       tags: [statistics]
       operationId: getTraineeStatisticsCsv
-      summary: (additive, I4 E33) getTraineeStatistics as CSV (same access, same numbers) — ТЗ ¶360, ¶379.
+      summary: (additive, I4 E33; I7 E46b) getTraineeStatistics as CSV, Excel or PDF (same access, same numbers) — ТЗ ¶360, ¶379.
+      description: |
+        `format=csv` (the default, unchanged since I4 E33): UTF-8 with BOM, `;` separator, Russian
+        headers, decimal comma. (I7 E46b) `format=xlsx`/`pdf`: the same rows and columns, typed
+        cells (numbers as numbers).
       x-action: '-'
       x-emits: []
       parameters:
@@ -3394,12 +3435,17 @@ paths:
         - $ref: '#/components/parameters/GroupIdQueryParam'
         - $ref: '#/components/parameters/FromParam'
         - $ref: '#/components/parameters/ToParam'
+        - $ref: '#/components/parameters/ExportFormatParam'
       responses:
         '200':
-          description: The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma).
+          description: The CSV, Excel or PDF file (`format`).
           content:
             text/csv:
               schema: { type: string }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -3454,7 +3500,10 @@ paths:
     get:
       tags: [statistics]
       operationId: getTraineeRatingCsv
-      summary: (additive, I5 E36) getTraineeRating as CSV (same access, same numbers).
+      summary: (additive, I5 E36; I7 E46b) getTraineeRating as CSV, Excel or PDF (same access, same numbers).
+      description: |
+        `format=csv` (the default, unchanged since I5 E36): UTF-8 with BOM, `;` separator, Russian
+        headers, decimal comma. (I7 E46b) `format=xlsx`/`pdf`: the same rows and columns.
       x-action: '-'
       x-emits: []
       parameters:
@@ -3462,12 +3511,17 @@ paths:
         - $ref: '#/components/parameters/GroupIdQueryParam'
         - $ref: '#/components/parameters/FromParam'
         - $ref: '#/components/parameters/ToParam'
+        - $ref: '#/components/parameters/ExportFormatParam'
       responses:
         '200':
-          description: The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma).
+          description: The CSV, Excel or PDF file (`format`).
           content:
             text/csv:
               schema: { type: string }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -3555,6 +3609,18 @@ components:
       required: false
       description: (additive, I4 E33)
       schema: { type: string, format: uuid }
+    ExportFormatParam:
+      name: format
+      in: query
+      required: false
+      description: (additive, I7 E46b) `csv` (default, byte-identical to before this epic), `xlsx` or `pdf`.
+      schema: { type: string, enum: [csv, xlsx, pdf], default: csv }
+    ExportFormatXlsxPdfParam:
+      name: format
+      in: query
+      required: true
+      description: (additive, I7 E46b) `xlsx` or `pdf` — no CSV precedent for this report, so there is no default.
+      schema: { type: string, enum: [xlsx, pdf] }
 
   responses:
     Unauthorized:

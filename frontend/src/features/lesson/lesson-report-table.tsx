@@ -1,8 +1,9 @@
 // I4 E33 (71 §71.10; ТЗ ¶329 REQ-2271–2275, ¶360, ¶379): the lesson report as a table — per
 // scored card its points, weight, failed rules, critical errors and its times against the system's
 // norms (`LessonReport.cards[].norms`, measured against the session's recorded timers) — plus
-// «Скачать CSV» (`getLessonReportCsv`, the same numbers as a file). Every number is shown exactly
-// as the server sent it (D11); a norm that was not measured says so rather than showing zero.
+// «Скачать CSV» / «Скачать Excel» / «Скачать PDF» (`getLessonReportCsv`'s `?format=`, I7 E46b,
+// the same numbers as a file). Every number is shown exactly as the server sent it (D11); a norm
+// that was not measured says so rather than showing zero.
 // I4 E35 (71 §71.12): a «Грамотность» column, the card's flagged-word/street count from
 // `LessonReport.cards[].text_quality` (the same object the session report's own section reads);
 // «—» for an unscored card or when the checker was unavailable for it.
@@ -27,9 +28,18 @@ import {
   type LessonReport,
   type NormView,
   type ProblemCode,
+  type ReportFileFormat,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { saveBlob } from '@/shared/lib/download';
+
+// (I7 E46b) CSV first, so `screen.getByRole('button', { name: ru.lessonReportDownloadCsv })`
+// keeps matching exactly one button.
+const EXPORT_FORMATS: readonly ReportFileFormat[] = ['csv', 'xlsx', 'pdf'];
+
+function exportLabel(format: ReportFileFormat): string {
+  return format === 'csv' ? t('lessonReportDownloadCsv') : format === 'xlsx' ? t('reportDownloadExcel') : t('reportDownloadPdf');
+}
 
 function normLabel(norm: NormView): string {
   if (norm.kind === 'FILL') return t('lessonReportNormFill');
@@ -88,26 +98,35 @@ function ReactionTimeLine({ reaction }: { reaction: LegReactionTimeView }) {
 }
 
 export function DownloadLessonReportCsvButton({ lessonId }: { lessonId: string }) {
-  const [busy, setBusy] = useState(false);
+  const [busyFormat, setBusyFormat] = useState<ReportFileFormat | null>(null);
   const [error, setError] = useState<unknown>(null);
 
-  async function handleDownload() {
-    setBusy(true);
+  async function handleDownload(format: ReportFileFormat) {
+    setBusyFormat(format);
     setError(null);
     try {
-      saveBlob(await getLessonReportCsv(lessonId), `lesson-${lessonId}-report.csv`);
+      saveBlob(await getLessonReportCsv(lessonId, format), `lesson-${lessonId}-report.${format}`);
     } catch (caught) {
       setError(caught);
     } finally {
-      setBusy(false);
+      setBusyFormat(null);
     }
   }
 
   return (
     <div className="flex items-center gap-2">
-      <Button type="button" variant="outline" size="sm" onClick={() => void handleDownload()} disabled={busy}>
-        {busy ? t('lessonReportDownloadingCsv') : t('lessonReportDownloadCsv')}
-      </Button>
+      {EXPORT_FORMATS.map((format) => (
+        <Button
+          key={format}
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void handleDownload(format)}
+          disabled={busyFormat !== null}
+        >
+          {busyFormat === format ? t('lessonReportDownloadingCsv') : exportLabel(format)}
+        </Button>
+      ))}
       {error ? (
         <span role="alert" className="text-sm text-destructive">
           {error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown')}

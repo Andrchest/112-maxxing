@@ -16,12 +16,13 @@ lives on a second router of this module (`instructor_router`).
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Response
 
 from app.api.deps import ContainerDep
+from app.api.export_headers import content_disposition
 from app.api.schemas.comments import (
     ResultCommentListSchema,
     ResultCommentRequestSchema,
@@ -46,7 +47,13 @@ from app.api.security import AdminOrInstructorDep, CurrentUserDep, actor_of
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.lessons.create_lesson import CreateLessonCommand
 from app.application.lessons.queries import assemble_lesson_detail
+from app.application.ports.report_exporter import (
+    PDF_MEDIA_TYPE,
+    XLSX_MEDIA_TYPE,
+    generated_at_moscow,
+)
 from app.application.reports.csv_export import CSV_MEDIA_TYPE, lesson_report_csv
+from app.application.reports.lesson_report_export import lesson_report_export_document
 from app.domain.common.ids import LessonId
 from app.domain.lesson.lesson import Lesson, LessonState
 from app.domain.session.variants import PartialVariants
@@ -284,22 +291,54 @@ async def _detail_by_id(
 
 
 # --- I4 E33 reports, statistics, CSV: `getLessonReportCsv` (`71-i4-wave4.md` §71.10) -------------
+# --- I7 E46b (owner item 6): `?format=xlsx|pdf` beside the CSV, same view, same access ----------
 
 
 @router.get(
     "/{lesson_id}/report.csv",
     operation_id="getLessonReportCsv",
-    summary="The lesson report as CSV (UTF-8 with BOM, `;`, Russian headers).",
+    summary="The lesson report as CSV, Excel or PDF (`?format=`, UTF-8 with BOM for CSV).",
     status_code=200,
     response_class=Response,
 )
 async def get_lesson_report_csv(
-    lesson_id: UUID, container: ContainerDep, user: CurrentUserDep
+    lesson_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    format: Annotated[
+        Literal["csv", "xlsx", "pdf"],
+        Query(description="I7 E46b: `csv` (default), `xlsx` or `pdf`."),
+    ] = "csv",
 ) -> Response:
     """`getLessonReport`'s own view rendered as a file — same access, same numbers (D11)."""
     view = await container.get_lesson_report()(LessonId(lesson_id), user)
+    if format == "csv":
+        return Response(
+            content=lesson_report_csv(view),
+            media_type=CSV_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": f'attachment; filename="lesson-{lesson_id}-report.csv"'
+            },
+        )
+    document = lesson_report_export_document(
+        view, filters_line="", generated_at=generated_at_moscow(container.clock)
+    )
+    if format == "xlsx":
+        return Response(
+            content=container.report_exporter.render_xlsx(document),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": content_disposition(
+                    f"Отчёт по занятию {lesson_id}.xlsx", f"lesson-{lesson_id}-report.xlsx"
+                )
+            },
+        )
     return Response(
-        content=lesson_report_csv(view),
-        media_type=CSV_MEDIA_TYPE,
-        headers={"Content-Disposition": f'attachment; filename="lesson-{lesson_id}-report.csv"'},
+        content=container.report_exporter.render_pdf(document),
+        media_type=PDF_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": content_disposition(
+                f"Отчёт по занятию {lesson_id}.pdf", f"lesson-{lesson_id}-report.pdf"
+            )
+        },
     )

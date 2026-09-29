@@ -21,12 +21,13 @@ it is the one operation here whose status code depends on the request (`200` wit
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Response
 
 from app.api.deps import ContainerDep
+from app.api.export_headers import content_disposition
 from app.api.schemas.comments import (
     ResultCommentListSchema,
     ResultCommentRequestSchema,
@@ -48,7 +49,13 @@ from app.api.schemas.reports import (
 from app.api.security import AdminOrInstructorDep, CurrentUserDep
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.ports.report_explanation_repository import ExplanationAudience
+from app.application.ports.report_exporter import (
+    PDF_MEDIA_TYPE,
+    XLSX_MEDIA_TYPE,
+    generated_at_moscow,
+)
 from app.application.reports.list_inference_metrics import DEFAULT_LIMIT, MAX_LIMIT
+from app.application.reports.session_report_export import session_report_export_document
 from app.application.scoring.rescore_session import RescoreOutcome
 from app.domain.common.ids import SessionId
 
@@ -73,6 +80,54 @@ async def get_session_report(
     an unfinished, aborted or unscored session is refused with `409 REPORT_NOT_READY`."""
     view = await container.get_session_report()(SessionId(session_id), user)
     return session_report_schema(view)
+
+
+# --- I7 E46b (owner item 6): the session report has no CSV, so it goes straight to Excel/PDF ----
+
+
+@router.get(
+    "/{session_id}/export",
+    operation_id="getSessionReportExport",
+    summary="The session report as Excel or PDF (`?format=`, same access as getSessionReport).",
+    status_code=200,
+    response_class=Response,
+)
+async def get_session_report_export(
+    session_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    format: Annotated[Literal["xlsx", "pdf"], Query(description="I7 E46b: `xlsx` or `pdf`.")],
+) -> Response:
+    """`getSessionReport`'s own view, filtered per viewer the same way, rendered as a file — no
+    CSV precedent to extend (the session report never had one), so this is a sibling endpoint
+    rather than a `format=` addition to `getSessionReport` itself (whose `response_model` stays
+    JSON)."""
+    view = await container.get_session_report()(SessionId(session_id), user)
+    document = session_report_export_document(
+        view, filters_line="", generated_at=generated_at_moscow(container.clock)
+    )
+    if format == "xlsx":
+        return Response(
+            content=container.report_exporter.render_xlsx(document),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": content_disposition(
+                    f"Отчёт по сессии {session_id}.xlsx", f"session-{session_id}-report.xlsx"
+                )
+            },
+        )
+    return Response(
+        content=container.report_exporter.render_pdf(document),
+        media_type=PDF_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": content_disposition(
+                f"Отчёт по сессии {session_id}.pdf", f"session-{session_id}-report.pdf"
+            )
+        },
+    )
+
+
+# --- end I7 E46b -----------------------------------------------------------------------------
 
 
 @router.get(

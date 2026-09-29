@@ -1327,4 +1327,8 @@ export const ru = {
   historyColumnTextQualityIssues: 'Замечания к тексту',
   historyResultPassed: 'Сдал',
   historyResultFailed: 'Не сдал',
+  // --- I7 E46b: Excel/PDF next to every «Скачать CSV» (owner item 6) ---
+  reportDownloadExcel: 'Скачать Excel',
+  reportDownloadPdf: 'Скачать PDF',
+  reportDownloadExport: 'Экспорт отчёта',
 } as const;

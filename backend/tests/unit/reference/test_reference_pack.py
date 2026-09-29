@@ -326,8 +326,12 @@ _READERS = ("openpyxl", "docx")
 
 
 def test_backend_app_never_imports_the_readers() -> None:
-    """A-13: the xlsx/docx readers are tools-only; the app and the gate never need them."""
+    """A-13: the xlsx/docx readers are tools-only; the app and the gate never need them.
+
+    I7 E46b: the owner-approved Excel export writes .xlsx with openpyxl, so the export adapter
+    (and only it) may import openpyxl; reading reference sources stays tools-only."""
     offenders: list[str] = []
+    export_dir = REPO_ROOT / "backend" / "app" / "infrastructure" / "export"
     for path in sorted((REPO_ROOT / "backend" / "app").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
@@ -337,7 +341,10 @@ def test_backend_app_never_imports_the_readers() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 names = [node.module]
             for name in names:
-                if name.split(".")[0] in _READERS:
+                top = name.split(".")[0]
+                if top == "openpyxl" and export_dir in path.parents:
+                    continue
+                if top in _READERS:
                     offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {name}")
     assert offenders == []
 

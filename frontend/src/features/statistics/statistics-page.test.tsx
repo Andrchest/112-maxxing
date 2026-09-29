@@ -190,4 +190,44 @@ describe('StatisticsPage', () => {
       click.mockRestore();
     }
   });
+
+  it('(I7 E46b) downloads statistics and rating as Excel or PDF, next to their CSV buttons', async () => {
+    signIn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/v1/statistics.csv') || url.startsWith('/api/v1/statistics/rating.csv')) {
+        const contentType = url.includes('format=pdf')
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        return new Response('x', { status: 200, headers: { 'content-type': contentType } });
+      }
+      if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
+      if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
+      if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      renderPage();
+      const user = userEvent.setup();
+      const [statsExcel] = await screen.findAllByRole('button', { name: ru.reportDownloadExcel });
+      await user.click(statsExcel!);
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/statistics.csv?format=xlsx')).toBe(true);
+
+      const [, ratingPdf] = screen.getAllByRole('button', { name: ru.reportDownloadPdf });
+      await user.click(ratingPdf!);
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(2));
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/statistics/rating.csv?format=pdf')).toBe(true);
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+      click.mockRestore();
+    }
+  });
 });

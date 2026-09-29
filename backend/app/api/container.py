@@ -130,6 +130,7 @@ from app.application.ports.llm import LLMClient
 from app.application.ports.mp3_encoder import Mp3Encoder
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.reference import ReferencePort
+from app.application.ports.report_exporter import ReportExporter
 from app.application.ports.runner_lock import LessonRunnerLock, RunnerLock
 from app.application.ports.sip_bindings import SipBindingDirectory
 from app.application.ports.text_checker import TextCheckerPort
@@ -197,6 +198,7 @@ from app.infrastructure.audit import ContextVarAuditChanges  # I7 E43
 from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
 from app.infrastructure.auth.jwt_token_service import JwtTokenService
 from app.infrastructure.clock import SystemClock
+from app.infrastructure.export.report_exporter import StandardReportExporter
 from app.infrastructure.health import (
     INFERENCE_SERVICES,
     LiveKitHealthProbe,
@@ -288,6 +290,8 @@ class Container:
         owns_redis: bool = True,
         # --- I4 E35 text quality: appended, never inserted among the params above (§71.1) ------
         text_checker: TextCheckerPort | None = None,
+        # --- I7 E46b Excel/PDF export: appended, never inserted among the params above ---------
+        report_exporter: ReportExporter | None = None,
     ) -> None:
         self.settings = settings
         #: False when a test handed in its own engine/Redis and will close them itself.
@@ -499,6 +503,15 @@ class Container:
         self.audit_changes: AuditChangeCollector = audit_changes
         self.audit_change_scope: AuditChangeScope = audit_changes
         # --- end I7 E43 -------------------------------------------------------------------------
+        # --- I7 E46b Excel/PDF export (owner item 6) -------------------------------------------
+        #
+        # One stateless adapter for both formats (`app.application.ports.report_exporter`):
+        # `openpyxl` for `.xlsx`, `reportlab` + the bundled DejaVu font for `.pdf`. A test may
+        # replace it. Appended at the end of `__init__` so nothing above it moves.
+        self.report_exporter: ReportExporter = (
+            report_exporter if report_exporter is not None else StandardReportExporter()
+        )
+        # --- end I7 E46b ------------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
 

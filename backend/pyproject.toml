@@ -36,6 +36,13 @@ dependencies = [
     # a system library, so LGPL's dynamic-linking exception does not obviously apply; the binding
     # is used unmodified and only as a library dependency, which LGPL permits.
     "lameenc>=1.8.4",
+    # I7 E46b: every place that offers a CSV export (statistics, rating, lesson/session report)
+    # gains Excel and PDF next to it. `openpyxl` renders the `.xlsx` (moved here from the
+    # workspace root's `tools` group — `backend/app` now uses it itself, not just the
+    # organizer-workbook import tools); `reportlab` renders the `.pdf` (Cyrillic via a bundled
+    # DejaVu font, `backend/app/infrastructure/export/fonts/`).
+    "openpyxl>=3.1,<4",
+    "reportlab>=4,<5",
 ]
 
 # Heavy ML dependencies are optional extras (D1); adapters import them lazily (E12: warm_up()/

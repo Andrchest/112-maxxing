@@ -20,18 +20,17 @@ dev = [
     "types-PyYAML",
     "httpx",
 ]
-# I3 E2a (HLD 70 §70.6.1, A-13): the reader the reference-pack import tool needs —
-# `backend/tools/import_classifier.py` reads the organizer's classifier xlsx. Tools only: never
-# imported by `backend/app` (`backend/tests/unit/reference/test_reference_pack.py` asserts it),
-# not needed by the gate (the manifest sha check is stdlib) and installed on demand with
-# `uv sync --all-packages --group dev --group tools --inexact`. The «СЛУЖБЫ 112» docx needs no
-# reader: its content is the hand transcription, and its sha256 is plain `hashlib`.
+# I3 E2a (HLD 70 §70.6.1, A-13): `backend/tools/import_classifier.py` reads the organizer's
+# classifier xlsx with `openpyxl` — moved to `backend/pyproject.toml`'s runtime dependencies by
+# I7 E46b (the backend itself now renders `.xlsx` exports), so this group no longer needs to name
+# it; `backend/tests/unit/reference/test_reference_pack.py` still asserts the import boundary
+# (`backend/app` never imports the *readers* under `backend/tools`, A-13). The «СЛУЖБЫ 112» docx
+# needs no reader: its content is the hand transcription, and its sha256 is plain `hashlib`.
 # I5 E41 (HLD 71 §71.12, Q-E23-2): `py7zr` extracts the ФНС КЛАДР `base.7z` for
-# `backend/tools/import_kladr_streets.py`. Tools only, same discipline as `openpyxl` above — the
-# raw archive is never committed, so the extractor (and the test that regenerates from it) is
-# skipped wherever this group is not installed.
+# `backend/tools/import_kladr_streets.py`. Tools only — the raw archive is never committed, so the
+# extractor (and the test that regenerates from it) is skipped wherever this group is not
+# installed.
 tools = [
-    "openpyxl>=3.1,<4",
     "py7zr>=0.21,<1",
 ]
 

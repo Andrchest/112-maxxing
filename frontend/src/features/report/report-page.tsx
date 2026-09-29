@@ -8,6 +8,9 @@
 // I5 E39 (Q-E9b-4 variant а): the release control is disabled, with «Изменять может только
 // преподаватель, создавший занятие», for an instructor who did not create the session
 // (`SessionReport.session.created_by_user_id`); the report and its comments stay open.
+//
+// I7 E46b (owner item 6): «Скачать Excel» / «Скачать PDF» (`SessionReportExportButtons`) — the
+// session report never had a CSV, so this is its first file export, same access as the JSON read.
 import { useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -39,6 +42,7 @@ import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
 import { ExplanationPanel } from './explanation-panel';
 import { CommentsSection } from './comments-section';
+import { SessionReportExportButtons } from './session-report-export-buttons';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -151,6 +155,10 @@ export function ReportPage() {
             ) : null}
           </div>
         ) : null}
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">{t('reportDownloadExport')}:</span>
+        <SessionReportExportButtons sessionId={sessionId} />
       </div>
       {releaseInfo?.released_at ? (
         <p className="text-xs text-muted-foreground">

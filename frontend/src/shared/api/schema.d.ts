@@ -1703,6 +1703,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/{session_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I7 E46b) The session report as Excel or PDF — same access as getSessionReport.
+         * @description `getSessionReport`'s own view, filtered per viewer the same way (SPEC §29's scored,
+         *     numeric core: totals, categories, the visible rule results, the visible timeline, norms
+         *     and reaction times — one sheet/section each). No CSV precedent to extend, so this is a
+         *     sibling endpoint rather than a `format=` addition to `getSessionReport` itself.
+         */
+        get: operations["getSessionReportExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reports/{session_id}/rescore": {
         parameters: {
             query?: never;
@@ -2362,10 +2385,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * (additive, I4 E33) The lesson report as CSV — ТЗ ¶360, ¶379.
-         * @description Same access and numbers as `getLessonReport`. UTF-8 with BOM, `;` separator, Russian
-         *     column headers, decimal comma; one row per card and norm (a card without a norm gets one
-         *     row), then the weighted total.
+         * (additive, I4 E33; I7 E46b) The lesson report as CSV, Excel or PDF — ТЗ ¶360, ¶379.
+         * @description Same access and numbers as `getLessonReport`. `format=csv` (the default, unchanged since
+         *     I4 E33): UTF-8 with BOM, `;` separator, Russian column headers, decimal comma; one row per
+         *     card and norm (a card without a norm gets one row), then the weighted total. (I7 E46b)
+         *     `format=xlsx`/`pdf`: the same numbers as two sections ("Карточки", "Нормативы и время
+         *     реакции") instead of one wide table.
          */
         get: operations["getLessonReportCsv"];
         put?: never;
@@ -2406,7 +2431,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** (additive, I4 E33) getTraineeStatistics as CSV (same access, same numbers) — ТЗ ¶360, ¶379. */
+        /**
+         * (additive, I4 E33; I7 E46b) getTraineeStatistics as CSV, Excel or PDF (same access, same numbers) — ТЗ ¶360, ¶379.
+         * @description `format=csv` (the default, unchanged since I4 E33): UTF-8 with BOM, `;` separator, Russian
+         *     headers, decimal comma. (I7 E46b) `format=xlsx`/`pdf`: the same rows and columns, typed
+         *     cells (numbers as numbers).
+         */
         get: operations["getTraineeStatisticsCsv"];
         put?: never;
         post?: never;
@@ -2467,7 +2497,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** (additive, I5 E36) getTraineeRating as CSV (same access, same numbers). */
+        /**
+         * (additive, I5 E36; I7 E46b) getTraineeRating as CSV, Excel or PDF (same access, same numbers).
+         * @description `format=csv` (the default, unchanged since I5 E36): UTF-8 with BOM, `;` separator, Russian
+         *     headers, decimal comma. (I7 E46b) `format=xlsx`/`pdf`: the same rows and columns.
+         */
         get: operations["getTraineeRatingCsv"];
         put?: never;
         post?: never;
@@ -4914,6 +4948,10 @@ export interface components {
         TraineeIdQueryParam: string;
         /** @description (additive, I4 E33) */
         GroupIdQueryParam: string;
+        /** @description (additive, I7 E46b) `csv` (default, byte-identical to before this epic), `xlsx` or `pdf`. */
+        ExportFormatParam: "csv" | "xlsx" | "pdf";
+        /** @description (additive, I7 E46b) `xlsx` or `pdf` — no CSV precedent for this report, so there is no default. */
+        ExportFormatXlsxPdfParam: "xlsx" | "pdf";
     };
     requestBodies: never;
     headers: never;
@@ -6992,6 +7030,36 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    getSessionReportExport: {
+        parameters: {
+            query: {
+                /** @description (additive, I7 E46b) `xlsx` or `pdf` — no CSV precedent for this report, so there is no default. */
+                format: components["parameters"]["ExportFormatXlsxPdfParam"];
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Excel or PDF file (`format`). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     rescoreSession: {
         parameters: {
             query?: never;
@@ -8012,7 +8080,10 @@ export interface operations {
     };
     getLessonReportCsv: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description (additive, I7 E46b) `csv` (default, byte-identical to before this epic), `xlsx` or `pdf`. */
+                format?: components["parameters"]["ExportFormatParam"];
+            };
             header?: never;
             path: {
                 lesson_id: components["parameters"]["LessonIdParam"];
@@ -8021,13 +8092,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The CSV file. */
+            /** @description The CSV, Excel or PDF file (`format`). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -8079,6 +8152,8 @@ export interface operations {
                 from?: components["parameters"]["FromParam"];
                 /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
                 to?: components["parameters"]["ToParam"];
+                /** @description (additive, I7 E46b) `csv` (default, byte-identical to before this epic), `xlsx` or `pdf`. */
+                format?: components["parameters"]["ExportFormatParam"];
             };
             header?: never;
             path?: never;
@@ -8086,13 +8161,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma). */
+            /** @description The CSV, Excel or PDF file (`format`). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -8164,6 +8241,8 @@ export interface operations {
                 from?: components["parameters"]["FromParam"];
                 /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
                 to?: components["parameters"]["ToParam"];
+                /** @description (additive, I7 E46b) `csv` (default, byte-identical to before this epic), `xlsx` or `pdf`. */
+                format?: components["parameters"]["ExportFormatParam"];
             };
             header?: never;
             path?: never;
@@ -8171,13 +8250,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The CSV file (UTF-8 with BOM, `;`, Russian headers, decimal comma). */
+            /** @description The CSV, Excel or PDF file (`format`). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
                 };
             };
             401: components["responses"]["Unauthorized"];

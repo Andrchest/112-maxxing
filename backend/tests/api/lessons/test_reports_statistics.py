@@ -8,7 +8,10 @@
 * no report path re-scores (D11): with the evaluator made to raise, every E33 read still answers
   and the stored rows are untouched;
 * a TRAINEE asking for someone else's statistics gets `403`;
-* ТЗ ¶165: the statistics over 1000 seeded sessions answer in 30 s or less.
+* ТЗ ¶165: the statistics over 1000 seeded sessions answer in 30 s or less;
+* (I7 E46b, owner item 6) the same three `.csv` endpoints answer `?format=xlsx|pdf` with the same
+  numbers, `format=csv` (the default) is byte-identical to before this epic, and the session
+  report — no CSV to extend — gets its own `.../export?format=xlsx|pdf`.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import pytest
 import sqlalchemy as sa
 from app.domain.common.ids import ScenarioVersionId
 from app.domain.scoring import engine
+from openpyxl import load_workbook
 
 from tests.api.conftest import auth
 from tests.api.lessons.conftest import Lessons, plan_entry
@@ -520,3 +524,155 @@ async def test_statistics_over_1000_seeded_sessions_answer_within_30_seconds(
     ]
     assert row["session_count"] == SEEDED_SESSIONS
     assert elapsed <= REPORT_BUDGET_S, f"getTraineeStatistics took {elapsed:.1f} s"
+
+
+# ---------------------------------------------------------------------------------------------
+# I7 E46b (owner item 6): Excel and PDF next to every CSV, plus the session report's own export
+# ---------------------------------------------------------------------------------------------
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _open_xlsx(content: bytes) -> Any:
+    return load_workbook(io.BytesIO(content))
+
+
+def _pdf_text_or_skip(content: bytes) -> str | None:
+    """The PDF's extracted text via `pypdf`, or `None` when it is not installed — the brief's own
+    fallback ("contains the Cyrillic title via pypdf only if already available")."""
+    pypdf = pytest.importorskip("pypdf", reason="pypdf is not installed; checked size/magic only")
+    reader = pypdf.PdfReader(io.BytesIO(content))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+async def test_statistics_csv_endpoint_answers_xlsx_and_pdf_with_format_query(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    await _ended_lesson(lessons, demo_version_id)
+    token = lessons.tokens["instructor1"]
+    json_rows = {
+        row["trainee_user_id"]: row
+        for row in (await _get(lessons.client, "/api/v1/statistics", token)).json()["rows"]
+    }
+
+    default = await _get(lessons.client, "/api/v1/statistics.csv", token)
+    explicit_csv = await _get(lessons.client, "/api/v1/statistics.csv", token, format="csv")
+    assert explicit_csv.content == default.content, "format=csv is byte-identical to the default"
+    assert explicit_csv.headers["content-type"] == default.headers["content-type"]
+
+    xlsx = await _get(lessons.client, "/api/v1/statistics.csv", token, format="xlsx")
+    assert xlsx.status_code == 200, xlsx.text
+    assert xlsx.headers["content-type"] == XLSX_MEDIA_TYPE
+    assert 'filename="statistics.xlsx"' in xlsx.headers["content-disposition"]
+    assert "filename*=UTF-8''" in xlsx.headers["content-disposition"]
+    workbook = _open_xlsx(xlsx.content)
+    sheet = workbook["Статистика"]
+    header = [cell.value for cell in sheet[5]]
+    assert header[:3] == ["Обучаемый", "Идентификатор", "Рабочее место"]
+    by_id = {row[1].value: row for row in sheet.iter_rows(min_row=6) if row[1].value is not None}
+    for trainee_id, row in json_rows.items():
+        sheet_row = by_id[trainee_id]
+        assert sheet_row[3].value == row["session_count"]  # a real int cell, not a CSV string
+        assert isinstance(sheet_row[3].value, int)
+
+    pdf = await _get(lessons.client, "/api/v1/statistics.csv", token, format="pdf")
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF")
+    assert 'filename="statistics.pdf"' in pdf.headers["content-disposition"]
+    text = _pdf_text_or_skip(pdf.content)
+    if text is not None:
+        assert "Статистика" in text
+
+
+async def test_trainee_rating_csv_endpoint_answers_xlsx_and_pdf_with_format_query(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    await _ended_lesson(lessons, demo_version_id)
+    token = lessons.tokens["instructor1"]
+
+    xlsx = await _get(lessons.client, "/api/v1/statistics/rating.csv", token, format="xlsx")
+    assert xlsx.status_code == 200, xlsx.text
+    assert xlsx.headers["content-type"] == XLSX_MEDIA_TYPE
+    workbook = _open_xlsx(xlsx.content)
+    assert workbook["Рейтинг"][5][0].value == "Место"
+
+    pdf = await _get(lessons.client, "/api/v1/statistics/rating.csv", token, format="pdf")
+    assert pdf.content.startswith(b"%PDF")
+    text = _pdf_text_or_skip(pdf.content)
+    if text is not None:
+        assert "Рейтинг" in text
+
+
+async def test_lesson_report_csv_endpoint_answers_xlsx_and_pdf_with_format_query(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    lesson_id, _ = await _ended_lesson(lessons, demo_version_id)
+    token = lessons.instructor
+    csv_url = f"/api/v1/lessons/{lesson_id}/report.csv"
+
+    default = await lessons.client.get(csv_url, headers=token)
+    explicit_csv = await lessons.client.get(csv_url, headers=token, params={"format": "csv"})
+    assert explicit_csv.content == default.content, "format=csv is byte-identical to the default"
+
+    xlsx = await lessons.client.get(csv_url, headers=token, params={"format": "xlsx"})
+    assert xlsx.status_code == 200, xlsx.text
+    assert xlsx.headers["content-type"] == XLSX_MEDIA_TYPE
+    workbook = _open_xlsx(xlsx.content)
+    assert set(workbook.sheetnames) == {"Карточки", "Нормативы и время реакции"}
+    assert workbook["Карточки"][5][0].value == "Позиция"
+
+    pdf = await lessons.client.get(csv_url, headers=token, params={"format": "pdf"})
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.content.startswith(b"%PDF")
+    text = _pdf_text_or_skip(pdf.content)
+    if text is not None:
+        assert "Карточки" in text and "Нормативы" in text
+
+
+async def test_session_report_export_endpoint_answers_xlsx_and_pdf(
+    lessons: Lessons, demo_version_id: ScenarioVersionId
+) -> None:
+    lesson_id, first = await _ended_lesson(lessons, demo_version_id)
+    token = lessons.instructor
+    export_url = f"/api/v1/reports/{first}/export"
+
+    missing_format = await lessons.client.get(export_url, headers=token)
+    assert missing_format.status_code == 422, "format is required — no CSV precedent to default to"
+
+    xlsx = await lessons.client.get(export_url, headers=token, params={"format": "xlsx"})
+    assert xlsx.status_code == 200, xlsx.text
+    assert xlsx.headers["content-type"] == XLSX_MEDIA_TYPE
+    assert f'filename="session-{first}-report.xlsx"' in xlsx.headers["content-disposition"]
+    assert "filename*=UTF-8''" in xlsx.headers["content-disposition"]
+    workbook = _open_xlsx(xlsx.content)
+    assert set(workbook.sheetnames) == {
+        "Сводка",
+        "Категории",
+        "Оценка",
+        "Хронология",
+        "Нормативы и время реакции",
+    }
+    summary = {row[0].value: row[1].value for row in workbook["Сводка"].iter_rows(min_row=6)}
+    assert summary["Сессия"] == first
+
+    pdf = await lessons.client.get(export_url, headers=token, params={"format": "pdf"})
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.content.startswith(b"%PDF")
+    text = _pdf_text_or_skip(pdf.content)
+    if text is not None:
+        assert "Отчёт по сессии" in text
+
+    stranger = await lessons.client.get(
+        export_url, headers=auth(lessons.tokens["trainee1"]), params={"format": "xlsx"}
+    )
+    assert stranger.status_code == 403, "the same access rule as getSessionReport"
+
+    released = await lessons.client.post(
+        f"/api/v1/instructor/lessons/{lesson_id}/report/release", headers=lessons.instructor
+    )
+    assert released.status_code == 200, released.text
+    trainee_ok = await lessons.client.get(
+        export_url, headers=auth(lessons.tokens["trainee2"]), params={"format": "xlsx"}
+    )
+    assert trainee_ok.status_code == 200, "the participant reads their own released export"

@@ -1,9 +1,9 @@
 // Route: /instructor/statistics (I4 E33, 71 §71.10; ТЗ ¶101, ¶138, ¶225, ¶232, ¶360, ¶379). One
 // row per trainee — sessions, lessons, the average percent, failed rules by category and the mean
 // deviations from the system's norms — optionally for one trainee group and a date window, plus
-// «Скачать CSV» (`getTraineeStatisticsCsv`, the same rows as a file). Every number is the server's,
-// read from stored scores (D11); the page only rounds it for display. Charts, heat maps and
-// Excel/PDF are bonus items and are not built (Q-E12-2).
+// «Скачать CSV» / «Скачать Excel» / «Скачать PDF» (`getTraineeStatisticsCsv`'s `?format=`, I7
+// E46b, the same rows as a file). Every number is the server's, read from stored scores (D11); the
+// page only rounds it for display.
 // I5 E36 (Q-E12-1, Q-E12-2): two reaction-time average columns beside the deviations, and a
 // «Рейтинг» table (`getTraineeRating` / `getTraineeRatingCsv`), same filters, best trainee first.
 import { useState } from 'react';
@@ -26,6 +26,7 @@ import {
   problemMessageRu,
   queryKeys,
   type ProblemCode,
+  type ReportFileFormat,
   type TraineeStatisticsQuery,
   type UserRole,
 } from '@/shared/api';
@@ -33,6 +34,15 @@ import { ProblemError } from '@/shared/lib/api';
 import { saveBlob } from '@/shared/lib/download';
 import { failedRulesLines, formatMeanDeviationMs, formatMeanDurationMs, formatPercent } from '@/entities/statistics';
 import { formatPassCount } from '@/entities/pass-verdict';
+
+// (I7 E46b) The three download buttons, in this fixed order, for both the statistics and the
+// rating card — CSV first, so existing tests indexing `getAllByRole('button', { name: ... })`
+// keep working unchanged.
+const EXPORT_FORMATS: readonly ReportFileFormat[] = ['csv', 'xlsx', 'pdf'];
+
+function exportLabel(format: ReportFileFormat): string {
+  return format === 'csv' ? t('lessonReportDownloadCsv') : format === 'xlsx' ? t('reportDownloadExcel') : t('reportDownloadPdf');
+}
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -54,9 +64,9 @@ export function StatisticsPage() {
   const [groupId, setGroupId] = useState('');
   const [fromDay, setFromDay] = useState('');
   const [toDay, setToDay] = useState('');
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingFormat, setDownloadingFormat] = useState<ReportFileFormat | null>(null);
   const [downloadError, setDownloadError] = useState<unknown>(null);
-  const [ratingDownloading, setRatingDownloading] = useState(false);
+  const [ratingDownloadingFormat, setRatingDownloadingFormat] = useState<ReportFileFormat | null>(null);
   const [ratingDownloadError, setRatingDownloadError] = useState<unknown>(null);
 
   const query: TraineeStatisticsQuery = {
@@ -78,27 +88,27 @@ export function StatisticsPage() {
     queryFn: () => getTraineeRating(query),
   });
 
-  async function handleDownload() {
-    setDownloading(true);
+  async function handleDownload(format: ReportFileFormat) {
+    setDownloadingFormat(format);
     setDownloadError(null);
     try {
-      saveBlob(await getTraineeStatisticsCsv(query), 'statistics.csv');
+      saveBlob(await getTraineeStatisticsCsv(query, format), `statistics.${format}`);
     } catch (error) {
       setDownloadError(error);
     } finally {
-      setDownloading(false);
+      setDownloadingFormat(null);
     }
   }
 
-  async function handleRatingDownload() {
-    setRatingDownloading(true);
+  async function handleRatingDownload(format: ReportFileFormat) {
+    setRatingDownloadingFormat(format);
     setRatingDownloadError(null);
     try {
-      saveBlob(await getTraineeRatingCsv(query), 'trainee-rating.csv');
+      saveBlob(await getTraineeRatingCsv(query, format), `trainee-rating.${format}`);
     } catch (error) {
       setRatingDownloadError(error);
     } finally {
-      setRatingDownloading(false);
+      setRatingDownloadingFormat(null);
     }
   }
 
@@ -145,9 +155,18 @@ export function StatisticsPage() {
             <Label htmlFor="statistics-to">{t('statisticsToLabel')}</Label>
             <Input id="statistics-to" type="date" value={toDay} onChange={(event) => setToDay(event.target.value)} />
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={() => void handleDownload()} disabled={downloading}>
-            {downloading ? t('lessonReportDownloadingCsv') : t('lessonReportDownloadCsv')}
-          </Button>
+          {EXPORT_FORMATS.map((format) => (
+            <Button
+              key={format}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleDownload(format)}
+              disabled={downloadingFormat !== null}
+            >
+              {downloadingFormat === format ? t('lessonReportDownloadingCsv') : exportLabel(format)}
+            </Button>
+          ))}
           {downloadError ? (
             <span role="alert" className="text-sm text-destructive">
               {problemText(downloadError)}
@@ -212,15 +231,18 @@ export function StatisticsPage() {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">{t('statisticsRatingTitle')}</h2>
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleRatingDownload()}
-              disabled={ratingDownloading}
-            >
-              {ratingDownloading ? t('lessonReportDownloadingCsv') : t('lessonReportDownloadCsv')}
-            </Button>
+            {EXPORT_FORMATS.map((format) => (
+              <Button
+                key={format}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleRatingDownload(format)}
+                disabled={ratingDownloadingFormat !== null}
+              >
+                {ratingDownloadingFormat === format ? t('lessonReportDownloadingCsv') : exportLabel(format)}
+              </Button>
+            ))}
             {ratingDownloadError ? (
               <span role="alert" className="text-sm text-destructive">
                 {problemText(ratingDownloadError)}

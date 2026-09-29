@@ -4,17 +4,21 @@
 Every number is read from stored rows (D11). INSTRUCTOR / ADMIN see every trainee; a TRAINEE sees
 themselves only (another `trainee_id` is `403 FORBIDDEN_FOR_ROLE`). The rating is INSTRUCTOR /
 ADMIN only. Each CSV is its JSON's own view rendered as a file.
+
+(I7 E46b, owner item 6) Both `.csv` endpoints also answer `?format=xlsx|pdf` — same view, same
+filters, same auth, `format=csv` (the default) byte-identical to before this epic.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Response
 
 from app.api.deps import ContainerDep
+from app.api.export_headers import content_disposition
 from app.api.schemas.statistics import (
     MyHistorySchema,
     TraineeStatisticsSchema,
@@ -23,10 +27,17 @@ from app.api.schemas.statistics import (
 )
 from app.api.schemas.trainee_rating import TraineeRatingSchema, trainee_rating_schema
 from app.api.security import CurrentUserDep
+from app.application.ports.report_exporter import (
+    PDF_MEDIA_TYPE,
+    XLSX_MEDIA_TYPE,
+    generated_at_moscow,
+)
 from app.application.reports.csv_export import CSV_MEDIA_TYPE
 from app.application.statistics.ports import StatisticsFilter
 from app.application.statistics.statistics_csv import statistics_csv
+from app.application.statistics.statistics_export import statistics_export_document
 from app.application.statistics.trainee_rating_csv import trainee_rating_csv
+from app.application.statistics.trainee_rating_export import trainee_rating_export_document
 from app.domain.common.ids import TraineeGroupId, UserId
 
 router = APIRouter(prefix="/api/v1", tags=["statistics"])
@@ -35,6 +46,9 @@ TraineeIdQuery = Annotated[UUID | None, Query()]
 GroupIdQuery = Annotated[UUID | None, Query()]
 FromQuery = Annotated[datetime | None, Query(alias="from", description="Inclusive (UTC).")]
 ToQuery = Annotated[datetime | None, Query(alias="to", description="Exclusive (UTC).")]
+ExportFormatQuery = Annotated[
+    Literal["csv", "xlsx", "pdf"], Query(description="I7 E46b: `csv` (default), `xlsx` or `pdf`.")
+]
 
 
 def _filter(
@@ -49,6 +63,20 @@ def _filter(
         from_utc=from_utc,
         to_utc=to_utc,
     )
+
+
+def _filters_line(query: StatisticsFilter) -> str:
+    """(I7 E46b) The applied filters as one line of Russian text, for the Excel/PDF exports."""
+    parts: list[str] = []
+    if query.trainee_id is not None:
+        parts.append(f"Обучаемый: {query.trainee_id}")
+    if query.group_id is not None:
+        parts.append(f"Группа: {query.group_id}")
+    if query.from_utc is not None:
+        parts.append(f"С: {query.from_utc.isoformat()}")
+    if query.to_utc is not None:
+        parts.append(f"По: {query.to_utc.isoformat()}")
+    return "; ".join(parts)
 
 
 @router.get(
@@ -75,7 +103,7 @@ async def get_trainee_statistics(
 @router.get(
     "/statistics.csv",
     operation_id="getTraineeStatisticsCsv",
-    summary="getTraineeStatistics as CSV (same access, same numbers).",
+    summary="getTraineeStatistics as CSV, Excel or PDF (`?format=`, same access, same numbers).",
     status_code=200,
     response_class=Response,
 )
@@ -86,14 +114,31 @@ async def get_trainee_statistics_csv(
     group_id: GroupIdQuery = None,
     from_utc: FromQuery = None,
     to_utc: ToQuery = None,
+    format: ExportFormatQuery = "csv",
 ) -> Response:
-    view = await container.get_trainee_statistics()(
-        _filter(trainee_id, group_id, from_utc, to_utc), user
+    query = _filter(trainee_id, group_id, from_utc, to_utc)
+    view = await container.get_trainee_statistics()(query, user)
+    if format == "csv":
+        return Response(
+            content=statistics_csv(view),
+            media_type=CSV_MEDIA_TYPE,
+            headers={"Content-Disposition": 'attachment; filename="statistics.csv"'},
+        )
+    document = statistics_export_document(
+        view, filters_line=_filters_line(query), generated_at=generated_at_moscow(container.clock)
     )
+    if format == "xlsx":
+        return Response(
+            content=container.report_exporter.render_xlsx(document),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": content_disposition("Статистика.xlsx", "statistics.xlsx")
+            },
+        )
     return Response(
-        content=statistics_csv(view),
-        media_type=CSV_MEDIA_TYPE,
-        headers={"Content-Disposition": 'attachment; filename="statistics.csv"'},
+        content=container.report_exporter.render_pdf(document),
+        media_type=PDF_MEDIA_TYPE,
+        headers={"Content-Disposition": content_disposition("Статистика.pdf", "statistics.pdf")},
     )
 
 
@@ -132,7 +177,7 @@ async def get_trainee_rating(
 @router.get(
     "/statistics/rating.csv",
     operation_id="getTraineeRatingCsv",
-    summary="getTraineeRating as CSV (same access, same numbers).",
+    summary="getTraineeRating as CSV, Excel or PDF (`?format=`, same access, same numbers).",
     status_code=200,
     response_class=Response,
 )
@@ -143,12 +188,29 @@ async def get_trainee_rating_csv(
     group_id: GroupIdQuery = None,
     from_utc: FromQuery = None,
     to_utc: ToQuery = None,
+    format: ExportFormatQuery = "csv",
 ) -> Response:
-    view = await container.get_trainee_rating()(
-        _filter(trainee_id, group_id, from_utc, to_utc), user
+    query = _filter(trainee_id, group_id, from_utc, to_utc)
+    view = await container.get_trainee_rating()(query, user)
+    if format == "csv":
+        return Response(
+            content=trainee_rating_csv(view),
+            media_type=CSV_MEDIA_TYPE,
+            headers={"Content-Disposition": 'attachment; filename="trainee-rating.csv"'},
+        )
+    document = trainee_rating_export_document(
+        view, filters_line=_filters_line(query), generated_at=generated_at_moscow(container.clock)
     )
+    if format == "xlsx":
+        return Response(
+            content=container.report_exporter.render_xlsx(document),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": content_disposition("Рейтинг.xlsx", "trainee-rating.xlsx")
+            },
+        )
     return Response(
-        content=trainee_rating_csv(view),
-        media_type=CSV_MEDIA_TYPE,
-        headers={"Content-Disposition": 'attachment; filename="trainee-rating.csv"'},
+        content=container.report_exporter.render_pdf(document),
+        media_type=PDF_MEDIA_TYPE,
+        headers={"Content-Disposition": content_disposition("Рейтинг.pdf", "trainee-rating.pdf")},
     )
