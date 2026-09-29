@@ -2184,3 +2184,78 @@ query params as `getTraineeStatistics`); `getActivityHeatmap`
   (a `time.sleep`, so the bound does not depend on CPU load under `-n 4`). While it is still inside
   the checker, `health/live` on the same loop must answer in < 0.5 s. The test fails on the in-loop
   version ("the text check ran inside the event loop").
+## 71.19.48 I7 E48 — Load test: 20/50/100 ДДС trainees + instructor, DB write rate (owner item 8, ТЗ ¶159, ¶164)
+
+**Purpose.** Measure what the ТЗ states as numbers and nothing had measured: ¶159 «Время отклика
+интерфейса не более 2 секунд при нагрузке до 100 пользователей», ¶164 «Скорость записи данных в БД
+не менее 100 операций в секунду», and the owner's item 8 (≥ 20 concurrent trainee sessions plus an
+instructor, no GPU). Fix what broke under that load when the fix was small and safe; report the
+rest. Method, machine and numbers: `docs/benchmarks/load.md`.
+
+**Harness (as built, dev tooling under `benchmarks/`).**
+- `_load_stack.py` — the scratch stack: compose project `sim112load` (PostgreSQL 16 on a data
+  volume, Redis 7), loopback-only ports 35432/36379, refusing the demo's/owner's/test suite's ports
+  (`FORBIDDEN_PORTS`) and any bound port; `alembic upgrade head`, `app.tools.seed_users` (ADMIN
+  password drawn with `secrets`, passed by environment only), `app.tools.import_scenarios`; the real
+  backend as `python -m uvicorn app.api.main:create_app --factory` on 18190 with fake ASR/LLM/TTS/
+  call transport, `SIM_REQUIRE_INFERENCE_READY=false`, the D7 runner on. `down()` = SIGTERM of the
+  captured PID + `docker compose down -v`.
+- `benchmark_load.py` — per N (`--trainees 20 50 100`): ADMIN creates one instructor and N trainees
+  (`createUser`); the instructor creates ONE lesson (`SINGLE_ROLE`, `GENERATED_CARD`,
+  `MEMO_STATUSES`, `street-rubbish-fire`, `--cards-per-trainee` cards per trainee, all at offset 0,
+  each bound by `PlanEntry.participants`) and starts it. Each trainee (logins spread over
+  `--ramp-s`): `getCurrentUser`, `listMyIncidents` every 3 s, and per card `getSessionSnapshot`,
+  the WebSocket (`resume` from 0), `listDdsLegs`, `listNotifications`, then Служба 101's leg
+  `open`→`ACCEPTED`(order number, comment)→`RESPONSE_STARTED`→`ARRIVED`→`WORKING`→`COMPLETED`
+  (comment), every other leg `open`→`NOT_ACCEPTED` (comment), `setDdsCardMarks`,
+  `closeDdsIncident`, with a seeded 1–3 s think time and a legs re-read after each status. The
+  instructor polls `getLesson` + `getInstructorSessionOverview` (round-robin) every 3 s with one
+  WebSocket open. Recorded: every request (op, ms, status, bytes), WebSocket event delivery
+  (receive time − `timestamp_utc`), WebSocket connect, backend RSS/CPU (`/proc` of the captured
+  PID). The lesson is aborted after the run if it is not terminal.
+- `benchmark_db.py` — N writers × M appends through `SqlAlchemyUnitOfWork.events.append` + commit
+  (one event per transaction) on started sessions with incidents, own stack `sim112loaddb`
+  (35442/36389); appends/s and per-append latency against ¶164's 100/s.
+- `make bench-load` / `make bench-db` (own Makefile section); `benchmarks/tests/test_bench_load.py`
+  unit-tests the pieces with an `httpx.MockTransport` fake backend and an in-memory WebSocket.
+
+**Product fixes (all three found by the harness; before/after in `load.md` §4).**
+1. *Pool starvation in DDS stage automation.* `DdsStageAutomation.__call__` asked the
+   `ResponderProbe` (`ScenarioResponderScripts`, which opens its own Unit of Work) from **inside**
+   its own transaction, in `_play_scripts` and `_ring_call_in_steps`. With 20+ memo sessions ticking
+   at once every tick held one pooled connection and waited for a second: `QueuePool limit … timed
+   out` after 30 s, `startLesson` timed out, every request stalled. Now the probe is asked once, before
+   the transaction opens, and the answer is passed down (`responders` parameter).
+   `ScenarioResponderScripts` caches the answer per session (process-wide, bounded to 4096; a
+   session's scenario version never changes and a version is immutable, D4); a missing session is
+   not cached. INV 3 is unchanged (the probe is still the only reader; the container wiring string
+   test still holds).
+2. *Idle ticks forcing a WAL flush.* `TickSession.__call__` committed when the tick changed nothing,
+   and memo-mode stage automation committed after every tick; both transactions hold the §20.8 row
+   lock (`FOR NO KEY UPDATE`), which gives them a transaction id, so each commit waited for an
+   `fdatasync` — two per ACTIVE session twice a second. On this host (≈ 80 `fdatasync`/s) that
+   queue was the 5–25 s stalls. Now an idle tick ends without a commit (the Unit of Work rolls back on
+   exit — the pattern `AdvanceCallFlow`/`AdvanceDdsCalls` already used). Memo stage automation
+   commits when a scripted step, a deadline event or a brigade call was written, or when the flush
+   set a leg's sticky `accept_missed` (`_accept_missed_marked`: re-reads the stage's legs in the same
+   transaction — the one write the flush makes without an event). The picker branch is unchanged.
+3. *Pool size.* `Settings.db_pool_size` (default 20) and `db_max_overflow` (default 10) —
+   `SIM_DB_POOL_SIZE` / `SIM_DB_MAX_OVERFLOW`, `.env.example` own section — feed
+   `app.db.session.create_engine` (was SQLAlchemy's 5 + 10: overflow connections were closed on
+   return and reopened, each paying asyncpg's pure-Python SCRAM PBKDF2).
+No migration: no index was needed (the hot reads are by `session_id`/`seq_no`, already indexed).
+
+**Reported, not built (larger than small-and-safe).** The per-tick cost of every ACTIVE session
+(each 500 ms tick reads the session three times, the scenario document, world truth, caller belief,
+resources, engine state and the **whole** event log, plus the hooks' own queries) makes the single
+API process CPU-bound from ~40 active sessions; `startLesson` starts every card inside one request
+(2.6 s / 20.4 s / 94.8 s for 40/100/200 cards); `getInstructorSessionOverview` is ~380 KB because
+every assignment repeats the card's `field_specs` (~57 KB each); every request writes an audit row
+with a synchronous commit; `TickSession.resolution_condition_met` (picker mode, `WORKING`) still
+opens a Unit of Work from inside stage automation's transaction — the same nesting as fix 1, not hit
+by the memo load. Owner question Q-I7-E48-1 (`docs/owner-decisions.md`).
+
+**Tests.** `benchmarks/tests/test_bench_load.py` (24: plan, latency, summaries, stack pieces, a whole
+fake run, honest NOT_RUNs); the existing suites around the changed code
+(`tests/api/dds`, `tests/integration/simulation`, `tests/integration/persistence`,
+`tests/invariants`, `tests/api/lessons`, `tests/unit/config`) pass unchanged.

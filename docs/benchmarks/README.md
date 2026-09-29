@@ -19,6 +19,7 @@ sha256, licence, who downloaded it and when) and `docs/benchmarks/results/` for 
 | [`e2e.md`](e2e.md) | SPEC §27's critical product metric (`speech_end_to_first_audio_ms`) and its stage split; barge-in |
 | [`vram.md`](vram.md) | Idle/peak VRAM residency over a realistic VAD→ASR→TTS→LLM sequence, per-component deltas |
 | [`voip.md`](voip.md) | SIP/VoIP one-way delay (ТЗ ¶161, REQ-2139) and the `--concurrent` load sweep (REQ-2138 «≥ 20 concurrent»): p50/p95 delay, RTP loss, jitter, gateway/SFU CPU, per N |
+| [`load.md`](load.md) | (I7 E48) 20/50/100 concurrent ДДС trainees + instructor over HTTP+WS against a fake-provider backend (ТЗ ¶159 «2 с при 100 пользователях»), and N×M EventStore appends/s (ТЗ ¶164 «100 операций/с»); what the load found and fixed |
 | [`models.md`](models.md) | Every model file on disk: source repo, pinned revision, sha256, licence, who downloaded it |
 
 ## Owner-facing summary (2026-09-22)

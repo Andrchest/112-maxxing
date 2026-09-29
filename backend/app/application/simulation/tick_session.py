@@ -130,7 +130,10 @@ class TickSession:
                 assignment_resolved=_assignment_resolved(session),
             )
             if not result.changed:
-                await uow.commit()
+                # I7 E48: nothing was written — the transaction only holds the §20.8 row lock — so
+                # it ends without a commit (the Unit of Work rolls it back on exit). A commit here
+                # made every idle tick of every ACTIVE session wait for a WAL flush, and those
+                # flushes were what a 20-trainee lesson queued behind (docs/benchmarks/load.md).
                 return TickResult(ticked=True, now_ms=now_ms)
 
             attachments = await _attachments(uow, session_id, result.events)

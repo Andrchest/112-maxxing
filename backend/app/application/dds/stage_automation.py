@@ -181,6 +181,12 @@ class DdsStageAutomation:
     async def __call__(self, session_id: SessionId) -> bool:
         """Advance the DDS stage as far as the board allows; `True` when anything fired."""
         resolution_met: bool | None = None
+        # I7 E48: the probe opens a Unit of Work of its own, so it is asked here — before this
+        # hook's transaction takes a pooled connection — and never from inside it. Asked inside,
+        # every ticking memo session held one connection while waiting for a second, and twenty
+        # sessions ticking at once exhausted the pool: every tick and every request then waited
+        # the pool's 30 s timeout (docs/benchmarks/load.md §4). The probe caches per session.
+        responders = await self._responder_probe(session_id)
         async with self._unit_of_work() as uow:
             session = await uow.sessions.get_for_update(session_id)
             if session is None or session.state is not SessionState.ACTIVE:
@@ -192,11 +198,16 @@ class DdsStageAutomation:
                 # Memo mode: stage automation drives legs only, never the stage (§70.4.4) — the
                 # scripted legs first, so the deadline flush below sees their due-stamped steps.
                 legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
-                scripted = await self._play_scripts(uow, session_id, legs, now_ms)
+                scripted = await self._play_scripts(uow, session_id, legs, now_ms, responders)
                 flushed = await uow.events.flush_deadlines(session_id, now_ms)
-                rang = await self._ring_call_in_steps(uow, session, stage, legs, now_ms)
-                await uow.commit()
-                return scripted or bool(flushed) or rang
+                rang = await self._ring_call_in_steps(uow, session, stage, legs, now_ms, responders)
+                moved = scripted or bool(flushed) or rang
+                # I7 E48: an idle tick wrote nothing but the row lock, so it ends without a commit
+                # (rolled back on exit) and spares a WAL flush — unless the flush above set a leg's
+                # sticky `accept_missed`, the one write it can make without an event.
+                if moved or await _accept_missed_marked(uow, stage, legs):
+                    await uow.commit()
+                return moved
             flushed = await uow.events.flush_deadlines(session_id, now_ms)
             if stage is None:
                 await uow.commit()
@@ -262,7 +273,12 @@ class DdsStageAutomation:
         return fired
 
     async def _play_scripts(
-        self, uow: UnitOfWork, session_id: SessionId, legs: list[DDSAssignment], now_ms: int
+        self,
+        uow: UnitOfWork,
+        session_id: SessionId,
+        legs: list[DDSAssignment],
+        now_ms: int,
+        responders: ScriptedResponders | None,
     ) -> bool:
         """Fire every due scripted step of the session's `SCRIPTED` legs (see the module
         docstring); `True` when any was fired."""
@@ -274,7 +290,6 @@ class DdsStageAutomation:
         ]
         if not open_scripted:
             return False
-        responders = await self._responder_probe(session_id)
         log = await uow.events.read(session_id)
         catalog = reference_catalog(self._reference).services(session_pack_id(log))
         moved, events = fire_due_scripted_steps(
@@ -303,6 +318,7 @@ class DdsStageAutomation:
         stage: RoleStage,
         legs: Sequence[DDSAssignment],
         now_ms: int,
+        responders: ScriptedResponders | None,
     ) -> bool:
         """Start an INBOUND call for each due, not yet rung `report: CALL_IN` step of a leg the
         trainee plays (see the module docstring); `True` when one was started."""
@@ -320,7 +336,6 @@ class DdsStageAutomation:
         ]
         if not trainee_legs:
             return False
-        responders = await self._responder_probe(session.id)
         log: list[SessionEvent] | None = None
         started = False
         for leg in trainee_legs:
@@ -395,6 +410,15 @@ class DdsStageAutomation:
             persona_id=None if persona is None else persona.id,
             callee_user_id=callee,
         )
+
+
+async def _accept_missed_marked(
+    uow: UnitOfWork, stage: RoleStage, before: Sequence[DDSAssignment]
+) -> bool:
+    """Whether this transaction's deadline flush set `accept_missed` on any of the stage's legs."""
+    was = {leg.assignment_id: leg.accept_missed for leg in before}
+    after = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
+    return any(leg.accept_missed and not was.get(leg.assignment_id, False) for leg in after)
 
 
 _CALL_HOLDING_STATES = frozenset({DDSStageState.RECEIVED, DDSStageState.ACKNOWLEDGED})

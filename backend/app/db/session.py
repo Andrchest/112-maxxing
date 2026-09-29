@@ -26,7 +26,13 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
     The caller owns the engine and must `await engine.dispose()` when finished.
     """
-    return create_async_engine(settings.database_url, pool_pre_ping=True, future=True)
+    return create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        future=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

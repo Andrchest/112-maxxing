@@ -544,3 +544,20 @@ e2e-scenarios-bundle:
 e2e-scenarios-bundle-http:
 	frontend/e2e/scenarios/build-bundle.sh --http "$(BUNDLE_DIR_HTTP)"
 # --- end I6 SCENARIOS ---------------------------------------------------------------------------
+
+# --- I7 E48: load benchmarks (ТЗ ¶159 «2 с при 100 пользователях», ¶164 «100 записей/с») -------
+# `bench-load` starts its OWN scratch stack — compose project `sim112load`, PostgreSQL + Redis on
+# loopback ports 35432/36379, the backend on 18190 with fake voice/LLM providers, no GPU — drives
+# LOAD_TRAINEES concurrent ДДС trainees plus one instructor over HTTP + WebSocket (each size in
+# turn), writes the JSON+CSV envelope to benchmarks/results/ and tears everything down (`down -v`).
+# `bench-db` measures N×M EventStore appends the same way (project `sim112loaddb`, 35442/36389).
+# Never part of `gate*`; the harness pieces are unit-tested in benchmarks/tests/test_bench_load.py.
+# Method, machine and numbers: docs/benchmarks/load.md. BENCH_ARGS passes through, e.g.
+#   make bench-load LOAD_TRAINEES=20 BENCH_ARGS="--cards-per-trainee 1"
+.PHONY: bench-load bench-db
+LOAD_TRAINEES ?= 20 50 100
+bench-load:
+	$(UV) run python benchmarks/benchmark_load.py --trainees $(LOAD_TRAINEES) $(BENCH_ARGS)
+bench-db:
+	$(UV) run python benchmarks/benchmark_db.py $(BENCH_ARGS)
+# --- end I7 E48 ---------------------------------------------------------------------------------

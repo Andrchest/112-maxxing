@@ -79,6 +79,15 @@ class Settings(BaseSettings):
     #: (`postgresql+asyncpg://user:pass@host/db`), so it is a secret in full, not just its password
     #: half.
     database_url: str = Field(repr=False)
+    #: (I7 E48) The API process's SQLAlchemy pool: connections kept open (`pool_size`) and the
+    #: extra ones opened under a burst and closed again on return (`max_overflow`). SQLAlchemy's
+    #: own 5 + 10 starved a 20-trainee lesson: every ACTIVE session's D7 tick takes a connection
+    #: twice a second, and each overflow connection re-paid asyncpg's SCRAM handshake (a pure-Python
+    #: PBKDF2) when it was reopened (docs/benchmarks/load.md §4). 20 + 10 keeps a classroom's
+    #: working set open and stays well under PostgreSQL's default `max_connections` (100) beside
+    #: the voice agent's own pool.
+    db_pool_size: int = Field(default=20, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
     redis_url: str = Field(repr=False)
     jwt_secret: str = Field(repr=False)
 
