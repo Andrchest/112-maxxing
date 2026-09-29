@@ -363,6 +363,29 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # --- I7 E46a: «Активность» weekday × hour heatmap (admin item 6) --------------------------
+  /api/v1/admin/activity-heatmap:
+    get:
+      tags: [admin]
+      operationId: getActivityHeatmap
+      summary: (additive, I7 E46a) Sessions started, by ISO weekday × hour, Moscow wall time (ADMIN).
+      description: |
+        `simulation_sessions.started_at`, bucketed by ISO weekday (1 = Monday … 7 = Sunday) and
+        hour (0…23) in Moscow wall time (`Europe/Moscow`, manager follow-up: admins read this as
+        local hours, the same zone every export's own "Сформировано" stamp already uses — never
+        UTC). No window: the whole history's own shape of when the system gets used. Only
+        non-empty buckets are listed; an absent `(weekday, hour)` means zero sessions.
+      x-action: '-'
+      x-emits: []
+      responses:
+        '200':
+          description: Non-empty (weekday, hour) buckets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActivityHeatmap' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/admin/server-load:
     get:
       tags: [admin]
@@ -3629,6 +3652,37 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ------------------------------------------- I7 E46a: charts (owner item 6) -------------------
+  /api/v1/statistics/charts:
+    get:
+      tags: [statistics]
+      operationId: getStatisticsCharts
+      summary: (additive, I7 E46a) Score timeline and error heatmap (INSTRUCTOR/ADMIN).
+      description: |
+        Same filters as `getTraineeStatistics`. Two folds over stored `score_results`, no ML, D11:
+        `score_timeline` — one point per scored session in scope, oldest first, its own
+        `session_percent`; `error_heatmap` — one row per trainee in scope × every `ScoringCategory`,
+        each cell the share (0…100 %, `null` without a checked rule in that category) of that
+        trainee's checks in that category that failed. Ownership like `getTypicalErrors`: an
+        INSTRUCTOR's scope is their own lessons' sessions only, an ADMIN's is every scored session.
+        `403 FORBIDDEN_FOR_ROLE` for a TRAINEE.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: The score timeline and the error heatmap for this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatisticsCharts' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -4381,6 +4435,26 @@ components:
               sessions: { type: integer, minimum: 0 }
               lessons: { type: integer, minimum: 0 }
               active_users: { type: integer, minimum: 0 }
+    # --- I7 E46a: «Активность» weekday × hour heatmap (admin item 6) ------------------------
+    ActivityHeatmapCell:
+      description: (additive, I7 E46a) One non-empty `(weekday, hour)` bucket of `getActivityHeatmap`.
+      type: object
+      additionalProperties: false
+      required: [weekday, hour, session_count]
+      properties:
+        weekday: { type: integer, minimum: 1, maximum: 7, description: 'ISO, Moscow wall time: 1 = Monday … 7 = Sunday.' }
+        hour: { type: integer, minimum: 0, maximum: 23, description: 'Moscow wall time (Europe/Moscow).' }
+        session_count: { type: integer, minimum: 0 }
+    ActivityHeatmap:
+      description: (additive, I7 E46a) `getActivityHeatmap`'s response. An absent `(weekday, hour)` means zero sessions.
+      type: object
+      additionalProperties: false
+      required: [cells]
+      properties:
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/ActivityHeatmapCell' }
+    # --- end I7 E46a --------------------------------------------------------------------------
     ServerLoad:
       description: (I4 E29) Every metric is `null` when it cannot be read — never `0`.
       type: object
@@ -7309,6 +7383,64 @@ components:
           type: array
           maxItems: 10
           items: { $ref: '#/components/schemas/TypicalErrorRow' }
+    # ------------------------------------------------ I7 E46a: charts (owner item 6) -----------
+    ScoreTimelinePoint:
+      description: (additive, I7 E46a) One scored session in scope, its own `session_percent`.
+      type: object
+      additionalProperties: false
+      required: [at, score_percent]
+      properties:
+        at: { type: string, format: date-time }
+        score_percent: { type: number, minimum: 0, maximum: 100 }
+    ScoreTimeline:
+      description: (additive, I7 E46a) `getStatisticsCharts.score_timeline` — oldest first.
+      type: object
+      additionalProperties: false
+      required: [points]
+      properties:
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/ScoreTimelinePoint' }
+    ErrorHeatmapCell:
+      description: (additive, I7 E46a) One trainee's share of failed checks in one category; `null` without a checked rule in that category in scope.
+      type: object
+      additionalProperties: false
+      required: [category, share_percent]
+      properties:
+        category: { $ref: '#/components/schemas/ScoringCategory' }
+        share_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+    ErrorHeatmapRow:
+      description: (additive, I7 E46a) One trainee's row; `cells` in `ErrorHeatmap.categories`' own order.
+      type: object
+      additionalProperties: false
+      required: [trainee_user_id, display_name_ru, cells]
+      properties:
+        trainee_user_id: { type: string, format: uuid }
+        display_name_ru: { type: string }
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorHeatmapCell' }
+    ErrorHeatmap:
+      description: (additive, I7 E46a) `getStatisticsCharts.error_heatmap` — one row per trainee in scope.
+      type: object
+      additionalProperties: false
+      required: [categories, rows]
+      properties:
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/ScoringCategory' }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorHeatmapRow' }
+    StatisticsCharts:
+      description: (additive, I7 E46a) `getStatisticsCharts`'s response.
+      type: object
+      additionalProperties: false
+      required: [score_timeline, error_heatmap]
+      properties:
+        score_timeline: { $ref: '#/components/schemas/ScoreTimeline' }
+        error_heatmap: { $ref: '#/components/schemas/ErrorHeatmap' }
+    # ------------------------------------------------ end I7 E46a -------------------------------
     # ------------------------------------------- I4 E35: text quality (§71.12, D35) -----------
     # «Грамотность и адреса» — report-only, no score effect until the owner answers Q-E11-1.
     # This section is E35's own (§71.16: "E35's report-section schema is left out of the delta");

@@ -27,7 +27,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.application.reports.norms import NORM_EVENT_TYPES
 from app.application.reports.text_quality import TEXT_QUALITY_EVENT_TYPES
 from app.application.statistics.ports import (
+    ErrorHeatmapCellRow,
     ScoredSession,
+    ScoreTimelinePointRow,
     StatisticsEvent,
     StatisticsFilter,
     StatisticsParticipant,
@@ -216,6 +218,48 @@ class SqlAlchemyStatisticsReader:
             for row in rows
         )
 
+    # -- I7 E46a: charts (score timeline, error heatmap) ------------------------------------
+
+    async def score_timeline(
+        self, session_ids: Sequence[SessionId]
+    ) -> tuple[ScoreTimelinePointRow, ...]:
+        """One `GROUP BY session_id` over `score_results`, joined to the session's own
+        `completed_at` — oldest first (I7 E46a)."""
+        if not session_ids:
+            return ()
+        statement = _score_timeline_statement(session_ids)
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).all()
+        return tuple(
+            ScoreTimelinePointRow(
+                session_id=SessionId(row.id),
+                completed_at=row.completed_at,
+                total_points=float(row.points or 0.0),
+                total_max_points=float(row.max_points or 0.0),
+            )
+            for row in rows
+        )
+
+    async def error_heatmap_cells(
+        self, session_ids: Sequence[SessionId], user_ids: Sequence[UserId]
+    ) -> tuple[ErrorHeatmapCellRow, ...]:
+        """One `GROUP BY (user_id, category)` joining `session_participants` to `score_results`
+        (I7 E46a) — crew-attributed, module doc."""
+        if not session_ids or not user_ids:
+            return ()
+        statement = _error_heatmap_statement(session_ids, user_ids)
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).all()
+        return tuple(
+            ErrorHeatmapCellRow(
+                user_id=UserId(row.user_id),
+                category=row.category,
+                failed_count=int(row.failed),
+                total_count=int(row.total),
+            )
+            for row in rows
+        )
+
 
 class _Totals:
     """One session's stored sums, folded from its `(category)` rows."""
@@ -383,4 +427,49 @@ def _typical_errors_statement(session_ids: Sequence[SessionId], *, limit: int) -
         .group_by(results.rule_id)
         .order_by(failed_sessions.desc(), results.rule_id)
         .limit(limit)
+    )
+
+
+# -- I7 E46a: charts (score timeline, error heatmap) — set-based over `score_results` alone ------
+
+
+def _score_timeline_statement(session_ids: Sequence[SessionId]) -> sa.Select[Any]:
+    """One row per session: its own `completed_at` plus its stored point sums, oldest first."""
+    sessions = SimulationSessionRow
+    results = ScoreResultRow
+    return (
+        sa.select(
+            sessions.id,
+            sessions.completed_at,
+            sa.func.sum(results.points_awarded).label("points"),
+            sa.func.sum(results.max_points).label("max_points"),
+        )
+        .join(results, results.session_id == sessions.id)
+        .where(sessions.id.in_(list(session_ids)))
+        .group_by(sessions.id, sessions.completed_at)
+        .order_by(sessions.completed_at, sessions.id)
+    )
+
+
+def _error_heatmap_statement(
+    session_ids: Sequence[SessionId], user_ids: Sequence[UserId]
+) -> sa.Select[Any]:
+    """One `GROUP BY (user_id, category)`: every participant of a session in scope counts that
+    session's `score_results` rows (crew-attributed, module doc) — `total` and `failed` per cell."""
+    participants = SessionParticipantRow
+    results = ScoreResultRow
+    return (
+        sa.select(
+            participants.user_id,
+            results.category,
+            sa.func.count().label("total"),
+            sa.func.count().filter(sa.not_(results.passed)).label("failed"),
+        )
+        .select_from(participants)
+        .join(results, results.session_id == participants.session_id)
+        .where(
+            participants.session_id.in_(list(session_ids)),
+            participants.user_id.in_(list(user_ids)),
+        )
+        .group_by(participants.user_id, results.category)
     )

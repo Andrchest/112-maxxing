@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AppShell } from '@/shared/ui/app-shell';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
+import { LineChart } from '@/shared/ui/charts';
 import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
@@ -50,6 +51,19 @@ export function HistoryPage() {
   });
   const history = historyQuery.data;
   const failed = history ? failedRulesLines(history.statistics.failed_rules_by_category) : [];
+
+  // I7 E46a, owner item 6: «Итоговый балл по сессиям» — the same `sessions` the table below
+  // already shows (`getMyHistory`, D11), oldest first (the table itself is newest first), a
+  // not-yet-released session (`score_percent: null`) dropped, exactly like `historyScoreNotReleased`.
+  const scoreTimelinePoints = (history?.sessions ?? [])
+    .filter((session) => session.score_percent !== null)
+    .slice()
+    .reverse()
+    .map((session) => ({
+      key: session.session_id,
+      label: formatTimestampRu(session.completed_at),
+      value: session.score_percent as number,
+    }));
 
   // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» — the trainee's own account fields plus this same
   // history summary, never the password hash or SIP HA1.
@@ -128,6 +142,19 @@ export function HistoryPage() {
                 <dt className="text-muted-foreground">{t('statisticsColumnFailedRules')}</dt>
                 <dd>{failed.length === 0 ? t('statisticsNoValue') : failed.map((line) => <div key={line}>{line}</div>)}</dd>
               </dl>
+            </CardContent>
+          </Card>
+
+          {/* I7 E46a (owner item 6): its own card, next to the summary and the sessions table
+              below — neither touches the other. */}
+          <Card data-slot="history-score-chart-card">
+            <CardContent>
+              <LineChart
+                title={t('historyScoreChartTitle')}
+                data={scoreTimelinePoints}
+                emptyMessage={t('chartsEmpty')}
+                valueColumnLabel={t('statisticsColumnAverage')}
+              />
             </CardContent>
           </Card>
 

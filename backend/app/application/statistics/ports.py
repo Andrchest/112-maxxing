@@ -29,6 +29,8 @@ from app.domain.enums import RoleType, SessionMode
 from app.domain.events.types import EventType
 
 __all__ = [
+    "ErrorHeatmapCellRow",
+    "ScoreTimelinePointRow",
     "ScoredSession",
     "StatisticsEvent",
     "StatisticsFilter",
@@ -116,6 +118,33 @@ class TypicalErrorRow:
     failed_session_count: int
 
 
+# -- I7 E46a: charts (score timeline, error heatmap) --------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreTimelinePointRow:
+    """One scored session (I7 E46a, `getStatisticsCharts`): its own stored totals, for
+    `session_percent`'s own clamp — never a second scorer (D11)."""
+
+    session_id: SessionId
+    completed_at: datetime
+    total_points: float
+    total_max_points: float
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorHeatmapCellRow:
+    """One `(trainee, category)` pair among sessions in scope (I7 E46a): how many of that
+    trainee's `score_results` rows in that category failed, and how many there were in total.
+    Crew-attributed like `TraineeStatisticsRow.failed_rules_by_category` — `score_results` carries
+    no per-participant assignment, so every participant of a session counts its rows."""
+
+    user_id: UserId
+    category: str
+    failed_count: int
+    total_count: int
+
+
 class StatisticsReader(Protocol):
     """The statistics' reads (adapter: `SqlAlchemyStatisticsReader`)."""
 
@@ -161,4 +190,18 @@ class StatisticsReader(Protocol):
     ) -> tuple[TypicalErrorRow, ...]:
         """The `limit` rules most of `session_ids` failed, worst (most failed sessions) first,
         ties broken by `rule_id` (I7 E54, G11) — one `GROUP BY`, no evaluator, D11."""
+        ...
+
+    async def score_timeline(
+        self, session_ids: Sequence[SessionId]
+    ) -> tuple[ScoreTimelinePointRow, ...]:
+        """(I7 E46a) `session_ids`' own stored totals, oldest first — one row per session, no
+        evaluator, D11."""
+        ...
+
+    async def error_heatmap_cells(
+        self, session_ids: Sequence[SessionId], user_ids: Sequence[UserId]
+    ) -> tuple[ErrorHeatmapCellRow, ...]:
+        """(I7 E46a) Per `(trainee, category)` among `user_ids` who took part in `session_ids`:
+        failed and total `score_results` rows — one `GROUP BY`, no evaluator, D11."""
         ...

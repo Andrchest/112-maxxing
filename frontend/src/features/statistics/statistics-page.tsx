@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { AppShell } from '@/shared/ui/app-shell';
+import { BarChart, Heatmap, LineChart } from '@/shared/ui/charts';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
@@ -18,6 +19,7 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
 import {
+  getStatisticsCharts,
   getTraineeRating,
   getTraineeRatingCsv,
   getTraineeStatistics,
@@ -34,8 +36,16 @@ import {
 import { TypicalErrorsTable } from './typical-errors-table';
 import { ProblemError } from '@/shared/lib/api';
 import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
-import { failedRulesLines, formatMeanDeviationMs, formatMeanDurationMs, formatPercent } from '@/entities/statistics';
+import {
+  categoryLabelRu,
+  failedRulesLines,
+  formatMeanDeviationMs,
+  formatMeanDurationMs,
+  formatPercent,
+  scoreDistributionBuckets,
+} from '@/entities/statistics';
 import { formatPassCount } from '@/entities/pass-verdict';
+import { formatTimestampRu } from '@/shared/lib/format-timestamp';
 
 // (I7 E46b) The three download buttons, in this fixed order, for both the statistics and the
 // rating card — CSV first, so existing tests indexing `getAllByRole('button', { name: ... })`
@@ -95,6 +105,15 @@ export function StatisticsPage() {
     queryFn: () => getTypicalErrors(query),
   });
 
+  // I7 E46a, owner item 6: «Средний балл по занятиям» (score timeline) — a scope of its own,
+  // one trainee from the current filter's rows, or the whole filter (default). «Ошибки по
+  // критериям» (error heatmap) shares the same request, current filter only (no trainee scope).
+  const [chartsTraineeId, setChartsTraineeId] = useState('');
+  const chartsQuery = useQuery({
+    queryKey: queryKeys.statistics.charts(query.group_id, query.from, query.to, chartsTraineeId || undefined),
+    queryFn: () => getStatisticsCharts({ ...query, trainee_id: chartsTraineeId || undefined }),
+  });
+
   async function handleDownload(format: ReportFileFormat) {
     setDownloadingFormat(format);
     setDownloadError(null);
@@ -125,6 +144,17 @@ export function StatisticsPage() {
 
   const rows = statisticsQuery.data?.rows ?? [];
   const ratingRows = ratingQuery.data?.rows ?? [];
+
+  // I7 E46a: the bar chart buckets the same `rows` the table above already shows — no backend
+  // change (module doc's `score-distribution.ts`).
+  const scoreBuckets = scoreDistributionBuckets(rows.map((row) => row.average_percent));
+  const scoreTimelinePoints = (chartsQuery.data?.score_timeline?.points ?? []).map((point, index) => ({
+    key: `${point.at}-${index}`,
+    label: formatTimestampRu(point.at),
+    value: point.score_percent,
+  }));
+  const errorHeatmapCategories = chartsQuery.data?.error_heatmap?.categories ?? [];
+  const errorHeatmapRows = chartsQuery.data?.error_heatmap?.rows ?? [];
 
   return (
     <AppShell
@@ -295,6 +325,73 @@ export function StatisticsPage() {
               </tbody>
             </table>
           ) : null}
+        </CardContent>
+      </Card>
+
+      {/* I7 E46a (owner item 6): charts, in their own cards, next to the E54 table below —
+          neither touches the other (owner note, `E42-gaps.md` §2 item 13). */}
+      <Card className="mt-4" data-slot="statistics-score-distribution-card">
+        <CardContent>
+          <BarChart
+            title={t('statisticsScoreDistributionTitle')}
+            data={scoreBuckets}
+            emptyMessage={t('chartsEmpty')}
+            valueColumnLabel={t('statisticsScoreDistributionColumn')}
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4" data-slot="statistics-score-timeline-card">
+        <CardHeader className="flex flex-row flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="statistics-charts-trainee">{t('statisticsAverageByLessonScopeLabel')}</Label>
+            <select
+              id="statistics-charts-trainee"
+              className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              value={chartsTraineeId}
+              onChange={(event) => setChartsTraineeId(event.target.value)}
+            >
+              <option value="">{t('statisticsAverageByLessonScopeAll')}</option>
+              {rows.map((row) => (
+                <option key={row.trainee_user_id} value={row.trainee_user_id}>
+                  {row.display_name_ru}
+                </option>
+              ))}
+            </select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {chartsQuery.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {problemText(chartsQuery.error)}
+            </p>
+          ) : (
+            <LineChart
+              title={t('statisticsAverageByLessonTitle')}
+              data={scoreTimelinePoints}
+              emptyMessage={t('chartsEmpty')}
+              valueColumnLabel={t('statisticsAverageByLessonColumn')}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4" data-slot="statistics-error-heatmap-card">
+        <CardContent>
+          {chartsQuery.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {problemText(chartsQuery.error)}
+            </p>
+          ) : (
+            <Heatmap
+              title={t('statisticsErrorHeatmapTitle')}
+              rowLabels={errorHeatmapRows.map((row) => row.display_name_ru)}
+              columnLabels={errorHeatmapCategories.map((category) => categoryLabelRu(category))}
+              values={errorHeatmapRows.map((row) => row.cells.map((cell) => cell.share_percent))}
+              emptyMessage={t('chartsEmpty')}
+              legendLabel={t('statisticsErrorHeatmapLegendLabel')}
+            />
+          )}
         </CardContent>
       </Card>
 

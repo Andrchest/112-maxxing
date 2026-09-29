@@ -20,7 +20,13 @@ from datetime import date, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.ports.admin_monitoring import DailyUsage, LoginFailureBurst, SessionErrorEvent
+from app.application.ports.admin_monitoring import (
+    ActivityHeatmapCell,
+    DailyUsage,
+    LoginFailureBurst,
+    SessionErrorEvent,
+)
+from app.application.ports.report_exporter import MOSCOW_TZ
 from app.db.models.events import AuditLog as AuditLogRow
 from app.db.models.events import SessionEvent as SessionEventRow
 from app.db.models.session import Lesson as LessonRow
@@ -99,6 +105,34 @@ class SqlAlchemyAdminMonitoring:
                 active_users=active_by_day.get(day, 0),
             )
             for day in days
+        )
+
+    async def activity_heatmap(self) -> Sequence[ActivityHeatmapCell]:
+        """(I7 E46a) `EXTRACT(ISODOW/HOUR FROM started_at AT TIME ZONE 'Europe/Moscow')`, grouped
+        — Moscow wall time (manager follow-up: admins read this as local hours, and every other
+        export's own stamp — `generated_at_moscow`, `MOSCOW_TZ` — already reads the same zone),
+        never UTC. `_day_of` above stays UTC-explicit on purpose (a day boundary there means the
+        same instant everywhere); this bucket means "what an admin in Moscow would call it"."""
+        moscow_started = sa.func.timezone(MOSCOW_TZ.key, _SESSIONS.c.started_at)
+        weekday_expr = sa.cast(sa.func.extract("isodow", moscow_started), sa.Integer)
+        hour_expr = sa.cast(sa.func.extract("hour", moscow_started), sa.Integer)
+        query = (
+            sa.select(
+                weekday_expr.label("weekday"),
+                hour_expr.label("hour"),
+                sa.func.count().label("n"),
+            )
+            .select_from(_SESSIONS)
+            .where(_SESSIONS.c.started_at.is_not(None))
+            .group_by(weekday_expr, hour_expr)
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(query)).all()
+        return tuple(
+            ActivityHeatmapCell(
+                weekday=int(row.weekday), hour=int(row.hour), session_count=int(row.n)
+            )
+            for row in rows
         )
 
     async def _counts(

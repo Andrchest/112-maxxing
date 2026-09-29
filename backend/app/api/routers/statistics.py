@@ -28,6 +28,7 @@ from app.api.schemas.statistics import (
     my_history_schema,
     trainee_statistics_schema,
 )
+from app.api.schemas.statistics_charts import StatisticsChartsSchema, statistics_charts_schema
 from app.api.schemas.trainee_rating import TraineeRatingSchema, trainee_rating_schema
 from app.api.schemas.typical_errors import TypicalErrorsSchema, typical_errors_schema
 from app.api.security import CurrentUserDep
@@ -242,3 +243,28 @@ async def get_typical_errors(
         _filter(trainee_id, group_id, from_utc, to_utc), user
     )
     return typical_errors_schema(view)
+
+
+# --- I7 E46a: charts — «Средний балл по занятиям», «Ошибки по критериям» (owner item 6) --------
+
+
+@router.get(
+    "/statistics/charts",
+    operation_id="getStatisticsCharts",
+    summary="(I7 E46a) Score timeline and error heatmap (INSTRUCTOR/ADMIN; own lessons for an "
+    "INSTRUCTOR).",
+    response_model=StatisticsChartsSchema,
+    status_code=200,
+)
+async def get_statistics_charts(
+    container: ContainerDep,
+    user: CurrentUserDep,
+    trainee_id: TraineeIdQuery = None,
+    group_id: GroupIdQuery = None,
+    from_utc: FromQuery = None,
+    to_utc: ToQuery = None,
+) -> StatisticsChartsSchema:
+    view = await container.get_statistics_charts()(
+        _filter(trainee_id, group_id, from_utc, to_utc), user
+    )
+    return statistics_charts_schema(view)

@@ -15,6 +15,7 @@ from pydantic import Field
 
 from app.api.schemas.common import ApiModel
 from app.application.admin.backup_status import BackupStatusResult
+from app.application.admin.get_activity_heatmap import ActivityHeatmapResult
 from app.application.admin.get_error_report import ErrorReportItem
 from app.application.admin.get_server_load import ServerLoadResult
 from app.application.admin.get_usage_stats import UsageStatsResult
@@ -26,6 +27,8 @@ from app.application.recording import PurgeRecordingsRequest, PurgeRecordingsRes
 from app.domain.common.ids import SessionId
 
 __all__ = [
+    "ActivityHeatmapCellSchema",
+    "ActivityHeatmapSchema",
     "AdminAlertViewSchema",
     "AdminAlertsSchema",
     "AuditChangeViewSchema",
@@ -38,6 +41,7 @@ __all__ = [
     "ServerLoadSchema",
     "UsageDaySchema",
     "UsageStatsSchema",
+    "activity_heatmap_schema",
     "admin_alerts_schema",
     "audit_entry_view_schema",
     "backup_status_schema",
@@ -185,6 +189,35 @@ def _usage_day_schema(day: DailyUsage) -> UsageDaySchema:
 def usage_stats_schema(result: UsageStatsResult) -> UsageStatsSchema:
     """The application `UsageStatsResult` -> `UsageStatsSchema`."""
     return UsageStatsSchema(days=[_usage_day_schema(day) for day in result.days])
+
+
+# --- I7 E46a: «Активность» weekday × hour heatmap (admin item 6) ----------------------------
+
+
+class ActivityHeatmapCellSchema(ApiModel):
+    """`openapi.yaml`'s `ActivityHeatmapCell` — one non-empty `(weekday, hour)` bucket."""
+
+    weekday: int = Field(ge=1, le=7, description="ISO: 1 = Monday … 7 = Sunday.")
+    hour: int = Field(ge=0, le=23)
+    session_count: int = Field(ge=0)
+
+
+class ActivityHeatmapSchema(ApiModel):
+    """`openapi.yaml`'s `ActivityHeatmap`. Only non-empty buckets are listed; an absent
+    `(weekday, hour)` means zero sessions."""
+
+    cells: list[ActivityHeatmapCellSchema]
+
+
+def activity_heatmap_schema(result: ActivityHeatmapResult) -> ActivityHeatmapSchema:
+    return ActivityHeatmapSchema(
+        cells=[
+            ActivityHeatmapCellSchema(
+                weekday=cell.weekday, hour=cell.hour, session_count=cell.session_count
+            )
+            for cell in result.cells
+        ]
+    )
 
 
 class ServerLoadSchema(ApiModel):

@@ -2033,3 +2033,95 @@ aggregate across sessions.
   does, an ADMIN's rows are a superset, the lesson report's own `typical_errors` is populated for
   INSTRUCTOR/ADMIN and empty for a trainee's own copy, and reading either endpoint writes nothing);
   `typical-errors-table.test.tsx`, `statistics-page.test.tsx`, `lesson-detail-page.test.tsx`.
+
+## 71.19.46a I7 E46a — Charts and heatmaps (owner item 6, «простые бонусы без ML»)
+
+**Purpose.** Three tables (instructor statistics, trainee history) and one admin table (usage
+stats) gain small accessible charts next to them — a bar chart, a line chart and two heatmaps —
+with no new npm dependency, no ML: every number is an existing or an additively-read aggregate.
+
+**Design.**
+- **`frontend/src/shared/ui/charts/`** (no charting library, manager decision): `BarChart`,
+  `LineChart`, `Heatmap`, each a small `<svg>` — one shape per datum, a `<title>` tooltip, theme
+  colours from `chart-tokens.ts` (`var(--color-chart-1..5)`, already defined for both themes in
+  `index.css`, unused until this epic), and a `ChartTableToggle` («Показать таблицей» / «Показать
+  графиком») rendering the identical numbers as a `<table>` — never a second source of truth. A
+  `null` heatmap cell renders as a distinct muted swatch («Нет данных»), never `0 %`; an empty
+  chart never renders a broken `<svg>`, it renders `chartsEmpty` instead.
+- **Instructor statistics** (`features/statistics/statistics-page.tsx`), three new cards, none
+  touching E54's `TypicalErrorsTable` section below them (owner note, `E42-gaps.md` §2 item 13):
+  - «Распределение итоговых баллов» (bar chart, 10 %-wide buckets) — pure client-side
+    (`entities/statistics/score-distribution.ts`'s `scoreDistributionBuckets`) over the same
+    `TraineeStatistics.rows[].average_percent` the table above already has; no backend change.
+  - «Средний балл по занятиям» (line chart) and «Ошибки по критериям» (heatmap) — one additive
+    endpoint, `getStatisticsCharts` (`GET /api/v1/statistics/charts`, same `StatisticsFilter` as
+    `getTraineeStatistics`). Scoping is `getTypicalErrors`'s own rule (the brief's explicit
+    wording for this endpoint), not `getTraineeStatistics`'s unrestricted one: an INSTRUCTOR's
+    scope is sessions of lessons *they* created, an ADMIN's is every scored session — both pieces
+    of the response share one `scoped_session_ids` call. The line chart has its own scope select
+    («Показать для» — the whole current filter, or one trainee from the currently filtered
+    rows), feeding `trainee_id` into the same endpoint; it does not touch the page's own
+    group/date filters.
+  - Application: `app.application.statistics.statistics_charts.GetStatisticsCharts` —
+    `score_timeline` folds `StatisticsReader.score_timeline(session_ids)` (one `GROUP BY
+    session_id` joining `score_results`, oldest first) through `pass_criteria.score_percent`, one
+    point per session (a `total_max_points` of `0` is skipped, same rule `average_percent` uses);
+    `error_heatmap` folds `StatisticsReader.error_heatmap_cells(session_ids, user_ids)` (one
+    `GROUP BY (user_id, category)` joining `session_participants` to `score_results` — every
+    participant of a session counts its rows, crew-attributed exactly like
+    `TraineeStatisticsRow.failed_rules_by_category`, D11) into one row per trainee in scope ×
+    every `ScoringCategory`, `share_percent = 100 · failed / total` or `null` without a checked
+    rule.
+- **Trainee `/history`** (`features/history/history-page.tsx`): «Итоговый балл по сессиям» (line
+  chart) — no backend change, `MyHistory.sessions` already carries `completed_at` +
+  `score_percent` per session (I4 E33); reversed to oldest-first, a not-yet-released session
+  (`score_percent: null`) dropped, exactly like the table's own «—».
+- **Admin «Активность»** (`features/admin/activity-heatmap.tsx`, embedded in
+  `usage-stats-tab.tsx` below the per-day table, its own card): weekday × hour of sessions
+  *started*. `simulation_sessions.started_at` was already a queryable column (set at `READY →
+  ACTIVE`, I3), so this is additive, not skipped. One new `AdminMonitoringReader.activity_heatmap()`
+  — `EXTRACT(ISODOW/HOUR FROM started_at AT TIME ZONE 'Europe/Moscow')`, grouped — surfaced
+  through `getActivityHeatmap` (`GET /api/v1/admin/activity-heatmap`, ADMIN only, no window: the
+  whole history's own shape). Only non-empty buckets are listed; the frontend fills the full 7×24
+  grid with `0` for the rest (a real measurement, never «no data» — `Heatmap`'s own
+  `colorScaleMax` prop lets a raw count supply its own colour-scale top instead of pretending to
+  be a 0…100 percent like the error heatmap does).
+  - **Moscow wall time, not UTC** (manager follow-up after the first landing): admins read this
+    heatmap as local hours, and every other export's own "Сформировано" stamp already reads
+    `Europe/Moscow` (`MOSCOW_TZ`, `app.application.ports.report_exporter`) — the SQL now reuses
+    that same zone (`MOSCOW_TZ.key`) rather than the `_day_of`/`daily_usage` helper's UTC-explicit
+    one, which stays UTC on purpose (a *day boundary* there must mean the same instant everywhere;
+    this heatmap's own bucket means "what a Moscow admin calls it"). The frontend column axis is
+    labelled «Час (МСК)» (`Heatmap`'s new `columnAxisLabel` prop). A session started 23:30 UTC is
+    02:30 the next day in Moscow (UTC+3, no DST) and lands in that next day's hour-02 bucket —
+    covered by `test_get_activity_heatmap_buckets_by_moscow_time_across_a_utc_midnight`.
+
+**Data / DB.** None (no migration) — every new read is a set-based `SELECT` over
+`score_results`/`session_participants`/`simulation_sessions`, the same discipline E33/E54 already
+established.
+
+**API** (additive, `docs/hld/openapi.yaml`): `getStatisticsCharts`
+(`GET /api/v1/statistics/charts` → `StatisticsCharts { score_timeline, error_heatmap }`, same
+query params as `getTraineeStatistics`); `getActivityHeatmap`
+(`GET /api/v1/admin/activity-heatmap` → `ActivityHeatmap { cells }`, no params). No new
+`ProblemCode` — both reuse `403 FORBIDDEN_FOR_ROLE` / `404` the way `getTypicalErrors` /
+`getUsageStats` already do.
+
+**Wiring.** `Container.get_statistics_charts()` (`GetStatisticsCharts(self.statistics_reader)`);
+`Container.get_activity_heatmap()` (`GetActivityHeatmap(self.admin_monitoring)`).
+
+**Tests.**
+- Backend: `tests/api/lessons/test_statistics_charts.py` (a TRAINEE is refused, an instructor who
+  created nothing sees an empty timeline and an all-`null` heatmap while the lesson's own creator
+  does not, an ADMIN's timeline is a superset, reading the endpoint writes nothing);
+  `tests/api/admin/test_activity_heatmap.py` (a started session lands in its own `(weekday,
+  hour)` bucket in Moscow time, a session started 23:30 UTC lands in the *next* Moscow day's
+  hour-02 bucket and never in the UTC one, ADMIN only, `401` without a token).
+- Frontend: `bar-chart.test.tsx` / `line-chart.test.tsx` / `heatmap.test.tsx` (empty, one
+  datum, many, the table toggle both ways) in `shared/ui/charts/`; `score-distribution.test.ts`;
+  page-wiring additions to `statistics-page.test.tsx` (all three new cards), `history-page.test.tsx`
+  (the line chart, oldest first, drops an unreleased score) and `usage-stats-tab.test.tsx` (the
+  full 7×24 grid, and its own empty state with no session ever started).
+
+**Not built (owner questions).** None — the brief's own scope, backend rule and «пусто → сообщение,
+никогда не рисуй пустой SVG» text were all explicit; nothing here needed a product-level guess.

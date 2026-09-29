@@ -159,6 +159,20 @@ describe('HistoryPage', () => {
     expect(unreleased).not.toHaveTextContent(ru.historyRecommendationsHint);
   });
 
+  // I7 E46a (owner item 6): its own line chart of `score_percent` over `sessions`, oldest first
+  // (the table is newest first), the not-yet-released session (`score_percent: null`) dropped.
+  it('renders the score-over-sessions line chart, oldest first, dropping an unreleased score', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(HISTORY)));
+    renderPage();
+
+    await screen.findByText('Apartment fire');
+    expect(screen.getByRole('heading', { name: ru.historyScoreChartTitle })).toBeInTheDocument();
+    const points = document.querySelectorAll('[data-slot="line-chart-point"]');
+    // HISTORY has two sessions, newest first; only "sess-1" (Apartment fire) has a score.
+    expect(points).toHaveLength(1);
+    expect(points[0]?.querySelector('title')).toHaveTextContent('80%');
+  });
+
   // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» downloads the caller's own profile.
   it('downloads the own profile as JSON with the bearer token', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

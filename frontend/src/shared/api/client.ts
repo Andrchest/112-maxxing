@@ -1171,6 +1171,16 @@ export function getServerLoad(): Promise<ServerLoad> {
   return apiFetch('/admin/server-load');
 }
 
+// --- I7 E46a: «Активность» weekday × hour heatmap (admin item 6) ----------------------------
+export type ActivityHeatmap = components['schemas']['ActivityHeatmap'];
+export type ActivityHeatmapCell = components['schemas']['ActivityHeatmapCell'];
+
+/** `getActivityHeatmap` (ADMIN) — sessions started, by ISO weekday (1 = Monday … 7 = Sunday) and
+ * UTC hour. No window: the whole history's own shape. Only non-empty buckets come back. */
+export function getActivityHeatmap(): Promise<ActivityHeatmap> {
+  return apiFetch('/admin/activity-heatmap');
+}
+
 /** `getErrorReport` (ADMIN) — ТЗ ¶207; merges backend error logs, `MODEL_ERROR` events and FATAL
  * transitions over an optional period, newest first. */
 export function getErrorReport(params: { from?: string; to?: string; limit?: number } = {}): Promise<{ items: ErrorRecordView[] }> {
@@ -1285,4 +1295,19 @@ export type TypicalErrorRow = components['schemas']['TypicalErrorRow'];
  * INSTRUCTOR's own lessons). */
 export function getTypicalErrors(params: TraineeStatisticsQuery = {}): Promise<TypicalErrors> {
   return apiFetch(`/statistics/typical-errors${statisticsQueryString(params)}`);
+}
+
+// --- I7 E46a: charts — «Средний балл по занятиям», «Ошибки по критериям» (owner item 6) --------
+export type StatisticsCharts = components['schemas']['StatisticsCharts'];
+export type ScoreTimeline = components['schemas']['ScoreTimeline'];
+export type ScoreTimelinePoint = components['schemas']['ScoreTimelinePoint'];
+export type ErrorHeatmap = components['schemas']['ErrorHeatmap'];
+export type ErrorHeatmapRow = components['schemas']['ErrorHeatmapRow'];
+export type ErrorHeatmapCell = components['schemas']['ErrorHeatmapCell'];
+
+/** `getStatisticsCharts` (I7 E46a) — the score timeline and the error heatmap for this scope;
+ * same filters and access as {@link getTypicalErrors} (INSTRUCTOR / ADMIN only, an INSTRUCTOR's
+ * own lessons). */
+export function getStatisticsCharts(params: TraineeStatisticsQuery = {}): Promise<StatisticsCharts> {
+  return apiFetch(`/statistics/charts${statisticsQueryString(params)}`);
 }

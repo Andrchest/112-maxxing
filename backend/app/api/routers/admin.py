@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from app.api.deps import ContainerDep
 from app.api.routers.health import readiness_snapshot
 from app.api.schemas.admin import (
+    ActivityHeatmapSchema,
     AdminAlertsSchema,
     AuditEntryViewSchema,
     BackupStatusSchema,
@@ -46,6 +47,7 @@ from app.api.schemas.admin import (
     PurgeRecordingsResultSchema,
     ServerLoadSchema,
     UsageStatsSchema,
+    activity_heatmap_schema,
     admin_alerts_schema,
     audit_entry_view_schema,
     backup_status_schema,
@@ -274,6 +276,25 @@ async def get_usage_stats(
     technical choice — see that module; Q-E14-3 confirms only the metric set)."""
     result = await container.get_usage_stats()(from_ts=from_, to_ts=to)
     return usage_stats_schema(result)
+
+
+# --- I7 E46a: «Активность» weekday × hour heatmap (admin item 6) ---------------------------
+
+
+@router.get(
+    "/activity-heatmap",
+    operation_id="getActivityHeatmap",
+    summary="(I7 E46a) Sessions started, by ISO weekday × hour, Moscow wall time (ADMIN).",
+    response_model=ActivityHeatmapSchema,
+    status_code=200,
+)
+async def get_activity_heatmap(container: ContainerDep, _user: AdminDep) -> ActivityHeatmapSchema:
+    """No window (module doc): the shape of when the system is used across every session on
+    record, `simulation_sessions.started_at`, bucketed in Moscow wall time (manager follow-up:
+    admins read it as local hours, the same zone every export's own stamp already uses). Only
+    non-empty buckets are listed."""
+    result = await container.get_activity_heatmap()()
+    return activity_heatmap_schema(result)
 
 
 @router.get(

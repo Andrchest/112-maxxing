@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsPage } from './statistics-page';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import type { TraineeRating, TraineeStatistics, TypicalErrors } from '@/shared/api';
+import type { StatisticsCharts, TraineeRating, TraineeStatistics, TypicalErrors } from '@/shared/api';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -80,6 +80,23 @@ const TYPICAL_ERRORS: TypicalErrors = {
   ],
 };
 
+// I7 E46a, owner item 6: score timeline + error heatmap, same filters as `STATISTICS`.
+const STATISTICS_CHARTS: StatisticsCharts = {
+  score_timeline: {
+    points: [
+      { at: '2026-09-20T10:00:00Z', score_percent: 60 },
+      { at: '2026-09-21T10:00:00Z', score_percent: 80 },
+    ],
+  },
+  error_heatmap: {
+    categories: ['CARD_QUALITY', 'TIMELINESS'],
+    rows: [
+      { trainee_user_id: 'trainee-1', display_name_ru: 'Trainee One', cells: [{ category: 'CARD_QUALITY', share_percent: 50 }, { category: 'TIMELINESS', share_percent: null }] },
+      { trainee_user_id: 'trainee-2', display_name_ru: 'Trainee Two', cells: [{ category: 'CARD_QUALITY', share_percent: null }, { category: 'TIMELINESS', share_percent: null }] },
+    ],
+  },
+};
+
 // I4 E33 (71 §71.10): /instructor/statistics — one row per trainee, a group filter, the CSV.
 describe('StatisticsPage', () => {
   afterEach(() => {
@@ -96,6 +113,7 @@ describe('StatisticsPage', () => {
         if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
         if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
         if (url === '/api/v1/statistics/typical-errors') return jsonResponse(TYPICAL_ERRORS);
+        if (url === '/api/v1/statistics/charts') return jsonResponse(STATISTICS_CHARTS);
         if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -137,6 +155,7 @@ describe('StatisticsPage', () => {
       if (url.startsWith('/api/v1/statistics/rating.csv')) return new Response('x', { status: 200, headers: { 'content-type': 'text/csv' } });
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
       if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
+      if (url.startsWith('/api/v1/statistics/charts')) return jsonResponse(STATISTICS_CHARTS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -177,6 +196,7 @@ describe('StatisticsPage', () => {
       if (url.startsWith('/api/v1/statistics/rating.csv')) return new Response('x', { status: 200, headers: { 'content-type': 'text/csv' } });
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
       if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
+      if (url.startsWith('/api/v1/statistics/charts')) return jsonResponse(STATISTICS_CHARTS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -213,6 +233,7 @@ describe('StatisticsPage', () => {
       }
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
       if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
+      if (url.startsWith('/api/v1/statistics/charts')) return jsonResponse(STATISTICS_CHARTS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -252,6 +273,7 @@ describe('StatisticsPage', () => {
         if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
         if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
         if (url === '/api/v1/statistics/typical-errors') return jsonResponse(TYPICAL_ERRORS);
+        if (url === '/api/v1/statistics/charts') return jsonResponse(STATISTICS_CHARTS);
         if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -273,6 +295,7 @@ describe('StatisticsPage', () => {
         if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
         if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
         if (url === '/api/v1/statistics/typical-errors') return jsonResponse({ rows: [] });
+        if (url === '/api/v1/statistics/charts') return jsonResponse(STATISTICS_CHARTS);
         if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -280,5 +303,44 @@ describe('StatisticsPage', () => {
     renderPage();
 
     expect(await screen.findByText(ru.typicalErrorsEmpty)).toBeInTheDocument();
+  });
+
+  // I7 E46a (owner item 6): the bar chart, the line chart (with its own trainee scope select)
+  // and the error heatmap, each in its own card, none touching the E54 table above.
+  it('renders the score-distribution bar chart, the score timeline and the error heatmap', async () => {
+    signIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
+        if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
+        if (url === '/api/v1/statistics/typical-errors') return jsonResponse(TYPICAL_ERRORS);
+        if (url === '/api/v1/statistics/charts') return jsonResponse(STATISTICS_CHARTS);
+        if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    renderPage();
+
+    // The bar chart buckets `STATISTICS.rows`' own `average_percent` (72.6 -> the 70-80% bar).
+    const barChart = await screen.findByRole('heading', { name: ru.statisticsScoreDistributionTitle });
+    expect(barChart).toBeInTheDocument();
+    const bars = document.querySelectorAll('[data-slot="bar-chart-bar"]');
+    expect(bars.length).toBeGreaterThan(0);
+
+    // The line chart: one point per `score_timeline.points` entry, oldest first.
+    expect(screen.getByRole('heading', { name: ru.statisticsAverageByLessonTitle })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="line-chart-point"]')).toHaveLength(2));
+
+    // The trainee scope select is populated from the current filter's rows.
+    await screen.findByRole('option', { name: 'Trainee One' });
+
+    // The error heatmap: one row per `error_heatmap.rows` entry, a `null` cell renders as
+    // «Нет данных», never `0%`.
+    expect(screen.getByRole('heading', { name: ru.statisticsErrorHeatmapTitle })).toBeInTheDocument();
+    const cells = document.querySelectorAll('[data-slot="heatmap-cell"]');
+    expect(cells).toHaveLength(4);
+    expect(cells[1]?.querySelector('title')).toHaveTextContent(ru.chartsNoData);
   });
 });

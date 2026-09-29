@@ -93,6 +93,10 @@ export const queryKeys = {
     // I7 E54, G11: «Типичные ошибки», same filters as `list`.
     typicalErrors: (groupId?: string, from?: string, to?: string) =>
       ['statistics', 'typical-errors', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
+    // I7 E46a, owner item 6: score timeline + error heatmap, same filters as `list` plus an
+    // optional `traineeId` (the line chart's own «по обучаемому» scope).
+    charts: (groupId?: string, from?: string, to?: string, traineeId?: string) =>
+      ['statistics', 'charts', groupId ?? 'ALL', from ?? '', to ?? '', traineeId ?? 'ALL'] as const,
   },
   // -- I4 E30: Admin UI (71 §71.7) — E28's accounts and E29's monitoring reads ----------------
   admin: {
@@ -105,5 +109,7 @@ export const queryKeys = {
     errors: (from?: string, to?: string) => ['admin', 'errors', from ?? '', to ?? ''] as const,
     alerts: () => ['admin', 'alerts'] as const,
     backupStatus: () => ['admin', 'backup-status'] as const,
+    // I7 E46a, admin item 6: «Активность» weekday × hour heatmap.
+    activityHeatmap: () => ['admin', 'activity-heatmap'] as const,
   },
 } as const;

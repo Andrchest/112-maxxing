@@ -27,6 +27,7 @@ from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 __all__ = [
+    "ActivityHeatmapCell",
     "AdminMonitoringReader",
     "DailyUsage",
     "ErrorSource",
@@ -49,6 +50,20 @@ class DailyUsage:
     sessions: int
     lessons: int
     active_users: int
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityHeatmapCell:
+    """One `(weekday, hour)` bucket of `getActivityHeatmap` (I7 E46a, admin item 6): sessions
+    *started* (`simulation_sessions.started_at`), bucketed in Moscow wall time (`MOSCOW_TZ`,
+    `app.application.ports.report_exporter` — the same zone every export's own "Сформировано"
+    stamp already reads; manager follow-up: admins read this heatmap as local hours). `weekday` is
+    ISO (1 = Monday … 7 = Sunday) *in Moscow time*. Only non-empty buckets are returned; an absent
+    `(weekday, hour)` means zero sessions."""
+
+    weekday: int
+    hour: int
+    session_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +108,12 @@ class AdminMonitoringReader(Protocol):
 
     async def daily_usage(self, *, from_ts: datetime, to_ts: datetime) -> Sequence[DailyUsage]:
         """One row per calendar day in `[from_ts, to_ts)`, oldest first."""
+        ...
+
+    async def activity_heatmap(self) -> Sequence[ActivityHeatmapCell]:
+        """(I7 E46a) Every `(weekday, hour)` bucket with at least one started session, across
+        every `simulation_sessions.started_at` on record — no window (the admin heatmap's own
+        reading: a shape of when the system is used, not a dated report)."""
         ...
 
     async def session_error_events(

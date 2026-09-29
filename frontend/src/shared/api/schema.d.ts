@@ -195,6 +195,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/activity-heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I7 E46a) Sessions started, by ISO weekday × hour, Moscow wall time (ADMIN).
+         * @description `simulation_sessions.started_at`, bucketed by ISO weekday (1 = Monday … 7 = Sunday) and
+         *     hour (0…23) in Moscow wall time (`Europe/Moscow`, manager follow-up: admins read this as
+         *     local hours, the same zone every export's own "Сформировано" stamp already uses — never
+         *     UTC). No window: the whole history's own shape of when the system gets used. Only
+         *     non-empty buckets are listed; an absent `(weekday, hour)` means zero sessions.
+         */
+        get: operations["getActivityHeatmap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/server-load": {
         parameters: {
             query?: never;
@@ -2589,6 +2613,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/statistics/charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I7 E46a) Score timeline and error heatmap (INSTRUCTOR/ADMIN).
+         * @description Same filters as `getTraineeStatistics`. Two folds over stored `score_results`, no ML, D11:
+         *     `score_timeline` — one point per scored session in scope, oldest first, its own
+         *     `session_percent`; `error_heatmap` — one row per trainee in scope × every `ScoringCategory`,
+         *     each cell the share (0…100 %, `null` without a checked rule in that category) of that
+         *     trainee's checks in that category that failed. Ownership like `getTypicalErrors`: an
+         *     INSTRUCTOR's scope is their own lessons' sessions only, an ADMIN's is every scored session.
+         *     `403 FORBIDDEN_FOR_ROLE` for a TRAINEE.
+         */
+        get: operations["getStatisticsCharts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2908,6 +2958,18 @@ export interface components {
                 lessons: number;
                 active_users: number;
             }[];
+        };
+        /** @description (additive, I7 E46a) One non-empty `(weekday, hour)` bucket of `getActivityHeatmap`. */
+        ActivityHeatmapCell: {
+            /** @description ISO, Moscow wall time: 1 = Monday … 7 = Sunday. */
+            weekday: number;
+            /** @description Moscow wall time (Europe/Moscow). */
+            hour: number;
+            session_count: number;
+        };
+        /** @description (additive, I7 E46a) `getActivityHeatmap`'s response. An absent `(weekday, hour)` means zero sessions. */
+        ActivityHeatmap: {
+            cells: components["schemas"]["ActivityHeatmapCell"][];
         };
         /** @description (I4 E29) Every metric is `null` when it cannot be read — never `0`. */
         ServerLoad: {
@@ -4895,6 +4957,38 @@ export interface components {
         TypicalErrors: {
             rows: components["schemas"]["TypicalErrorRow"][];
         };
+        /** @description (additive, I7 E46a) One scored session in scope, its own `session_percent`. */
+        ScoreTimelinePoint: {
+            /** Format: date-time */
+            at: string;
+            score_percent: number;
+        };
+        /** @description (additive, I7 E46a) `getStatisticsCharts.score_timeline` — oldest first. */
+        ScoreTimeline: {
+            points: components["schemas"]["ScoreTimelinePoint"][];
+        };
+        /** @description (additive, I7 E46a) One trainee's share of failed checks in one category; `null` without a checked rule in that category in scope. */
+        ErrorHeatmapCell: {
+            category: components["schemas"]["ScoringCategory"];
+            share_percent: number | null;
+        };
+        /** @description (additive, I7 E46a) One trainee's row; `cells` in `ErrorHeatmap.categories`' own order. */
+        ErrorHeatmapRow: {
+            /** Format: uuid */
+            trainee_user_id: string;
+            display_name_ru: string;
+            cells: components["schemas"]["ErrorHeatmapCell"][];
+        };
+        /** @description (additive, I7 E46a) `getStatisticsCharts.error_heatmap` — one row per trainee in scope. */
+        ErrorHeatmap: {
+            categories: components["schemas"]["ScoringCategory"][];
+            rows: components["schemas"]["ErrorHeatmapRow"][];
+        };
+        /** @description (additive, I7 E46a) `getStatisticsCharts`'s response. */
+        StatisticsCharts: {
+            score_timeline: components["schemas"]["ScoreTimeline"];
+            error_heatmap: components["schemas"]["ErrorHeatmap"];
+        };
         /** @description (I4 E35) One word the ru_RU dictionary does not recognise, as an offset into its field's `text`. */
         MisspelledSpanView: {
             start: number;
@@ -5369,6 +5463,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageStats"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getActivityHeatmap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Non-empty (weekday, hour) buckets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityHeatmap"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -8516,6 +8632,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TypicalErrors"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getStatisticsCharts: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The score timeline and the error heatmap for this scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatisticsCharts"];
                 };
             };
             401: components["responses"]["Unauthorized"];

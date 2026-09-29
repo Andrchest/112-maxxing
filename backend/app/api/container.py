@@ -32,6 +32,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.admin.backup_status import GetBackupStatus
+from app.application.admin.get_activity_heatmap import GetActivityHeatmap
 from app.application.admin.get_error_report import GetErrorReport
 from app.application.admin.get_server_load import GetServerLoad
 from app.application.admin.get_usage_stats import GetUsageStats
@@ -180,6 +181,7 @@ from app.application.simulation.responder_scripts import ScenarioResponderScript
 from app.application.simulation.runner import SimulationRunner
 from app.application.simulation.tick_session import TickSession
 from app.application.statistics.ports import StatisticsReader
+from app.application.statistics.statistics_charts import GetStatisticsCharts
 from app.application.statistics.trainee_rating import GetTraineeRating
 from app.application.statistics.trainee_statistics import GetMyHistory, GetTraineeStatistics
 from app.application.statistics.typical_errors import GetTypicalErrors
@@ -1344,6 +1346,10 @@ class Container:
         """`getUsageStats` (ADMIN) — the proposed metric set, Q-E14-3."""
         return GetUsageStats(self.admin_monitoring, self.clock)
 
+    def get_activity_heatmap(self) -> GetActivityHeatmap:
+        """`getActivityHeatmap` (ADMIN, I7 E46a) — weekday × hour of started sessions."""
+        return GetActivityHeatmap(self.admin_monitoring)
+
     def get_server_load(self) -> GetServerLoad:
         """`getServerLoad` (ADMIN) — `/proc`, `shutil.disk_usage`, the voice-agent heartbeat."""
         return GetServerLoad(
@@ -1398,6 +1404,15 @@ class Container:
         return GetTypicalErrors(self.statistics_reader)
 
     # --- end I7 E54 -------------------------------------------------------------------------
+
+    # --- I7 E46a: charts — score timeline, error heatmap (owner item 6) ----------------------
+
+    def get_statistics_charts(self) -> GetStatisticsCharts:
+        """`getStatisticsCharts` — INSTRUCTOR / ADMIN only, same reader as the rest of E33/E36,
+        own-lessons scoping like `get_typical_errors`."""
+        return GetStatisticsCharts(self.statistics_reader)
+
+    # --- end I7 E46a --------------------------------------------------------------------------
 
     # --- I7 E53: scenario version download (G14a) --------------------------------------------
 
