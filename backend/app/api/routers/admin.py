@@ -236,9 +236,11 @@ async def list_audit_log(
     to: Annotated[datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    with_changes: Annotated[bool, Query()] = False,
 ) -> AuditLogPageSchema:
     """No bound left unset here: an absent `user_id`/`action`/`from`/`to` leaves that filter off
-    (`AuditFilter`'s own defaults, `app.application.ports.audit_log`)."""
+    (`AuditFilter`'s own defaults, `app.application.ports.audit_log`). `with_changes` (I7 E43)
+    keeps only the entries that carry a «было → стало» list."""
     page = await container.audit_reader.page(
         AuditFilter(
             user_id=UserId(user_id) if user_id is not None else None,
@@ -247,6 +249,7 @@ async def list_audit_log(
             to_ts=to,
             limit=limit,
             offset=offset,
+            with_changes=with_changes,
         )
     )
     return AuditLogPageSchema(

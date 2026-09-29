@@ -2765,6 +2765,22 @@ export interface components {
             username?: string | null;
             /** @description (additive, I6) The acting account's display name, joined like `username`. */
             display_name_ru?: string | null;
+            /**
+             * @description (additive, I7 E43, Q-E15-3) «было → стало»: each field the request's use case changed, in
+             *     order; empty for a read, a refusal, a failed request or an entry written before 0019.
+             */
+            changes?: components["schemas"]["AuditChangeView"][];
+        };
+        /**
+         * @description (I7 E43) One changed field of an audited request. `field` is `<entity>.<field>`, optionally
+         *     with a `[qualifier]` (a card position, a rule id), e.g. `user.user_role`, `lesson.weight[2]`,
+         *     `score.rule_points[R1]`. `before`/`after` are any JSON value (`null` = absent / not set). A
+         *     secret (password, hash, HA1, token, key) is never recorded: both are `null` («изменён»).
+         */
+        AuditChangeView: {
+            field: string;
+            before: unknown;
+            after: unknown;
         };
         /** @description (I4 E29) `getUsageStats`'s response. */
         UsageStats: {
@@ -5094,6 +5110,8 @@ export interface operations {
                 to?: string;
                 limit?: number;
                 offset?: number;
+                /** @description (additive, I7 E43) «Только с изменениями» — only entries whose `changes` is non-empty. */
+                with_changes?: boolean;
             };
             header?: never;
             path?: never;

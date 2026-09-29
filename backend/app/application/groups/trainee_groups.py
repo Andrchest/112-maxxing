@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.auth.ownership import require_owner_or_admin
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.trainee_group_repository import StoredTraineeGroup
@@ -102,6 +103,31 @@ async def _view(uow: UnitOfWork, group: StoredTraineeGroup) -> TraineeGroupView:
     )
 
 
+def _member_names(view: TraineeGroupView) -> list[str]:
+    """The members as the journal shows them: their logins (I7 E43)."""
+    return [member.username for member in view.members]
+
+
+def _record_group(
+    changes: AuditChangeCollector,
+    before: TraineeGroupView | None,
+    after: TraineeGroupView | None,
+) -> None:
+    """`group.name_ru` / `group.members`, «было → стало» (I7 E43); `None` is "no group"."""
+    changes.record(
+        "group",
+        "name_ru",
+        before.group.name_ru if before is not None else None,
+        after.group.name_ru if after is not None else None,
+    )
+    changes.record(
+        "group",
+        "members",
+        _member_names(before) if before is not None else None,
+        _member_names(after) if after is not None else None,
+    )
+
+
 async def _owned_group(
     uow: UnitOfWork, group_id: TraineeGroupId, actor: AuthenticatedUser
 ) -> StoredTraineeGroup:
@@ -116,10 +142,18 @@ async def _owned_group(
 class CreateTraineeGroup:
     """`createTraineeGroup`."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, ids: IdGenerator, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        ids: IdGenerator,
+        clock: Clock,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._ids = ids
         self._clock = clock
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self, *, name_ru: str, member_user_ids: Sequence[UserId], actor: AuthenticatedUser
@@ -139,6 +173,7 @@ class CreateTraineeGroup:
             assert stored is not None  # written in this very transaction
             view = await _view(uow, stored)
             await uow.commit()
+        _record_group(self._changes, None, view)
         return view
 
 
@@ -175,8 +210,11 @@ class GetTraineeGroup:
 class UpdateTraineeGroup:
     """`updateTraineeGroup` — rename and replace the member list whole."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self,
@@ -188,24 +226,29 @@ class UpdateTraineeGroup:
     ) -> TraineeGroupView:
         name = _clean_name(name_ru)
         async with self._unit_of_work() as uow:
-            await _owned_group(uow, group_id, actor)
+            before = await _view(uow, await _owned_group(uow, group_id, actor))
             members = await _checked_members(uow, member_user_ids)
             await uow.trainee_groups.replace(group_id, name_ru=name, member_user_ids=members)
             stored = await uow.trainee_groups.get(group_id)
             assert stored is not None
             view = await _view(uow, stored)
             await uow.commit()
+        _record_group(self._changes, before, view)
         return view
 
 
 class DeleteTraineeGroup:
     """`deleteTraineeGroup` — lessons created for it keep their participants."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes  # I7 E43
 
     async def __call__(self, group_id: TraineeGroupId, *, actor: AuthenticatedUser) -> None:
         async with self._unit_of_work() as uow:
-            await _owned_group(uow, group_id, actor)
+            before = await _view(uow, await _owned_group(uow, group_id, actor))
             await uow.trainee_groups.delete(group_id)
             await uow.commit()
+        _record_group(self._changes, before, None)

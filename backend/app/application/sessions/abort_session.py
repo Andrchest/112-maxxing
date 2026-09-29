@@ -34,6 +34,7 @@ from __future__ import annotations
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.auth.ownership import require_owner_or_admin
 from app.application.operator.views import CallPhase, project_call_state
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.voice_signal_publisher import VoiceSignalPublisher
@@ -55,10 +56,14 @@ class AbortSession:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         voice_signals: VoiceSignalPublisher | None = None,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._voice_signals = voice_signals
+        #: I7 E43: `session.state` «было → стало» (the event log carries the rest).
+        self._changes = changes
 
     async def __call__(
         self,
@@ -97,6 +102,7 @@ class AbortSession:
             await uow.events.append(session_id, [*call_events, *events])
             await uow.commit()
             call = project_call_state(log)
+        self._changes.record("session", "state", session.state, aborted.state)
 
         # After the commit, never inside it (§40.6).
         if self._voice_signals is not None and call.call_id is not None and call.phase in _LIVE:

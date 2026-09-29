@@ -33,6 +33,7 @@ from app.application.lessons.errors import (
     LessonReportNotReleasedError,
     NotALessonParticipantError,
 )
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.result_comment_repository import (
@@ -82,8 +83,9 @@ async def _check_replaces(
     *,
     session_id: SessionId | None = None,
     lesson_id: LessonId | None = None,
-) -> None:
-    """Refuse an edit that does not point at a comment of this same session/lesson."""
+) -> StoredResultComment:
+    """Refuse an edit that does not point at a comment of this same session/lesson; the comment
+    it replaces otherwise."""
     existing = await comments.get(replaces_comment_id)
     if existing is None:
         raise CommentNotFoundError(replaces_comment_id)
@@ -91,6 +93,14 @@ async def _check_replaces(
         raise CommentNotFoundError(replaces_comment_id)
     if lesson_id is not None and existing.lesson_id != lesson_id:
         raise CommentNotFoundError(replaces_comment_id)
+    return existing
+
+
+def _record_comment(
+    changes: AuditChangeCollector, replaced: StoredResultComment | None, stored: StoredResultComment
+) -> None:
+    """`comment.text` «было → стало» (I7 E43): an edit shows the text it replaces."""
+    changes.record("comment", "text", replaced.text if replaced is not None else None, stored.text)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -126,10 +136,18 @@ class ListSessionComments:
 class CreateSessionComment:
     """`createSessionComment` (INSTRUCTOR / ADMIN — the router's `AdminOrInstructorDep` gate)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock, ids: IdGenerator) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        ids: IdGenerator,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._ids = ids
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self, session_id: SessionId, user: AuthenticatedUser, request: NewCommentRequest
@@ -138,10 +156,13 @@ class CreateSessionComment:
             session = await uow.sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
-            if request.replaces_comment_id is not None:
+            replaced = (
                 await _check_replaces(
                     uow.result_comments, request.replaces_comment_id, session_id=session_id
                 )
+                if request.replaces_comment_id is not None
+                else None
+            )
             comment_id = await uow.result_comments.add(
                 NewResultComment(
                     id=self._ids.new(),
@@ -156,6 +177,7 @@ class CreateSessionComment:
             stored = await uow.result_comments.get(comment_id)
             await uow.commit()
         assert stored is not None
+        _record_comment(self._changes, replaced, stored)
         return stored
 
 
@@ -189,10 +211,18 @@ class ListLessonComments:
 class CreateLessonComment:
     """`createLessonComment` (INSTRUCTOR / ADMIN — the router's `AdminOrInstructorDep` gate)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock, ids: IdGenerator) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        ids: IdGenerator,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._ids = ids
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self, lesson_id: LessonId, user: AuthenticatedUser, request: NewCommentRequest
@@ -201,10 +231,13 @@ class CreateLessonComment:
             lesson = await uow.lessons.get(lesson_id)
             if lesson is None:
                 raise LessonNotFoundError(lesson_id)
-            if request.replaces_comment_id is not None:
+            replaced = (
                 await _check_replaces(
                     uow.result_comments, request.replaces_comment_id, lesson_id=lesson_id
                 )
+                if request.replaces_comment_id is not None
+                else None
+            )
             comment_id = await uow.result_comments.add(
                 NewResultComment(
                     id=self._ids.new(),
@@ -219,6 +252,7 @@ class CreateLessonComment:
             stored = await uow.result_comments.get(comment_id)
             await uow.commit()
         assert stored is not None
+        _record_comment(self._changes, replaced, stored)
         return stored
 
 

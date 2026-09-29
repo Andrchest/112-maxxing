@@ -2,7 +2,9 @@
 // action and a `completed_at`-style date window (`from` inclusive, `to` exclusive, like the E33
 // statistics filter); `user_id` is left to a future pass — the server accepts it, but this tab has
 // no user picker of its own yet (a technical simplification, not a product choice).
-import { useState } from 'react';
+// I7 E43 (Q-E15-3): a row that changed something shows an expandable «Изменения» list, «поле: было
+// → стало» with Russian field labels (`audit-changes.ts`), and «Только с изменениями» filters on it.
+import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
@@ -12,6 +14,7 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
+import { auditChangeLineRu } from './audit-changes';
 import {
   listAuditLog,
   problemMessageRu,
@@ -76,6 +79,24 @@ function ActorCell({ entry }: { entry: AuditEntryView }) {
   return <span className="text-muted-foreground">{t('adminAuditAnonymous')}</span>;
 }
 
+// I7 E43: the toggle of one row's «было → стало» list; a dash when the row changed nothing.
+function ChangesToggle({ entry, expanded, onToggle }: { entry: AuditEntryView; expanded: boolean; onToggle: () => void }) {
+  const count = entry.changes?.length ?? 0;
+  if (count === 0) return <span className="text-muted-foreground">{t('adminAuditChangeNone')}</span>;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      aria-expanded={expanded}
+      aria-controls={`admin-audit-changes-${entry.id}`}
+      onClick={onToggle}
+    >
+      {expanded ? t('adminAuditChangesHide') : t('adminAuditChangesShow')} ({count})
+    </Button>
+  );
+}
+
 function dayStartIso(day: string): string | undefined {
   return day ? new Date(`${day}T00:00:00`).toISOString() : undefined;
 }
@@ -89,14 +110,25 @@ export function AuditLogTab() {
   const [fromDay, setFromDay] = useState('');
   const [toDay, setToDay] = useState('');
   const [offset, setOffset] = useState(0);
+  const [withChanges, setWithChanges] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   const from = dayStartIso(fromDay);
   const to = dayStartIso(toDay);
 
   const auditQuery = useQuery({
-    queryKey: queryKeys.admin.auditLog(undefined, action || undefined, from, to, offset),
-    queryFn: () => listAuditLog({ action: action || undefined, from, to, limit: PAGE_SIZE, offset }),
+    queryKey: queryKeys.admin.auditLog(undefined, action || undefined, from, to, offset, withChanges),
+    queryFn: () => listAuditLog({ action: action || undefined, from, to, limit: PAGE_SIZE, offset, withChanges }),
   });
+
+  function toggle(id: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const items = auditQuery.data?.items ?? [];
   const total = auditQuery.data?.total ?? 0;
@@ -147,6 +179,18 @@ export function AuditLogTab() {
             }}
           />
         </div>
+        <label className="flex h-8 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={withChanges}
+            onChange={(event) => {
+              setOffset(0);
+              setWithChanges(event.target.checked);
+            }}
+          />
+          {t('adminAuditFilterWithChanges')}
+        </label>
       </CardHeader>
       <CardContent>
         {auditQuery.isError ? (
@@ -166,23 +210,46 @@ export function AuditLogTab() {
                 <th className="p-2 font-medium">{t('adminAuditColumnStatus')}</th>
                 <th className="p-2 font-medium">{t('adminAuditColumnOutcome')}</th>
                 <th className="p-2 font-medium">{t('adminAuditColumnIp')}</th>
+                <th className="p-2 font-medium">{t('adminAuditColumnChanges')}</th>
               </tr>
             </thead>
             <tbody>
               {items.map((entry) => (
-                <tr key={entry.id} className="border-b border-border/60" data-slot="admin-audit-row">
-                  <td className="p-2 tabular-nums">{formatTimestampRu(entry.ts)}</td>
-                  <td className="p-2">
-                    <ActorCell entry={entry} />
-                  </td>
-                  <td className="p-2">{t(ACTION_LABEL_KEY[entry.action])}</td>
-                  <td className="p-2 font-mono text-xs">
-                    {entry.method} {entry.path_template}
-                  </td>
-                  <td className="p-2 tabular-nums">{entry.status}</td>
-                  <td className="p-2">{t(OUTCOME_LABEL_KEY[entry.outcome])}</td>
-                  <td className="p-2 font-mono text-xs">{entry.client_ip ?? t('statisticsNoValue')}</td>
-                </tr>
+                <Fragment key={entry.id}>
+                  <tr className="border-b border-border/60" data-slot="admin-audit-row">
+                    <td className="p-2 tabular-nums">{formatTimestampRu(entry.ts)}</td>
+                    <td className="p-2">
+                      <ActorCell entry={entry} />
+                    </td>
+                    <td className="p-2">{t(ACTION_LABEL_KEY[entry.action])}</td>
+                    <td className="p-2 font-mono text-xs">
+                      {entry.method} {entry.path_template}
+                    </td>
+                    <td className="p-2 tabular-nums">{entry.status}</td>
+                    <td className="p-2">{t(OUTCOME_LABEL_KEY[entry.outcome])}</td>
+                    <td className="p-2 font-mono text-xs">{entry.client_ip ?? t('statisticsNoValue')}</td>
+                    <td className="p-2">
+                      <ChangesToggle entry={entry} expanded={expanded.has(entry.id)} onToggle={() => toggle(entry.id)} />
+                    </td>
+                  </tr>
+                  {expanded.has(entry.id) && entry.changes?.length ? (
+                    <tr className="border-b border-border/60 bg-muted/40" data-slot="admin-audit-changes">
+                      <td colSpan={8} className="p-2">
+                        <ul
+                          id={`admin-audit-changes-${entry.id}`}
+                          aria-label={t('adminAuditChangesListLabel')}
+                          className="flex flex-col gap-1"
+                        >
+                          {entry.changes.map((change, index) => (
+                            <li key={`${change.field}-${index}`} className="break-words">
+                              {auditChangeLineRu(change)}
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>

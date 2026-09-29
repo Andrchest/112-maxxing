@@ -21,6 +21,7 @@ from app.application.lessons.errors import (
     LessonNotFoundError,
     require_creator_or_admin,
 )
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.sessions.abort_session import AbortSession
@@ -36,11 +37,19 @@ class AbortLesson:
     """`abortLesson` (INSTRUCTOR — the creator — or ADMIN)."""
 
     def __init__(
-        self, unit_of_work: UnitOfWorkFactory, clock: Clock, abort_session: AbortSession
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        abort_session: AbortSession,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._abort_session = abort_session
+        #: I7 E43: the lesson's own state, and how many cards it stopped (the cards' own
+        #: `SESSION_ABORTED` events carry the rest).
+        self._changes = changes
 
     async def __call__(
         self, lesson_id: LessonId, user: AuthenticatedUser, reason: str
@@ -55,6 +64,7 @@ class AbortLesson:
             aborted = lesson.abort(self._clock.now(), actor=actor)
             await uow.lessons.save(aborted)
             await uow.commit()
+        self._changes.record("lesson", "state", lesson.state, aborted.state)
 
         async with self._unit_of_work() as uow:
             cards = await uow.lessons.list_cards(lesson_id)
@@ -65,4 +75,6 @@ class AbortLesson:
                 continue
             await self._abort_session(card.session_id, actor, reason)
             stopped.append(card.session_id)
+        if stopped:
+            self._changes.record("lesson", "aborted_cards", None, len(stopped))
         return aborted, tuple(stopped)

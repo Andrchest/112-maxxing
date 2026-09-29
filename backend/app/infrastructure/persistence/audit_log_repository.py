@@ -13,6 +13,9 @@ Two rules shape the writer, the same two that shape `PgMetricsRecorder`:
 
 The table is append-only (`audit_log_append_only`, §20.9): this adapter has no UPDATE or DELETE,
 and the trigger refuses one from anywhere else.
+
+I7 E43: `changes` (`0019_audit_changes`) is written in the same single INSERT — `NULL` for an
+entry that changed nothing — and `AuditFilter.with_changes` reads only rows that carry one.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.ports.audit_changes import AuditChange
 from app.application.ports.audit_log import (
     AuditAction,
     AuditEntry,
@@ -73,6 +77,8 @@ class SqlAlchemyAuditLog:
             conditions.append(_AUDIT_LOG.c.ts >= audit_filter.from_ts)
         if audit_filter.to_ts is not None:
             conditions.append(_AUDIT_LOG.c.ts < audit_filter.to_ts)
+        if audit_filter.with_changes:
+            conditions.append(_AUDIT_LOG.c.changes.is_not(None))
 
         # The acting account's login and name are joined in at read time (I6 FIX1): the journal
         # shows who acted, not only the role. LEFT JOIN — an anonymous row has no account.
@@ -108,6 +114,15 @@ def _row_of(entry: AuditEntry) -> dict[str, Any]:
         "status": entry.status,
         "client_ip": entry.client_ip,
         "outcome": entry.outcome.value,
+        "changes": (
+            [
+                {"field": change.field, "before": change.before, "after": change.after}
+                for change in entry.changes
+            ]
+            if entry.changes
+            # SQL NULL, not JSON `null`: `with_changes` filters on `IS NOT NULL`.
+            else sa.null()
+        ),
     }
 
 
@@ -126,7 +141,18 @@ def _stored_of(row: Any) -> StoredAuditEntry:
             status=row["status"],
             client_ip=row["client_ip"],
             outcome=AuditOutcome(row["outcome"]),
+            changes=_changes_of(row["changes"]),
         ),
         username=row["actor_username"],
         display_name_ru=row["actor_display_name_ru"],
+    )
+
+
+def _changes_of(value: Any) -> tuple[AuditChange, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        AuditChange(field=str(item["field"]), before=item.get("before"), after=item.get("after"))
+        for item in value
+        if isinstance(item, dict) and "field" in item
     )

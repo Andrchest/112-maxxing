@@ -293,6 +293,8 @@ class AuditLog(Base):
     status = sa.Column(sa.Integer(), nullable=False)
     client_ip = sa.Column(sa.Text(), nullable=True)
     outcome = sa.Column(sa.Text(), nullable=False)
+    #: I7 E43 (`0019_audit_changes`): `[{field, before, after}]`, `NULL` when nothing changed.
+    changes = sa.Column(JSONB_T, nullable=True)
 
     __table_args__ = (
         sa.Index("ix_audit_log_ts", "ts"),

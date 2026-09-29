@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.lessons.errors import LessonNotFoundError, require_creator_or_admin
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.domain.common.actors import ActorRef
@@ -24,9 +25,16 @@ __all__ = ["StartLesson"]
 class StartLesson:
     """`startLesson` (INSTRUCTOR — the creator — or ADMIN)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._changes = changes  # I7 E43
 
     async def __call__(self, lesson_id: LessonId, user: AuthenticatedUser) -> Lesson:
         async with self._unit_of_work() as uow:
@@ -42,4 +50,5 @@ class StartLesson:
             )
             await uow.lessons.save(started)
             await uow.commit()
+        self._changes.record("lesson", "state", lesson.state, started.state)
         return started

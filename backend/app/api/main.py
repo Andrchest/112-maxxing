@@ -71,6 +71,7 @@ from app.api.routers import (
     users,
 )
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.ports.audit_changes import AuditChange, AuditChangeScope
 from app.application.ports.audit_log import AuditAction, AuditEntry, AuditOutcome
 
 __all__ = ["AuditMiddleware", "create_app"]
@@ -244,12 +245,21 @@ class AuditMiddleware:
                 status = int(message["status"])
             await send(message)
 
+        # I7 E43: the use cases this request runs report «было → стало» into a list of its own;
+        # it is read back here and written into this request's one row (never an UPDATE later).
+        change_scope = _change_scope(scope)
+        token = change_scope.open() if change_scope is not None else None
         try:
             await self.app(scope, receive, capture)
         except Exception:
+            if change_scope is not None:
+                change_scope.close(token)
             await _record_http(scope, status if status is not None else _SERVER_ERROR_STATUS)
             raise
-        await _record_http(scope, status if status is not None else _SERVER_ERROR_STATUS)
+        changes = change_scope.close(token) if change_scope is not None else ()
+        await _record_http(
+            scope, status if status is not None else _SERVER_ERROR_STATUS, changes=changes
+        )
 
     async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
         recorded = False
@@ -289,14 +299,21 @@ def _is_audited(scope: Scope) -> bool:
     return not (path == _UNAUDITED_PREFIX or path.startswith(_UNAUDITED_PREFIX + "/"))
 
 
-async def _record_http(scope: Scope, status: int) -> None:
+async def _record_http(scope: Scope, status: int, *, changes: tuple[AuditChange, ...] = ()) -> None:
     if scope_state(scope).get(AUDIT_RECORDED_KEY):
         return
     if status in _DENIED_STATUSES:
         await _record(scope, AuditAction.ACCESS_DENIED, status, AuditOutcome.DENIED)
         return
     outcome = AuditOutcome.OK if status < 400 else AuditOutcome.ERROR
-    await _record(scope, AuditAction.HTTP_REQUEST, status, outcome)
+    # A request that failed changed nothing it committed: its reported changes are dropped.
+    await _record(
+        scope,
+        AuditAction.HTTP_REQUEST,
+        status,
+        outcome,
+        changes=changes if outcome is AuditOutcome.OK else (),
+    )
 
 
 async def _record_ws_accept(scope: Scope) -> None:
@@ -309,9 +326,26 @@ async def _record_ws_accept(scope: Scope) -> None:
         await _record(scope, AuditAction.WS_CONNECTED, int(refused), AuditOutcome.ERROR)
 
 
-async def _record(scope: Scope, action: AuditAction, status: int, outcome: AuditOutcome) -> None:
+def _container_of(scope: Scope) -> Container | None:
     container = getattr(getattr(scope.get("app"), "state", None), "container", None)
-    if not isinstance(container, Container):
+    return container if isinstance(container, Container) else None
+
+
+def _change_scope(scope: Scope) -> AuditChangeScope | None:
+    container = _container_of(scope)
+    return container.audit_change_scope if container is not None else None
+
+
+async def _record(
+    scope: Scope,
+    action: AuditAction,
+    status: int,
+    outcome: AuditOutcome,
+    *,
+    changes: tuple[AuditChange, ...] = (),
+) -> None:
+    container = _container_of(scope)
+    if container is None:
         return
     user = scope_state(scope).get(AUDIT_USER_KEY)
     route = scope.get("route")
@@ -333,6 +367,7 @@ async def _record(scope: Scope, action: AuditAction, status: int, outcome: Audit
         operation_id=route.operation_id if isinstance(route, APIRoute) else None,
         target_ids=_target_ids(scope.get("path_params")),
         client_ip=str(client[0]) if client else None,
+        changes=changes,
     )
     await container.audit_recorder.record(entry)
 

@@ -27,6 +27,7 @@ from datetime import datetime
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.lessons.errors import LessonNotFoundError, require_creator_or_admin
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
@@ -198,9 +199,17 @@ class GetWeightProposals:
 class AcceptWeightProposals:
     """`acceptWeightProposals` — the chosen proposals become `PlanEntry.weight`."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        #: I7 E43: each card's weight, «было → стало» (`lesson.weight[<position>]`).
+        self._changes = changes
 
     async def __call__(
         self, lesson_id: LessonId, positions: Collection[int], user: AuthenticatedUser
@@ -213,4 +222,11 @@ class AcceptWeightProposals:
             accepted = lesson.accept_weights(frozenset(positions), self._clock.now())
             await uow.lessons.save_weights(accepted)
             await uow.commit()
+        for entry in accepted.scenario_plan:
+            self._changes.record(
+                "lesson",
+                f"weight[{entry.position}]",
+                lesson.entry(entry.position).weight,
+                entry.weight,
+            )
         return proposals_view(accepted)

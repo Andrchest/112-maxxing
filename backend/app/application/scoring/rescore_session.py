@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.auth.ownership import require_owner_or_admin
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.scoring.score_session import (
     compute_report,
@@ -85,8 +86,13 @@ class RescoreSession:
     any session; a trainee re-scoring, let alone persisting over, their own official result is
     exactly the kind of self-graded outcome SPEC §28's determinism guarantee exists to rule out)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        #: I7 E43 (ТЗ ¶246): a persisted rescore reports the score «было → стало» — the total and
+        #: every rule whose points moved. A dry run changes nothing and reports nothing.
+        self._changes = changes
 
     async def __call__(
         self, session_id: SessionId, user: AuthenticatedUser, *, persist: bool
@@ -130,6 +136,8 @@ class RescoreSession:
                 )
                 persisted = True
             await uow.commit()
+        if persisted:
+            self._record_score(stored_results, recomputed, differences)
 
         return RescoreOutcome(
             session_id=session_id,
@@ -142,6 +150,26 @@ class RescoreSession:
             persisted=persisted,
             scoring_rules=scenario_version.scoring_rules,
         )
+
+    def _record_score(
+        self,
+        stored_results: tuple[ScoreResult, ...] | None,
+        recomputed: ScoreReport,
+        differences: tuple[RescoreDifference, ...],
+    ) -> None:
+        stored_total = (
+            None
+            if stored_results is None
+            else sum(result.points_awarded for result in stored_results)
+        )
+        self._changes.record("score", "total_points", stored_total, recomputed.total_points)
+        for difference in differences:
+            self._changes.record(
+                "score",
+                f"rule_points[{difference.rule_id}]",
+                difference.stored_points,
+                difference.recomputed_points,
+            )
 
 
 def _stored_report(recomputed: ScoreReport, stored_results: tuple[ScoreResult, ...]) -> ScoreReport:

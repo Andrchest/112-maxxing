@@ -1150,3 +1150,87 @@ next restart picks up an import; a host run (`make run-api`) has only one `SIM_E
 operator folds `infra/.env.settings` into their own `.env` by hand (documented in
 `docs/RUNBOOK.md`) — a second `SIM_ENV_FILE`-like variable for a host run was judged out of scope
 for this epic (a technical choice, not a product one).
+
+## 71.19.43 I7 E43 — Audit journal «было → стало» (Q-E15-3; ТЗ ¶246, ¶296)
+
+**Purpose.** The owner answered Q-E15-3: the journal must show values, e.g. «Иванов изменил оценку
+с 42 на 50». E25's row (who, which operation, which target, status, time) now also carries what the
+operation changed.
+
+**Design (as built).**
+- Application: port `application/ports/audit_changes.py`:
+  - `AuditChangeCollector.record(entity, field, before, after)` and `record_secret(entity, field)`;
+    `AuditChangeScope.open()` / `close(token)` for the middleware;
+  - `AuditChange(field="<entity>.<field>[qualifier]", before, after)`; values normalised to JSON
+    (`audit_value`: enum → value, id/date → string, pydantic model → JSON dump, collection → list);
+  - a pair whose normalised values are equal is dropped (a create records only what it set; an
+    idempotent repeat records nothing);
+  - secrets: `record_secret` keeps the field with `before`/`after` `None` («изменён»), and `record`
+    on a field whose name contains `password`/`hash`/`ha1`/`token`/`secret`/`key`/`credential`
+    drops the values whatever the caller passed (`is_secret_field`; a `[qualifier]` is not part of
+    the name);
+  - `NO_AUDIT_CHANGES`, the null collector every instrumented use case defaults to.
+- Infrastructure: `infrastructure/audit/context_change_collector.py` `ContextVarAuditChanges` — one
+  mutable list per open scope in a `ContextVar`, so a copied context (thread-pool dependency, task
+  group) appends to its request's list; outside a scope (runners, CLI) `record` is a no-op.
+- API: `AuditMiddleware._http` opens a scope before the app and closes it after the response; the
+  collected list goes into the request's single `audit_log` INSERT, only when the outcome is `OK`
+  (status < 400) — a refused or failed request writes `changes = NULL`. The container holds one
+  `ContextVarAuditChanges` as `audit_changes` (collector) and `audit_change_scope` (scope);
+  `Container._audit_changes()` hands it to every instrumented use case (the null one while
+  `__init__` still runs — the `LessonRunner`'s `StartSession`, which runs outside any request).
+- The table stays append-only: nothing is ever updated after the INSERT; `audit_log_append_only`
+  is untouched and still refuses UPDATE/DELETE (including an UPDATE of `changes`).
+
+**Instrumented use cases** (field names as stored; recorded after the commit):
+
+| Operation | Changes |
+|:--|:--|
+| `createUser` | `user.username`, `user.display_name_ru`, `user.user_role`, `user.is_active` (from `null`); `user.password` «изменён» |
+| `updateUser` | `user.display_name_ru`, `user.user_role` (`UpdateUser`); `user.is_active` (`SetActive`, block / unblock) |
+| `resetUserPassword` | `user.password` «изменён» — never the password, hash or HA1 |
+| `createLesson` | `lesson.title_ru`, `session_mode`, `group_id`, `participants` (logins), `scenario_plan` (`[{position, scenario_version_id, weight}]`), `timers[<position>]` (the entry's override), `time_scale` (when ≠ 1), `pass_criteria` (when given) |
+| `acceptWeightProposals` | `lesson.weight[<position>]` for each card whose weight moved |
+| `startLesson` / `abortLesson` | `lesson.state`; abort also `lesson.aborted_cards` (count) — the cards' own aborts report nothing (their `SESSION_ABORTED` events carry it) |
+| `releaseLessonReport` | `lesson.report_released`, `lesson.released_cards` (count) — the per-card releases report nothing |
+| `create/update/deleteTraineeGroup` | `group.name_ru`, `group.members` (logins); delete → `null` |
+| `importScenarioVersion` | `scenario.slug` (new scenario), `scenario_version.title`, `.version`, `.content_sha256` (new version); an idempotent re-import reports nothing |
+| `archiveScenario` / `unarchiveScenario` | `scenario.archived` |
+| `uploadMaterial` / `archiveMaterial` | `material.title_ru`, `file_name`, `content_type`, `size_bytes`; `material.archived` |
+| `createSessionComment` / `createLessonComment` | `comment.text`; an edit (`replaces_comment_id`) shows the replaced text as `before` |
+| `releaseReportToTrainee` | `report.released` (first release only) |
+| `rescoreSession persist=true` | `score.total_points` (stored → recomputed; `null` when none was stored) and `score.rule_points[<rule_id>]` for each rule that moved; a dry run reports nothing |
+| `startSession` / `abortSession` | `session.state` (cheap, from the aggregate) |
+| `setDdsServiceStatus` | `dds_leg.response_status` (the leg's status before the command, `ADDED` included) |
+
+Not instrumented: `createSession` (the session is created `READY`; its full content is
+`SESSION_CREATED`), every other session command (operator card fields, ДДС picker, calls — each
+event already carries its value in the session's log, D5), `requestWeightProposals` (stores a
+proposal, changes no weight), `purgeRecordings` / `clearInferenceFatal` (operational, not listed by
+the manager); settings import is CLI-only and not audited (§71.18.6).
+
+**Data / DB.** Migration `0019_audit_changes` (down `0018_training_materials`): nullable
+`audit_log.changes jsonb` (HLD 20, `audit_log`). SQL `NULL` (not JSON `null`) when empty.
+
+**API** (additive): `listAuditLog` gains `with_changes` (boolean, «Только с изменениями»:
+`changes IS NOT NULL`); `AuditEntryView.changes` (array of the new `AuditChangeView`
+`{field, before, after}`, empty when none). No new problem code.
+
+**UI.** `/admin` «Журнал» (`features/admin/audit-log-tab.tsx`): column «Изменения» with a toggle
+«Показать изменения (N)» (`aria-expanded`) that opens a list «поле: было → стало» under the row;
+`audit-changes.ts` maps each field to a Russian label (qualifier «(карточка №2)»), enum values to
+the labels the rest of the UI uses (roles, modes, lesson/session states, memo statuses), booleans to
+«да»/«нет», `null` to «—», a secret to «изменён». Checkbox «Только с изменениями» sets the filter.
+
+**Acceptance (tests).**
+- One API test per instrumented operation asserting the row's exact `changes`
+  (`tests/api/admin/test_accounts_audit_changes.py`, `tests/api/lessons/test_lessons_audit_changes.py`,
+  `tests/api/reports/test_reports_audit_changes.py`, `tests/api/dds/test_dds_audit_changes.py`,
+  `tests/api/test_scenarios_audit_changes.py`, `tests/api/materials/test_materials_audit_changes.py`);
+- secrets: neither the created/reset password nor its digest appears in any row; password fields
+  carry `null`/`null` (API) and every secret-looking name is nulled (unit,
+  `tests/unit/infrastructure/test_audit_change_collector.py`);
+- `tests/integration/db/test_audit_changes_migration.py`: upgrade keeps old rows (`NULL`),
+  downgrade/upgrade round-trip, an UPDATE adding `changes` is refused by the append-only trigger;
+  `test_audit_log_table.py` unchanged and passing;
+- vitest `audit-log-tab.test.tsx`: expand/collapse with Russian lines, the filter's query.

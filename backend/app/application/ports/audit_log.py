@@ -11,6 +11,10 @@ What an entry holds is fixed by the table (HLD 20 §20.6): who (`user_id`, `role
 personal data do not reach this port, which is why `AuditEntry` has no field that could carry one.
 For `LOGIN_*` the attempted username is `target_ids["username"]`, never the password.
 
+I7 E43 (Q-E15-3) adds `changes`: the «было → стало» list a mutating use case reported through
+`AuditChangeCollector` (`app.application.ports.audit_changes`) — field values, never a body, and a
+secret only ever as «изменён» with both values `None`.
+
 Two ports, one adapter (`app.infrastructure.persistence.audit_log_repository`): the API writes
 through `AuditRecorder` (the audit middleware and `loginUser`), and E29's `listAuditLog` reads
 through `AuditReader`.
@@ -25,6 +29,7 @@ from enum import Enum
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from app.application.ports.audit_changes import AuditChange
 from app.application.ports.user_repository import UserRole
 from app.domain.common.ids import UserId
 
@@ -73,6 +78,8 @@ class AuditEntry:
     operation_id: str | None = None
     target_ids: Mapping[str, str] = field(default_factory=dict)
     client_ip: str | None = None
+    changes: tuple[AuditChange, ...] = ()
+    """(I7 E43) What the request changed, «было → стало»; empty for a read or a refusal."""
 
 
 @dataclass(frozen=True)
@@ -100,6 +107,8 @@ class AuditFilter:
     to_ts: datetime | None = None
     limit: int = 100
     offset: int = 0
+    with_changes: bool = False
+    """(I7 E43) «Только с изменениями»: only rows that carry a non-empty `changes`."""
 
 
 @dataclass(frozen=True)

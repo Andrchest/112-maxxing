@@ -8,7 +8,7 @@ plus S5's monitoring reads (I4 E29, `71-i4-wave4.md` §71.6, appended at the end
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -28,6 +28,7 @@ from app.domain.common.ids import SessionId
 __all__ = [
     "AdminAlertViewSchema",
     "AdminAlertsSchema",
+    "AuditChangeViewSchema",
     "AuditEntryViewSchema",
     "BackupStatusSchema",
     "ErrorRecordViewSchema",
@@ -100,6 +101,15 @@ def purge_recordings_result_schema(result: PurgeRecordingsResult) -> PurgeRecord
 # `getBackupStatus` — ADMIN only, ТЗ ¶205-¶209, ¶216, ¶289, ¶308.
 
 
+class AuditChangeViewSchema(ApiModel):
+    """`openapi.yaml`'s `AuditChangeView` (I7 E43): one field «было → стало»; `before`/`after`
+    are any JSON, both `null` for a secret («изменён»)."""
+
+    field: str
+    before: Any = None
+    after: Any = None
+
+
 class AuditEntryViewSchema(ApiModel):
     """`openapi.yaml`'s `AuditEntryView` — one `audit_log` row, never a request/response body."""
 
@@ -117,6 +127,8 @@ class AuditEntryViewSchema(ApiModel):
     outcome: AuditOutcome
     username: str | None = None
     display_name_ru: str | None = None
+    changes: list[AuditChangeViewSchema] = Field(default_factory=list)
+    """(I7 E43) «было → стало»; empty for an entry that changed nothing."""
 
 
 def audit_entry_view_schema(stored: StoredAuditEntry) -> AuditEntryViewSchema:
@@ -137,6 +149,10 @@ def audit_entry_view_schema(stored: StoredAuditEntry) -> AuditEntryViewSchema:
         outcome=entry.outcome,
         username=stored.username,
         display_name_ru=stored.display_name_ru,
+        changes=[
+            AuditChangeViewSchema(field=change.field, before=change.before, after=change.after)
+            for change in entry.changes
+        ],
     )
 
 

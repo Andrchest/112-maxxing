@@ -39,6 +39,7 @@ from typing import Any
 
 import yaml
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.reference import ReferencePort
 from app.application.ports.scenario_repository import StoredScenarioVersionDetail
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
@@ -154,10 +155,16 @@ class ImportScenarioVersion:
     """Validate and store one scenario version document, in one transaction (D4)."""
 
     def __init__(
-        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        reference: ReferencePort | None = None,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._reference = reference
+        #: I7 E43: a new scenario / version as imported; an idempotent re-import reports nothing.
+        self._changes = changes
 
     async def __call__(self, command: ImportScenarioVersionCommand) -> StoredScenarioVersionDetail:
         """Import; returns the stored row. Every rejection leaves the database untouched."""
@@ -177,13 +184,21 @@ class ImportScenarioVersion:
 
         async with self._unit_of_work() as uow:
             slug = await self._resolve_slug(uow, version, command.source_path)
-            await self._ensure_scenario(uow, version, slug)
-            await self._store_version(uow, version, slug, content, digest, command.source_path)
+            scenario_created = await self._ensure_scenario(uow, version, slug)
+            version_added = await self._store_version(
+                uow, version, slug, content, digest, command.source_path
+            )
             detail = await uow.scenarios.get_version_detail(version.id)
             await uow.commit()
 
         if detail is None:  # pragma: no cover - the row was just written in this transaction
             raise ScenarioIdentityConflictError(f"scenario version {version.id} vanished on write")
+        if scenario_created:
+            self._changes.record("scenario", "slug", None, slug)
+        if version_added:
+            self._changes.record("scenario_version", "title", None, version.title)
+            self._changes.record("scenario_version", "version", None, version.version)
+            self._changes.record("scenario_version", "content_sha256", None, digest)
         return detail
 
     # -- steps --------------------------------------------------------------------------------
@@ -201,16 +216,18 @@ class ImportScenarioVersion:
                 return parent
         return slug_of(version.title)
 
-    async def _ensure_scenario(self, uow: UnitOfWork, version: ScenarioVersion, slug: str) -> None:
+    async def _ensure_scenario(self, uow: UnitOfWork, version: ScenarioVersion, slug: str) -> bool:
+        """`True` when the `scenarios` row was created here."""
         owner = await uow.scenarios.find_scenario_by_slug(slug)
         if owner is None:
             await uow.scenarios.add_scenario(version.scenario_id, slug, version.title)
-            return
+            return True
         if str(owner.scenario_id) != str(version.scenario_id):
             raise ScenarioIdentityConflictError(
                 f"scenario slug {slug!r} is owned by scenario_id {owner.scenario_id} but the "
                 f"document declares {version.scenario_id}"
             )
+        return False
 
     async def _store_version(
         self,
@@ -220,14 +237,15 @@ class ImportScenarioVersion:
         content: Mapping[str, Any],
         digest: str,
         source_path: str | None,
-    ) -> None:
+    ) -> bool:
+        """`True` when the version row was written here (`False`: the idempotent no-op)."""
         stored = await uow.scenarios.find_version(version.scenario_id, version.version)
         if stored is None:
             await uow.scenarios.add_version(version, content, digest, source_path)
             await uow.scenarios.add_scoring_rules(version.id, version.scoring_rules)
-            return
+            return True
         if stored.content_sha256 == digest:
-            return  # idempotent: the same version with the same content is already stored
+            return False  # idempotent: the same version with the same content is already stored
         if stored.locked_at is not None:
             raise ScenarioVersionLockedError(slug, version.version)
         raise ScenarioVersionExistsError(slug, version.version)

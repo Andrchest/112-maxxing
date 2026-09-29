@@ -1106,9 +1106,19 @@ export function resetUserPassword(userId: string, body: PasswordResetRequest): P
 /** `listAuditLog` (ADMIN) — ТЗ ¶205, ¶296. Filters by user, action and period; paged, newest
  * first. */
 export function listAuditLog(
-  params: { userId?: string; action?: AuditAction; from?: string; to?: string; limit?: number; offset?: number } = {},
+  params: {
+    userId?: string;
+    action?: AuditAction;
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+    /** (I7 E43) «Только с изменениями». */
+    withChanges?: boolean;
+  } = {},
 ): Promise<{ items: AuditEntryView[]; total: number }> {
   const query = new URLSearchParams();
+  if (params.withChanges) query.set('with_changes', 'true');
   if (params.userId) query.set('user_id', params.userId);
   if (params.action) query.set('action', params.action);
   if (params.from) query.set('from', params.from);
@@ -1201,3 +1211,7 @@ export function exportUserProfile(userId: string): Promise<Blob> {
 export function exportSettingsXml(): Promise<Blob> {
   return fetchFile('/admin/settings/export', 'application/xml');
 }
+
+// --- I7 E43: «было → стало» in the audit journal (Q-E15-3) — `AuditEntryView.changes` items;
+// `listAuditLog`'s `withChanges` filter is above. ---
+export type AuditChangeView = components['schemas']['AuditChangeView'];

@@ -15,6 +15,7 @@ from app.application.lessons.errors import (
     LessonReportNotReadyError,
     require_creator_or_admin,
 )
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.reports.release_report import ReleaseReportToTrainee
@@ -34,10 +35,13 @@ class ReleaseLessonReport:
         unit_of_work: UnitOfWorkFactory,
         clock: Clock,
         release_session: ReleaseReportToTrainee,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
         self._release_session = release_session
+        self._changes = changes  # I7 E43
 
     async def __call__(self, lesson_id: LessonId, user: AuthenticatedUser) -> Lesson:
         if not user.is_instructor_or_admin:
@@ -55,9 +59,11 @@ class ReleaseLessonReport:
             cards = await uow.lessons.list_cards(lesson_id)
             await uow.commit()
 
+        released_cards = 0
         for card in cards:
             if card.state is SessionState.COMPLETED:
                 await self._release_session(card.session_id, user)
+                released_cards += 1
 
         async with self._unit_of_work() as uow:
             current = await uow.lessons.get_for_update(lesson_id)
@@ -66,4 +72,12 @@ class ReleaseLessonReport:
             released = current.release_report(self._clock.now(), released_by=user.user_id)
             await uow.lessons.save(released)
             await uow.commit()
+        self._changes.record(
+            "lesson",
+            "report_released",
+            current.report_released_at is not None,
+            released.report_released_at is not None,
+        )
+        if current.report_released_at is None and released_cards:
+            self._changes.record("lesson", "released_cards", None, released_cards)
         return released

@@ -93,8 +93,8 @@ export const queryKeys = {
   admin: {
     users: (role?: string, includeInactive?: boolean) =>
       ['admin', 'users', role ?? 'ALL', includeInactive ?? false] as const,
-    auditLog: (userId?: string, action?: string, from?: string, to?: string, offset = 0) =>
-      ['admin', 'audit-log', userId ?? '', action ?? '', from ?? '', to ?? '', offset] as const,
+    auditLog: (userId?: string, action?: string, from?: string, to?: string, offset = 0, withChanges = false) =>
+      ['admin', 'audit-log', userId ?? '', action ?? '', from ?? '', to ?? '', offset, withChanges] as const,
     usageStats: (from?: string, to?: string) => ['admin', 'usage-stats', from ?? '', to ?? ''] as const,
     serverLoad: () => ['admin', 'server-load'] as const,
     errors: (from?: string, to?: string) => ['admin', 'errors', from ?? '', to ?? ''] as const,

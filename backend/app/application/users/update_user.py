@@ -10,6 +10,7 @@ is never "demoting", and a `user_role` equal to the current one is a no-op the g
 
 from __future__ import annotations
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.user_repository import StoredUser, UserRole
 from app.application.users.errors import (
@@ -25,8 +26,11 @@ __all__ = ["UpdateUser"]
 class UpdateUser:
     """Change `display_name_ru` and/or `user_role`; both optional, at least one expected."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self,
@@ -61,4 +65,6 @@ class UpdateUser:
             )
             assert updated is not None, "the `get` above already proved the row exists"
             await uow.commit()
+        for field in ("display_name_ru", "user_role"):
+            self._changes.record("user", field, getattr(target, field), getattr(updated, field))
         return updated

@@ -43,6 +43,7 @@ from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.dds.command_context import DdsCommandContext, DdsCommandGate
 from app.application.dds.list_legs import assemble_leg_views
 from app.application.dds.views import DdsLegView
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError, InvalidTransitionError
 from app.domain.common.ids import AssignmentId, SessionId, UserId
@@ -178,8 +179,12 @@ async def leg_view_of(
 class SetDdsServiceStatus:
     """`setDdsServiceStatus` (`openapi.yaml`): one leg, one step."""
 
-    def __init__(self, gate: DdsCommandGate) -> None:
+    def __init__(
+        self, gate: DdsCommandGate, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._gate = gate
+        #: I7 E43: the leg's status «было → стало»; the event log keeps everything else.
+        self._changes = changes
 
     async def __call__(
         self,
@@ -195,6 +200,7 @@ class SetDdsServiceStatus:
         """Move the leg to `status` (see the module docstring for the order of the checks)."""
         async with self._gate.open(session_id, user, ACTION_ID) as ctx:
             leg = ctx.leg(assignment_id)
+            status_before = leg.response_status
             check_leg_bound(leg, user.user_id)
             if proposed_by_call_id is not None:
                 check_proposal(ctx.full_log, proposed_by_call_id, assignment_id)
@@ -246,4 +252,6 @@ class SetDdsServiceStatus:
             ):
                 events.extend(await acknowledge_stage(ctx, moved))
             await ctx.append_status_events(events)
-            return await leg_view_of(ctx, assignment_id, user)
+            view = await leg_view_of(ctx, assignment_id, user)
+        self._changes.record("dds_leg", "response_status", status_before, moved.response_status)
+        return view

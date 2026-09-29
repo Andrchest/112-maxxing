@@ -10,6 +10,7 @@ any non-ADMIN account, never needs them.
 
 from __future__ import annotations
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.ports.user_repository import StoredUser, UserRole
 from app.application.users.errors import (
@@ -25,8 +26,11 @@ __all__ = ["SetActive"]
 class SetActive:
     """Block or unblock an account."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes  # I7 E43
 
     async def __call__(self, user_id: UserId, *, actor_id: UserId, is_active: bool) -> StoredUser:
         async with self._unit_of_work() as uow:
@@ -50,4 +54,5 @@ class SetActive:
             updated = await uow.users.update(user_id, is_active=is_active)
             assert updated is not None, "the `get` above already proved the row exists"
             await uow.commit()
+        self._changes.record("user", "is_active", target.is_active, updated.is_active)
         return updated

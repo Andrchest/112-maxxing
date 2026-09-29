@@ -12,6 +12,7 @@ concurrent duplicate still surfaces through `uq_users_username` at the database 
 
 from __future__ import annotations
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -33,11 +34,14 @@ class CreateUser:
         ids: IdGenerator,
         *,
         min_password_length: int,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._hasher = hasher
         self._ids = ids
         self._min_password_length = min_password_length
+        #: I7 E43: «было → стало» for the audit row; the password only ever as «изменён».
+        self._changes = changes
 
     async def __call__(
         self, *, username: str, display_name_ru: str, user_role: UserRole, password: str
@@ -55,4 +59,7 @@ class CreateUser:
                 password_hash=self._hasher.hash(password),
             )
             await uow.commit()
+        for field in ("username", "display_name_ru", "user_role", "is_active"):
+            self._changes.record("user", field, None, getattr(user, field))
+        self._changes.record_secret("user", "password")
         return user

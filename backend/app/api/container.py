@@ -110,6 +110,11 @@ from app.application.operator.list_card_revisions import ListCardRevisions
 from app.application.operator.select_service import SelectRecipientService
 from app.application.operator.set_card_field import SetCardField
 from app.application.ports.admin_monitoring import AdminMonitoringReader, ServerHeartbeatReader
+from app.application.ports.audit_changes import (  # I7 E43
+    NO_AUDIT_CHANGES,
+    AuditChangeCollector,
+    AuditChangeScope,
+)
 from app.application.ports.audit_log import AuditReader, AuditRecorder
 from app.application.ports.call_state_cache import CallStateCache
 from app.application.ports.call_transport_status import CallTransportStatus
@@ -188,6 +193,7 @@ from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
 from app.domain.scoring.results import ScoreResult
 from app.inference.llm.explanation_client import build_explanation_llm_client
+from app.infrastructure.audit import ContextVarAuditChanges  # I7 E43
 from app.infrastructure.auth.argon2_hasher import Argon2PasswordHasher
 from app.infrastructure.auth.jwt_token_service import JwtTokenService
 from app.infrastructure.clock import SystemClock
@@ -482,7 +488,27 @@ class Container:
         )
         # --- end I4 E35 -------------------------------------------------------------------------
 
+        # --- I7 E43 audit «было → стало» (`71-i4-wave4.md` §71.19.43, Q-E15-3) -------------------
+        #
+        # One object, two ports: the mutating use cases report into the collector, and
+        # `AuditMiddleware` opens a fresh list per request through the scope and writes what was
+        # collected into that request's single `audit_log` row. Built last, so a use case the
+        # constructor above already built (the `LessonRunner`'s `StartSession`) has none — it
+        # runs in the background, outside any request, and would record nothing anyway.
+        audit_changes = ContextVarAuditChanges()
+        self.audit_changes: AuditChangeCollector = audit_changes
+        self.audit_change_scope: AuditChangeScope = audit_changes
+        # --- end I7 E43 -------------------------------------------------------------------------
+
     # -- use-case factories --------------------------------------------------------------------
+
+    def _audit_changes(self) -> AuditChangeCollector:
+        """I7 E43: the «было → стало» collector — the null one while `__init__` is still running
+        (the `LessonRunner`'s `StartSession` is built before the collector, and runs outside any
+        request)."""
+        collector: AuditChangeCollector | None = getattr(self, "audit_changes", None)
+        return collector if collector is not None else NO_AUDIT_CHANGES
+
     #
     # One method per use case. Routers call these; they never call a use-case constructor, so a
     # constructor signature can change without touching a single endpoint.
@@ -513,7 +539,9 @@ class Container:
 
     def import_scenario_version(self) -> ImportScenarioVersion:
         """`importScenarioVersion`; rules R37/R38 check against the reference pack."""
-        return ImportScenarioVersion(self.unit_of_work, self.reference)
+        return ImportScenarioVersion(
+            self.unit_of_work, self.reference, changes=self._audit_changes()
+        )
 
     def validate_scenario_document(self) -> ValidateScenarioDocument:
         """`validateScenarioFile`."""
@@ -521,11 +549,11 @@ class Container:
 
     def archive_scenario(self) -> ArchiveScenario:
         """`archiveScenario` (I4 E32)."""
-        return ArchiveScenario(self.unit_of_work)
+        return ArchiveScenario(self.unit_of_work, changes=self._audit_changes())
 
     def unarchive_scenario(self) -> UnarchiveScenario:
         """`unarchiveScenario` (I4 E32)."""
-        return UnarchiveScenario(self.unit_of_work)
+        return UnarchiveScenario(self.unit_of_work, changes=self._audit_changes())
 
     def create_session(self) -> CreateSession:
         """`createSession`; records `SESSION_CREATED.reference_pack` (HLD 70 §70.6.1)."""
@@ -540,17 +568,26 @@ class Container:
             self.ids,
             require_inference_ready=self.settings.require_inference_ready,
             reference=self.reference,
+            changes=self._audit_changes(),
         )
 
     def abort_session(self) -> AbortSession:
         """`abortSession`; publishes `voice:cancel:{session_id}` after the commit (§40.6)."""
-        return AbortSession(self.unit_of_work, self.clock, self.voice_signals)
+        return AbortSession(
+            self.unit_of_work, self.clock, self.voice_signals, changes=self._audit_changes()
+        )
 
     # -- I3 E4a: lessons and the incident list (HLD 70 §70.3) -----------------------------------
 
     def create_lesson(self) -> CreateLesson:
         """`createLesson` — every card through `createSession`'s path, one Unit of Work."""
-        return CreateLesson(self.unit_of_work, self.ids, self.clock, self.create_session())
+        return CreateLesson(
+            self.unit_of_work,
+            self.ids,
+            self.clock,
+            self.create_session(),
+            changes=self._audit_changes(),
+        )
 
     def list_lessons(self) -> ListLessons:
         """`listLessons`."""
@@ -562,11 +599,17 @@ class Container:
 
     def start_lesson(self) -> StartLesson:
         """`startLesson`."""
-        return StartLesson(self.unit_of_work, self.clock)
+        return StartLesson(self.unit_of_work, self.clock, changes=self._audit_changes())
 
     def abort_lesson(self) -> AbortLesson:
         """`abortLesson` — each running card through `abortSession`."""
-        return AbortLesson(self.unit_of_work, self.clock, self.abort_session())
+        # I7 E43: the cards' own aborts report nothing — the lesson reports its state and count.
+        return AbortLesson(
+            self.unit_of_work,
+            self.clock,
+            AbortSession(self.unit_of_work, self.clock, self.voice_signals),
+            changes=self._audit_changes(),
+        )
 
     def get_lesson_report(self) -> GetLessonReport:
         """`getLessonReport` — the cards' own `getSessionReport`s, weighted."""
@@ -574,7 +617,13 @@ class Container:
 
     def release_lesson_report(self) -> ReleaseLessonReport:
         """`releaseLessonReport` — `releaseReportToTrainee` for every completed card."""
-        return ReleaseLessonReport(self.unit_of_work, self.clock, self.release_report_to_trainee())
+        # I7 E43: the per-card releases report nothing — the lesson reports its own release.
+        return ReleaseLessonReport(
+            self.unit_of_work,
+            self.clock,
+            ReleaseReportToTrainee(self.unit_of_work, self.clock),
+            changes=self._audit_changes(),
+        )
 
     # -- I4 E32: instructor misc — comments (`71-i4-wave4.md` §71.9) ---------------------------
 
@@ -584,7 +633,9 @@ class Container:
 
     def create_session_comment(self) -> CreateSessionComment:
         """`createSessionComment`."""
-        return CreateSessionComment(self.unit_of_work, self.clock, self.ids)
+        return CreateSessionComment(
+            self.unit_of_work, self.clock, self.ids, changes=self._audit_changes()
+        )
 
     def list_lesson_comments(self) -> ListLessonComments:
         """`listLessonComments`."""
@@ -592,7 +643,9 @@ class Container:
 
     def create_lesson_comment(self) -> CreateLessonComment:
         """`createLessonComment`."""
-        return CreateLessonComment(self.unit_of_work, self.clock, self.ids)
+        return CreateLessonComment(
+            self.unit_of_work, self.clock, self.ids, changes=self._audit_changes()
+        )
 
     def list_my_incidents(self) -> ListMyIncidents:
         """`listMyIncidents`."""
@@ -602,7 +655,9 @@ class Container:
 
     def create_trainee_group(self) -> CreateTraineeGroup:
         """`createTraineeGroup`."""
-        return CreateTraineeGroup(self.unit_of_work, self.ids, self.clock)
+        return CreateTraineeGroup(
+            self.unit_of_work, self.ids, self.clock, changes=self._audit_changes()
+        )
 
     def list_trainee_groups(self) -> ListTraineeGroups:
         """`listTraineeGroups`."""
@@ -614,11 +669,11 @@ class Container:
 
     def update_trainee_group(self) -> UpdateTraineeGroup:
         """`updateTraineeGroup`."""
-        return UpdateTraineeGroup(self.unit_of_work)
+        return UpdateTraineeGroup(self.unit_of_work, changes=self._audit_changes())
 
     def delete_trainee_group(self) -> DeleteTraineeGroup:
         """`deleteTraineeGroup`."""
-        return DeleteTraineeGroup(self.unit_of_work)
+        return DeleteTraineeGroup(self.unit_of_work, changes=self._audit_changes())
 
     def weight_proposer(self) -> LlmWeightProposer:
         """The LLM proposer over the backend's own `LLMClient` (`SIM_EXPLANATION_LLM_*`), with
@@ -644,7 +699,7 @@ class Container:
 
     def accept_weight_proposals(self) -> AcceptWeightProposals:
         """`acceptWeightProposals` — the only path from a proposal to `PlanEntry.weight`."""
-        return AcceptWeightProposals(self.unit_of_work, self.clock)
+        return AcceptWeightProposals(self.unit_of_work, self.clock, changes=self._audit_changes())
 
     def _adopt_started_card(self, session_id: SessionId) -> None:
         """A card the `LessonRunner` started is ticked like any session (D7)."""
@@ -661,7 +716,7 @@ class Container:
 
     def rescore_session(self) -> RescoreSession:
         """`rescoreSession` (epic E15-B)."""
-        return RescoreSession(self.unit_of_work)
+        return RescoreSession(self.unit_of_work, changes=self._audit_changes())
 
     # -- E16: the post-session report and replay (SPEC §29, §27; D11) ---------------------------
 
@@ -673,7 +728,7 @@ class Container:
 
     def release_report_to_trainee(self) -> ReleaseReportToTrainee:
         """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""
-        return ReleaseReportToTrainee(self.unit_of_work, self.clock)
+        return ReleaseReportToTrainee(self.unit_of_work, self.clock, changes=self._audit_changes())
 
     # -- E17 R4: the live instructor overview (D3, D11) ------------------------------------------
 
@@ -975,7 +1030,7 @@ class Container:
 
     def set_dds_service_status(self) -> SetDdsServiceStatus:
         """`setDdsServiceStatus` (I3 E5a)."""
-        return SetDdsServiceStatus(self.dds_command_gate())
+        return SetDdsServiceStatus(self.dds_command_gate(), changes=self._audit_changes())
 
     def flag_dds_card_issue(self) -> FlagDdsCardIssue:
         """`flagDdsCardIssue` (I3 E5b)."""
@@ -1146,20 +1201,24 @@ class Container:
             self.hasher,
             self.ids,
             min_password_length=self.settings.min_password_length,
+            changes=self._audit_changes(),
         )
 
     def update_user(self) -> UpdateUser:
         """`updateUser`'s role / display-name half (ADMIN)."""
-        return UpdateUser(self.unit_of_work)
+        return UpdateUser(self.unit_of_work, changes=self._audit_changes())
 
     def set_active(self) -> SetActive:
         """`updateUser`'s `is_active` half (ADMIN)."""
-        return SetActive(self.unit_of_work)
+        return SetActive(self.unit_of_work, changes=self._audit_changes())
 
     def reset_password(self) -> ResetPassword:
         """`resetUserPassword` (ADMIN)."""
         return ResetPassword(
-            self.unit_of_work, self.hasher, min_password_length=self.settings.min_password_length
+            self.unit_of_work,
+            self.hasher,
+            min_password_length=self.settings.min_password_length,
+            changes=self._audit_changes(),
         )
 
     # --- end I4 E28 -----------------------------------------------------------------------------
@@ -1191,6 +1250,7 @@ class Container:
             self.clock,
             materials_dir=self.materials_dir,
             max_size_bytes=self.settings.material_max_mb * 1024 * 1024,
+            changes=self._audit_changes(),
         )
 
     def list_materials(self) -> ListMaterials:
@@ -1203,7 +1263,7 @@ class Container:
 
     def archive_material(self) -> ArchiveMaterial:
         """`archiveMaterial` (§71.11)."""
-        return ArchiveMaterial(self.unit_of_work, self.clock)
+        return ArchiveMaterial(self.unit_of_work, self.clock, changes=self._audit_changes())
 
     # --- I4 E29 admin monitoring (`71-i4-wave4.md` §71.6) ---------------------------------------
     #

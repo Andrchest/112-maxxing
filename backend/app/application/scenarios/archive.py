@@ -9,6 +9,7 @@ running on one of its versions is completely unaffected — nothing here touches
 
 from __future__ import annotations
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.scenario_repository import StoredScenarioListing
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.scenarios.queries import ScenarioNotFoundError
@@ -17,31 +18,50 @@ from app.domain.common.ids import ScenarioId
 __all__ = ["ArchiveScenario", "UnarchiveScenario"]
 
 
+async def _set_archived(
+    unit_of_work: UnitOfWorkFactory,
+    changes: AuditChangeCollector,
+    scenario_id: ScenarioId,
+    *,
+    archived: bool,
+) -> StoredScenarioListing:
+    """Both commands: flip the flag, and report `scenario.archived` «было → стало» (I7 E43)."""
+    async with unit_of_work() as uow:
+        before = await uow.scenarios.get_scenario(scenario_id)
+        listing = await uow.scenarios.set_archived(scenario_id, archived=archived)
+        await uow.commit()
+    if listing is None:
+        raise ScenarioNotFoundError(f"no scenario {scenario_id}")
+    changes.record(
+        "scenario",
+        "archived",
+        before.archived_at is not None if before is not None else None,
+        listing.archived_at is not None,
+    )
+    return listing
+
+
 class ArchiveScenario:
     """`archiveScenario` — idempotent; a second call leaves the original `archived_at`."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes
 
     async def __call__(self, scenario_id: ScenarioId) -> StoredScenarioListing:
-        async with self._unit_of_work() as uow:
-            listing = await uow.scenarios.set_archived(scenario_id, archived=True)
-            await uow.commit()
-        if listing is None:
-            raise ScenarioNotFoundError(f"no scenario {scenario_id}")
-        return listing
+        return await _set_archived(self._unit_of_work, self._changes, scenario_id, archived=True)
 
 
 class UnarchiveScenario:
     """`unarchiveScenario` — idempotent; a second call is a no-op."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, *, changes: AuditChangeCollector = NO_AUDIT_CHANGES
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._changes = changes
 
     async def __call__(self, scenario_id: ScenarioId) -> StoredScenarioListing:
-        async with self._unit_of_work() as uow:
-            listing = await uow.scenarios.set_archived(scenario_id, archived=False)
-            await uow.commit()
-        if listing is None:
-            raise ScenarioNotFoundError(f"no scenario {scenario_id}")
-        return listing
+        return await _set_archived(self._unit_of_work, self._changes, scenario_id, archived=False)

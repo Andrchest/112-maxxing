@@ -17,6 +17,7 @@ from pathlib import Path
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.materials.allowed_types import content_type_of, extension_of
 from app.application.materials.errors import MaterialTooLargeError, MaterialTypeNotAllowedError
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.material_repository import StoredMaterial
@@ -46,6 +47,7 @@ class UploadMaterial:
         *,
         materials_dir: Path,
         max_size_bytes: int,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._ids = ids
@@ -53,6 +55,7 @@ class UploadMaterial:
         #: `Settings.data_dir / "materials"` (HLD 71 §71.11).
         self._materials_dir = materials_dir
         self._max_size_bytes = max_size_bytes
+        self._changes = changes  # I7 E43
 
     async def __call__(
         self, request: UploadMaterialRequest, *, actor: AuthenticatedUser
@@ -82,6 +85,8 @@ class UploadMaterial:
         async with self._unit_of_work() as uow:
             await uow.materials.add(material)
             await uow.commit()
+        for field in ("title_ru", "file_name", "content_type", "size_bytes"):
+            self._changes.record("material", field, None, getattr(material, field))
         return material
 
     def _write_once(self, sha256_hex: str, content: bytes) -> None:

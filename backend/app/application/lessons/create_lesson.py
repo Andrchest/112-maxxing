@@ -31,13 +31,14 @@ from dataclasses import dataclass, field
 
 from app.application.groups.trainee_groups import TraineeGroupNotFoundError
 from app.application.lessons.errors import LessonPlanEntryRefusedError
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.sessions.create_session import CreateSession, CreateSessionCommand
 from app.domain.common.actors import ActorRef
 from app.domain.common.errors import DomainError
-from app.domain.common.ids import LessonId, TraineeGroupId
+from app.domain.common.ids import LessonId, TraineeGroupId, UserId
 from app.domain.enums import SessionMode
 from app.domain.lesson.lesson import Lesson, create_lesson
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry
@@ -105,11 +106,15 @@ class CreateLesson:
         ids: IdGenerator,
         clock: Clock,
         create_session: CreateSession,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._ids = ids
         self._clock = clock
         self._create_session = create_session
+        #: I7 E43: the lesson as created — title, mode, participants, plan, timers, criteria.
+        self._changes = changes
 
     async def __call__(self, command: CreateLessonCommand) -> Lesson:
         created_by = command.actor.actor_id
@@ -161,5 +166,57 @@ class CreateLesson:
                     raise
                 except DomainError as exc:
                     raise LessonPlanEntryRefusedError(entry.position, exc) from exc
+            participant_names = {
+                account.user_id: account.username
+                for account in await uow.users.get_many(
+                    [participant.user_id for participant in lesson.participants]
+                )
+            }
             await uow.commit()
+        self._record_created(lesson, command, participant_names)
         return lesson
+
+    def _record_created(
+        self,
+        lesson: Lesson,
+        command: CreateLessonCommand,
+        participant_names: dict[UserId, str],
+    ) -> None:
+        record = self._changes.record
+        record("lesson", "title_ru", None, lesson.title_ru)
+        record("lesson", "session_mode", None, lesson.session_mode)
+        record("lesson", "group_id", None, lesson.group_id)
+        record(
+            "lesson",
+            "participants",
+            None,
+            [
+                participant_names.get(participant.user_id, str(participant.user_id))
+                for participant in lesson.participants
+            ],
+        )
+        record(
+            "lesson",
+            "scenario_plan",
+            None,
+            [
+                {
+                    "position": entry.position,
+                    "scenario_version_id": entry.scenario_version_id,
+                    "weight": entry.weight,
+                }
+                for entry in lesson.scenario_plan
+            ],
+        )
+        for entry in lesson.scenario_plan:
+            if entry.timers is not None:
+                record(
+                    "lesson",
+                    f"timers[{entry.position}]",
+                    None,
+                    entry.timers.model_dump(mode="json", exclude_none=True),
+                )
+        if command.time_scale != 1.0:
+            record("lesson", "time_scale", None, command.time_scale)
+        if command.pass_criteria is not None:
+            record("lesson", "pass_criteria", None, command.pass_criteria)

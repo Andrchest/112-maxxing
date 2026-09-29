@@ -33,6 +33,7 @@ from typing import Any
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.auth.ownership import require_owner_or_admin
 from app.application.handoff.prefab_handoff import materialise_prefab_handoff
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.inference_readiness import InferenceReadiness
@@ -96,8 +97,11 @@ class StartSession:
         *,
         require_inference_ready: bool,
         reference: ReferencePort | None = None,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
+        #: I7 E43: `session.state` «было → стало» (the event log carries the rest).
+        self._changes = changes
         #: The reference pack: the prefab card is written against the version's card schema
         #: (I3 E3a, HLD 70 §70.5.4 — a schema-2 prefab names v2 paths).
         self._reference = reference
@@ -155,6 +159,7 @@ class StartSession:
             await uow.sessions.save(started)
             await uow.events.append(session_id, [*events, *await self._prefab(uow, started)])
             await uow.commit()
+        self._changes.record("session", "state", session.state, started.state)
         return started
 
     # -- internals ----------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.auth.ownership import require_owner_or_admin
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.clock import Clock
 from app.application.ports.session_repository import ReportRelease
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -51,9 +52,16 @@ class ReleaseReportToTrainee:
     """`releaseReportToTrainee`: `INSTRUCTOR`/`ADMIN` only (D8; a trainee releasing their own
     report to themselves would make the gate meaningless)."""
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        clock: Clock,
+        *,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
+    ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
+        self._changes = changes  # I7 E43
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> ReportRelease:
         if not user.is_instructor_or_admin:
@@ -71,6 +79,7 @@ class ReleaseReportToTrainee:
             )
             if session.state is not SessionState.COMPLETED:
                 raise ReportNotReadyError(session_id, session.state)
+            released_before = await uow.sessions.get_report_release(session_id) is not None
             release = await uow.sessions.release_report(
                 session_id,
                 released_by_user_id=user.user_id,
@@ -80,4 +89,5 @@ class ReleaseReportToTrainee:
             if fold.status_at(fold.horizon_ms or 0, report_released=True) is CardStatus.CHECKED:
                 await uow.sessions.set_card_status(session_id, CardStatus.CHECKED)
             await uow.commit()
+        self._changes.record("report", "released", released_before, True)
         return release

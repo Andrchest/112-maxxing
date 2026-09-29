@@ -906,6 +906,7 @@ Telemetry, never read by scoring.
 | `status` | `integer` | no | |
 | `client_ip` | `text` | yes | |
 | `outcome` | `text` | no | |
+| `changes` | `jsonb` | yes | (additive, I7 E43, migration `0019_audit_changes`) |
 
 PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts (ts)`,
 `ix_audit_log_user_ts (user_id, ts)`.
@@ -927,6 +928,13 @@ PK `(id)`. FK `user_id → users(id) ON DELETE RESTRICT`. Index `ix_audit_log_ts
   `operation_id`. `ts` is the backend's `Clock`. Only `/api/*` is audited, and never an `OPTIONS`
   preflight.
 - `/health/*` is not recorded (the instructor page polls readiness).
+- `changes` (I7 E43, Q-E15-3; `71-i4-wave4.md` §71.19.43): a JSON array of
+  `{field, before, after}` — «было → стало» the request's mutating use case reported through
+  `AuditChangeCollector`, in order; `field` is `<entity>.<field>` with an optional `[qualifier]`
+  (`lesson.weight[2]`). `NULL` for a request that changed nothing it reports, for every refusal
+  and failed request (status ≥ 400), and for every row written before `0019`. A secret (password,
+  hash, HA1, token, key) is `{field, before: null, after: null}` — never its value. Written in the
+  row's single INSERT, so the table stays append-only.
 - **Append-only:** `CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log FOR EACH
   ROW EXECUTE FUNCTION trg_reject_mutation();` (§20.9 function, one more attachment).
 - **Retention:** ТЗ ¶297 «не менее 6 месяцев». `SIM_AUDIT_RETENTION_DAYS` (default 365) is refused
@@ -1209,3 +1217,14 @@ Index `ix_training_materials_sha256 (sha256)`, `ix_training_materials_created (c
 - Allow-list pdf, docx, doc, xlsx, txt, md, png, jpg; max size `SIM_MATERIAL_MAX_MB` (ТЗ ¶387, ¶370).
 - Archive hides a material from trainees; the file is kept. Retention: none (reference data).
 - No assignment column: whom a material is assigned to is owner question Q-E13-1.
+
+<!-- --- I7 E43 --- -->
+## 20.12.43 I7 E43 — migration `0019_audit_changes` (Q-E15-3)
+
+| Migration | Epic | Change | Kind |
+|:--|:--|:--|:--|
+| `0019_audit_changes` | I7 E43 | column `audit_log.changes jsonb NULL` | additive column on an append-only table (trigger unchanged) |
+
+The column is described with its table (`audit_log`, above). `down_revision` =
+`0018_training_materials`; downgrade drops the column.
+<!-- --- end I7 E43 --- -->

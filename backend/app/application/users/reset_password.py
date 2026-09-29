@@ -11,6 +11,7 @@ nor demoting an account.
 
 from __future__ import annotations
 
+from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.unit_of_work import UnitOfWorkFactory
 from app.application.users.errors import PasswordTooShortError, UserNotFoundError
@@ -21,11 +22,18 @@ __all__ = ["ResetPassword"]
 
 class ResetPassword:
     def __init__(
-        self, unit_of_work: UnitOfWorkFactory, hasher: PasswordHasher, *, min_password_length: int
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        hasher: PasswordHasher,
+        *,
+        min_password_length: int,
+        changes: AuditChangeCollector = NO_AUDIT_CHANGES,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._hasher = hasher
         self._min_password_length = min_password_length
+        #: I7 E43: the journal gets «пароль изменён» — never the password or its digest.
+        self._changes = changes
 
     async def __call__(self, user_id: UserId, *, password: str) -> None:
         if len(password) < self._min_password_length:
@@ -36,3 +44,4 @@ class ResetPassword:
                 raise UserNotFoundError(user_id)
             await uow.users.set_password_hash(user_id, self._hasher.hash(password))
             await uow.commit()
+        self._changes.record_secret("user", "password")
