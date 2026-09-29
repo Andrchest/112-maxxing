@@ -1,0 +1,53 @@
+# I7 E52 (ТЗ ¶171-176; Q&A 09:20 «в основном это будут все функции работы на центральном
+# процессоре… проверка решений на стандартных бытовых компьютерах») — the GPU override.
+#
+# Every `runtime: nvidia` and every GPU device reservation the stack needs lives HERE, nowhere in
+# `infra/docker-compose.yml` itself, for the three services that ever touch a GPU: `llama-server`,
+# `voice-agent`, `tts-qwen3` (the additive eighth service, still gated behind
+# `--profile qwen3-tts` regardless of this file). Docker Compose merges an override onto the base
+# file service by service — nothing else about these three services is repeated or changed here.
+#
+# `make up` (`docker compose -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml ... up`)
+# includes this file by default: today's behaviour is unchanged, a real NVIDIA GPU + nvidia
+# container runtime is still required exactly as before. `make up-cpu` starts the base file ALONE
+# (no `-f` for this override) with `SIM_MODEL_PROFILE=CPU`, so `llama-server` never asks for a GPU
+# device — `docker compose config` for that invocation has no `runtime: nvidia` and no
+# `deploy.resources.reservations.devices` anywhere in it (`make compose-check` renders both
+# variants, see the Makefile's "I7 E52" section).
+#
+# This file changes nothing about `NVIDIA_VISIBLE_DEVICES` (all:0 by default, unchanged): it is
+# only ever consulted when `runtime: nvidia` is actually in effect, which is exactly the case this
+# file controls.
+
+services:
+  llama-server:
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+
+  voice-agent:
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]
+
+  tts-qwen3:
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: ["gpu"]

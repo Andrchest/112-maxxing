@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from app.cli.preflight import (
+    NOT_REQUIRED_BY_PROFILE_DETAIL,
     CheckResult,
     GpuInfo,
     PreflightReport,
@@ -28,6 +29,7 @@ from app.cli.preflight import (
     check_tts_responds,
     has_cyrillic_word,
     profile_model_file_paths,
+    profile_requires_gpu,
     render_json,
     render_table,
 )
@@ -39,6 +41,12 @@ from app.domain.common.errors import ScenarioValidationError
 @pytest.fixture
 def profile() -> ModelProfile:
     return load_profile("DEV_3060TI")
+
+
+@pytest.fixture
+def cpu_profile() -> ModelProfile:
+    """I7 E52: `CPU.yaml` — every component runs off the GPU (ТЗ ¶171-176)."""
+    return load_profile("CPU")
 
 
 # -- #1 cuda_gpu_available ------------------------------------------------------------------------
@@ -62,6 +70,29 @@ async def test_cuda_gpu_available_fails_when_the_probe_raises() -> None:
     result = await check_cuda_gpu_available(raising)
     assert result.status == "FAIL"
     assert "nvml not found" in result.detail
+
+
+# I7 E52 (ТЗ ¶171-176): a profile that needs no GPU at all PASSes outright and never even calls the
+# probe — a machine with no NVIDIA GPU / no nvidia container runtime must not FAIL this check.
+
+
+async def test_cuda_gpu_available_passes_without_a_probe_call_for_a_profile_that_needs_no_gpu(
+    cpu_profile: ModelProfile,
+) -> None:
+    def raising() -> list[GpuInfo]:
+        raise AssertionError("query_gpus must not be called when the profile needs no GPU")
+
+    result = await check_cuda_gpu_available(raising, cpu_profile)
+
+    assert result.status == "PASS"
+    assert result.detail == NOT_REQUIRED_BY_PROFILE_DETAIL
+
+
+async def test_cuda_gpu_available_still_checks_for_a_profile_that_needs_a_gpu(
+    profile: ModelProfile,
+) -> None:
+    result = await check_cuda_gpu_available(lambda: [], profile)
+    assert result.status == "FAIL"
 
 
 # -- #2 expected_gpu_detected ---------------------------------------------------------------------
@@ -158,6 +189,20 @@ async def test_expected_gpu_detected_assumes_cold_when_the_loaded_probe_raises(
     assert result.status == "FAIL"
 
 
+async def test_expected_gpu_detected_passes_without_a_probe_call_for_a_profile_that_needs_no_gpu(
+    cpu_profile: ModelProfile,
+) -> None:
+    """I7 E52: same bypass as check #1 — `CPU.yaml` PASSes without ever calling `query_gpus`."""
+
+    def raising() -> list[GpuInfo]:
+        raise AssertionError("query_gpus must not be called when the profile needs no GPU")
+
+    result = await check_expected_gpu_detected(raising, cpu_profile)
+
+    assert result.status == "PASS"
+    assert result.detail == NOT_REQUIRED_BY_PROFILE_DETAIL
+
+
 # -- #3 model_files_exist -------------------------------------------------------------------------
 
 
@@ -173,6 +218,21 @@ async def test_model_files_exist_fails_when_a_path_is_missing(profile: ModelProf
 
     result = await check_model_files_exist(profile, stat)
     assert result.status == "FAIL"
+    assert "llm.model_path" in result.detail
+
+
+async def test_model_files_exist_reports_a_missing_cpu_model_instead_of_crashing(
+    cpu_profile: ModelProfile,
+) -> None:
+    """I7 E52 acceptance: a CPU model not present locally is reported by name in the FAIL detail —
+    the check never raises, matching `test_model_files_exist_fails_when_a_path_is_missing` above
+    but against the CPU profile's own paths (gigaam CPU checkpoint, Piper voice, the CPU llama.cpp
+    GGUF)."""
+    result = await check_model_files_exist(cpu_profile, lambda path: None)
+
+    assert result.status == "FAIL"
+    assert "asr.model_path" in result.detail
+    assert "tts.model_path" in result.detail
     assert "llm.model_path" in result.detail
 
 
@@ -553,3 +613,25 @@ async def test_build_real_checks_dials_the_settings_llm_base_url_not_the_profile
     assert dialled == ["http://127.0.0.1:8101/v1"]
     assert result.number == 4
     assert result.status == "PASS"
+
+
+# -- profile_requires_gpu (I7 E52, ТЗ ¶171-176) ----------------------------------------------------
+
+
+def test_profile_requires_gpu_is_true_for_a_gpu_profile(profile: ModelProfile) -> None:
+    assert profile_requires_gpu(profile) is True
+
+
+def test_profile_requires_gpu_is_false_for_the_cpu_profile(cpu_profile: ModelProfile) -> None:
+    assert profile_requires_gpu(cpu_profile) is False
+
+
+def test_profile_requires_gpu_is_true_when_only_one_component_names_cuda(
+    cpu_profile: ModelProfile,
+) -> None:
+    """Any single `device: cuda` (or `llm.n_gpu_layers != 0`) is enough to require a GPU — not
+    only an all-or-nothing profile shape."""
+    asr_on_gpu = cpu_profile.model_copy(
+        update={"asr": cpu_profile.asr.model_copy(update={"device": "cuda"})}
+    )
+    assert profile_requires_gpu(asr_on_gpu) is True

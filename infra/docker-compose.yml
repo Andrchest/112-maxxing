@@ -24,6 +24,12 @@
 # credential in source, and the defaults below are the same fake dev placeholders `.env.example`
 # documents. `make compose-check` renders this file against `infra/compose.check.env`'s throwaway
 # (>= 32-byte) placeholders so the gate can validate the compose YAML with no real `.env` present.
+#
+# I7 E52 (ТЗ ¶171-176, no NVIDIA GPU / no nvidia container runtime): this file alone names no
+# `runtime: nvidia` and no GPU device reservation anywhere — those live entirely in the override
+# `infra/docker-compose.gpu.yml` (`llama-server`, `voice-agent`, `tts-qwen3`). `make up` layers
+# that override in by default (today's behaviour, unchanged); `make up-cpu` starts this file alone
+# with `SIM_MODEL_PROFILE=CPU`, so the stack starts on a machine with neither.
 
 name: sim112dev
 
@@ -106,17 +112,12 @@ services:
     # via `docker manifest inspect` (read-only, no pull) on 2026-09-22; the exact FLAG SPELLING for
     # this tag remains UNVERIFIED until it is actually run (E19) — see docs/hld/60-inference-ops.md
     # §8/§10 item 3. Override with LLAMA_CPP_IMAGE if a newer/verified tag is chosen later.
+    # I7 E52 (ТЗ ¶171-176): `runtime: nvidia` + the GPU device reservation live in
+    # `infra/docker-compose.gpu.yml` now, not here — `make up` still layers that override in by
+    # default (today's behaviour, unchanged); `make up-cpu` omits it, so this service starts with
+    # no GPU requirement at all when `SIM_MODEL_PROFILE=CPU` (`llm.n_gpu_layers: 0`) is in effect.
     image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11065}
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
-              capabilities: ["gpu"]
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       # SIM_LLAMA_SERVER_BIN is the ABSOLUTE path of the server binary inside this pinned image.
       # VERIFIED 2026-09-22 (E20-G): `docker run --rm --entrypoint ls
       # ghcr.io/ggml-org/llama.cpp:server-cuda-b11065 -l /app/llama-server` ->
@@ -247,14 +248,8 @@ services:
     build:
       context: ..
       dockerfile: workers/voice_agent/Dockerfile
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
-              capabilities: ["gpu"]
+    # I7 E52: see the llama-server comment above — the GPU runtime/device reservation moved to
+    # infra/docker-compose.gpu.yml, which `make up` still includes by default.
     env_file:
       - path: ../.env
         required: false
@@ -400,14 +395,9 @@ services:
     build:
       context: ../workers/tts_qwen3
       dockerfile: Dockerfile
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
-              capabilities: ["gpu"]
+    # I7 E52: see the llama-server comment above — the GPU runtime/device reservation moved to
+    # infra/docker-compose.gpu.yml, which `make up` still includes by default. `tts-qwen3` is
+    # already gated behind `--profile qwen3-tts` and is never started by `make up-cpu`.
     # The model VARIANT comes from the active profile (E20): `make profile-env` (run by `make up`)
     # writes `SIM_TTS_QWEN3_MODEL=<tts.model_variant>` into `.env.profile`; DEV_3060TI ships 0.6B,
     # the variant its measured VRAM peak describes. Absent a variant the worker keeps its default.

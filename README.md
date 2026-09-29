@@ -37,11 +37,39 @@ make gate           # full gate: backend (lint, typecheck, import-boundary check
 See `make help`-equivalent targets in the `Makefile` (`fmt`, `lint`, `typecheck`, `boundaries`,
 `scenarios`, `test-backend`, `infra-up`, `infra-down`) for running one slice at a time.
 
+## Требования к оборудованию
+
+(I7 E52; ТЗ ¶171–176; Q&A 09:20 «в основном это будут все функции работы на центральном
+процессоре… проверка решений на стандартных бытовых компьютерах».)
+
+- **Без видеокарты NVIDIA и без nvidia container runtime** стенд запускается профилем `CPU`
+  (`backend/app/config/profiles/CPU.yaml`) командой `make up-cpu` вместо `make up`:
+  `infra/docker-compose.gpu.yml` — единственное место, где остаются `runtime: nvidia` и
+  резервирование GPU-устройства (`llama-server`, `voice-agent`, `tts-qwen3`), — в эту команду не
+  подключается (`make compose-check` проверяет оба варианта конфигурации).
+- На таком стенде работают: интерфейс (страницы оператора/ДДС/инструктора), карточки происшествий,
+  формирование отчётов, а также голосовой канал в текстовом/фейковом режиме
+  (`SIM_CALL_TRANSPORT=fake`, `SIM_ASR_PROVIDER=fake`, `SIM_LLM_PROVIDER=fake`,
+  `SIM_TTS_PROVIDER=fake` — тот же набор, что уже стоит по умолчанию в `.env.example`).
+- Реальный голосовой диалог (распознавание речи, локальная LLM, синтез речи) на CPU-профиле тоже
+  запускается, но заметно медленнее, чем на GPU-профиле — точных цифр здесь нет: реальный замер
+  голосовой задержки на CPU не проводился (вне рамок этой задачи).
+- `make preflight` для профиля `CPU` не требует видеокарты: проверки №1/№2
+  (`cuda_gpu_available`/`expected_gpu_detected`) сами видят, что профилю GPU не нужен, и печатают
+  `PASS` с пояснением «не требуется профилем», а не завершаются ошибкой на машине без NVIDIA.
+- Минимальное железо для профиля `CPU` не измерялось; ориентировочно — любой x86-64 с 16 ГБ ОЗУ
+  (веса `Qwen3.5-2B` Q4_K_M, GigaAM `v3_e2e_ctc` и Piper вместе умещаются в этот объём без GPU;
+  `make models` их по-прежнему скачивает один раз, GPU для самой загрузки не нужен).
+
 ## Running the full stack (demo/local run-book)
 
 `infra/docker-compose.yml` is the SPEC §36 seven services (`postgres`, `redis`, `livekit`,
 `backend`, `frontend`, `llama-server`, `voice-agent`) plus an additive eighth, `tts-qwen3`, gated
 behind a compose profile so a plain run never starts it (docs/hld/60-inference-ops.md §9).
+`infra/docker-compose.gpu.yml` is a GPU-only override (`runtime: nvidia` + device reservation for
+`llama-server`/`voice-agent`/`tts-qwen3`): `make up` includes it (unchanged default behaviour);
+`make up-cpu` starts the same services without it, `SIM_MODEL_PROFILE=CPU` — see «Требования к
+оборудованию» above.
 
 For the day-to-day operator tasks once the stack is running (start/stop, preflight, resetting demo
 data, clearing a `FATAL` inference latch, switching a profile) see `docs/RUNBOOK.md`. What follows
@@ -82,6 +110,8 @@ real. For a **real** run, edit `.env` before `make up`:
   `gguf_init_from_file: failed to open GGUF file '/models/llm/...gguf'`.)
 - `TTS_COMPOSE_PROFILE=qwen3-tts make up` starts the additive eighth service (`tts-qwen3`) too; a
   plain `make up` never does.
+- No NVIDIA GPU / no nvidia container runtime on this machine? Use `make up-cpu` instead of
+  `make up` (`SIM_MODEL_PROFILE=CPU` by default) — see «Требования к оборудованию» above.
 
 `make compose-check` validates `infra/docker-compose.yml` (all eight service definitions) against a
 throwaway env file — no `.env`, no build, no pull — and is part of `make gate`.

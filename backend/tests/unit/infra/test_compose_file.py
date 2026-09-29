@@ -107,10 +107,20 @@ def test_no_literal_secret_every_secret_bearing_value_is_env_interpolated(
         assert "${" in value, f"{key}'s value {value!r} is not environment-interpolated"
 
 
+GPU_OVERRIDE_PATH = COMPOSE_PATH.with_name("docker-compose.gpu.yml")
+
+
 def test_gpu_services_use_the_nvidia_runtime(compose_doc: dict) -> None:
+    """I7 E52: the nvidia runtime lives only in the GPU override (`make up`); the base file
+    (`make up-cpu`) must start on a machine without the nvidia container runtime."""
+    gpu_doc = yaml.safe_load(GPU_OVERRIDE_PATH.read_text(encoding="utf-8"))
     for name in ("llama-server", "voice-agent", ADDITIVE_EIGHTH):
-        svc = compose_doc["services"][name]
-        assert svc.get("runtime") == "nvidia", f"{name} must use the nvidia container runtime"
+        assert gpu_doc["services"][name].get("runtime") == "nvidia", (
+            f"{name} must use the nvidia container runtime in the GPU override"
+        )
+        assert "runtime" not in compose_doc["services"][name], (
+            f"{name} must not require the nvidia runtime in the base compose file"
+        )
 
 
 def test_models_dir_is_mounted_read_only_on_every_gpu_service(compose_doc: dict) -> None:

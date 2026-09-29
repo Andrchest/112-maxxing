@@ -1300,3 +1300,69 @@ local CA of `make certs`).
 **Not built (owner questions).** Q-I7-E44-1: whether plain SIP (5060) is turned off. A TLS client
 certificate, SRTCP (the stack sends no RTCP), DTLS-SRTP / ZRTP and the `AES_CM_128_HMAC_SHA1_32` /
 AES-256 / GCM suites are not offered (technical scope: the one mandatory SDES suite).
+## 71.19.1 I7 E52 — No-GPU deployment (CPU profile)
+
+Source: the I7 E52 brief (manager's design, `/tmp/teamwork-112-maxxing/reports/i7/E42-gaps.md` §2
+item 1, gap G1); ТЗ ¶171–176 (client/server hardware lists no GPU); Q&A 09:20 «в основном это будут
+все функции работы на центральном процессоре… проверка решений на стандартных бытовых
+компьютерах».
+
+- New model profile `backend/app/config/profiles/CPU.yaml`: `llm.n_gpu_layers: 0` (Qwen3.5-2B
+  Q4_K_M, the same GGUF DEV_3060TI already pins, `parallel_slots: 1`); `asr`/`tts` reuse
+  `DEV_3060TI_SHARED`'s already-MEASURED CPU path verbatim (gigaam `v3_e2e_ctc` `device: cpu`
+  `compute_type: float32`, RTF 0.036; Piper `device: cpu`, RTF 0.023–0.052); `vad` stays
+  `device: cpu` like every shipped profile. `hardware.*`/`vram_budget_mb`/`min_vram_margin_mb` are
+  inert placeholders (`gpu_name_contains: "none"` deliberately matches no real GPU name — an empty
+  string would match every name as a substring, so a bug that ever reached check #2 for real would
+  fail loudly instead of falsely passing); `measured_peak_vram_mb: 0` is a structural fact (nothing
+  in this profile ever loads onto a GPU), not a benchmark result, so `validate_vram_margin` passes
+  with no "unmeasured" warning. `llm.request_timeout_ms` (20000 ms) and `warmup.timeout_ms`
+  (120000 ms) are documented as generous, UNMEASURED placeholders — real CPU voice timing is
+  excluded from this task (owner decision) and SPEC §27 forbids inventing a measured number.
+- `infra/docker-compose.gpu.yml` (new): the override holding every `runtime: nvidia` +
+  `deploy.resources.reservations.devices` block for `llama-server`, `voice-agent` and `tts-qwen3`
+  — moved out of `infra/docker-compose.yml`, which now names no GPU requirement anywhere on its
+  own. `Makefile`: `COMPOSE_FULL_CPU` is the base file alone; `COMPOSE_FULL` (`make up`'s compose
+  invocation) layers the GPU override on top of it — today's behaviour, unchanged. New `make
+  up-cpu`/`make down-cpu` use `COMPOSE_FULL_CPU` directly and default `SIM_MODEL_PROFILE` to `CPU`
+  (a target-specific variable, overridable with `make up-cpu SIM_MODEL_PROFILE=...`).
+  `make compose-check` now renders both variants (with and without the GPU override).
+- `app.cli.preflight`: new `profile_requires_gpu(profile)` (true when `llm.n_gpu_layers != 0` or
+  any of `asr`/`tts`/`vad`'s `device` is `cuda`). Checks #1 (`cuda_gpu_available`) and #2
+  (`expected_gpu_detected`) PASS `"не требуется профилем"` outright for a profile like `CPU.yaml`
+  — without ever calling the GPU probe — instead of FAILing a machine that correctly has neither a
+  GPU nor the nvidia container runtime. Check #3 (`model_files_exist`) is unchanged: a CPU model
+  not present locally is still reported by name in the FAIL detail, never a crash.
+- README.md: a new Russian «Требования к оборудованию» section (no GPU: interface, cards, reports
+  and text/fake-provider mode all work; real voice on the CPU profile is slower, with no measured
+  number given since none was taken) plus one-line pointers to `make up-cpu` from the fresh-clone
+  and full-stack sections.
+
+**Data / DB.** None (no migration; `backend/alembic.ini` head stays `0018_training_materials`).
+
+**API.** None (no contract change; `CPU` is a config value of the existing `SIM_MODEL_PROFILE`).
+
+**Acceptance.**
+- `make compose-check` renders both variants clean (verified: the base file alone has zero
+  `runtime: nvidia` occurrences; base + `infra/docker-compose.gpu.yml` has exactly three, matching
+  the pre-change count).
+- `backend/tests/unit/cli/test_preflight.py`: `profile_requires_gpu` true/false cases, checks #1/#2
+  PASS `"не требуется профилем"` for `CPU.yaml` without calling the GPU probe (an
+  `AssertionError`-raising fake proves it), check #3 reports a missing CPU model by name.
+- `backend/tests/unit/config/test_profile.py`: `CPU` added to the shipped-profile parametrize list;
+  `CPU.yaml` needs no GPU (`n_gpu_layers == 0`, every device `cpu`); its VRAM margin check passes
+  with no warning.
+- A real fake-provider backend start with `SIM_MODEL_PROFILE=CPU` (`SIM_CALL_TRANSPORT=fake` etc.)
+  reached `/api/v1/health/live` -> `200 {"status":"LIVE",...}` against a scratch migrated database
+  and a free Redis index (both dropped afterward); `python -m app.cli preflight --profile CPU`
+  against that same process printed `[PASS] 1. cuda_gpu_available: не требуется профилем` /
+  `[PASS] 2. expected_gpu_detected: не требуется профилем`, with check #3 correctly listing the
+  four model files as missing on this GPU-only worktree (no crash).
+
+**Not built (owner questions).** None.
+
+**Awaiting owner / deferred by this task's own design.** Real CPU voice-call latency was not
+measured (owner exclusion, this epic's brief); `llm.request_timeout_ms`/`warmup.timeout_ms`/
+`latency_targets.*` in `CPU.yaml` stay documented placeholders until `benchmarks/benchmark_llm.py`
+/ `benchmark_vram.py --profile CPU` are actually run on a CPU-only box and the results are folded
+back in, same as any other profile's measured fields.

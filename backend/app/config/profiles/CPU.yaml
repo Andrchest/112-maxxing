@@ -1,0 +1,136 @@
+profile_name: CPU
+description: >
+  I7 E52 (ТЗ ¶171-176; Q&A 09:20 «в основном это будут все функции работы на центральном
+  процессоре… проверка решений на стандартных бытовых компьютерах»). The no-GPU profile: every
+  component runs on the CPU, so this stack starts and serves text/card/report work on a machine
+  with no NVIDIA GPU and no nvidia container runtime (`infra/docker-compose.gpu.yml` — the
+  runtime/device-reservation override `make up-cpu` omits, HLD 60 §9). ASR and TTS reuse the exact
+  CPU configuration DEV_3060TI_SHARED already ships and MEASURED for real (owner decision
+  2026-09-21: gigaam v3_e2e_ctc CPU RTF 0.036, Piper CPU RTF 0.023-0.052) — only the LLM moves off
+  GPU here, which that profile never needed to do. Real-time voice latency on this profile is NOT
+  measured (owner exclusion, I7 E52 brief: "no numbers - none were measured"); interface, cards,
+  reports and text/fake-provider mode are unaffected by which device the LLM runs on.
+
+hardware:
+  # No GPU is required by this profile (see llm.n_gpu_layers/asr.device/tts.device/vad.device
+  # below) — `app.cli.preflight` checks #1/#2 short-circuit to PASS "не требуется профилем" for a
+  # profile like this one and never read these three fields. They still have to be well-typed
+  # (ModelProfile has no optional hardware block), so they carry deliberately inert placeholders:
+  # `gpu_name_contains: "none"` matches no real GPU name (an empty string would match every name as
+  # a substring), so a bug that ever let check #2 run for real for this profile would FAIL loudly
+  # instead of falsely PASSing.
+  gpu_name_contains: "none"
+  gpu_total_vram_mb: 0
+  reserved_by_others_mb: 0
+
+# 0/0: no GPU is used by this profile by construction (llm.n_gpu_layers: 0, every other component
+# device: cpu), not a measured number — SPEC §27 forbids inventing a measured figure, but "zero
+# because nothing here ever touches a GPU" is a structural fact, not a guess.
+vram_budget_mb: 0
+min_vram_margin_mb: 0
+measured_peak_vram_mb: 0
+measured_at: 2026-09-29
+
+llm:
+  provider: llama_cpp
+  # Same GGUF DEV_3060TI/DEV_3060TI_SHARED already pin (task reports e13-b3/e13-b4) — only the
+  # device changes here; `make models-layout` already lays it out at this path, so a CPU-only
+  # checkout needs no extra download once the GPU profiles' weights are already on disk. If the
+  # file is not present, `app.cli.preflight` check #3 (`model_files_exist`) reports it by name as
+  # missing rather than crashing (`app.config.model_paths.host_model_path`); the profile itself
+  # still loads and validates either way (I7 E52 acceptance).
+  model_name: Qwen3.5-2B
+  model_path: /models/llm/Qwen3.5-2B-Q4_K_M.gguf
+  quantization: Q4_K_M
+  base_url: http://llama-server:8080/v1
+  n_ctx: 4096
+  # The whole point of this profile: llama-server loads every layer on the CPU. `infra/scripts/
+  # llama-server-entrypoint.sh` passes this straight through as `--n-gpu-layers 0`, a value
+  # llama.cpp accepts on any build (CUDA or CPU-only).
+  n_gpu_layers: 0
+  n_batch: 512
+  n_ubatch: 256
+  parallel_slots: 1
+  flash_attention: "off"    # a GPU-only kernel; CPU builds ignore/reject it
+  kv_cache_type: f16        # plain float16 KV cache; the quantised q8_0 cache the GPU profiles use
+                             # is a VRAM-saving trick this profile has no reason to pay the extra
+                             # CPU compute for
+  # Same measured token budgets as DEV_3060TI (e13-b3/e13-b4) — these bound OUTPUT LENGTH, not
+  # inference speed, so they do not depend on which device runs the model.
+  max_response_tokens: 80
+  interpreter_max_tokens: 138
+  # NOT MEASURED (owner exclusion, I7 E52 brief: real CPU voice timing is out of scope tonight).
+  # DEV_3060TI's 3000 ms is a GPU figure and would time out CPU inference of the same model
+  # outright, so this is a deliberately generous placeholder, not a measurement — a real number
+  # belongs in docs/benchmarks/llm.md once benchmarks/benchmark_llm.py --profile CPU is actually run.
+  request_timeout_ms: 20000
+  thinking_enabled: false
+
+asr:
+  # Identical to DEV_3060TI_SHARED's asr block, MEASURED for real on this same CPU path (owner
+  # decision 2026-09-21, RTF 0.036) — reused verbatim rather than re-guessed.
+  provider: gigaam
+  model_version: v3_e2e_ctc
+  model_path: /models/asr/gigaam-v3-e2e-ctc
+  device: cpu
+  compute_type: float32   # GigaAMProvider forces float32 off-CUDA; float16 is CUDA-only
+  sample_rate: 16000
+
+tts:
+  # Identical to DEV_3060TI_SHARED's tts block, MEASURED for real on this same CPU path (owner
+  # decision 2026-09-21, RTF 0.023-0.052).
+  provider: piper
+  model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  voice_id: ru_RU-irina-medium
+  device: cpu
+  output_sample_rate: 22050
+  max_chunk_ms: 20
+  fallback_provider: none   # no second CPU TTS path to fall back to
+  model_variant: null       # not applicable — this profile's TTS is not Qwen3-TTS
+  voice_map:
+    ru_female_adult_01: ru_RU-irina-medium   # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: ru_RU-irina-medium          # `make models-piper`'s downloaded voice
+
+vad:
+  # VAD already runs on the CPU in every shipped profile, GPU ones included.
+  provider: silero
+  model_path: /models/vad/silero_vad.onnx
+  device: cpu
+
+voice_turn:
+  # Protocol-level turn-taking constants (HLD `50-voice-pipeline.md` §4.1) — identical across every
+  # shipped profile, DEV_3060TI(_SHARED) included; they describe the VAD/turn state machine, not
+  # any one component's inference device.
+  speech_start_threshold: 0.55
+  speech_end_threshold: 0.35
+  speech_start_min_ms: 96
+  endpoint_silence_ms: 300
+  pre_roll_ms: 300
+  barge_in_min_speech_ms: 120
+  max_turn_ms: 30000
+  min_turn_ms: 200
+  vad_frame_ms: 32
+  outbound_queue_ms: 200
+  tts_chunk_ms: 20
+  partial_asr_enabled: true
+  partial_interval_ms: 500
+  reconnect_grace_s: 30
+
+warmup:
+  enabled: true
+  asr_sample_path: /models/warmup/warmup_ru.wav
+  llm_prompt: "Скажи одно слово."
+  tts_text: "Проверка."
+  # NOT MEASURED: CPU cold-load + first-inference time for all three components is unknown (the
+  # same owner exclusion as llm.request_timeout_ms above). A generous placeholder, twice
+  # DEV_3060TI's 60000 ms GPU figure, so a legitimately slow CPU warm-up is not mistaken for a
+  # hang; replace with a measured number once benchmarks/benchmark_vram.py or an equivalent CPU
+  # warm-up timing is actually run.
+  timeout_ms: 120000
+
+latency_targets:
+  # NOT MEASURED (same owner exclusion). Provisional, clearly not DEV_3060TI's GPU figures
+  # (1500/2500 ms) — CPU inference is known to be slower per the Q&A, but by how much was never
+  # measured tonight, so these are wide placeholders rather than an invented precise number.
+  p50_ms: 5000
+  p95_ms: 10000

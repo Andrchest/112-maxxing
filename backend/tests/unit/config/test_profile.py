@@ -22,6 +22,7 @@ ALL_PROFILE_NAMES = (
     "DEV_3060TI_SHARED",
     "FINAL_3080TI_12GB",
     "FINAL_3080TI_16GB",
+    "CPU",
 )
 
 
@@ -185,5 +186,34 @@ def test_a_dev_profile_with_a_measured_and_sufficient_margin_does_not_warn(
 
     with caplog.at_level(logging.WARNING):
         validate_vram_margin(profile)
+
+    assert caplog.records == []
+
+
+# -- CPU profile (I7 E52: no NVIDIA GPU / no nvidia container runtime, ТЗ ¶171-176) ---------------
+
+
+def test_cpu_profile_needs_no_gpu() -> None:
+    """The whole point of `CPU.yaml`: the LLM offloads no layer and every other component names
+    `device: cpu` — the fact `app.cli.preflight.profile_requires_gpu` reads."""
+    profile = load_profile("CPU")
+
+    assert profile.llm.n_gpu_layers == 0
+    assert profile.asr.device == "cpu"
+    assert profile.tts.device == "cpu"
+    assert profile.vad.device == "cpu"
+
+
+def test_cpu_profile_passes_the_vram_margin_check_with_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CPU.yaml declares `measured_peak_vram_mb: 0` (a structural fact — nothing loads onto a GPU
+    — not a benchmark result), so the margin check passes outright and never falls into the
+    "unmeasured" warning branch a `None` value would hit."""
+    profile = load_profile("CPU")
+    assert profile.measured_peak_vram_mb == 0
+
+    with caplog.at_level(logging.WARNING):
+        validate_vram_margin(profile)  # must not raise
 
     assert caplog.records == []

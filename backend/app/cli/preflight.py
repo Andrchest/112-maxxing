@@ -69,6 +69,7 @@ __all__ = [
     "check_tts_responds",
     "has_cyrillic_word",
     "main",
+    "profile_requires_gpu",
     "render_json",
     "render_table",
     "run_preflight",
@@ -139,8 +140,33 @@ RunVersion = Callable[[str], int]
 # ---------------------------------------------------------------------------------------------
 
 
-async def check_cuda_gpu_available(query_gpus: QueryGpus) -> CheckResult:
-    """#1: at least one CUDA GPU is visible to the driver."""
+#: I7 E52 (ТЗ ¶171-176; Q&A «в основном это будут все функции работы на центральном процессоре»):
+#: a profile like `CPU.yaml` configures every component off the GPU, so checks #1/#2 below have
+#: nothing to probe and must not FAIL a machine that correctly has no NVIDIA GPU at all.
+_CUDA_DEVICE = "cuda"
+NOT_REQUIRED_BY_PROFILE_DETAIL = "не требуется профилем"
+
+
+def profile_requires_gpu(profile: ModelProfile) -> bool:
+    """True when `profile` configures at least one component to run on a CUDA device.
+
+    The LLM offloads layers to the GPU (`llm.n_gpu_layers != 0`) or any of ASR/TTS/VAD names
+    `device: cuda`. A profile where none of these hold (`CPU.yaml`) needs no GPU at all, so
+    `check_cuda_gpu_available`/`check_expected_gpu_detected` PASS outright for it instead of
+    FAILing a machine that has none — HLD 60 §5's checks are about THIS profile's requirements,
+    not about whether a GPU happens to be in the box.
+    """
+    if profile.llm.n_gpu_layers != 0:
+        return True
+    return _CUDA_DEVICE in (profile.asr.device, profile.tts.device, profile.vad.device)
+
+
+async def check_cuda_gpu_available(
+    query_gpus: QueryGpus, profile: ModelProfile | None = None
+) -> CheckResult:
+    """#1: at least one CUDA GPU is visible to the driver — unless `profile` needs none at all."""
+    if profile is not None and not profile_requires_gpu(profile):
+        return CheckResult(1, "cuda_gpu_available", "PASS", NOT_REQUIRED_BY_PROFILE_DETAIL)
     try:
         gpus = query_gpus()
     except Exception as exc:
@@ -171,7 +197,12 @@ async def check_expected_gpu_detected(
     nobody mistakes the looser bound for the pre-start one. A profile with no
     `measured_peak_vram_mb` (nothing measured yet) keeps the pre-start rule: an unmeasured profile
     has no remaining allowance to claim.
+
+    I7 E52: a profile that needs no GPU at all (`profile_requires_gpu` false, e.g. `CPU.yaml`)
+    PASSes outright, same reasoning as check #1 — this check is never reached for such a profile.
     """
+    if not profile_requires_gpu(profile):
+        return CheckResult(2, "expected_gpu_detected", "PASS", NOT_REQUIRED_BY_PROFILE_DETAIL)
     try:
         gpus = query_gpus()
     except Exception as exc:
@@ -710,7 +741,7 @@ def build_real_checks(
     audio_check_enabled = os.environ.get("AUDIO_DEVICE_CHECK", "").strip().lower() == "true"
 
     return [
-        lambda: check_cuda_gpu_available(_query_gpus_real),
+        lambda: check_cuda_gpu_available(_query_gpus_real, profile),
         lambda: check_expected_gpu_detected(
             _query_gpus_real,
             profile,
