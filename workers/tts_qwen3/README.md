@@ -36,7 +36,8 @@ report whichever variant actually loaded, not a hard-coded constant.
 
 - tokenizer (shared by both variants) `Qwen/Qwen3-TTS-Tokenizer-12Hz` @ revision
   `7dd38ad4e9bad454aae9cd937d0cd577604fe229`
-- 4 vendor speakers only: `Serena`, `Ryan`, `Vivian`, `Aiden`.
+- 5 vendor speakers only (I8 V0): `serena`, `eric`, `aiden`, `uncle_fu` (the owner's evaluated
+  four) and `ryan` (spare); matched case-insensitively. `vivian` was dropped after listening.
 - Output: raw PCM s16le mono **24000 Hz**.
 - Generation is **whole-utterance** (`generate_custom_voice()` returns a complete waveform, no
   native streaming/cancellation — recon §1.1). The mandatory mitigation lives on the client side

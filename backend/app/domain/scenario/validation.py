@@ -26,6 +26,7 @@ of a model must not silently drop a rule.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
@@ -41,6 +42,7 @@ from app.domain.dds.responders import (
     service_scripts,
 )
 from app.domain.enums import (
+    AgeGroup,
     EffectKind,
     KnowledgeState,
     RoleType,
@@ -221,6 +223,11 @@ def _check_schema_version(version: ScenarioVersion, out: list[str]) -> None:
         if version.expected_response.responders is not None:
             out.append(
                 "R01: expected_response.responders is a schema_version 2 key; schema_version "
+                f"{version.schema_version} does not allow it"
+            )
+        if version.caller_profile.voice_style is not None:
+            out.append(
+                "R01: caller_profile.voice_style is a schema_version 2 key; schema_version "
                 f"{version.schema_version} does not allow it"
             )
 
@@ -1057,13 +1064,62 @@ def scenario_version_violations(
     return sorted(out)
 
 
+#: I8 V0: the gender and age a logical `caller_profile.voice_id` names (`ru_female_adult_01`,
+#: `ru_male_elderly_01`, HLD 30 §30.3). An id outside this pattern is not checked.
+_LOGICAL_VOICE_ID = re.compile(r"^[a-z]{2}_(?P<gender>female|male)_(?P<age>[a-z]+)_\d+$")
+#: I8 V0: Russian surname endings that give the bearer's gender. A surname matching neither
+#: (`Ким`, `Слобода`) is not checked — the heuristic warns, it never guesses.
+_FEMALE_SURNAME = re.compile(r"(?:ова|ева|ёва|ина|ына|ая)$")
+_MALE_SURNAME = re.compile(r"(?:ов|ев|ёв|ин|ын|ий|ый|ой)$")
+
+
+def _surname_gender(identity_ru: str) -> str | None:
+    """`"Очевидец: Иванова Елена Сергеевна"` -> `"female"`; `None` when `identity_ru` names no
+    «роль: Фамилия …» or the surname's ending gives no gender."""
+    if ":" not in identity_ru:
+        return None
+    words = identity_ru.rsplit(":", 1)[1].split()
+    if not words:
+        return None
+    surname = words[0].lower()
+    if _FEMALE_SURNAME.search(surname):
+        return "female"
+    if _MALE_SURNAME.search(surname):
+        return "male"
+    return None
+
+
+def _caller_voice_warnings(version: ScenarioVersion) -> list[str]:
+    """I8 V0: the caller's logical voice id against its own persona — an `ELDERLY` caller cast
+    with an `*_adult_*` voice, and a voice gender the `identity_ru` surname contradicts. Warnings,
+    not violations: the casting still plays, only with a voice that does not fit."""
+    profile = version.caller_profile
+    match = _LOGICAL_VOICE_ID.match(profile.voice_id)
+    if match is None:
+        return []
+    warnings: list[str] = []
+    if profile.age_group is AgeGroup.ELDERLY and match["age"] == "adult":
+        warnings.append(
+            f"caller_profile.voice_id '{profile.voice_id}' is an adult voice for an ELDERLY "
+            "caller (an *_elderly_* voice id exists)"
+        )
+    surname_gender = _surname_gender(profile.identity_ru)
+    if surname_gender is not None and surname_gender != match["gender"]:
+        warnings.append(
+            f"caller_profile.voice_id '{profile.voice_id}' is a {match['gender']} voice, but the "
+            f"identity_ru surname reads {surname_gender}"
+        )
+    return warnings
+
+
 def scenario_version_warnings(version: ScenarioVersion) -> list[str]:
     """Non-fatal observations about `version` (§30.6.4).
 
     A `MUTATE_CALLER_BELIEF` effect on an event with `caller_observable: false` is dropped at
     runtime (D7); §30.6.4 says the loader warns about that combination but does not reject it.
+    I8 V0 adds the caller voice checks of `_caller_voice_warnings`.
     """
-    warnings: list[str] = []
+    warnings: list[str] = _caller_voice_warnings(version)
     for event in version.world_events:
         if event.caller_observable:
             continue

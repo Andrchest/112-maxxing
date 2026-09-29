@@ -77,7 +77,7 @@ tts:
   # BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the separate tts_qwen3 worker process (own venv) appends
   # the configured variant's own subdirectory (E14-D) — never opened by the backend/voice-agent.
   model_path: /models/tts/qwen3-tts
-  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
+  voice_id: serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
   device: cuda
   output_sample_rate: 24000
   max_chunk_ms: 20
@@ -122,15 +122,16 @@ tts:
   # I3 E6c (HLD 80 §80.4.1): the ДДС phone's personas (`reference/personas/v1.yaml`). The male
   # speakers were verified against the INSTALLED `qwen_tts` 0.1.1 (workers/tts_qwen3/.venv): the
   # package's `get_supported_speakers()` is the checkpoint's `talker_config.spk_id` — aiden, dylan,
-  # eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian — of which the worker allows the four
-  # `VENDOR_SPEAKERS` (Serena, Ryan, Vivian, Aiden); Ryan and Aiden are the male ones there (the
-  # owner's other project maps `male` -> Ryan, `teen_male` -> Aiden). Piper has no male voice on
+  # eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian — of which the worker allows the five
+  # `VENDOR_SPEAKERS` (I8 V0: serena, eric, aiden, uncle_fu, ryan — lower-case, Vivian dropped
+  # after the owner's listening); this profile keeps its E6c cast (ryan, aiden). The owner's
+  # evaluated cast is DEV_3060TI_VOICE's. Piper has no male voice on
   # disk: under the Piper fallback every id below resolves to ru_RU-irina-medium (REQ-4041 partial).
   voice_map:
-    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml; personas 103, DEPARTMENT, OPERATOR_112
-    ru_male_adult_01: Ryan        # personas BRIGADE_101, BRIGADE_102, CITY_DEFAULT
-    ru_male_adult_02: Aiden       # personas BRIGADE_104, DDS_DISTRICT, DDS_PREFECTURE
-  default_voice: Serena           # vendor CustomVoice speaker; every unmapped logical id
+    ru_female_adult_01: serena    # scenarios/examples/apartment-fire/v1.yaml; personas 103, DEPARTMENT, OPERATOR_112
+    ru_male_adult_01: ryan        # personas BRIGADE_101, BRIGADE_102, CITY_DEFAULT
+    ru_male_adult_02: aiden       # personas BRIGADE_104, DDS_DISTRICT, DDS_PREFECTURE
+  default_voice: serena           # vendor CustomVoice speaker; every unmapped logical id
 
 vad:
   provider: silero

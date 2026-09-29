@@ -902,6 +902,7 @@ class TtsSpeechSink:
                     voice_id=profile.voice_id,
                     speaking_rate=profile.speaking_rate,
                     language=profile.language or "ru",
+                    voice_style=profile.voice_style,
                 )
         except Exception:
             logger.warning(

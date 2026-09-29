@@ -62,6 +62,7 @@ __all__ = [
     "VENDOR_SPEAKERS",
     "Qwen3TTS",
     "TtsQwen3EndpointError",
+    "canonical_speaker",
     "validate_tts_qwen3_base_url",
 ]
 
@@ -78,7 +79,11 @@ MODEL_REVISION = "0c0e3051f131929182e2c023b9537f8b1c68adfe"
 TOKENIZER_REPO = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 TOKENIZER_REVISION = "7dd38ad4e9bad454aae9cd937d0cd577604fe229"
 OUTPUT_SAMPLE_RATE = 24000
-VENDOR_SPEAKERS: tuple[str, ...] = ("Serena", "Ryan", "Vivian", "Aiden")
+#: I8 V0: the speakers the owner evaluated by ear in his TTS lab (serena — the only usable female
+#: voice; eric, aiden, uncle_fu — male) plus `ryan` as a spare male; Vivian was rejected by
+#: listening. Lower-case, the spelling `qwen_tts` lists them in (it matches case-insensitively).
+#: MUST equal `tts_qwen3.server.VENDOR_SPEAKERS` — a gate test compares the two copies.
+VENDOR_SPEAKERS: tuple[str, ...] = ("serena", "eric", "aiden", "uncle_fu", "ryan")
 _NEUTRAL_EMOTION = EmotionState(emotion=EmotionLabel.CALM, stress_level=0.0)
 
 #: Same default as `LlamaCppClient`'s (`app.inference.llm.llama_cpp_client`): the compose service
@@ -165,6 +170,12 @@ class _VoiceResolver:
                 self._default,
             )
         return self._default
+
+
+def canonical_speaker(name: str) -> str:
+    """`"Serena"` -> `"serena"`: vendor speaker names are matched case-insensitively (I8 V0), so
+    an operator's `.env` written for the E14-B spelling keeps working."""
+    return name.strip().lower()
 
 
 def _looks_like_oom(body_text: str) -> bool:
@@ -293,6 +304,7 @@ class Qwen3TTS:
         default_voice: str | None = None,
     ) -> None:
         validate_tts_qwen3_base_url(base_url, allowed_internal_hosts=allowed_internal_hosts)
+        speaker = canonical_speaker(speaker)
         if speaker not in VENDOR_SPEAKERS:
             raise ValueError(
                 f"tts_qwen3_speaker={speaker!r} is not one of the vendor speakers {VENDOR_SPEAKERS}"
@@ -302,14 +314,18 @@ class Qwen3TTS:
         # back to `speaker` (`SIM_TTS_QWEN3_SPEAKER`), which is what this adapter already used for
         # an empty `voice_id`. A `default_voice` that is not a vendor speaker is a CONFIGURATION
         # error and is refused here, at construction — not per utterance.
-        resolved_default = default_voice or speaker
+        resolved_default = canonical_speaker(default_voice) if default_voice else speaker
         if resolved_default not in VENDOR_SPEAKERS:
             raise ValueError(
                 f"tts.default_voice={resolved_default!r} is not one of the vendor speakers "
                 f"{VENDOR_SPEAKERS} (Qwen3-TTS CustomVoice, recon §1.1)"
             )
         self._voices = _VoiceResolver(
-            provider_name=self.provider_name, voice_map=voice_map, default=resolved_default
+            provider_name=self.provider_name,
+            voice_map={
+                logical: canonical_speaker(native) for logical, native in (voice_map or {}).items()
+            },
+            default=resolved_default,
         )
         self._base_url = base_url.rstrip("/")
         self._default_speaker = speaker
@@ -439,7 +455,10 @@ class Qwen3TTS:
             "text": text,
             "speaker": speaker,
             "language": "Russian",
-            "instruct": build_instruct(emotion if emotion is not None else _NEUTRAL_EMOTION),
+            "instruct": build_instruct(
+                emotion if emotion is not None else _NEUTRAL_EMOTION,
+                stream_obj._voice.voice_style,
+            ),
             "request_id": request_id,
         }
         try:

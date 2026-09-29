@@ -16,8 +16,9 @@ import httpx
 import pytest
 from app.application.ports.tts import TtsTimeoutError, TtsUnavailableError, TtsVoiceSpec
 from app.domain.caller.emotion import EmotionState
-from app.domain.enums import EmotionLabel
+from app.domain.enums import CallerVoiceStyle, EmotionLabel
 from app.inference.errors import InferenceOutOfMemoryError
+from app.inference.tts.instruct import STYLE_PRESETS
 from app.inference.tts.qwen3_tts import (
     OUTPUT_SAMPLE_RATE,
     Qwen3TTS,
@@ -98,9 +99,9 @@ async def test_stream_sends_speaker_language_and_instruct() -> None:
     stream = tts.stream("Здравствуйте.", _VOICE, request_id="r1", max_chunk_ms=40)
     chunks = [chunk async for chunk in stream]
 
-    assert captured[0]["speaker"] == "Serena"
+    assert captured[0]["speaker"] == "serena"
     assert captured[0]["language"] == "Russian"
-    assert captured[0]["instruct"] == "Speak in a calm and composed manner."
+    assert captured[0]["instruct"] == STYLE_PRESETS["calm_fast"]
     assert captured[0]["request_id"] == "r1"
     assert chunks  # at least one chunk
     for chunk in chunks:
@@ -137,8 +138,8 @@ async def test_the_instruct_differs_between_two_emotions_carried_by_the_voice_sp
     _ = [chunk async for chunk in tts.stream("Алло.", calm_voice, request_id="r2a")]
     _ = [chunk async for chunk in tts.stream("Помогите!", panicked_voice, request_id="r2b")]
 
-    assert captured[0]["instruct"] == "Speak in a calm and composed manner."
-    assert captured[1]["instruct"] == "Speak in a panicked and hysterical manner."
+    assert captured[0]["instruct"] == STYLE_PRESETS["calm_fast"]
+    assert captured[1]["instruct"] == STYLE_PRESETS["panic_fast"]
     assert captured[0]["instruct"] != captured[1]["instruct"]
 
 
@@ -183,7 +184,38 @@ async def test_a_none_emotion_on_the_voice_spec_synthesises_neutral() -> None:
     stream = tts.stream("Помогите!", _VOICE, request_id="r2e", max_chunk_ms=40)
     _ = [chunk async for chunk in stream]
 
-    assert captured[0]["instruct"] == "Speak in a calm and composed manner."
+    assert captured[0]["instruct"] == STYLE_PRESETS["calm_fast"]
+
+
+async def test_the_scenario_pain_voice_style_sends_the_pain_preset() -> None:
+    """I8 V0: `TtsVoiceSpec.voice_style = PAIN` (the scenario's `caller_profile.voice_style`)
+    overrides the emotion table with `pain_gasp`."""
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200, content=_tone_pcm(1000), headers={"X-Sample-Rate": str(OUTPUT_SAMPLE_RATE)}
+        )
+
+    tts = _client(handler)
+    voice = TtsVoiceSpec(
+        voice_id="serena",
+        speaking_rate=1.0,
+        emotion=EmotionState(emotion=EmotionLabel.WORRIED, stress_level=0.4),
+        voice_style=CallerVoiceStyle.PAIN,
+    )
+    _ = [chunk async for chunk in tts.stream("Мне больно.", voice, request_id="r2f")]
+
+    assert captured[0]["instruct"] == STYLE_PRESETS["pain_gasp"]
+
+
+def test_speaker_names_are_matched_case_insensitively() -> None:
+    """I8 V0: an operator's `.env` spelling (`Serena`) still constructs; Vivian is gone."""
+    tts = Qwen3TTS(base_url="http://127.0.0.1:8112", speaker="Serena", default_voice="ERIC")
+    assert tts.native_voice_id("") == "eric"
+    with pytest.raises(ValueError):
+        Qwen3TTS(base_url="http://127.0.0.1:8112", speaker="Vivian")
 
 
 # --- E20-G/G6: `voice_id` is a SCENARIO-LOGICAL id, resolved through the profile's voice_map ----
@@ -217,14 +249,14 @@ def _capturing():
 
 async def test_a_mapped_logical_voice_id_is_sent_as_its_native_speaker() -> None:
     captured, handler = _capturing()
-    tts = _mapped_client(handler, voice_map={"ru_female_adult_01": "Vivian"})
+    tts = _mapped_client(handler, voice_map={"ru_female_adult_01": "Eric"})
     stream = tts.stream(
         "тест", TtsVoiceSpec(voice_id="ru_female_adult_01", speaking_rate=1.0), request_id="r3"
     )
     _ = [chunk async for chunk in stream]
 
-    assert captured[0]["speaker"] == "Vivian"
-    assert tts.native_voice_id("ru_female_adult_01") == "Vivian"
+    assert captured[0]["speaker"] == "eric"  # matched case-insensitively (I8 V0)
+    assert tts.native_voice_id("ru_female_adult_01") == "eric"
 
 
 async def test_an_unmapped_logical_voice_id_falls_back_to_default_voice_and_never_raises() -> None:
@@ -237,7 +269,7 @@ async def test_an_unmapped_logical_voice_id_falls_back_to_default_voice_and_neve
         )
         _ = [chunk async for chunk in stream]
 
-    assert [body["speaker"] for body in captured] == ["Aiden", "Aiden", "Aiden"]
+    assert [body["speaker"] for body in captured] == ["aiden", "aiden", "aiden"]
 
 
 async def test_an_unmapped_logical_voice_id_warns_exactly_once(
@@ -284,7 +316,7 @@ async def test_an_empty_voice_id_falls_back_to_the_configured_default_speaker() 
     stream = tts.stream("тест", TtsVoiceSpec(voice_id="", speaking_rate=1.0), request_id="r3c")
     _ = [chunk async for chunk in stream]
 
-    assert captured[0]["speaker"] == "Serena"  # the `_client()` fixture's default speaker
+    assert captured[0]["speaker"] == "serena"  # the `_client()` fixture's default speaker
 
 
 async def test_chunking_respects_max_chunk_ms() -> None:

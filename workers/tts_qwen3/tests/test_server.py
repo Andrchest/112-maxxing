@@ -82,7 +82,7 @@ async def test_synthesize_returns_pcm_with_expected_headers() -> None:
             "/synthesize",
             json={
                 "text": "Здравствуйте, это проверка.",
-                "speaker": "Serena",
+                "speaker": "serena",
                 "language": "Russian",
                 "instruct": "Speak in a calm and composed manner.",
                 "request_id": "r1",
@@ -103,7 +103,7 @@ async def test_synthesize_lazily_loads_the_model() -> None:
     async with await _client_for(_FakeModel) as client:
         response = await client.post(
             "/synthesize",
-            json={"text": "Алло.", "speaker": "Ryan", "request_id": "r2"},
+            json={"text": "Алло.", "speaker": "eric", "request_id": "r2"},
         )
     assert response.status_code == 200
 
@@ -122,15 +122,38 @@ async def test_unknown_speaker_is_rejected_without_calling_the_model() -> None:
     assert "NotARealSpeaker" not in body["message"]
 
 
-async def test_vendor_speakers_are_exactly_four() -> None:
-    assert VENDOR_SPEAKERS == ("Serena", "Ryan", "Vivian", "Aiden")
+async def test_vendor_speakers_are_the_owners_evaluated_four_plus_ryan() -> None:
+    """I8 V0: serena, eric, aiden, uncle_fu (evaluated by ear) and ryan (spare); no vivian."""
+    assert VENDOR_SPEAKERS == ("serena", "eric", "aiden", "uncle_fu", "ryan")
+
+
+async def test_speaker_is_matched_case_insensitively_and_sent_lower_case() -> None:
+    model = _FakeModel()
+    async with await _client_for(lambda: model) as client:
+        response = await client.post(
+            "/synthesize",
+            json={"text": "тест", "speaker": "Uncle_Fu", "request_id": "r-case"},
+        )
+    assert response.status_code == 200
+    assert model.calls[0]["speaker"] == "uncle_fu"
+
+
+async def test_vivian_is_rejected() -> None:
+    model = _FakeModel()
+    async with await _client_for(lambda: model) as client:
+        response = await client.post(
+            "/synthesize",
+            json={"text": "тест", "speaker": "Vivian", "request_id": "r-vivian"},
+        )
+    assert response.status_code == 503
+    assert model.calls == []
 
 
 async def test_generation_failure_maps_to_a_stable_503_body_never_echoing_the_exception() -> None:
     async with await _client_for(_FailingModel) as client:
         response = await client.post(
             "/synthesize",
-            json={"text": "тест", "speaker": "Serena", "request_id": "r4"},
+            json={"text": "тест", "speaker": "serena", "request_id": "r4"},
         )
     assert response.status_code == 503
     body = response.json()
@@ -182,7 +205,7 @@ async def test_inference_lock_serialises_two_concurrent_synthesize_calls() -> No
         async def _one(index: int) -> httpx.Response:
             return await client.post(
                 "/synthesize",
-                json={"text": f"t{index}", "speaker": "Serena", "request_id": f"c{index}"},
+                json={"text": f"t{index}", "speaker": "serena", "request_id": f"c{index}"},
             )
 
         await asyncio.gather(*(_one(i) for i in range(3)))
@@ -207,7 +230,7 @@ async def test_disconnected_client_is_dropped_without_generating(monkeypatch) ->
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.post(
             "/synthesize",
-            json={"text": "тест", "speaker": "Serena", "request_id": "r5"},
+            json={"text": "тест", "speaker": "serena", "request_id": "r5"},
         )
     assert response.status_code == 499
     assert model.calls == []

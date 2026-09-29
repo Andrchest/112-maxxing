@@ -1,0 +1,131 @@
+profile_name: DEV_3060TI_VOICE
+description: >
+  ADDITIVE profile (I8 V0) — NOT one of SPEC §26's three named profiles. The caller-voice profile
+  for a DEDICATED RTX 3060 Ti 8 GB: Qwen3-TTS 1.7B CustomVoice (the checkpoint the owner evaluated
+  by ear) on GPU with the owner's four evaluated speakers, the LLM on GPU, ASR moved to CPU to
+  make room (the owner-approved, measured CPU ASR of DEV_3060TI_SHARED). Nothing else may hold the
+  card: the owner's lab TTS worker (:8020) must be stopped first — by the owner, never by us.
+
+hardware:
+  gpu_name_contains: "3060 Ti"
+  gpu_total_vram_mb: 8192
+  reserved_by_others_mb: 512    # dedicated card, same assumption as DEV_3060TI
+
+vram_budget_mb: 7168
+min_vram_margin_mb: 512
+# UNMEASURED until I8 V2 (benchmark_vram.py on this profile, 20 and 100 turns, under the GPU lock).
+# Arithmetic only (I8 A1 §3 option B): baseline 350 + TTS 1.7B worker 4299 + LLM 1559 = 6208 MB,
+# ASR 0 (CPU) — 960 MB under the budget. Not trusted until measured: the lab saw the 1.7B worker
+# grow across a session. A DEV profile may start unmeasured (HLD 60 §2.5: a warning, not a refusal).
+measured_peak_vram_mb: null
+
+llm:
+  provider: llama_cpp
+  # Same measured choice as DEV_3060TI (task reports e13-b3/e13-b4): Qwen3.5-2B Q4_K_M, both slots.
+  model_name: Qwen3.5-2B
+  model_path: /models/llm/Qwen3.5-2B-Q4_K_M.gguf
+  quantization: Q4_K_M
+  base_url: http://llama-server:8080/v1
+  n_ctx: 4096
+  n_gpu_layers: -1
+  n_batch: 512
+  n_ubatch: 256
+  parallel_slots: 2
+  flash_attention: "on"
+  kv_cache_type: q8_0
+  max_response_tokens: 80
+  interpreter_max_tokens: 138
+  request_timeout_ms: 3000
+  thinking_enabled: false
+
+asr:
+  provider: gigaam
+  model_version: v3_e2e_ctc
+  model_path: /models/asr/gigaam-v3-e2e-ctc
+  device: cpu                    # MEASURED RTF 0.036 on CPU (DEV_3060TI_SHARED, owner-approved)
+  compute_type: float32          # GigaAMProvider forces float32 off-CUDA (float16 is CUDA-only)
+  sample_rate: 16000
+
+tts:
+  provider: qwen3_tts
+  # BASE dir, SIM_TTS_QWEN3_MODEL_DIR; the tts_qwen3 worker appends the variant's subdirectory.
+  model_path: /models/tts/qwen3-tts
+  voice_id: serena                # vendor CustomVoice speaker — not a free voice id
+  device: cuda
+  output_sample_rate: 24000
+  max_chunk_ms: 20
+  fallback_provider: piper        # PiperTTS, CPU — the configured fallback (D9), marked in events
+  fallback_model_path: /models/tts/piper/ru_RU-irina-medium.onnx
+  fallback_voice_id: ru_RU-irina-medium
+  fallback_output_sample_rate: 22050
+  # The owner's evaluated checkpoint (same HF revision as his lab's). Fallback if I8 V2's growth
+  # bar fails: "0.6B" on this same profile (I8 A1 §3 option D).
+  model_variant: "1.7B"
+  # Whole-utterance provider: same guards as DEV_3060TI (sized from its measured first audio);
+  # to be re-sized by I8 V2's measurement with 70-character units.
+  first_chunk_timeout_ms: 12000
+  timeout_ms: 15000
+  # I8 V0, the owner's lab recipe (I8 A1 §2.2): units of <= 70 characters (the lab: 60-80 keeps
+  # Qwen3-TTS from degenerating), 200 ms between units (the lab: 0.15-0.25 s).
+  max_unit_chars: 70
+  inter_unit_pause_ms: 200
+  # I8 A1 §2.4: post-synthesis tempo per caller emotion (the owner's main complaint was slow
+  # speech); PAIN is the scenario `caller_profile.voice_style`. Consumed from I8 V1; the factors
+  # are to be confirmed by the owner's listening set (I8 V5).
+  tempo_by_emotion:
+    CALM: 1.10
+    WORRIED: 1.15
+    FRIGHTENED: 1.20
+    PANICKED: 1.20
+    ANGRY: 1.15
+    CONFUSED: 1.10
+    APATHETIC: 1.10
+    PAIN: 1.15
+  # Per-unit seed derived from the session's deterministic_seed, turn and unit (I8 A1 §2.2).
+  # Consumed from I8 V1.
+  seed_mode: derived
+  # I8 A1 §2.3: the owner's evaluated speakers. Logical ids stay in the scenarios; this profile
+  # owns the cast. Every value must be one of `VENDOR_SPEAKERS` (a gate test checks it).
+  voice_map:
+    ru_female_adult_01: serena    # the only usable female voice; callers + personas 103, DEPARTMENT, OPERATOR_112
+    ru_male_adult_01: eric        # main male voice; callers + personas BRIGADE_101, BRIGADE_102, CITY_DEFAULT
+    ru_male_adult_02: aiden       # personas BRIGADE_104, DDS_DISTRICT, DDS_PREFECTURE
+    ru_male_elderly_01: uncle_fu  # I8 V0 logical id; no scenario casts it yet
+    ru_female_elderly_01: serena  # I8 V0 logical id; no elderly female speaker exists
+  default_voice: serena           # every unmapped logical id
+
+vad:
+  provider: silero
+  model_path: /models/vad/silero_vad.onnx
+  device: cpu
+
+voice_turn:
+  speech_start_threshold: 0.55
+  speech_end_threshold: 0.35
+  speech_start_min_ms: 96
+  endpoint_silence_ms: 300
+  pre_roll_ms: 300
+  barge_in_min_speech_ms: 120
+  max_turn_ms: 30000
+  min_turn_ms: 200
+  vad_frame_ms: 32
+  outbound_queue_ms: 200
+  tts_chunk_ms: 20
+  partial_asr_enabled: true
+  partial_interval_ms: 500
+  reconnect_grace_s: 30
+
+warmup:
+  enabled: true
+  asr_sample_path: /models/warmup/warmup_ru.wav
+  llm_prompt: "Скажи одно слово."
+  tts_text: "Проверка."
+  timeout_ms: 60000
+
+latency_targets:
+  p50_ms: 1500
+  p95_ms: 2500
+
+health:
+  failure_threshold: 3
+  rewarm_interval_s: 30

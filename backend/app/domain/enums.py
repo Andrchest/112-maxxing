@@ -202,6 +202,14 @@ class EmotionLabel(str, Enum):
     APATHETIC = "APATHETIC"
 
 
+class CallerVoiceStyle(str, Enum):
+    """I8 V0: `caller_profile.voice_style` (schema 2, optional) — a closed hint for the caller's
+    TTS style that no `EmotionLabel` expresses. `PAIN`: the caller is the injured person and
+    speaks through pain (`app.inference.tts.instruct`, preset `pain_gasp`)."""
+
+    PAIN = "PAIN"
+
+
 class ValueType(str, Enum):
     """Fact and card value typing."""
 

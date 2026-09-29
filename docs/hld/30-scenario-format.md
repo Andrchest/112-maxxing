@@ -105,6 +105,7 @@ caller_profile:
   speaking_rate: 0.5..2.0
   baseline_stress_level: 0.0..1.0
   persona_whitelist_ru: ["Ирина", "Петровна"]
+  voice_style: PAIN               # optional, schema 2 only (I8 V0); the only value
   emotion_rules:
     - rule_id: <string, unique in this list>
       trigger:
@@ -123,6 +124,15 @@ outlives whichever TTS provider a deployment selects — and is never a provider
 name; the active model profile's `tts.voice_map` / `tts.default_voice` (HLD 60 §2.1) map it onto
 the selected provider's native voice, and an id the map does not name resolves to
 `tts.default_voice` with a warning rather than failing the call (E20-G).
+
+I8 V0: the logical ids in use are `ru_female_adult_01`, `ru_male_adult_01`, `ru_male_adult_02`,
+`ru_male_elderly_01` and `ru_female_elderly_01` (`<lang>_<female|male>_<age>_<nn>`). The loader
+warns (never refuses) when an `ELDERLY` caller is cast with an `*_adult_*` id, and when the
+`identity_ru` surname («роль: Фамилия …»; -ова/-ева/-ина/-ая vs -ов/-ев/-ин/-ий…) reads the other
+gender than the id. `voice_style` (schema 2, closed enum, only `PAIN`) marks a caller no
+`EmotionLabel` describes — the injured person calling about themselves; the Qwen3-TTS adapter then
+sends the `pain_gasp` style instead of the emotion's. Rule R01 refuses it in a schema-1 document;
+a document without it dumps (and hashes, D4) exactly as before.
 
 ## 30.4 `available_resources` (SPEC §11)
 

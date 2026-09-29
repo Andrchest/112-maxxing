@@ -62,6 +62,7 @@ caller_profile:
   relationship: VICTIM
   language: "ru-RU"
   voice_id: "ru_female_adult_01"
+  voice_style: PAIN   # I8 V0: the injured caller speaks through pain (TTS preset pain_gasp)
   age_group: ADULT
   baseline_emotion: FRIGHTENED
   cooperativeness: 0.8

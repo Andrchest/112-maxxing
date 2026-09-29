@@ -11,15 +11,19 @@ import logging
 
 import pytest
 from app.config.profile import (
+    TEMPO_EMOTION_KEYS,
+    TEMPO_VOICE_STYLE_KEYS,
     ModelProfile,
     ProfileRefused,
     load_profile,
     validate_vram_margin,
 )
+from app.domain.enums import CallerVoiceStyle, EmotionLabel
 
 ALL_PROFILE_NAMES = (
     "DEV_3060TI",
     "DEV_3060TI_SHARED",
+    "DEV_3060TI_VOICE",
     "FINAL_3080TI_12GB",
     "FINAL_3080TI_16GB",
     "CPU",
@@ -217,3 +221,63 @@ def test_cpu_profile_passes_the_vram_margin_check_with_no_warning(
         validate_vram_margin(profile)  # must not raise
 
     assert caplog.records == []
+
+
+# -- I8 V0: DEV_3060TI_VOICE and the TTS recipe keys ---------------------------------------------
+
+
+def test_the_voice_profile_is_unmeasured_and_only_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """Measured in I8 V2; until then a DEV profile with no peak warns, it is not refused."""
+    profile = load_profile("DEV_3060TI_VOICE")
+    assert profile.measured_peak_vram_mb is None
+    assert (profile.asr.device, profile.tts.device, profile.tts.model_variant) == (
+        "cpu",
+        "cuda",
+        "1.7B",
+    )
+    assert profile.llm.n_gpu_layers == -1
+    with caplog.at_level(logging.WARNING):
+        validate_vram_margin(profile)
+    assert "unmeasured" in caplog.text
+
+
+def test_the_tempo_keys_are_the_domain_enums() -> None:
+    """`app.config` repeats the enum values as literals (it imports nothing from `app`)."""
+    assert set(TEMPO_EMOTION_KEYS) == {label.value for label in EmotionLabel}
+    assert set(TEMPO_VOICE_STYLE_KEYS) == {style.value for style in CallerVoiceStyle}
+
+
+def _voice_tts(**overrides: object) -> dict:
+    base = load_profile("DEV_3060TI_VOICE").model_dump(mode="json")
+    base["tts"].update(overrides)
+    return base
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"tempo_by_emotion": {"CALM": 1.1}}, "missing"),
+        (
+            {"tempo_by_emotion": {**dict.fromkeys(TEMPO_EMOTION_KEYS, 1.1), "JOY": 1.1}},
+            "unknown",
+        ),
+        ({"tempo_by_emotion": dict.fromkeys(TEMPO_EMOTION_KEYS, 3.0)}, "outside"),
+        ({"max_unit_chars": 5}, "greater than or equal"),
+        ({"inter_unit_pause_ms": -1}, "greater than or equal"),
+        ({"seed_mode": "random"}, "seed_mode"),
+    ],
+)
+def test_the_recipe_keys_are_validated(overrides: dict, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        ModelProfile(**_voice_tts(**overrides))
+
+
+def test_a_tempo_table_without_the_voice_style_key_is_accepted() -> None:
+    profile = ModelProfile(**_voice_tts(tempo_by_emotion=dict.fromkeys(TEMPO_EMOTION_KEYS, 1.0)))
+    assert "PAIN" not in profile.tts.tempo_by_emotion
+
+
+def test_a_profile_without_the_recipe_keys_gets_none_and_an_empty_table() -> None:
+    tts = load_profile("DEV_3060TI").tts
+    assert (tts.max_unit_chars, tts.inter_unit_pause_ms, tts.seed_mode) == (None, None, None)
+    assert tts.tempo_by_emotion == {}

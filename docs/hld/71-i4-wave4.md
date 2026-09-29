@@ -2259,3 +2259,78 @@ by the memo load. Owner question Q-I7-E48-1 (`docs/owner-decisions.md`).
 fake run, honest NOT_RUNs); the existing suites around the changed code
 (`tests/api/dds`, `tests/integration/simulation`, `tests/integration/persistence`,
 `tests/invariants`, `tests/api/lessons`, `tests/unit/config`) pass unchanged.
+
+
+## 71.20.V0 I8 V0 — Caller voices: speakers, emotion presets v2, profile keys, voice selection
+
+Owner, 2026-09-29: caller voices on Qwen3-TTS 1.7B CustomVoice («сделай то, что нужно, так как
+нужно»). Design: the I8 A1 plan (§2.2–§2.4, §4 V0). This epic makes the project able to *name* the
+recipe the owner evaluated in his TTS lab; no GPU was used, nothing is measured yet (I8 V2).
+
+**Speakers.** `VENDOR_SPEAKERS = ("serena", "eric", "aiden", "uncle_fu", "ryan")` in both copies —
+`workers/tts_qwen3/tts_qwen3/server.py` and `app.inference.tts.qwen3_tts` — and a gate test
+(`test_qwen3_worker_shape.py`) asserts they are equal and that every `voice_id`, `voice_map` value
+and `default_voice` of every `qwen3_tts` profile is in the set. Vivian is gone (rejected by
+listening); ryan stays as a spare male. Names are lower-case (as `qwen_tts` lists them) and matched
+case-insensitively on both sides (`canonical_speaker`), so an `.env` written as `Serena` still
+works. `WARMUP_SPEAKER = "serena"`. The existing profiles keep their cast, lower-cased
+(`DEV_3060TI`: serena/ryan/aiden; `FINAL_3080TI_12GB`: serena).
+
+**Emotion presets, style version 2** (`app.inference.tts.instruct`). `STYLE_VERSION = 2`;
+`STYLE_PRESETS` holds `calm_fast`, `panic_fast`, `fear`, `pain_gasp` and `anger` copied verbatim
+from the lab's `tools/qwen_studio.py` (emo-lab commit `5a02e3e8`); `anger` is flagged not
+owner-rated; no `*_zh` preset exists. The closed `(EmotionLabel, stress bucket) → preset` table is
+A1 §2.4 (CALM/APATHETIC `calm_fast`; WORRIED and CONFUSED `calm_fast`, `fear` at high stress;
+FRIGHTENED `fear`; PANICKED `panic_fast`; ANGRY `anger`). `build_instruct(emotion, voice_style)`
+returns the preset sentence itself (v1's `"Speak in a … manner."` is gone). Recording
+`style_version` on `CALLER_TTS_STARTED` / `inference_metrics` is I8 V1.
+
+**Scenario `caller_profile.voice_style`** (schema 2, optional, closed enum `CallerVoiceStyle`, only
+`PAIN`). `CallerProfileSection` omits it from the dump when absent, so every document without it
+keeps its canonical content and sha (D4); R01 refuses it in a schema-1 document. The speech sink
+copies it into the additive `TtsVoiceSpec.voice_style`, and the Qwen3-TTS adapter passes it to
+`build_instruct`, which then answers `pain_gasp` whatever the emotion. It is set on the 8
+«Пострадавший, звонит сам» tickets (06-2, 07-2, 11-3, 15-3, 21-2, 23-2, 23-2-card-error, 29-3);
+their content sha changes, the other 100 tickets' does not. Scenario schema regenerated.
+
+**Voice-id warnings** (`scenario_version_warnings`, never violations): an `ELDERLY` caller cast
+with an `*_adult_*` logical id, and a logical id whose gender the `identity_ru` surname
+(«роль: Фамилия …») contradicts (-ова/-ева/-ёва/-ина/-ына/-ая female; -ов/-ев/-ёв/-ин/-ын/-ий/-ый/-ой
+male; any other ending or no «:» — not checked). On the 108 tickets: 3 ELDERLY warnings
+(ticket-11-call-3, ticket-21-call-2, ticket-23-call-3 — female callers cast `ru_female_adult_01`),
+no gender contradiction. New logical ids (HLD 30 §30.3): `ru_male_elderly_01`,
+`ru_female_elderly_01`.
+
+**Profile keys** (`TtsProfile`, all optional; overlaid onto `Settings` only when the profile names
+them, so a profile without them behaves exactly as before):
+
+| key | Settings / env | default | validated |
+|---|---|---|---|
+| `max_unit_chars` | `tts_max_unit_chars` / `SIM_TTS_MAX_UNIT_CHARS` | 120 | 20–400 |
+| `inter_unit_pause_ms` | `tts_inter_unit_pause_ms` / `SIM_TTS_INTER_UNIT_PAUSE_MS` | 0 | 0–1000 |
+| `tempo_by_emotion` | `tts_tempo_by_emotion` / `SIM_TTS_TEMPO_BY_EMOTION` | `{}` | empty, or every `EmotionLabel` (+ optional `PAIN`), factors 0.5–2.0 |
+| `seed_mode` | `tts_seed_mode` / `SIM_TTS_SEED_MODE` | `off` | `off` \| `derived` |
+
+`max_unit_chars` is consumed today (the chunker already reads `Settings.tts_max_unit_chars`); the
+other three are defined and validated only — the chunked stream (pause) and the adapter/worker
+(tempo, seed) consume them from I8 V1. `.env.example`: `SIM_TTS_MAX_UNIT_CHARS` is now commented
+(profile-owned, like the other E20 keys) and the I8 V0 section documents the three new variables.
+
+**Profile `DEV_3060TI_VOICE`** (additive): ASR GigaAM on CPU (float32), TTS Qwen3-TTS `1.7B` on
+CUDA with the Piper fallback, LLM Qwen3.5-2B fully on GPU; `max_unit_chars: 70`,
+`inter_unit_pause_ms: 200`, `tempo_by_emotion` per A1 §2.4 (CALM/CONFUSED/APATHETIC 1.10,
+WORRIED/ANGRY/PAIN 1.15, FRIGHTENED/PANICKED 1.20), `seed_mode: derived`; `voice_map`
+ru_female_adult_01→serena, ru_male_adult_01→eric, ru_male_adult_02→aiden,
+ru_male_elderly_01→uncle_fu, ru_female_elderly_01→serena, default serena.
+`measured_peak_vram_mb: null` — unmeasured until I8 V2 (a DEV profile only warns, HLD 60 §2.5).
+
+**Owner decisions.** `docs/owner-decisions.md` «Голоса звонящих (I8, 2026-09-29)»: A1 §5 Q2–Q6 by
+the plan's defaults (Q5: today's instruction supersedes «голос пока не делаем» for the caller
+voice); Q1 (stop the lab worker :8020 during lessons and measurements) waits for the owner.
+
+**Tests.** `tests/unit/inference/tts/test_instruct.py` (rewritten: verbatim presets, §2.4 table,
+PAIN override), `test_qwen3_tts.py` (preset instruct, PAIN, case-insensitive speakers),
+`test_qwen3_worker_shape.py` (copies equal, every Qwen profile casts only vendor speakers),
+`tests/unit/config/test_profile.py` / `test_apply_profile.py` (new profile, key validation,
+overlay, unchanged defaults), `tests/unit/domain/scenario/test_caller_voice.py` (voice_style
+schema/R01/dump, warnings, the 8 PAIN tickets), `workers/tts_qwen3/tests/test_server.py`.

@@ -486,6 +486,17 @@
         "voice_id": {
           "title": "Voice Id",
           "type": "string"
+        },
+        "voice_style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CallerVoiceStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -517,6 +528,14 @@
         "UNKNOWN"
       ],
       "title": "CallerRelationship",
+      "type": "string"
+    },
+    "CallerVoiceStyle": {
+      "description": "I8 V0: `caller_profile.voice_style` (schema 2, optional) — a closed hint for the caller's\nTTS style that no `EmotionLabel` expresses. `PAIN`: the caller is the injured person and\nspeaks through pain (`app.inference.tts.instruct`, preset `pain_gasp`).",
+      "enum": [
+        "PAIN"
+      ],
+      "title": "CallerVoiceStyle",
       "type": "string"
     },
     "CardSource": {

@@ -165,6 +165,21 @@ async def test_expected_gpu_detected_keeps_the_pre_start_rule_when_nothing_is_lo
     assert "models loaded" not in result.detail
 
 
+async def test_the_unmeasured_voice_profile_keeps_the_pre_start_rule_even_when_warm() -> None:
+    """I8 V0: `DEV_3060TI_VOICE` has no `measured_peak_vram_mb` until I8 V2, so it has no remaining
+    allowance to claim — the whole budget + margin must be free (the existing DEV rule)."""
+    voice = load_profile("DEV_3060TI_VOICE")
+    assert voice.measured_peak_vram_mb is None
+    required = voice.vram_budget_mb + voice.min_vram_margin_mb
+    gpu = GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, required)
+    passed = await check_expected_gpu_detected(lambda: [gpu], voice, _loaded)
+    assert passed.status == "PASS"
+    assert "models loaded" not in passed.detail
+    short = GpuInfo("NVIDIA GeForce RTX 3060 Ti", 8192, required - 1)
+    failed = await check_expected_gpu_detected(lambda: [short], voice, _loaded)
+    assert failed.status == "FAIL"
+
+
 async def test_expected_gpu_detected_still_fails_on_a_warm_stack_below_the_remaining_allowance(
     profile: ModelProfile,
 ) -> None:

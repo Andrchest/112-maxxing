@@ -13,8 +13,16 @@ channel, which SPEC forbids the caller pipeline from ever exposing:
   text and no scenario-authored free text ever reaches this function — there is no parameter for
   any of them.
 * **The output is a lookup into a fixed table**, not a template interpolating anything: every one
-  of the 7 labels x 3 stress buckets has its own literal English descriptor below, so the full
-  output space is enumerable and reviewable in one place, not generated at runtime.
+  of the 7 labels x 3 stress buckets names one preset below, so the full output space is
+  enumerable and reviewable in one place, not generated at runtime.
+
+I8 V0 (style version 2, `STYLE_VERSION`): the presets are the instruction sentences the owner
+evaluated by ear in his TTS lab, copied VERBATIM from `~/emo-lab/tools/qwen_studio.py`
+`STYLE_PRESETS` at emo-lab commit `5a02e3e838da2573bde3c9deb65635532ff69fc6` — never reworded
+(the lab's rule: a reworded preset is a new style version). The table is the I8 A1 plan §2.4. The
+`*_zh` presets are excluded by construction (not in `STYLE_PRESETS`). The one input besides
+`EmotionState` is `CallerVoiceStyle` — a closed scenario enum (`caller_profile.voice_style`), still
+no free text.
 
 Pure, deterministic, no I/O — unit-tested directly (`backend/tests/unit/inference/tts/
 test_instruct.py`), no `qwen-tts`/`torch` import anywhere near it.
@@ -23,11 +31,22 @@ test_instruct.py`), no `qwen-tts`/`torch` import anywhere near it.
 from __future__ import annotations
 
 from app.domain.caller.emotion import EmotionState
-from app.domain.enums import EmotionLabel
+from app.domain.enums import CallerVoiceStyle, EmotionLabel
 
-__all__ = ["StressBucket", "build_instruct", "stress_bucket"]
+__all__ = [
+    "STYLE_PRESETS",
+    "STYLE_VERSION",
+    "StressBucket",
+    "build_instruct",
+    "preset_name",
+    "stress_bucket",
+]
 
 StressBucket = str  # "low" | "medium" | "high" — see `stress_bucket()`
+
+#: Bumped whenever a preset text or the table below changes (the lab's "never reword between
+#: runs" rule). 1 was the E14-B `"Speak in a {descriptor} manner."` table.
+STYLE_VERSION = 2
 
 #: Thirds of the `[0.0, 1.0]` range `EmotionState.stress_level` is defined over
 #: (`app.domain.caller.emotion.EmotionState`, `Field(ge=0.0, le=1.0)`). `<` on the low bound and
@@ -35,31 +54,56 @@ StressBucket = str  # "low" | "medium" | "high" — see `stress_bucket()`
 _LOW_MAX = 1.0 / 3.0
 _MEDIUM_MAX = 2.0 / 3.0
 
-#: `(EmotionLabel, StressBucket) -> English descriptor`, dropped into `"Speak in a {descriptor}
-#: manner."`. Every one of the 7 labels x 3 buckets is a distinct, hand-written entry — no
-#: interpolation, no string formatting of caller/scenario text (see module docstring).
-_INSTRUCT_TABLE: dict[tuple[EmotionLabel, StressBucket], str] = {
-    (EmotionLabel.CALM, "low"): "calm and composed",
-    (EmotionLabel.CALM, "medium"): "calm but attentive",
-    (EmotionLabel.CALM, "high"): "calm under pressure",
-    (EmotionLabel.WORRIED, "low"): "mildly worried",
-    (EmotionLabel.WORRIED, "medium"): "worried and uneasy",
-    (EmotionLabel.WORRIED, "high"): "worried and anxious",
-    (EmotionLabel.FRIGHTENED, "low"): "slightly frightened",
-    (EmotionLabel.FRIGHTENED, "medium"): "frightened and unsettled",
-    (EmotionLabel.FRIGHTENED, "high"): "frightened and trembling",
-    (EmotionLabel.PANICKED, "low"): "on edge and panicked",
-    (EmotionLabel.PANICKED, "medium"): "panicked and rushed",
-    (EmotionLabel.PANICKED, "high"): "panicked and hysterical",
-    (EmotionLabel.ANGRY, "low"): "irritated",
-    (EmotionLabel.ANGRY, "medium"): "angry and sharp",
-    (EmotionLabel.ANGRY, "high"): "angry and shouting",
-    (EmotionLabel.CONFUSED, "low"): "a little confused",
-    (EmotionLabel.CONFUSED, "medium"): "confused and hesitant",
-    (EmotionLabel.CONFUSED, "high"): "confused and disoriented",
-    (EmotionLabel.APATHETIC, "low"): "flat and apathetic",
-    (EmotionLabel.APATHETIC, "medium"): "apathetic and detached",
-    (EmotionLabel.APATHETIC, "high"): "apathetic and numb",
+#: VERBATIM from `~/emo-lab/tools/qwen_studio.py` `STYLE_PRESETS` (emo-lab commit `5a02e3e8`);
+#: see the module docstring. Do not edit a string here without bumping `STYLE_VERSION`.
+STYLE_PRESETS: dict[str, str] = {
+    "calm_fast": (
+        "Speak quickly and matter-of-factly, like a real person dictating an address over the "
+        "phone, without pauses."
+    ),
+    "panic_fast": (
+        "Speak very fast and breathlessly, in panic, like a real person on an emergency call, "
+        "words rushing out with no pauses."
+    ),
+    "fear": "Speak in a frightened, trembling voice, as if terrified and on the verge of tears.",
+    "pain_gasp": (
+        "Speak in severe physical pain: short words forced out through groans, heavy breathing "
+        "between phrases, the voice tight and strained."
+    ),
+    # NOT owner-rated: the lab's `anger` preset was never listened to by the owner (A1 §2.4, §5
+    # Q6); it is used for ANGRY until the owner's listening set (I8 V5) decides.
+    "anger": "Speak angrily and forcefully, with a raised, sharp voice.",
+}
+
+#: `(EmotionLabel, StressBucket) -> STYLE_PRESETS key` (A1 §2.4). CONFUSED does not use the lab's
+#: `confused` preset: it asks for "long pauses", the opposite of the owner's main complaint.
+_PRESET_TABLE: dict[tuple[EmotionLabel, StressBucket], str] = {
+    (EmotionLabel.CALM, "low"): "calm_fast",
+    (EmotionLabel.CALM, "medium"): "calm_fast",
+    (EmotionLabel.CALM, "high"): "calm_fast",
+    (EmotionLabel.WORRIED, "low"): "calm_fast",
+    (EmotionLabel.WORRIED, "medium"): "calm_fast",
+    (EmotionLabel.WORRIED, "high"): "fear",
+    (EmotionLabel.FRIGHTENED, "low"): "fear",
+    (EmotionLabel.FRIGHTENED, "medium"): "fear",
+    (EmotionLabel.FRIGHTENED, "high"): "fear",
+    (EmotionLabel.PANICKED, "low"): "panic_fast",
+    (EmotionLabel.PANICKED, "medium"): "panic_fast",
+    (EmotionLabel.PANICKED, "high"): "panic_fast",
+    (EmotionLabel.ANGRY, "low"): "anger",
+    (EmotionLabel.ANGRY, "medium"): "anger",
+    (EmotionLabel.ANGRY, "high"): "anger",
+    (EmotionLabel.CONFUSED, "low"): "calm_fast",
+    (EmotionLabel.CONFUSED, "medium"): "calm_fast",
+    (EmotionLabel.CONFUSED, "high"): "fear",
+    (EmotionLabel.APATHETIC, "low"): "calm_fast",
+    (EmotionLabel.APATHETIC, "medium"): "calm_fast",
+    (EmotionLabel.APATHETIC, "high"): "calm_fast",
+}
+
+#: `CallerVoiceStyle -> STYLE_PRESETS key`: a scenario style hint overrides the emotion table.
+_VOICE_STYLE_PRESETS: dict[CallerVoiceStyle, str] = {
+    CallerVoiceStyle.PAIN: "pain_gasp",
 }
 
 
@@ -72,12 +116,19 @@ def stress_bucket(stress_level: float) -> StressBucket:
     return "high"
 
 
-def build_instruct(emotion: EmotionState) -> str:
-    """`EmotionState` -> the `instruct` string sent to Qwen3-TTS CustomVoice.
+def preset_name(emotion: EmotionState, voice_style: CallerVoiceStyle | None = None) -> str:
+    """The `STYLE_PRESETS` key for this turn: the scenario's `voice_style` when it has one, else
+    `(emotion.emotion, stress_bucket(emotion.stress_level))`'s table entry."""
+    if voice_style is not None:
+        return _VOICE_STYLE_PRESETS[voice_style]
+    return _PRESET_TABLE[(emotion.emotion, stress_bucket(emotion.stress_level))]
 
-    A pure table lookup keyed by `(emotion.emotion, stress_bucket(emotion.stress_level))` — every
-    key is present in `_INSTRUCT_TABLE` for every `EmotionLabel`, so this never raises for a valid
-    `EmotionState`.
+
+def build_instruct(emotion: EmotionState, voice_style: CallerVoiceStyle | None = None) -> str:
+    """`EmotionState` (+ the scenario's closed `voice_style`) -> the `instruct` string sent to
+    Qwen3-TTS CustomVoice.
+
+    A pure table lookup — every `(EmotionLabel, bucket)` and every `CallerVoiceStyle` has an
+    entry, so this never raises for a valid `EmotionState`.
     """
-    descriptor = _INSTRUCT_TABLE[(emotion.emotion, stress_bucket(emotion.stress_level))]
-    return f"Speak in a {descriptor} manner."
+    return STYLE_PRESETS[preset_name(emotion, voice_style)]

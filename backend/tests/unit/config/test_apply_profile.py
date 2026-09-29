@@ -41,6 +41,11 @@ def _clean_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
         # E20-G/G6.
         "SIM_TTS_VOICE_MAP",
         "SIM_TTS_DEFAULT_VOICE",
+        # I8 V0.
+        "SIM_TTS_MAX_UNIT_CHARS",
+        "SIM_TTS_INTER_UNIT_PAUSE_MS",
+        "SIM_TTS_TEMPO_BY_EMOTION",
+        "SIM_TTS_SEED_MODE",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -255,7 +260,7 @@ def test_tts_model_path_and_voice_id_follow_the_selected_provider(
 
     qwen3_overlaid = apply_profile(Settings(), load_profile("DEV_3060TI"))  # type: ignore[call-arg]
     assert qwen3_overlaid.tts_qwen3_model_dir == "/models/tts/qwen3-tts"
-    assert qwen3_overlaid.tts_qwen3_speaker == "Serena"
+    assert qwen3_overlaid.tts_qwen3_speaker == "serena"
 
     piper_overlaid = apply_profile(Settings(), load_profile("DEV_3060TI_SHARED"))  # type: ignore[call-arg]
     assert piper_overlaid.tts_piper_voice_path == "/models/tts/piper/ru_RU-irina-medium.onnx"
@@ -415,11 +420,11 @@ def test_tts_voice_map_and_default_voice_are_overlaid_from_the_profile(
     # I3 E6c (HLD 80 §80.4.1): the ДДС phone's male persona voices, verified against the
     # installed `qwen_tts` (Ryan, Aiden).
     assert overlaid.tts_voice_map == {
-        "ru_female_adult_01": "Serena",
-        "ru_male_adult_01": "Ryan",
-        "ru_male_adult_02": "Aiden",
+        "ru_female_adult_01": "serena",
+        "ru_male_adult_01": "ryan",
+        "ru_male_adult_02": "aiden",
     }
-    assert overlaid.tts_default_voice == "Serena"
+    assert overlaid.tts_default_voice == "serena"
 
     # The Piper-primary profile maps the same logical id onto ITS native voice.
     piper = apply_profile(Settings(), load_profile("DEV_3060TI_SHARED"))  # type: ignore[call-arg]
@@ -464,7 +469,13 @@ def test_every_shipped_profile_maps_every_logical_voice_id_the_example_scenarios
         for match in re.finditer(r'^\s*voice_id:\s*"?([^"\s]+)"?\s*$', path.read_text(), re.M)
     }
     assert logical_ids, "no caller_profile.voice_id found in scenarios/examples"
-    for name in ("DEV_3060TI", "DEV_3060TI_SHARED", "FINAL_3080TI_12GB", "FINAL_3080TI_16GB"):
+    for name in (
+        "DEV_3060TI",
+        "DEV_3060TI_SHARED",
+        "DEV_3060TI_VOICE",
+        "FINAL_3080TI_12GB",
+        "FINAL_3080TI_16GB",
+    ):
         voice_map = load_profile(name).tts.voice_map
         assert logical_ids <= set(voice_map), f"{name}: unmapped {logical_ids - set(voice_map)}"
 
@@ -491,3 +502,66 @@ def test_a_streaming_primary_keeps_the_default_guards(monkeypatch: pytest.Monkey
     overlaid = apply_profile(Settings(), load_profile("DEV_3060TI_SHARED"))  # type: ignore[call-arg]
     assert overlaid.tts_first_chunk_timeout_ms == 1500
     assert overlaid.tts_timeout_ms == 8000
+
+
+# -- I8 V0: the caller-voice profile and its recipe keys -----------------------------------------
+
+
+def test_the_voice_profile_overlays_its_recipe_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DEV_3060TI_VOICE: 1.7B, CPU ASR, the owner's evaluated cast and the lab recipe keys."""
+    _clean_settings_env(monkeypatch)
+    overlaid = apply_profile(Settings(), load_profile("DEV_3060TI_VOICE"))  # type: ignore[call-arg]
+    assert overlaid.asr_device == "cpu"
+    assert overlaid.tts_device == "cuda"
+    assert overlaid.tts_model_variant == "1.7B"
+    assert overlaid.tts_max_unit_chars == 70
+    assert overlaid.tts_inter_unit_pause_ms == 200
+    assert overlaid.tts_seed_mode == "derived"
+    assert overlaid.tts_tempo_by_emotion == {
+        "CALM": 1.10,
+        "WORRIED": 1.15,
+        "FRIGHTENED": 1.20,
+        "PANICKED": 1.20,
+        "ANGRY": 1.15,
+        "CONFUSED": 1.10,
+        "APATHETIC": 1.10,
+        "PAIN": 1.15,
+    }
+    assert overlaid.tts_voice_map == {
+        "ru_female_adult_01": "serena",
+        "ru_male_adult_01": "eric",
+        "ru_male_adult_02": "aiden",
+        "ru_male_elderly_01": "uncle_fu",
+        "ru_female_elderly_01": "serena",
+    }
+    assert overlaid.tts_default_voice == "serena"
+
+
+@pytest.mark.parametrize(
+    "name", ["DEV_3060TI", "DEV_3060TI_SHARED", "CPU", "FINAL_3080TI_12GB", "FINAL_3080TI_16GB"]
+)
+def test_a_profile_without_the_recipe_keys_keeps_todays_behaviour(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _clean_settings_env(monkeypatch)
+    overlaid = apply_profile(Settings(), load_profile(name))  # type: ignore[call-arg]
+    assert overlaid.tts_max_unit_chars == 120
+    assert overlaid.tts_inter_unit_pause_ms == 0
+    assert overlaid.tts_tempo_by_emotion == {}
+    assert overlaid.tts_seed_mode == "off"
+
+
+def test_an_explicit_env_unit_length_beats_the_voice_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_settings_env(monkeypatch)
+    monkeypatch.setenv("SIM_TTS_MAX_UNIT_CHARS", "90")
+    overlaid = apply_profile(Settings(), load_profile("DEV_3060TI_VOICE"))  # type: ignore[call-arg]
+    assert overlaid.tts_max_unit_chars == 90
+
+
+def test_an_incomplete_env_tempo_table_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_settings_env(monkeypatch)
+    monkeypatch.setenv("SIM_TTS_TEMPO_BY_EMOTION", '{"CALM": 1.1}')
+    with pytest.raises(ValueError, match="missing"):
+        Settings()  # type: ignore[call-arg]

@@ -152,7 +152,12 @@ class UnknownModelVariantError(ValueError):
 #: names"). `Qwen3TTS` (the backend adapter) validates `TtsVoiceSpec.voice_id` against this same
 #: set before ever dialling the worker; the worker re-validates it too, because a worker that
 #: trusts its one known client is a worker that breaks silently the day a second one exists.
-VENDOR_SPEAKERS: tuple[str, ...] = ("Serena", "Ryan", "Vivian", "Aiden")
+#:
+#: I8 V0: the speakers the owner evaluated by ear (serena; eric, aiden, uncle_fu) plus `ryan` as a
+#: spare male; Vivian was rejected by listening. Lower-case, as `qwen_tts` lists them; a request's
+#: `speaker` is matched case-insensitively. MUST equal `app.inference.tts.qwen3_tts.
+#: VENDOR_SPEAKERS` (two copies by design — separate venvs; a gate test compares them).
+VENDOR_SPEAKERS: tuple[str, ...] = ("serena", "eric", "aiden", "uncle_fu", "ryan")
 
 #: Never echoed with exception text (this task's brief, item 1) — one stable body for every
 #: failure mode, so a client never has to parse free text to classify a failure.
@@ -171,7 +176,7 @@ _ERROR_BODY: dict[str, str] = {
 #: Short on purpose — it is thrown away, and a long warm-up is VRAM pressure for nothing.
 WARMUP_TEXT_RU = "Проверка."
 #: One of `VENDOR_SPEAKERS`; the warm-up path must be the same path a real request takes.
-WARMUP_SPEAKER = "Serena"
+WARMUP_SPEAKER = "serena"
 
 
 class ModelHandle(Protocol):
@@ -444,9 +449,11 @@ def create_app(
 
     @app.post("/synthesize")
     async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:
-        if payload.speaker not in VENDOR_SPEAKERS:
+        speaker = payload.speaker.strip().lower()
+        if speaker not in VENDOR_SPEAKERS:
             log.warning("tts_qwen3: unknown speaker %r rejected", payload.speaker)
             return JSONResponse(status_code=503, content=_ERROR_BODY)
+        payload = payload.model_copy(update={"speaker": speaker})
 
         try:
             await state.ensure_loaded()

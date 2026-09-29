@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PROFILES_DIR",
+    "TEMPO_EMOTION_KEYS",
+    "TEMPO_VOICE_STYLE_KEYS",
     "AsrProfile",
     "HardwareProfile",
     "HealthProfile",
@@ -48,6 +50,7 @@ __all__ = [
     "ModelProfile",
     "ProfileRefused",
     "TtsProfile",
+    "TtsSeedMode",
     "VadProfile",
     "VoiceTurnProfile",
     "VoipProfile",
@@ -55,6 +58,7 @@ __all__ = [
     "active_profile",
     "apply_profile",
     "load_profile",
+    "validate_tempo_by_emotion",
     "validate_vram_margin",
 ]
 
@@ -66,6 +70,23 @@ PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 
 _FINAL_PREFIX = "FINAL_"
 _KNOWN_TTS_VARIANTS = ("0.6B", "1.7B")
+#: I8 V0: the keys `tts.tempo_by_emotion` accepts — every `app.domain.enums.EmotionLabel` value
+#: (all required when the table is given) and every `CallerVoiceStyle` value (optional). Literals,
+#: not an import: `app.config` depends on nothing in `app` (a unit test pins them to the enums).
+TEMPO_EMOTION_KEYS: tuple[str, ...] = (
+    "CALM",
+    "WORRIED",
+    "FRIGHTENED",
+    "PANICKED",
+    "ANGRY",
+    "CONFUSED",
+    "APATHETIC",
+)
+TEMPO_VOICE_STYLE_KEYS: tuple[str, ...] = ("PAIN",)
+#: I8 V0: `tts.seed_mode`. `off` — no seed is sent (the library's own random sampling, the
+#: behaviour before I8); `derived` — a per-unit seed derived from the session's
+#: `deterministic_seed`, the turn and the unit (I8 A1 §2.2; consumed from I8 V1).
+TtsSeedMode = Literal["off", "derived"]
 
 
 class ProfileRefused(Exception):
@@ -170,6 +191,26 @@ class TtsProfile(BaseModel):
     #: distribution or every turn is a guaranteed `MODEL_ERROR{TIMEOUT}` (E20-I, a silent caller).
     first_chunk_timeout_ms: int | None = None
     timeout_ms: int | None = None
+    #: ADDITIVE (I8 V0). `split_for_tts`'s unit length for this profile, overlaid onto
+    #: `Settings.tts_max_unit_chars`; `None` keeps the Settings default (120). The owner's lab
+    #: found 60-80-character units keep Qwen3-TTS from degenerating on long segments.
+    max_unit_chars: int | None = Field(default=None, ge=20, le=400)
+    #: ADDITIVE (I8 V0). Silence between two synthesised units, overlaid onto
+    #: `Settings.tts_inter_unit_pause_ms`; `None` keeps the Settings default (0 = none). Consumed
+    #: by the chunked stream from I8 V1.
+    inter_unit_pause_ms: int | None = Field(default=None, ge=0, le=1000)
+    #: ADDITIVE (I8 V0). Post-synthesis tempo factor per caller emotion (and per scenario voice
+    #: style), overlaid onto `Settings.tts_tempo_by_emotion`. Empty = no tempo change. When given,
+    #: every `EmotionLabel` must have a factor. Consumed by the Qwen3-TTS adapter from I8 V1.
+    tempo_by_emotion: dict[str, float] = Field(default_factory=dict)
+    #: ADDITIVE (I8 V0). How the per-unit synthesis seed is chosen (`TtsSeedMode`), overlaid onto
+    #: `Settings.tts_seed_mode`; `None` keeps the Settings default (`off`). Consumed from I8 V1.
+    seed_mode: TtsSeedMode | None = None
+
+    @field_validator("tempo_by_emotion")
+    @classmethod
+    def _complete_tempo_table(cls, value: dict[str, float]) -> dict[str, float]:
+        return validate_tempo_by_emotion(value, what="tts.tempo_by_emotion")
 
     @field_validator("model_variant")
     @classmethod
@@ -179,6 +220,24 @@ class TtsProfile(BaseModel):
                 f"tts.model_variant={value!r} must be one of {_KNOWN_TTS_VARIANTS} or null"
             )
         return value
+
+
+def validate_tempo_by_emotion(value: dict[str, float], *, what: str) -> dict[str, float]:
+    """I8 V0: an empty table, or one factor in `[0.5, 2.0]` for every `EmotionLabel` (plus, if
+    wanted, a `CallerVoiceStyle`) and no other key. Shared by `TtsProfile` and `Settings`."""
+    if not value:
+        return value
+    allowed = set(TEMPO_EMOTION_KEYS) | set(TEMPO_VOICE_STYLE_KEYS)
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{what}: unknown key(s) {unknown}; allowed {sorted(allowed)}")
+    missing = [key for key in TEMPO_EMOTION_KEYS if key not in value]
+    if missing:
+        raise ValueError(f"{what}: every emotion needs a factor; missing {missing}")
+    out_of_range = sorted(key for key, factor in value.items() if not 0.5 <= factor <= 2.0)
+    if out_of_range:
+        raise ValueError(f"{what}: factor(s) outside [0.5, 2.0] for {out_of_range}")
+    return value
 
 
 class VadProfile(BaseModel):
@@ -454,6 +513,16 @@ def _direct_mapping(profile: ModelProfile) -> dict[str, Any]:
         mapping["tts_first_chunk_timeout_ms"] = profile.tts.first_chunk_timeout_ms
     if profile.tts.timeout_ms is not None:
         mapping["tts_timeout_ms"] = profile.tts.timeout_ms
+    # I8 V0: overlaid only when the profile names them, so a profile without the keys keeps the
+    # Settings defaults (today's behaviour) exactly.
+    if profile.tts.max_unit_chars is not None:
+        mapping["tts_max_unit_chars"] = profile.tts.max_unit_chars
+    if profile.tts.inter_unit_pause_ms is not None:
+        mapping["tts_inter_unit_pause_ms"] = profile.tts.inter_unit_pause_ms
+    if profile.tts.tempo_by_emotion:
+        mapping["tts_tempo_by_emotion"] = dict(profile.tts.tempo_by_emotion)
+    if profile.tts.seed_mode is not None:
+        mapping["tts_seed_mode"] = profile.tts.seed_mode
     mapping["tts_warmup_timeout_ms"] = profile.warmup.timeout_ms
     return mapping
 

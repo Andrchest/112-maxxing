@@ -74,7 +74,7 @@ async def test_synthesize_returns_audio_l16_with_the_documented_headers() -> Non
             "/synthesize",
             json={
                 "text": "Проверка.",
-                "speaker": "Serena",
+                "speaker": "serena",
                 "language": "Russian",
                 "instruct": "Speak in a calm and composed manner.",
                 "request_id": "shape-1",
@@ -101,7 +101,43 @@ async def test_unknown_speaker_maps_to_the_stable_503_body() -> None:
 async def test_default_port_and_vendor_speakers_match_the_brief() -> None:
     assert server.DEFAULT_PORT == 8112
     assert server.DEFAULT_PORT not in (8000, 8001, 8012, 8016)
-    assert server.VENDOR_SPEAKERS == ("Serena", "Ryan", "Vivian", "Aiden")
+    assert server.VENDOR_SPEAKERS == ("serena", "eric", "aiden", "uncle_fu", "ryan")
+
+
+def test_the_two_vendor_speaker_copies_are_equal() -> None:
+    """I8 V0: the worker's and the adapter's `VENDOR_SPEAKERS` are two copies by design (separate
+    venvs) — they must never drift."""
+    from app.inference.tts.qwen3_tts import VENDOR_SPEAKERS
+
+    assert server.VENDOR_SPEAKERS == VENDOR_SPEAKERS
+    assert "vivian" not in VENDOR_SPEAKERS
+
+
+def test_every_qwen_profile_casts_only_vendor_speakers() -> None:
+    """I8 V0: every `voice_map` value, `default_voice` and `voice_id` of every Qwen3-TTS profile
+    is one of `VENDOR_SPEAKERS` (an unknown one would be a 503 per utterance, then Piper)."""
+    from app.config.profile import PROFILES_DIR, load_profile
+
+    checked = 0
+    for path in sorted(PROFILES_DIR.glob("*.yaml")):
+        tts = load_profile(path.stem).tts
+        if tts.provider != "qwen3_tts":
+            continue
+        checked += 1
+        speakers = {tts.voice_id, *tts.voice_map.values()}
+        if tts.default_voice is not None:
+            speakers.add(tts.default_voice)
+        assert speakers <= set(server.VENDOR_SPEAKERS), path.name
+    assert checked >= 2  # DEV_3060TI, DEV_3060TI_VOICE (and the FINAL Qwen profile)
+
+
+async def test_speaker_is_matched_case_insensitively() -> None:
+    async with await _client() as client:
+        response = await client.post(
+            "/synthesize",
+            json={"text": "тест", "speaker": "Serena", "request_id": "shape-case"},
+        )
+    assert response.status_code == 200
 
 
 async def test_warm_up_generates_once_and_reports_the_audio_it_threw_away() -> None:

@@ -35,6 +35,7 @@ from typing import Protocol, runtime_checkable
 
 from app.application.ports.call_transport import AudioFrame
 from app.domain.caller.emotion import EmotionState
+from app.domain.enums import CallerVoiceStyle
 
 __all__ = [
     "TTSProvider",
@@ -57,6 +58,9 @@ class TtsVoiceSpec:
     # provider's instruct/style lever can read it without any mutable provider-side state. `None`
     # means "no live emotion available" (e.g. a warm-up call) — a provider treats that as neutral.
     # `app.application` -> `app.domain` is an allowed import (D2).
+    voice_style: CallerVoiceStyle | None = None
+    # additive (I8 V0): the scenario's closed `caller_profile.voice_style` hint (`PAIN`), read
+    # once per session with the voice. A provider without a style lever ignores it.
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,6 +17,8 @@ from dotenv import dotenv_values
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.config.profile import TtsSeedMode, validate_tempo_by_emotion
+
 #: SPEC §41: "Secrets/configuration belong in environment/config files, not source code" —
 #: enforced here as a minimum length, not just presence, so a copy-pasted short placeholder
 #: (e.g. the pre-E18 `test-only-secret`) is refused at load rather than accepted as "a secret".
@@ -90,6 +92,11 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=10, ge=0)
     redis_url: str = Field(repr=False)
     jwt_secret: str = Field(repr=False)
+
+    @field_validator("tts_tempo_by_emotion")
+    @classmethod
+    def _complete_tempo_table(cls, value: dict[str, float]) -> dict[str, float]:
+        return validate_tempo_by_emotion(value, what="SIM_TTS_TEMPO_BY_EMOTION")
 
     @field_validator("jwt_secret")
     @classmethod
@@ -312,6 +319,17 @@ class Settings(BaseSettings):
     #: above which a sentence is subdivided at clause separators so the first chunk of audio is
     #: not held hostage by a run-on sentence (§2.4, §8 lever 1).
     tts_max_unit_chars: int = 120
+    # -- I8 V0: the Qwen3-TTS caller-voice recipe (defined here, consumed from I8 V1) ----------
+    #: `SIM_TTS_INTER_UNIT_PAUSE_MS` — silence between two synthesised units; 0 = none (today's
+    #: behaviour). Overlaid from the profile's `tts.inter_unit_pause_ms`.
+    tts_inter_unit_pause_ms: int = Field(default=0, ge=0, le=1000)
+    #: `SIM_TTS_TEMPO_BY_EMOTION`, a JSON object `{EmotionLabel (or CallerVoiceStyle): factor}` —
+    #: post-synthesis tempo per caller emotion; empty = no tempo change (today's behaviour).
+    #: Overlaid from the profile's `tts.tempo_by_emotion`; validated like it.
+    tts_tempo_by_emotion: dict[str, float] = Field(default_factory=dict)
+    #: `SIM_TTS_SEED_MODE` — `off` (no seed, today's behaviour) | `derived` (I8 A1 §2.2).
+    #: Overlaid from the profile's `tts.seed_mode`.
+    tts_seed_mode: TtsSeedMode = "off"
     # -- E14-B: the real TTS providers (OWNER DECISION: Qwen3-TTS GPU default; `PiperTTS` CPU
     # fallback). `voice_agent.providers.build_tts`/`build_tts_fallback` are the only readers.
     #: `Qwen3TTS`'s httpx client target — the standalone `workers/tts_qwen3` worker on loopback,
@@ -327,10 +345,11 @@ class Settings(BaseSettings):
     #: documents/validates the path exists when the profile requires it (E18).
     tts_qwen3_model_dir: str = "models/qwen3-tts"
     #: The vendor CustomVoice speaker `Qwen3TTS` falls back to when `TtsVoiceSpec.voice_id` is
-    #: empty (recon §1.1: `"Serena" | "Ryan" | "Vivian" | "Aiden"` only — the generic
-    #: `tts_voice_id` default above is not one of them and is rejected, not substituted, when a
-    #: caller passes it explicitly; see E14-B's report, "HLD gaps").
-    tts_qwen3_speaker: str = "Serena"
+    #: empty — one of `app.inference.tts.qwen3_tts.VENDOR_SPEAKERS` (I8 V0: `serena` | `eric` |
+    #: `aiden` | `uncle_fu` | `ryan`, matched case-insensitively). The generic `tts_voice_id`
+    #: default above is not one of them and is rejected, not substituted, when a caller passes it
+    #: explicitly; see E14-B's report, "HLD gaps".
+    tts_qwen3_speaker: str = "serena"
     #: `PiperTTS`'s `.onnx` voice file (+ sibling `.onnx.json`), `models/piper/` (gitignored),
     #: fetched by `make models-piper`.
     tts_piper_voice_path: str = "models/piper/ru_RU-irina-medium.onnx"

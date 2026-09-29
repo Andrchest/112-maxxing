@@ -55,7 +55,7 @@ tts:
   # BASE dir (SIM_TTS_QWEN3_MODEL_DIR); the separate tts_qwen3 worker process appends the
   # configured variant's own subdirectory (E14-D).
   model_path: /models/tts/qwen3-tts
-  voice_id: Serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
+  voice_id: serena                # vendor CustomVoice speaker (recon §1.1) — not a free voice id
   device: cuda
   output_sample_rate: 24000
   max_chunk_ms: 20
@@ -78,8 +78,8 @@ tts:
   # `female`/`female_alt`/`female_calm`/`elderly_female` -> `Serena`), so the same casting
   # decision is carried over rather than re-invented.
   voice_map:
-    ru_female_adult_01: Serena    # scenarios/examples/apartment-fire/v1.yaml
-  default_voice: Serena           # vendor CustomVoice speaker; every unmapped logical id
+    ru_female_adult_01: serena    # scenarios/examples/apartment-fire/v1.yaml
+  default_voice: serena           # vendor CustomVoice speaker; every unmapped logical id
 
 vad:
   provider: silero

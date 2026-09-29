@@ -42,6 +42,7 @@ from app.domain.common.values import FactValue
 from app.domain.dds.resources import EtaProfile, ResourceAvailability, ResourceCapability
 from app.domain.dds.responders import ScriptedStep, ServiceScript
 from app.domain.enums import (
+    CallerVoiceStyle,
     DisclosurePolicy,
     KnowledgeState,
     ResourceType,
@@ -150,6 +151,19 @@ class CallerProfileSection(CallerProfile):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     emotion_rules: tuple[EmotionRule, ...] = ()
+    voice_style: CallerVoiceStyle | None = None
+    """Schema 2 only (I8 V0): a closed TTS style hint (`PAIN` only) for a caller no
+    `EmotionLabel` describes — the injured person calling about themselves. Read by the speech
+    sink into `TtsVoiceSpec.voice_style`; R01 refuses it in a schema-1 document."""
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_voice_style(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """Leave `voice_style` out of a dump when the document has none, so every document
+        written before I8 V0 dumps — and hashes (D4) — byte for byte as it did (P5)."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("voice_style") is None:
+            data.pop("voice_style", None)
+        return data
 
 
 class PrefabHandoff(BaseModel):
