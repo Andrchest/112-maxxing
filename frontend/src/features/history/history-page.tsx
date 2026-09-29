@@ -29,6 +29,19 @@ const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   ADMIN: 'userRoleAdmin',
 };
 
+/** «Результат» (I7 E50, G9): `passed` is `null` until the report is visible, exactly like
+ * `score_percent` — rendered the same way (`statisticsNoValue`, «—»). */
+function historyResultLabel(passed: boolean | null | undefined): string {
+  if (passed === null || passed === undefined) return t('statisticsNoValue');
+  return passed ? t('historyResultPassed') : t('historyResultFailed');
+}
+
+/** «Реакция: …, с» (I7 E50, G9): the server's own ms, rounded to whole seconds for this column —
+ * `null`/absent renders as «—», never `0`. */
+function formatReactionSeconds(valueMs: number | null | undefined): string {
+  return valueMs === null || valueMs === undefined ? t('statisticsNoValue') : String(Math.round(valueMs / 1000));
+}
+
 export function HistoryPage() {
   const user = useAuthStore((state) => state.user);
   const historyQuery = useQuery({
@@ -131,6 +144,12 @@ export function HistoryPage() {
                       <th className="p-2 font-medium">{t('historyColumnScenario')}</th>
                       <th className="p-2 font-medium">{t('historyColumnScore')}</th>
                       <th className="p-2 font-medium">{t('historyColumnFailedRules')}</th>
+                      {/* I7 E50 (G9, ТЗ ¶265): the four additive fields on `MyHistorySession`,
+                          reusing the same per-session data the lesson report already computes. */}
+                      <th className="p-2 font-medium">{t('historyColumnResult')}</th>
+                      <th className="p-2 font-medium">{t('historyColumnReactionOpen')}</th>
+                      <th className="p-2 font-medium">{t('historyColumnReactionFirstStatus')}</th>
+                      <th className="p-2 font-medium">{t('historyColumnTextQualityIssues')}</th>
                       <th className="p-2" />
                     </tr>
                   </thead>
@@ -147,6 +166,10 @@ export function HistoryPage() {
                           )}
                         </td>
                         <td className="p-2 tabular-nums">{session.failed_rule_count ?? t('statisticsNoValue')}</td>
+                        <td className="p-2" data-slot="history-passed-cell">{historyResultLabel(session.passed)}</td>
+                        <td className="p-2 tabular-nums">{formatReactionSeconds(session.reaction_open_ms)}</td>
+                        <td className="p-2 tabular-nums">{formatReactionSeconds(session.reaction_first_status_ms)}</td>
+                        <td className="p-2 tabular-nums">{session.text_quality_issue_count ?? t('statisticsNoValue')}</td>
                         <td className="p-2 text-right">
                           <Link className="text-primary underline-offset-2 hover:underline" to={`/report/${session.session_id}`}>
                             {t('historyOpenReport')}

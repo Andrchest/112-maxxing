@@ -36,6 +36,7 @@ from typing import Any, Protocol
 from app.application.ports.text_checker import (
     MisspelledSpan,
     StreetLookup,
+    StreetStatusKind,
     TextCheckerPort,
 )
 from app.domain.common.values import FactValue
@@ -47,6 +48,7 @@ __all__ = [
     "TextQualityField",
     "TextQualityReport",
     "TextQualitySource",
+    "flagged_issue_count",
     "text_quality_report",
 ]
 
@@ -191,3 +193,18 @@ def _dds_fields(events: Sequence[_Event], checker: TextCheckerPort) -> list[Text
             )
         )
     return fields
+
+
+def flagged_issue_count(report: TextQualityReport) -> int | None:
+    """(I7 E50) The count `frontend/src/entities/text-quality/format.ts`'s
+    `flaggedTextQualityItems` renders one row per: every misspelling, plus one row per field whose
+    street lookup is not `KNOWN`. `None` when the checker did not run (`available: False`) — the
+    same "absence is not a zero" honesty rule the report section itself follows, never `0`."""
+    if not report.available:
+        return None
+    count = 0
+    for field in report.fields:
+        count += len(field.misspellings)
+        if field.street is not None and field.street.status is not StreetStatusKind.KNOWN:
+            count += 1
+    return count

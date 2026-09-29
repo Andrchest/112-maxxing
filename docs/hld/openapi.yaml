@@ -6730,6 +6730,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RoleType'
             - type: 'null'
+        service_leg_status:
+          description: >-
+            ADDITIVE (I7 E50, memo p.40 «Статус службы»): the viewing ДДС participant's own leg
+            status. `null` for a 112-register row, an instructor/admin viewer, or an ambiguous
+            binding (nobody bound to a single leg).
+          oneOf:
+            - $ref: '#/components/schemas/ServiceResponseStatus'
+            - type: 'null'
+        service_leg_status_at_offset_ms:
+          description: 'ADDITIVE (I7 E50): when `service_leg_status` was last set.'
+          type: [integer, 'null']
     # ----------------------------------------------- I4 E31: instructor core ----
     CardTimersRequest:
       description: |
@@ -6901,6 +6912,33 @@ components:
         completed_at: { type: string, format: date-time }
         score_percent: { type: [number, 'null'], minimum: 0, maximum: 100 }
         failed_rule_count: { type: [integer, 'null'], minimum: 0 }
+        passed:
+          description: >-
+            ADDITIVE (I7 E50, ТЗ ¶265 REQ-2220): «сдал / не сдал» under the session's recorded
+            criteria (`pass_verdict.session_pass_verdict`); `null` until the report is visible to
+            the caller, exactly like `score_percent`.
+          type: [boolean, 'null']
+        reaction_open_ms:
+          description: >-
+            ADDITIVE (I7 E50): the caller's own ДДС leg(s), delivery → first `DDS_CARD_OPENED`,
+            averaged when more than one leg; `null` without a measured leg (a 112 session, an
+            unbound/scripted leg, or before the report is visible).
+          type: [integer, 'null']
+          minimum: 0
+        reaction_first_status_ms:
+          description: >-
+            ADDITIVE (I7 E50): the caller's own ДДС leg(s), delivery → first primary decision,
+            same averaging and `null` rule as `reaction_open_ms`.
+          type: [integer, 'null']
+          minimum: 0
+        text_quality_issue_count:
+          description: >-
+            ADDITIVE (I7 E50, HLD 71 §71.12): the count of «Грамотность и адреса» flagged
+            items (misspellings plus non-`KNOWN` street lookups) over the session's final 112 card
+            and ДДС comments; `null` when the checker is unavailable or before the report is
+            visible to the caller.
+          type: [integer, 'null']
+          minimum: 0
     MyHistory:
       description: (I4 E33) `getMyHistory`.
       type: object

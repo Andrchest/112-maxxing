@@ -15,6 +15,7 @@ from app.application.ports.text_checker import MisspelledSpan, StreetLookup, Str
 from app.application.reports.text_quality import (
     UNAVAILABLE_MESSAGE_RU,
     TextQualitySource,
+    flagged_issue_count,
     is_operator_source,
     text_quality_report,
 )
@@ -132,3 +133,31 @@ def test_is_operator_source_splits_card_fields_from_dds_comments() -> None:
     assert is_operator_source(TextQualitySource.DDS_STATUS_COMMENT) is False
     assert is_operator_source(TextQualitySource.DDS_CARD_ISSUE_COMMENT) is False
     assert is_operator_source(TextQualitySource.DDS_CLOSE_COMMENT) is False
+
+
+# -- flagged_issue_count (I7 E50) --------------------------------------------------------------
+
+
+def test_flagged_issue_count_is_none_when_the_checker_is_unavailable() -> None:
+    report = text_quality_report(card_values=None, events=(), checker=None)
+    assert flagged_issue_count(report) is None
+
+
+def test_flagged_issue_count_sums_misspellings_and_non_known_streets() -> None:
+    """One misspelling in `description.text`, one `NEAR` street (`address.street` is never
+    `"Известная улица"` here) — mirrors `flaggedTextQualityItems`' one-row-per-item counting on
+    the client (`frontend/src/entities/text-quality/format.ts`)."""
+    card_values = {
+        "address.street": "Незнакомая улица",
+        "description.text": "текст с ошибка внутри",
+        "recipients.comment": "без нарушений",
+    }
+    report = text_quality_report(card_values=card_values, events=(), checker=FakeChecker())
+    assert flagged_issue_count(report) == 2
+
+
+def test_flagged_issue_count_is_zero_with_nothing_to_flag() -> None:
+    report = text_quality_report(
+        card_values={"address.street": "Известная улица"}, events=(), checker=FakeChecker()
+    )
+    assert flagged_issue_count(report) == 0

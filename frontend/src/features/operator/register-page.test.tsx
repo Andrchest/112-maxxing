@@ -63,7 +63,11 @@ describe('RegisterPage — the 112 register (ui-check D-2)', () => {
     renderPage();
 
     expect(await screen.findByText(`${ru.incidentListNumberPrefix} 36814851`)).toBeInTheDocument();
-    expect(screen.getByText(ru.lessonCardStatusRegistered)).toBeInTheDocument();
+    // (I7 E50) the «Статус» filter's <option>s repeat the same Russian labels, so the query is
+    // scoped to the status badge itself — never an ambiguous plain-text match.
+    expect(
+      screen.getByText(ru.lessonCardStatusRegistered, { selector: '[data-slot="card-status-badge"]' }),
+    ).toBeInTheDocument();
     const link = screen.getByRole('link', { name: ru.incidentListOpenButton });
     expect(link).toHaveAttribute('href', '/operator/sess-1');
   });

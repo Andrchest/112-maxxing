@@ -48,8 +48,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from statistics import fmean
+from typing import Literal
 
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.ports.text_checker import TextCheckerPort
 from app.application.reports.norms import (
     CardNorm,
     LegReactionTime,
@@ -58,6 +60,7 @@ from app.application.reports.norms import (
     card_reaction_times,
 )
 from app.application.reports.pass_verdict import session_pass_verdict
+from app.application.reports.text_quality import flagged_issue_count, text_quality_report
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.statistics.ports import (
     ScoredSession,
@@ -131,8 +134,8 @@ class TraineeStatisticsView:
 
 @dataclass(frozen=True, slots=True)
 class MyHistorySessionView:
-    """`MyHistorySession`: `score_percent` / `failed_rule_count` are `None` until the report is
-    visible to the caller."""
+    """`MyHistorySession`: every field below is `None` until the report is visible to the
+    caller, exactly like `score_percent` / `failed_rule_count` (I5 E38, ТЗ ¶265)."""
 
     session_id: SessionId
     lesson_id: LessonId | None
@@ -140,6 +143,17 @@ class MyHistorySessionView:
     completed_at: datetime
     score_percent: float | None
     failed_rule_count: int | None
+    passed: bool | None = None
+    """ADDITIVE (I7 E50): `session_pass(session).passed` — the same verdict `pass_count` sums."""
+    reaction_open_ms: int | None = None
+    """ADDITIVE (I7 E50): the mean of `_attributed_reaction_times`' `to_open_ms` over this one
+    session, `None` without a measured leg."""
+    reaction_first_status_ms: int | None = None
+    """ADDITIVE (I7 E50): the mean of `_attributed_reaction_times`' `to_first_status_ms`, same
+    rule."""
+    text_quality_issue_count: int | None = None
+    """ADDITIVE (I7 E50): `text_quality.flagged_issue_count` of this session's
+    `text_quality_report`, `None` when the checker is unavailable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,8 +343,14 @@ class GetTraineeStatistics:
 class GetMyHistory:
     """`getMyHistory`: the caller's own row and completed sessions."""
 
-    def __init__(self, reader: StatisticsReader) -> None:
+    def __init__(
+        self, reader: StatisticsReader, text_checker: TextCheckerPort | None = None
+    ) -> None:
         self._reader = reader
+        # (I7 E50) `None` when the lexicon/street data is absent — `text_quality_report` (and this
+        # class's `text_quality_issue_count`) read that as "unavailable", never raise, exactly like
+        # `GetSessionReport`'s own `self._text_checker`.
+        self._text_checker = text_checker
 
     async def __call__(self, user: AuthenticatedUser) -> MyHistoryView:
         accounts = await self._reader.accounts([user.user_id])
@@ -361,7 +381,45 @@ class GetMyHistory:
                     failed_rule_count=(
                         session.failed_rule_count if session.session_id in shown_ids else None
                     ),
+                    passed=(
+                        session_pass(session).passed if session.session_id in shown_ids else None
+                    ),
+                    reaction_open_ms=(
+                        _mean_reaction(session, user.user_id, "to_open_ms")
+                        if session.session_id in shown_ids
+                        else None
+                    ),
+                    reaction_first_status_ms=(
+                        _mean_reaction(session, user.user_id, "to_first_status_ms")
+                        if session.session_id in shown_ids
+                        else None
+                    ),
+                    text_quality_issue_count=(
+                        flagged_issue_count(
+                            text_quality_report(
+                                card_values=session.card_values,
+                                events=session.events,
+                                checker=self._text_checker,
+                            )
+                        )
+                        if session.session_id in shown_ids
+                        else None
+                    ),
                 )
                 for session in listed
             ),
         )
+
+
+def _mean_reaction(
+    session: ScoredSession, user_id: UserId, field_name: Literal["to_open_ms", "to_first_status_ms"]
+) -> int | None:
+    """(I7 E50) The mean of this one session's `_attributed_reaction_times` for `field_name`,
+    `None` without a measured leg — the same attribution `reaction_to_open_ms_avg` /
+    `reaction_to_status_ms_avg` use, narrowed from "every session" to just this one."""
+    values = [
+        value
+        for reaction in _attributed_reaction_times(session, user_id)
+        if (value := getattr(reaction, field_name)) is not None
+    ]
+    return round(fmean(values)) if values else None

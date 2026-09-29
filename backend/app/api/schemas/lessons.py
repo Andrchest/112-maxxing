@@ -45,6 +45,7 @@ from app.application.ports.lesson_repository import StoredLessonListing
 from app.application.reports.assemble_report import UnscoredSessionView
 from app.domain.common.ids import ScenarioVersionId, TraineeGroupId, UserId
 from app.domain.dds.card_status import CardStatus
+from app.domain.dds.response import ServiceResponseStatus
 from app.domain.enums import RoleType, ServiceId, SessionMode, SessionState
 from app.domain.lesson.lesson import LessonState
 from app.domain.lesson.plan import Arrival, ArrivalKind, LessonParticipant, PlanEntry
@@ -325,6 +326,11 @@ class IncidentListItemSchema(ApiModel):
     classifier_code: str | None
     address_line_ru: str | None
     my_role_type: RoleType | None
+    service_leg_status: ServiceResponseStatus | None = None
+    """ADDITIVE (I7 E50, memo p.40 «Статус службы»): the viewing ДДС participant's own leg
+    status; `null` for a 112-register row, an instructor/admin viewer, or an ambiguous binding."""
+    service_leg_status_at_offset_ms: int | None = None
+    """ADDITIVE (I7 E50): when `service_leg_status` was last set."""
 
 
 # -- mappings ------------------------------------------------------------------------------------
@@ -471,4 +477,6 @@ def incident_list_item_schema(item: IncidentListItemView) -> IncidentListItemSch
         classifier_code=item.classifier_code,
         address_line_ru=item.address_line_ru,
         my_role_type=item.my_role_type,
+        service_leg_status=item.service_leg_status,
+        service_leg_status_at_offset_ms=item.service_leg_status_at_offset_ms,
     )

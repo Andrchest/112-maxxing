@@ -62,7 +62,11 @@ describe('DdsIncidentListPage — the DDS incident list (ui-check D-8)', () => {
 
     renderPage();
 
-    const badge = await screen.findByText(ru.lessonCardStatusNotNotified);
+    // (I7 E50) the «Статус» filter's <option>s repeat the same Russian labels, so the query is
+    // scoped to the status badge itself — never an ambiguous plain-text match.
+    const badge = await screen.findByText(ru.lessonCardStatusNotNotified, {
+      selector: '[data-slot="card-status-badge"]',
+    });
     expect(badge).toHaveAttribute('data-variant', 'destructive');
     const link = screen.getByRole('link', { name: ru.incidentListOpenButton });
     expect(link).toHaveAttribute('href', '/dds/sess-9');

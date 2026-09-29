@@ -61,7 +61,9 @@ export const queryKeys = {
     comments: (lessonId: string) => ['lessons', lessonId, 'comments'] as const,
   },
   incidents: {
-    list: (roleType?: string, q?: string) => ['incidents', 'list', roleType ?? 'ANY', q ?? ''] as const,
+    // I7 E50 (G2/G3): `cardStatus` joins the key so the «Статус» filter gets its own cache entry.
+    list: (roleType?: string, q?: string, cardStatus?: string) =>
+      ['incidents', 'list', roleType ?? 'ANY', q ?? '', cardStatus ?? 'ANY'] as const,
   },
   // -- I3 E9a: trainee groups and difficulty-weight proposals (70 §70.3.7) --------------------
   traineeGroups: {

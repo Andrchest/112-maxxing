@@ -1315,4 +1315,16 @@ export const ru = {
   adminAuditFieldScoreRulePoints: 'Баллы по правилу',
   adminAuditFieldSessionState: 'Состояние сеанса',
   adminAuditFieldDdsLegStatus: 'Статус службы',
+  // --- I7 E50: the incident list's live refresh, «Статус» filter and «Статус службы» column
+  // (G2/G3), and the trainee /history additive columns (G9) ---
+  incidentListColumnServiceLegStatus: 'Статус службы',
+  incidentListAutoRefreshLabel: 'Автообновление',
+  incidentListStatusFilterLabel: 'Статус',
+  incidentListStatusFilterAll: 'Все',
+  historyColumnResult: 'Результат',
+  historyColumnReactionOpen: 'Реакция: открытие, с',
+  historyColumnReactionFirstStatus: 'Реакция: первый статус, с',
+  historyColumnTextQualityIssues: 'Замечания к тексту',
+  historyResultPassed: 'Сдал',
+  historyResultFailed: 'Не сдал',
 } as const;

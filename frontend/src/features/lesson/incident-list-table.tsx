@@ -10,6 +10,7 @@ import { Link } from 'react-router';
 import { Badge } from '@/shared/ui/badge';
 import { t } from '@/shared/i18n';
 import type { IncidentListItem } from '@/shared/api';
+import { serviceResponseStatusLabelRu } from '@/features/dds/dds-labels';
 import { cardStatusLabelRu, isRedFlagCardStatus } from './lesson-labels';
 import { formatDurationMs, remainingDeadlineMs } from './incident-countdown';
 
@@ -58,7 +59,24 @@ function CountdownCell({ deadlineOffsetMs, sessionOffsetMs }: { deadlineOffsetMs
   return <span className="font-mono">{formatDurationMs(remaining)}</span>;
 }
 
+/** «Статус службы» = `service_leg_status` + `service_leg_status_at_offset_ms` verbatim (G3, memo
+ * p.40) — hidden entirely for the 112 register, never rendered as a blank column there. */
+function ServiceLegStatusCell({ item }: { item: IncidentListItem }) {
+  if (item.service_leg_status === null || item.service_leg_status === undefined) {
+    return <span className="text-muted-foreground">{t('incidentCountdownDash')}</span>;
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      {item.service_leg_status_at_offset_ms !== null && item.service_leg_status_at_offset_ms !== undefined ? (
+        <span className="font-mono text-muted-foreground">{formatDurationMs(item.service_leg_status_at_offset_ms)}</span>
+      ) : null}
+      <span>{serviceResponseStatusLabelRu(item.service_leg_status)}</span>
+    </span>
+  );
+}
+
 export function IncidentListTable({ items, consoleBasePath }: IncidentListTableProps) {
+  const showServiceLegStatusColumn = consoleBasePath === '/dds';
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('incidentListEmpty')}</p>;
   }
@@ -72,6 +90,9 @@ export function IncidentListTable({ items, consoleBasePath }: IncidentListTableP
           <th className="p-2 font-medium">{t('incidentListColumnAddress')}</th>
           <th className="p-2 font-medium">{t('incidentListColumnTime')}</th>
           <th className="p-2 font-medium">{t('incidentListColumnStatus')}</th>
+          {showServiceLegStatusColumn ? (
+            <th className="p-2 font-medium">{t('incidentListColumnServiceLegStatus')}</th>
+          ) : null}
           <th className="p-2 font-medium">{t('incidentListColumnAcceptCountdown')}</th>
           <th className="p-2 font-medium">{t('incidentListColumnFillCountdown')}</th>
           <th className="p-2 font-medium">{t('incidentListColumnNotCompletedCountdown')}</th>
@@ -94,6 +115,11 @@ export function IncidentListTable({ items, consoleBasePath }: IncidentListTableP
                 {cardStatusLabelRu(item.card_status)}
               </Badge>
             </td>
+            {showServiceLegStatusColumn ? (
+              <td className="p-2" data-slot="service-leg-status-cell">
+                <ServiceLegStatusCell item={item} />
+              </td>
+            ) : null}
             <td className="p-2">
               <CountdownCell deadlineOffsetMs={item.accept_deadline_offset_ms} sessionOffsetMs={item.session_offset_ms} />
             </td>

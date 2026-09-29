@@ -90,6 +90,15 @@ class MyHistorySessionSchema(ApiModel):
     completed_at: datetime
     score_percent: float | None = Field(ge=0, le=100)
     failed_rule_count: int | None = Field(ge=0)
+    passed: bool | None = None
+    """ADDITIVE (I7 E50, ТЗ ¶265): «сдал / не сдал»; `null` until the report is visible."""
+    reaction_open_ms: int | None = Field(default=None, ge=0)
+    """ADDITIVE (I7 E50): delivery → first `DDS_CARD_OPENED` of the caller's own leg(s)."""
+    reaction_first_status_ms: int | None = Field(default=None, ge=0)
+    """ADDITIVE (I7 E50): delivery → the caller's own leg(s)' first primary decision."""
+    text_quality_issue_count: int | None = Field(default=None, ge=0)
+    """ADDITIVE (I7 E50): «Грамотность и адреса» flagged-item count; `null` when the checker is
+    unavailable or the report is not visible yet."""
 
 
 class MyHistorySchema(ApiModel):
@@ -149,6 +158,10 @@ def my_history_schema(view: MyHistoryView) -> MyHistorySchema:
                 completed_at=session.completed_at,
                 score_percent=session.score_percent,
                 failed_rule_count=session.failed_rule_count,
+                passed=session.passed,
+                reaction_open_ms=session.reaction_open_ms,
+                reaction_first_status_ms=session.reaction_first_status_ms,
+                text_quality_issue_count=session.text_quality_issue_count,
             )
             for session in view.sessions
         ],

@@ -38,11 +38,13 @@ from app.application.timebase import session_offset_ms
 from app.domain.common.ids import IncidentId, LessonId, SessionId, SnapshotId
 from app.domain.common.values import FactValue
 from app.domain.dds.card_status import CardStatus, CardStatusFold, fold_card_status
+from app.domain.dds.response import ServiceResponseStatus
 from app.domain.enums import RoleType, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.lesson.lesson import Lesson, LessonState
 from app.domain.lesson.plan import Arrival
+from app.domain.session.session import SimulationSession
 from app.domain.session.variants import SessionVariants
 
 __all__ = [
@@ -114,6 +116,13 @@ class IncidentListItemView:
     classifier_code: str | None
     address_line_ru: str | None
     my_role_type: RoleType | None
+    service_leg_status: ServiceResponseStatus | None = None
+    """ADDITIVE (I7 E50, memo p.40 «Статус службы»): the viewing ДДС participant's own leg — the
+    `DDSAssignment` bound to them (I3 E9a `assigned_service_id`) — its last memo status; `None` for
+    a 112-register row, for an instructor/admin viewer, or when nobody is bound to a single leg
+    (one trainee plays every leg, §70.4.5 — ambiguous, so left unset rather than guessed)."""
+    service_leg_status_at_offset_ms: int | None = None
+    """ADDITIVE (I7 E50): when `service_leg_status` was last set."""
 
 
 def _is_participant(lesson: Lesson, user: AuthenticatedUser) -> bool:
@@ -238,19 +247,22 @@ class ListMyIncidents:
                     continue
                 if card_status is not None and row.card_status is not card_status:
                     continue
-                item = await self._item(uow, row)
+                item = await self._item(uow, row, viewer)
                 if q and not _matches(item, q):
                     continue
                 items.append(item)
             await uow.commit()
         return items
 
-    async def _item(self, uow: UnitOfWork, row: StoredIncidentRow) -> IncidentListItemView:
+    async def _item(
+        self, uow: UnitOfWork, row: StoredIncidentRow, viewer: AuthenticatedUser
+    ) -> IncidentListItemView:
         session = await uow.sessions.get(row.session_id)
         now_ms = 0 if session is None else running_ms(session, self._clock.now())
         log = await uow.events.read(row.session_id)
         fold = fold_card_status(log)
         values = await self._card_values(uow, row, log)
+        leg_status, leg_status_at = await self._service_leg_status(uow, session, row, viewer)
         return IncidentListItemView(
             session_id=row.session_id,
             incident_id=row.incident_id,
@@ -266,7 +278,36 @@ class ListMyIncidents:
             classifier_code=_text(values.get(_CLASSIFIER_CODE_PATH)),
             address_line_ru=_address_line(values),
             my_role_type=row.my_role_type,
+            service_leg_status=leg_status,
+            service_leg_status_at_offset_ms=leg_status_at,
         )
+
+    async def _service_leg_status(
+        self,
+        uow: UnitOfWork,
+        session: SimulationSession | None,
+        row: StoredIncidentRow,
+        viewer: AuthenticatedUser,
+    ) -> tuple[ServiceResponseStatus | None, int | None]:
+        """(I7 E50) The viewer's own leg — the `DDSAssignment` bound to them — of a ДДС row.
+
+        `None` for a 112-register row (`my_role_type` is not `DDS`), for an instructor/admin
+        viewer (`my_role_type` is only ever set from the viewer's own participation) and when the
+        binding is ambiguous (nobody bound, or — impossibly, but checked — more than one leg
+        bound to the same user): guessing a leg here would misattribute a status memo p.40 never
+        asked this column to guess.
+        """
+        if session is None or row.my_role_type is not RoleType.DDS:
+            return None, None
+        stage = next((s for s in session.stages if s.role_type is RoleType.DDS), None)
+        if stage is None:
+            return None, None
+        legs = await uow.dds_assignments.list_for_stage(stage.role_stage_id)
+        mine = [leg for leg in legs if leg.bound_user_id == viewer.user_id]
+        if len(mine) != 1:
+            return None, None
+        leg = mine[0]
+        return leg.response_status, leg.response_status_at_offset_ms
 
     async def _card_values(
         self, uow: UnitOfWork, row: StoredIncidentRow, log: Sequence[SessionEvent]

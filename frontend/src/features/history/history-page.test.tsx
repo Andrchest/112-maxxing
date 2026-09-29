@@ -91,6 +91,51 @@ describe('HistoryPage', () => {
     expect(links.map((link) => link.getAttribute('href'))).toEqual(['/report/sess-2', '/report/sess-1']);
   });
 
+  // I7 E50 (G9, ТЗ ¶265): the four additive `MyHistorySession` columns.
+  it('renders the pass/fail result, the two reaction times in seconds and the text-quality count', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/me/history') {
+          return jsonResponse({
+            ...HISTORY,
+            sessions: [
+              {
+                ...HISTORY.sessions[1],
+                passed: true,
+                reaction_open_ms: 12_400,
+                reaction_first_status_ms: 45_000,
+                text_quality_issue_count: 3,
+              },
+              {
+                ...HISTORY.sessions[0],
+                passed: null,
+                reaction_open_ms: null,
+                reaction_first_status_ms: null,
+                text_quality_issue_count: null,
+              },
+            ],
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('Apartment fire');
+    const rows = screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'history-row');
+    const [scored, unscored] = rows;
+    if (!scored || !unscored) throw new Error('expected two history rows');
+    expect(scored).toHaveTextContent(ru.historyResultPassed);
+    expect(scored).toHaveTextContent('12'); // 12_400ms rounds to 12s
+    expect(scored).toHaveTextContent('45');
+    expect(scored).toHaveTextContent('3');
+    // the not-yet-visible session shows a dash for every one of the four additive columns.
+    expect(unscored.querySelectorAll('td')).not.toHaveLength(0);
+    expect(unscored.textContent?.match(new RegExp(ru.statisticsNoValue, 'g'))?.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('says so when there is no completed session yet', async () => {
     vi.stubGlobal(
       'fetch',

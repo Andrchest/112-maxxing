@@ -366,6 +366,11 @@ async def test_my_history_lists_own_sessions_with_score_and_date(
     assert body["statistics"] == own
     assert session["score_percent"] == pytest.approx(own["average_percent"])
     assert session["failed_rule_count"] == sum(own["failed_rules_by_category"].values())
+    # (I7 E50) additive fields: «сдал/не сдал», the ДДС leg's reaction times, the text-quality
+    # flagged-item count — all reused from the same data the lesson report computes.
+    assert session["passed"] is False, "score below the default 70% pass threshold"
+    assert session["reaction_first_status_ms"] == 12_000
+    assert session["text_quality_issue_count"] == 0
 
     other = (await _get(lessons.client, "/api/v1/me/history", lessons.tokens["trainee1"])).json()
     assert other["sessions"] == [] and other["statistics"]["session_count"] == 0

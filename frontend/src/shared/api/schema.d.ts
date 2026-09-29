@@ -4547,6 +4547,10 @@ export interface components {
             /** @description From the snapshot for a ДДС row, from the live card for a 112 row (never WorldTruth). */
             address_line_ru: string | null;
             my_role_type: components["schemas"]["RoleType"] | null;
+            /** @description ADDITIVE (I7 E50, memo p.40 «Статус службы»): the viewing ДДС participant's own leg status. `null` for a 112-register row, an instructor/admin viewer, or an ambiguous binding (nobody bound to a single leg). */
+            service_leg_status?: components["schemas"]["ServiceResponseStatus"] | null;
+            /** @description ADDITIVE (I7 E50): when `service_leg_status` was last set. */
+            service_leg_status_at_offset_ms?: number | null;
         };
         /**
          * @description (I4 E31) A per-key override of the scenario's `timers` (HLD 30 §30.12), session ms; an
@@ -4677,6 +4681,14 @@ export interface components {
             completed_at: string;
             score_percent: number | null;
             failed_rule_count: number | null;
+            /** @description ADDITIVE (I7 E50, ТЗ ¶265 REQ-2220): «сдал / не сдал» under the session's recorded criteria (`pass_verdict.session_pass_verdict`); `null` until the report is visible to the caller, exactly like `score_percent`. */
+            passed?: boolean | null;
+            /** @description ADDITIVE (I7 E50): the caller's own ДДС leg(s), delivery → first `DDS_CARD_OPENED`, averaged when more than one leg; `null` without a measured leg (a 112 session, an unbound/scripted leg, or before the report is visible). */
+            reaction_open_ms?: number | null;
+            /** @description ADDITIVE (I7 E50): the caller's own ДДС leg(s), delivery → first primary decision, same averaging and `null` rule as `reaction_open_ms`. */
+            reaction_first_status_ms?: number | null;
+            /** @description ADDITIVE (I7 E50, HLD 71 §71.12): the count of «Грамотность и адреса» flagged items (misspellings plus non-`KNOWN` street lookups) over the session's final 112 card and ДДС comments; `null` when the checker is unavailable or before the report is visible to the caller. */
+            text_quality_issue_count?: number | null;
         };
         /** @description (I4 E33) `getMyHistory`. */
         MyHistory: {

@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from app.domain.common.ids import LessonId, SessionId, TraineeGroupId, UserId
+from app.domain.common.values import FactValue
 from app.domain.dds.card_status import CardTimers
 from app.domain.enums import RoleType, SessionMode
 from app.domain.events.types import EventType
@@ -92,7 +93,12 @@ class ScoredSession:
     failed_rule_count: int
     critical_error_count: int
     events: tuple[StatisticsEvent, ...] = field(default=())
-    """`norms.NORM_EVENT_TYPES` only, in `seq_no` order."""
+    """`norms.NORM_EVENT_TYPES` plus `text_quality.TEXT_QUALITY_EVENT_TYPES`, in `seq_no` order."""
+    card_values: Mapping[str, FactValue] | None = None
+    """ADDITIVE (I7 E50): the session's final 112 card (`incident_cards.values`), `None` when the
+    incident never had one — `getMyHistory`'s `text_quality_issue_count` reuses the same
+    `text_quality_report` fold `getSessionReport` uses, over this and `events` (D11: still no
+    evaluator runs here, only the stored/folded values it was already reading)."""
 
 
 class StatisticsReader(Protocol):

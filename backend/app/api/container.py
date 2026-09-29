@@ -1306,8 +1306,9 @@ class Container:
         return GetTraineeStatistics(self.statistics_reader)
 
     def get_my_history(self) -> GetMyHistory:
-        """`getMyHistory`."""
-        return GetMyHistory(self.statistics_reader)
+        """`getMyHistory`. (I7 E50) `self.text_checker` feeds `text_quality_issue_count`, same
+        `None`-is-unavailable rule as `get_session_report`."""
+        return GetMyHistory(self.statistics_reader, self.text_checker)
 
     # --- end I4 E33 -----------------------------------------------------------------------------
 

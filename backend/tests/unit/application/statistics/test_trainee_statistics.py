@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from app.application.auth.get_current_user import AuthenticatedUser
+from app.application.ports.text_checker import MisspelledSpan, StreetLookup, StreetStatusKind
 from app.application.ports.user_repository import UserRole
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.statistics.ports import (
@@ -105,6 +106,7 @@ def _session(
     lesson: LessonId | None = LESSON,
     completed_at: datetime = DONE,
     events: tuple[StatisticsEvent, ...] | None = None,
+    card_values: dict[str, Any] | None = None,
 ) -> ScoredSession:
     failed = {"TIMELINESS": 1, "WORKFLOW": 2} if failed is None else failed
     return ScoredSession(
@@ -118,6 +120,7 @@ def _session(
         participants=tuple(StatisticsParticipant(u, r) for u, r in participants),
         total_points=points,
         total_max_points=max_points,
+        card_values=card_values,
         failed_by_category=failed,
         failed_rule_count=sum(failed.values()),
         critical_error_count=0,
@@ -302,6 +305,59 @@ async def test_the_history_lists_an_unreleased_session_without_its_score() -> No
     assert (older.score_percent, older.failed_rule_count) == (75.0, 3)
     assert history.statistics.session_count == 1
     assert history.statistics.display_name_ru == "Диспетчер"
+    # (I7 E50) the additive fields follow the same visibility rule as `score_percent`.
+    assert (newest.passed, newest.reaction_open_ms, newest.text_quality_issue_count) == (
+        None,
+        None,
+        None,
+    )
+    assert older.passed is True, "75% >= the default 70% threshold, no critical failure"
+
+
+class _FakeChecker:
+    """(I7 E50) Flags any word spelled `"ошибка"`; every street is `KNOWN` (irrelevant here)."""
+
+    dictionary_sha256 = "dict-sha"
+    street_list_sha256 = "streets-sha"
+
+    def misspellings(self, text: str) -> tuple[MisspelledSpan, ...]:
+        if "ошибка" not in text:
+            return ()
+        start = text.index("ошибка")
+        return (MisspelledSpan(start=start, end=start + 6, word="ошибка"),)
+
+    def street_status(self, street: str, locality: str | None = None) -> StreetLookup:
+        return StreetLookup(status=StreetStatusKind.KNOWN)
+
+
+async def test_the_history_carries_reaction_times_and_the_text_quality_count() -> None:
+    """(I7 E50) `reaction_open_ms` / `reaction_first_status_ms` are this one session's own mean
+    over `DISPATCHER`'s legs (the same attribution `reaction_to_open_ms_avg` uses); the checker
+    flags the card's one misspelling."""
+    log = (
+        *_memo_log(["OPERATOR_112", "DDS"]),
+        _event(EventType.DDS_CARD_OPENED, 170_000, assignment_id="a"),
+        _event(EventType.DDS_CARD_OPENED, 165_000, assignment_id="b"),
+    )
+    session = _session(
+        [(DISPATCHER, RoleType.DDS)],
+        events=log,
+        card_values={"description.text": "текст с ошибка внутри"},
+    )
+    history = await GetMyHistory(FakeReader([session]), _FakeChecker())(_user(DISPATCHER))
+    [row] = history.sessions
+    # leg a: bound to DISPATCHER (+10s to open); leg b: unbound, DDS-covered (+5s); c: SCRIPTED.
+    assert row.reaction_open_ms == round((10_000 + 5_000) / 2)
+    assert row.reaction_first_status_ms == round((40_000 + 10_000) / 2)
+    assert row.text_quality_issue_count == 1
+
+
+async def test_the_history_s_text_quality_count_is_none_without_a_checker() -> None:
+    session = _session(
+        [(DISPATCHER, RoleType.DDS)], card_values={"description.text": "текст с ошибка внутри"}
+    )
+    history = await GetMyHistory(FakeReader([session]))(_user(DISPATCHER))
+    assert history.sessions[0].text_quality_issue_count is None
 
 
 # -- the CSV ----------------------------------------------------------------------------------

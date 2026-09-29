@@ -1366,3 +1366,79 @@ measured (owner exclusion, this epic's brief); `llm.request_timeout_ms`/`warmup.
 `latency_targets.*` in `CPU.yaml` stay documented placeholders until `benchmarks/benchmark_llm.py`
 / `benchmark_vram.py --profile CPU` are actually run on a CPU-only box and the results are folded
 back in, same as any other profile's measured fields.
+## 71.19.1 I7 E50 — Incident list live refresh + «Статус службы» (G2/G3), trainee /history columns (G9)
+
+**Purpose.** Three ТЗ gaps from `reports/i7/E42-gaps.md` §2 items 2 and 5: the ДДС «Список
+происшествий» and 112 «реестр» never refreshed and had no status filter (memo p.11 «бегунок
+«Автообновление»», memo p.40 «поиск по статусу»), and the trainee's own `/history` (ТЗ ¶265
+REQ-2220, «время реакции», «оценки») carried no pass/fail, reaction times or text-quality count
+even though the lesson report already computes all four per session.
+
+**Sources:** `reports/i7/E42-gaps.md` G2, G3, G9.
+
+**Design.**
+- **G2 (live refresh).** `IncidentListScreen`'s `useQuery` gained `refetchInterval`: 3 s while
+  `document.visibilityState === 'visible'`, `false` otherwise, itself gated by a new
+  «Автообновление» checkbox (default on, persisted to `localStorage` under
+  `i112.incidentList.autoRefresh`, every read/write wrapped in `try/catch` so a blocked/absent
+  store still renders the checkbox checked). No lesson- or list-scoped WebSocket exists to
+  invalidate this query from instead: the only socket is `WS /api/v1/ws/sessions/{session_id}`
+  (`backend/app/api/routers/realtime.py`), one per session, never per lesson or per caller — so
+  polling is this page's whole live mechanism. A visible tab regaining focus already re-triggers
+  TanStack Query's own `refetchOnWindowFocus`, which resumes the interval loop on its own once the
+  tab is visible again, so no extra visibility-change wiring was added.
+- **G3 (status filter + «Статус службы»).** The backend already accepted `card_status` on
+  `listMyIncidents` (I3 E4a) — only the ДДС/112 list screen never sent it. A native `<select>`
+  («Статус», values = every `CardStatus`, «Все» = no filter) now does. The list's server-side item
+  gained one additive pair: `IncidentListItemView.service_leg_status` /
+  `.service_leg_status_at_offset_ms` (`ServiceResponseStatus | None`, `int | None`) — the ДДС
+  viewer's own leg (the `DDSAssignment` whose `bound_user_id` is the viewer, found by loading
+  `uow.dds_assignments.list_for_stage` off the session's DDS `RoleStage`; `None` when nobody is
+  bound to exactly one leg — a session with no `assigned_service_id` binding has every leg
+  unbound, and guessing "the" leg for a trainee who plays several would misattribute a status the
+  memo never asked this column to guess). `IncidentListTable` renders «Статус службы» as its own
+  column, shown only when `consoleBasePath === '/dds'` (hidden entirely for the 112 register, per
+  the gap's own wording, not merely blanked).
+- **G9 (trainee /history columns).** Four additive fields on `MyHistorySessionView`/
+  `MyHistorySession`, all `None` until the report is visible to the caller (the same rule
+  `score_percent` already follows): `passed` (`session_pass`, already computed for `pass_count`),
+  `reaction_open_ms` / `reaction_first_status_ms` (the mean of `_attributed_reaction_times` over
+  *this one session*, the same attribution `reaction_to_open_ms_avg` already uses across every
+  session), `text_quality_issue_count` (`text_quality.flagged_issue_count`, new: counts a
+  `text_quality_report`'s misspellings plus its non-`KNOWN` street lookups — the same one-row-per-
+  item counting `frontend/src/entities/text-quality/format.ts`'s `flaggedTextQualityItems` already
+  does on the client). Reused, not duplicated: `StatisticsReader.scored_sessions` now also reads
+  each session's final `incident_cards.values` (`ScoredSession.card_values`, one more outer join
+  in the existing set-based statement) and widens its event-type filter to
+  `NORM_EVENT_TYPES | TEXT_QUALITY_EVENT_TYPES` (still one statement); `GetMyHistory` takes the
+  same `TextCheckerPort | None` `GetSessionReport` already does, `None`-is-unavailable, never
+  raises. `/history` renders «Результат» (Сдал/Не сдал/—), «Реакция: открытие, с», «Реакция:
+  первый статус, с» (rounded whole seconds — the mean's own ms, never re-measured) and «Замечания
+  к тексту». CSV export is unaffected (`getMyHistory` has none; `getTraineeStatisticsCsv`'s header
+  is untouched).
+
+**Data / DB.** None (no migration) — every new field is additive JSON on an existing read, not a
+new column.
+
+**API** (additive, `docs/hld/openapi.yaml`): `IncidentListItem.service_leg_status` /
+`.service_leg_status_at_offset_ms`; `MyHistorySession.passed` / `.reaction_open_ms` /
+`.reaction_first_status_ms` / `.text_quality_issue_count`. No new `ProblemCode`.
+
+**Acceptance.**
+- Backend: `test_the_incident_list_shows_arrived_cards_with_status_and_deadlines` extended for the
+  unbound (null) case, plus a new `..._the_bound_dds_participants_own_leg_status` test for the
+  bound case (`tests/api/lessons/test_lessons.py`); `flagged_issue_count` unit tests
+  (`tests/unit/application/reports/test_text_quality.py`); `GetMyHistory`'s four fields, with and
+  without a checker (`tests/unit/application/statistics/test_trainee_statistics.py`); one HTTP
+  assertion per field (`tests/api/lessons/test_reports_statistics.py`).
+- Frontend: `incident-list-screen.test.tsx` (new) — the 3 s poll fires while «Автообновление» is
+  checked, stops once unchecked, the preference survives a remount, and the select sends
+  `card_status`; `history-page.test.tsx` gained a case rendering all four new columns, «—» for an
+  unreleased session.
+- `npm run check:api` clean (schema regenerated); `mypy`, `ruff check`/`format --check`,
+  `check_imports.py` clean on the touched backend packages.
+
+**Not built (owner questions).** None — G2, G3 and G9 are manager-decided, not product-level
+choices left open.
+
+**HLD gaps.** None found.

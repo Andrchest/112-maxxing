@@ -2,10 +2,11 @@
 §71.10).
 
 Set-based on purpose (ТЗ ¶165 REQ-2142: an analytic report in 30 s or less): whatever the number
-of sessions, one call is five statements — the sessions, their participants, their score sums per
-category, the events the norms read, and nothing per session. Every statement is a read in one
-short transaction of its own (like E25's `SqlAlchemyAuditLog`, not the Unit of Work: a read model
-publishes nothing and belongs to no aggregate).
+of sessions, one call is five statements — the sessions (their final card's values joined in, I7
+E50), their participants, their score sums per category, the events the norms and the text-quality
+fold read, and nothing per session. Every statement is a read in one short transaction of its own
+(like E25's `SqlAlchemyAuditLog`, not the Unit of Work: a read model publishes nothing and belongs
+to no aggregate).
 
 Only stored rows are summed (D11): `sum(points_awarded)`, `sum(max_points)` and counts of
 `passed = false` / `critical_failure = true` per `(session, category)`. The adapter evaluates no
@@ -24,6 +25,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.reports.norms import NORM_EVENT_TYPES
+from app.application.reports.text_quality import TEXT_QUALITY_EVENT_TYPES
 from app.application.statistics.ports import (
     ScoredSession,
     StatisticsEvent,
@@ -32,11 +34,13 @@ from app.application.statistics.ports import (
     TraineeAccount,
 )
 from app.db.models.events import SessionEvent as SessionEventRow
+from app.db.models.layers import IncidentCard as IncidentCardRow
 from app.db.models.reference import ScenarioVersion as ScenarioVersionRow
 from app.db.models.reference import TraineeGroup as TraineeGroupRow
 from app.db.models.reference import TraineeGroupMember as TraineeGroupMemberRow
 from app.db.models.reference import User as UserRow
 from app.db.models.scoring import ScoreResult as ScoreResultRow
+from app.db.models.session import Incident as IncidentRow
 from app.db.models.session import SessionParticipant as SessionParticipantRow
 from app.db.models.session import SimulationSession as SimulationSessionRow
 from app.domain.common.ids import LessonId, SessionId, TraineeGroupId, UserId
@@ -48,7 +52,12 @@ __all__ = ["SqlAlchemyStatisticsReader"]
 
 _TRAINEE = "TRAINEE"
 _COMPLETED = "COMPLETED"
-_NORM_EVENT_TYPE_VALUES = sorted(event_type.value for event_type in NORM_EVENT_TYPES)
+#: (I7 E50) `norms.card_norms`/`card_reaction_times` and `text_quality.text_quality_report`'s DDS
+#: comment sources — the one event read this reader does, still set-based over every session at
+#: once.
+_STATISTICS_EVENT_TYPE_VALUES = sorted(
+    event_type.value for event_type in NORM_EVENT_TYPES | TEXT_QUALITY_EVENT_TYPES
+)
 _EVENT_TYPES = {event_type.value: event_type for event_type in EventType}
 
 
@@ -157,6 +166,7 @@ class SqlAlchemyStatisticsReader:
                 failed_rule_count=sum(totals[head.id].failed.values()),
                 critical_error_count=totals[head.id].critical,
                 events=tuple(by_events.get(head.id, ())),
+                card_values=(None if head.card_values is None else dict(head.card_values)),
             )
             for head in heads
         )
@@ -198,8 +208,14 @@ def _sessions_statement(
             sessions.report_released_at,
             ScenarioVersionRow.title,
             ScenarioVersionRow.content["timers"].label("timers"),
+            # (I7 E50) The final 112 card's values, for `text_quality_issue_count` — the same
+            # `incident_cards` row `GetSessionReport`'s `uow.operator_cards.get` reads, joined
+            # in this set-based read rather than fetched per session.
+            IncidentCardRow.values.label("card_values"),
         )
         .join(ScenarioVersionRow, ScenarioVersionRow.id == sessions.scenario_version_id)
+        .outerjoin(IncidentRow, IncidentRow.session_id == sessions.id)
+        .outerjoin(IncidentCardRow, IncidentCardRow.incident_id == IncidentRow.id)
         .where(
             sessions.state == _COMPLETED,
             sessions.completed_at.is_not(None),
@@ -248,7 +264,7 @@ def _events_statement(session_ids: Sequence[UUID]) -> sa.Select[Any]:
         sa.select(events.session_id, events.event_type, events.payload, events.monotonic_offset_ms)
         .where(
             events.session_id.in_(list(session_ids)),
-            events.event_type.in_(_NORM_EVENT_TYPE_VALUES),
+            events.event_type.in_(_STATISTICS_EVENT_TYPE_VALUES),
         )
         .order_by(events.session_id, events.seq_no)
     )

@@ -409,11 +409,21 @@ async def test_the_incident_list_shows_arrived_cards_with_status_and_deadlines(
     assert row["not_completed_deadline_offset_ms"] == 600_000
     assert row["address_line_ru"], "the ДДС row reads the prefab snapshot's address"
     assert row["display_number"] == detail["sessions"][0]["display_number"]
+    # (I7 E50) trainee2 plays every leg here (no `assigned_service_id`, so every leg is unbound) —
+    # ambiguous, so the column stays null rather than guessing a leg.
+    assert row["service_leg_status"] is None
+    assert row["service_leg_status_at_offset_ms"] is None
 
     instructor = await lessons.client.get(
         "/api/v1/incidents", headers=lessons.instructor, params={"lesson_id": lesson_id}
     )
     assert instructor.json()["total"] == 2
+    # (I7 E50) the instructor is nobody's leg either (`my_role_type` is only ever the viewer's own
+    # participation).
+    same = next(
+        item for item in instructor.json()["items"] if item["session_id"] == row["session_id"]
+    )
+    assert same["service_leg_status"] is None
     filtered = await lessons.client.get(
         "/api/v1/incidents",
         headers=trainee,
@@ -424,6 +434,41 @@ async def test_the_incident_list_shows_arrived_cards_with_status_and_deadlines(
         "/api/v1/incidents", headers=trainee, params={"q": str(row["display_number"])}
     )
     assert [item["session_id"] for item in searched.json()["items"]] == [row["session_id"]]
+
+
+async def test_the_incident_list_shows_the_bound_dds_participants_own_leg_status(
+    lessons: Lessons, short_timers_version_id: ScenarioVersionId
+) -> None:
+    """(I7 E50) The demo's two-leg card (`FIRE_RESCUE`, `AMBULANCE`, `v1.yaml:150`): a trainee
+    bound to `AMBULANCE` sees their own leg's status — never the other, scripted, leg's."""
+    detail = await lessons.created(
+        [plan_entry(1, short_timers_version_id)],
+        participants=[
+            {
+                "user_id": str(lessons.users["trainee2"]),
+                "assigned_role_type": "DDS",
+                "assigned_service_id": "AMBULANCE",
+            }
+        ],
+    )
+    lesson_id = detail["lesson_id"]
+    await lessons.start(lesson_id)
+    trainee = auth(lessons.tokens["trainee2"])
+    response = await lessons.client.get(
+        "/api/v1/incidents", headers=trainee, params={"lesson_id": lesson_id}
+    )
+    [row] = response.json()["items"]
+    assert row["service_leg_status"] in {
+        "ADDED",
+        "RECEIVED",
+        "ACCEPTED",
+        "NOT_ACCEPTED",
+        "RESPONSE_STARTED",
+        "ARRIVED",
+        "WORKING",
+        "COMPLETED",
+        "REFUSED",
+    }
 
 
 async def _complete_dds_card(lessons: Lessons, session_id: str) -> None:
