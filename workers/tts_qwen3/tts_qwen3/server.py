@@ -34,43 +34,89 @@ value raises `UnknownModelVariantError` at `create_app()` time, so `python -m tt
 start rather than silently loading the default or crashing deep inside a request. `/health`'s
 `model`/`revision` come from the *resolved* variant (`WorkerState.variant_repo`/`variant_revision`),
 not the 1.7B module constants — a worker actually serving 0.6B reports 0.6B.
+
+**I8 V1: the lab's generation recipe** (`/tmp/teamwork-112-maxxing/reports/i8/A1-plan.md` §2.2,
+§4 V1). One `/synthesize` is still one client unit, but it is now generated the way the owner's
+lab evaluated it:
+
+* digits are spelled out (`pipeline.normalize_numbers`; the raw text with one WARN when
+  `num2words` is missing);
+* a unit longer than `SAFETY_NET_MAX_CHARS` (the client's splitter could not cut it) is split by
+  the vendored `pipeline.segment_text`, each segment generated on its own and `pipeline.stitch`ed
+  with `pause_s` of silence (`X-Units` says how many);
+* every generation is capped at `max_new_tokens_for(text)` codec tokens — `clamp(ceil(expected_s
+  x 12 x 2), 64, 400)`, `expected_s = spoken chars / 10` — instead of the library's 2048 (~170 s
+  of runaway audio holding the inference lock); a request may only lower it;
+* explicit sampling (`SAMPLING_DEFAULTS`, the lab's tested set) and, when the request carries a
+  `seed`, `torch.manual_seed` + `cuda.manual_seed_all` before each generation;
+* a free rate check on the RAW clip: fewer than `QC_MIN_CHARS_PER_SECOND` spoken chars per second,
+  or longer than `QC_MAX_LENGTH_FACTOR` x the expected length, regenerates ONCE with `seed + 1` and
+  keeps the better clip (`X-QC: regenerated`, `X-Seed` = the seed that won). Never a second retry;
+* `torch.cuda.empty_cache()` after every generation (with `PYTORCH_CUDA_ALLOC_CONF=
+  expandable_segments:True` in the service environment) so a session does not keep the peak;
+* post-hoc tempo `sox tempo -s <tempo>` (WSOLA, pitch-preserving) outside the inference lock;
+  `X-Tempo` echoes what was applied — `1` when the request asked for none, when `sox` is missing
+  (one WARN) or when it failed. Tempo never fails a synthesis.
+
+The torch calls go through a `GenerationRuntime` (`TorchRuntime` for the real loader); a test's
+fake factory gets `NullRuntime` unless it injects a recording one: no test touches torch or a GPU.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import shutil
+import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from .pipeline import normalize_numbers, segment_text, stitch
 
 __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_MODEL_VARIANT",
     "DEFAULT_PORT",
+    "DEFAULT_SEGMENT_PAUSE_S",
+    "MAX_NEW_TOKENS",
+    "MIN_NEW_TOKENS",
     "MODEL_REPO",
     "MODEL_REVISION",
     "MODEL_VARIANTS",
+    "QC_MAX_LENGTH_FACTOR",
+    "QC_MIN_CHARS",
+    "QC_MIN_CHARS_PER_SECOND",
+    "SAFETY_NET_MAX_CHARS",
     "SAMPLE_RATE",
+    "SAMPLING_DEFAULTS",
     "TOKENIZER_REPO",
     "TOKENIZER_REVISION",
     "VENDOR_SPEAKERS",
     "WARMUP_SPEAKER",
     "WARMUP_TEXT_RU",
+    "GenerationRuntime",
     "ModelFactory",
     "ModelHandle",
     "ModelVariant",
+    "NullRuntime",
     "SynthesizeRequest",
+    "TorchRuntime",
     "UnknownModelVariantError",
     "WorkerState",
     "create_app",
+    "expected_seconds",
+    "max_new_tokens_for",
+    "rate_check_passes",
+    "spoken_chars",
 ]
 
 log = logging.getLogger("tts_qwen3")
@@ -179,14 +225,131 @@ WARMUP_TEXT_RU = "Проверка."
 WARMUP_SPEAKER = "serena"
 
 
+# -- I8 V1: the generation recipe (module docstring) ------------------------------------------
+
+#: The tokenizer's codec frame rate — `Qwen3-TTS-Tokenizer-12Hz`: 12 codec tokens per second.
+CODEC_TOKENS_PER_SECOND = 12
+#: Expected speaking rate for the token budget: 10 spoken characters (letters/digits) per second.
+EXPECTED_CHARS_PER_SECOND = 10
+#: Head-room over the expected length before the cap cuts a unit off.
+TOKEN_BUDGET_FACTOR = 2
+#: `max_new_tokens` bounds (manager decision, I8 V1): 64 tokens ~ 5.3 s, 400 ~ 33 s.
+MIN_NEW_TOKENS = 64
+MAX_NEW_TOKENS = 400
+#: The live rate check (A1 §2.2 "Quality check"): a raw clip slower than this many spoken chars
+#: per second is a runaway and is regenerated once with `seed + 1`.
+QC_MIN_CHARS_PER_SECOND = 6.0
+#: ...as is a raw clip longer than this many times the expected length.
+QC_MAX_LENGTH_FACTOR = 3.0
+#: Below this many spoken characters the rate check is skipped (`X-QC: skipped`): a one-word
+#: unit («Да.», «Алло!») is mostly the model's own lead-in/tail, so its chars/s says nothing about
+#: a runaway — and the token cap already bounds it to `MIN_NEW_TOKENS` (~5.3 s).
+QC_MIN_CHARS = 10
+#: The client's splitter (`tts.max_unit_chars`, 70 on the voice profile) normally keeps a unit far
+#: below this; a longer one is split here by the vendored `segment_text` (A1 §2.2 "safety net").
+SAFETY_NET_MAX_CHARS = 100
+#: Silence between two safety-net segments (A1 §2.2: 0.15-0.25 s).
+DEFAULT_SEGMENT_PAUSE_S = 0.2
+#: The lab's tested sampling set (`~/emo-lab/tools/qwen3_pipeline.py` `PipelineConfig`), explicit
+#: rather than the library's defaults. Each one is overridable per request.
+SAMPLING_DEFAULTS: dict[str, float] = {
+    "temperature": 0.65,
+    "top_p": 0.9,
+    "top_k": 30,
+    "subtalker_temperature": 0.65,
+    "subtalker_top_p": 0.9,
+    "subtalker_top_k": 30,
+    "repetition_penalty": 1.05,
+}
+#: `seed` is a 31-bit value (the adapter derives it `& 0x7fffffff`); `seed + 1` wraps inside it.
+_SEED_MASK = 0x7FFFFFFF
+#: `sox` must never hold a synthesis hostage.
+_SOX_TIMEOUT_S = 10.0
+
+
+def spoken_chars(text: str) -> int:
+    """Characters that are spoken: letters and digits — no spaces, no punctuation."""
+    return sum(1 for ch in text if ch.isalnum())
+
+
+def expected_seconds(text: str) -> float:
+    """How long `text` should take to say, at `EXPECTED_CHARS_PER_SECOND`."""
+    return spoken_chars(text) / EXPECTED_CHARS_PER_SECOND
+
+
+def max_new_tokens_for(text: str, requested: int | None = None) -> int:
+    """`clamp(ceil(expected_seconds x 12 x 2), 64, 400)`; a request may only lower it."""
+    budget = math.ceil(expected_seconds(text) * CODEC_TOKENS_PER_SECOND * TOKEN_BUDGET_FACTOR)
+    cap = min(MAX_NEW_TOKENS, max(MIN_NEW_TOKENS, budget))
+    return cap if requested is None else min(cap, requested)
+
+
+def rate_check_passes(text: str, audio_s: float) -> bool | None:
+    """The live QC on the RAW clip (before tempo). `None` when it does not apply (`QC_MIN_CHARS`).
+
+    Fails when the clip is slower than `QC_MIN_CHARS_PER_SECOND` spoken chars per second or longer
+    than `QC_MAX_LENGTH_FACTOR` x `expected_seconds(text)`.
+    """
+    chars = spoken_chars(text)
+    if chars < QC_MIN_CHARS:
+        return None
+    if audio_s <= 0:
+        return True
+    if chars / audio_s < QC_MIN_CHARS_PER_SECOND:
+        return False
+    return audio_s <= QC_MAX_LENGTH_FACTOR * expected_seconds(text)
+
+
 class ModelHandle(Protocol):
     """What `WorkerState` needs from a loaded model — real (`qwen_tts.Qwen3TTSModel`) or fake."""
 
     def generate_custom_voice(
-        self, *, text: str, language: str, speaker: str, instruct: str
+        self, *, text: str, language: str, speaker: str, instruct: str, **kwargs: Any
     ) -> tuple[Any, int]:
-        """Returns `(wavs, sample_rate)` — `wavs` a sequence of float32 arrays (recon §1.1)."""
+        """Returns `(wavs, sample_rate)` — `wavs` a sequence of float32 arrays (recon §1.1).
+
+        I8 V1 passes `max_new_tokens` and the sampling kwargs (`SAMPLING_DEFAULTS`) through
+        `**kwargs`; `qwen_tts` forwards them to its `generate()`."""
         ...
+
+
+class GenerationRuntime(Protocol):
+    """The torch side effects around one generation — injectable so tests never import torch."""
+
+    def seed(self, seed: int) -> None:
+        """Seed every RNG the next generation samples from."""
+        ...
+
+    def release(self) -> None:
+        """Hand cached allocator blocks back after a generation."""
+        ...
+
+
+class TorchRuntime:
+    """The real runtime: `torch.manual_seed` + `cuda.manual_seed_all`, and `empty_cache()`."""
+
+    def seed(self, seed: int) -> None:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def release(self) -> None:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+class NullRuntime:
+    """No torch: the runtime a fake model factory gets unless a test injects its own."""
+
+    def seed(self, seed: int) -> None:
+        return None
+
+    def release(self) -> None:
+        return None
 
 
 #: A factory takes the model directory and returns a loaded `ModelHandle`. Swapped for a fake in
@@ -215,6 +378,31 @@ class SynthesizeRequest(BaseModel):
     language: str = "Russian"
     instruct: str = ""
     request_id: str
+    # -- I8 V1 (all optional: a client that sends none of them gets the recipe's defaults — no
+    # seed, the length cap, the lab's sampling, no tempo) --
+    #: Seeds the generation; the one retry uses `seed + 1`. `None` = unseeded.
+    seed: int | None = Field(default=None, ge=0, le=_SEED_MASK)
+    #: An explicit cap; it only ever LOWERS `max_new_tokens_for(text)`.
+    max_new_tokens: int | None = Field(default=None, ge=1, le=MAX_NEW_TOKENS)
+    #: Post-synthesis tempo (`sox tempo -s`); 1.0 = none.
+    tempo: float = Field(default=1.0, ge=0.5, le=2.0)
+    #: Silence between two safety-net segments (`SAFETY_NET_MAX_CHARS`), seconds.
+    pause_s: float = Field(default=DEFAULT_SEGMENT_PAUSE_S, ge=0.0, le=1.0)
+    temperature: float = Field(default=SAMPLING_DEFAULTS["temperature"], gt=0.0, le=2.0)
+    top_p: float = Field(default=SAMPLING_DEFAULTS["top_p"], gt=0.0, le=1.0)
+    top_k: int = Field(default=int(SAMPLING_DEFAULTS["top_k"]), ge=1, le=1000)
+    subtalker_temperature: float = Field(
+        default=SAMPLING_DEFAULTS["subtalker_temperature"], gt=0.0, le=2.0
+    )
+    subtalker_top_p: float = Field(default=SAMPLING_DEFAULTS["subtalker_top_p"], gt=0.0, le=1.0)
+    subtalker_top_k: int = Field(default=int(SAMPLING_DEFAULTS["subtalker_top_k"]), ge=1, le=1000)
+    repetition_penalty: float = Field(
+        default=SAMPLING_DEFAULTS["repetition_penalty"], ge=1.0, le=2.0
+    )
+
+    def sampling(self) -> dict[str, float]:
+        """The sampling kwargs `generate_custom_voice` receives."""
+        return {name: getattr(self, name) for name in SAMPLING_DEFAULTS}
 
 
 class WorkerState:
@@ -234,15 +422,20 @@ class WorkerState:
         device: str = "cuda:0",
         variant_repo: str = MODEL_REPO,
         variant_revision: str = MODEL_REVISION,
+        runtime: GenerationRuntime | None = None,
     ) -> None:
         self.model_dir = model_dir
         self.model_factory = model_factory
         self.device = device
         self.variant_repo = variant_repo
         self.variant_revision = variant_revision
+        self.runtime: GenerationRuntime = runtime if runtime is not None else NullRuntime()
         self.model: ModelHandle | None = None
         self.load_lock = asyncio.Lock()
         self.inference_lock = asyncio.Lock()
+        #: One WARN per process for each missing optional tool, not one per unit.
+        self.warned_no_sox = False
+        self.warned_no_num2words = False
 
     @property
     def loaded(self) -> bool:
@@ -266,8 +459,8 @@ def _pcm_audio_ms(pcm: bytes, sample_rate: int) -> int:
     return (samples * 1000) // sample_rate
 
 
-def _float_wavs_to_pcm16(wavs: Any) -> bytes:
-    """`wavs` (recon §1.1: "a list of np.ndarray" float32 in [-1, 1]) -> concatenated PCM s16le.
+def _float_wavs_to_array(wavs: Any) -> Any:
+    """`wavs` (recon §1.1: "a list of np.ndarray" float32 in [-1, 1]) -> one float32 array.
 
     Imports `numpy` at call time only — this function is only ever reached from inside
     `_run_generate`, itself only called after a model (real or fake) has already produced
@@ -280,23 +473,171 @@ def _float_wavs_to_pcm16(wavs: Any) -> bytes:
         wavs = [wavs]
     pieces = [np.asarray(piece, dtype=np.float32).reshape(-1) for piece in wavs]
     if not pieces:
-        return b""
-    audio = np.concatenate(pieces) if len(pieces) > 1 else pieces[0]
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(pieces) if len(pieces) > 1 else pieces[0]
+
+
+def _array_to_pcm16(audio: Any) -> bytes:
+    """Float32 in [-1, 1] -> PCM s16le."""
+    import numpy as np
+
     clipped = np.clip(audio, -1.0, 1.0)
     pcm16 = (clipped * 32767.0).astype("<i2")
-    return pcm16.tobytes()
+    return bytes(pcm16.tobytes())
 
 
-def _run_generate(model: ModelHandle, payload: SynthesizeRequest) -> tuple[bytes, int]:
-    """Runs on a worker thread (`asyncio.to_thread`) — the model call itself is synchronous."""
-    wavs, sample_rate = model.generate_custom_voice(
-        text=payload.text,
-        language=payload.language,
-        speaker=payload.speaker,
-        instruct=payload.instruct,
+def _run_generate(
+    model: ModelHandle,
+    runtime: GenerationRuntime,
+    payload: SynthesizeRequest,
+    *,
+    text: str,
+    seed: int | None,
+) -> tuple[Any, int]:
+    """One generation of `text`. Runs on a worker thread (`asyncio.to_thread`) — the model call
+    itself is synchronous. Seeds first when a seed is given; releases the allocator cache after,
+    whatever happened (I8 V1)."""
+    if seed is not None:
+        runtime.seed(seed)
+    try:
+        wavs, sample_rate = model.generate_custom_voice(
+            text=text,
+            language=payload.language,
+            speaker=payload.speaker,
+            instruct=payload.instruct,
+            max_new_tokens=max_new_tokens_for(text, payload.max_new_tokens),
+            **payload.sampling(),
+        )
+    finally:
+        runtime.release()
+    return _float_wavs_to_array(wavs), sample_rate
+
+
+@dataclass(frozen=True)
+class _Synthesis:
+    """What one `/synthesize` (or `/warm_up`) generated, before tempo."""
+
+    pcm: bytes
+    sample_rate: int
+    seeds: tuple[int | None, ...]  # the seed that WON, per segment
+    qc: str  # "ok" | "regenerated" | "skipped" | "failed"
+    units: int
+
+
+async def _never_disconnected() -> bool:
+    return False
+
+
+async def _generate_speech(
+    state: WorkerState,
+    payload: SynthesizeRequest,
+    *,
+    is_disconnected: Callable[[], Awaitable[bool]] = _never_disconnected,
+) -> _Synthesis:
+    """The I8 V1 recipe (module docstring). The caller holds `state.inference_lock`."""
+    model = state.model
+    assert model is not None  # the caller ran ensure_loaded()
+    text = _speech_text(state, payload.text)
+    segments = segment_text(text, SAFETY_NET_MAX_CHARS) if len(text) > SAFETY_NET_MAX_CHARS else []
+    if not segments:
+        segments = [text]
+    audio: list[Any] = []
+    seeds: list[int | None] = []
+    verdicts: list[str] = []
+    sample_rate = SAMPLE_RATE
+    for segment in segments:
+        wav, sample_rate = await asyncio.to_thread(
+            _run_generate, model, state.runtime, payload, text=segment, seed=payload.seed
+        )
+        won_seed = payload.seed
+        verdict = rate_check_passes(segment, wav.size / sample_rate if sample_rate else 0.0)
+        if verdict is False and not await is_disconnected():
+            retry_seed = None if payload.seed is None else (payload.seed + 1) & _SEED_MASK
+            retry_wav, retry_rate = await asyncio.to_thread(
+                _run_generate, model, state.runtime, payload, text=segment, seed=retry_seed
+            )
+            retry_s = retry_wav.size / retry_rate if retry_rate else 0.0
+            # Both failure modes are "too long", so of two failing clips the shorter is better.
+            if rate_check_passes(segment, retry_s) or retry_wav.size < wav.size:
+                wav, sample_rate, won_seed = retry_wav, retry_rate, retry_seed
+            log.info(
+                "tts_qwen3: rate check failed, regenerated (request_id=%s, seed=%s -> kept %s)",
+                payload.request_id,
+                payload.seed,
+                won_seed,
+            )
+            verdicts.append("regenerated")
+        else:
+            # `False` here only when the client left before the retry: nobody reads this answer.
+            verdicts.append({None: "skipped", True: "ok", False: "failed"}[verdict])
+        audio.append(wav)
+        seeds.append(won_seed)
+    joined = (
+        audio[0]
+        if len(audio) == 1
+        else stitch(audio, sample_rate, [payload.pause_s] * (len(audio) - 1))
     )
-    pcm = _float_wavs_to_pcm16(wavs)
-    return pcm, sample_rate
+    if "regenerated" in verdicts:
+        qc = "regenerated"
+    elif "failed" in verdicts:
+        qc = "failed"
+    elif all(verdict == "skipped" for verdict in verdicts):
+        qc = "skipped"
+    else:
+        qc = "ok"
+    return _Synthesis(
+        pcm=_array_to_pcm16(joined),
+        sample_rate=sample_rate,
+        seeds=tuple(seeds),
+        qc=qc,
+        units=len(segments),
+    )
+
+
+def _speech_text(state: WorkerState, text: str) -> str:
+    """Digits spelled out (`normalize_numbers`); the raw text, with one WARN, without num2words."""
+    try:
+        return normalize_numbers(text)
+    except ImportError:
+        if not state.warned_no_num2words:
+            state.warned_no_num2words = True
+            log.warning(
+                "tts_qwen3: num2words is not installed; digits are sent to the model unspelled "
+                "(run `make deps-tts-qwen3`)"
+            )
+        return text
+
+
+def _apply_tempo(
+    state: WorkerState, pcm: bytes, sample_rate: int, tempo: float
+) -> tuple[bytes, float]:
+    """`sox tempo -s <tempo>` over raw PCM s16le mono. Returns `(pcm, tempo actually applied)`.
+
+    Never raises: a missing `sox` (one WARN per process) or a failing one (a WARN each time)
+    returns the untouched clip and `1.0` — tempo is a nicety, the synthesis already succeeded.
+    """
+    if tempo == 1.0 or not pcm:
+        return pcm, 1.0
+    sox = shutil.which("sox")
+    if sox is None:
+        if not state.warned_no_sox:
+            state.warned_no_sox = True
+            log.warning("tts_qwen3: sox is not installed; tempo is not applied (X-Tempo: 1)")
+        return pcm, 1.0
+    raw = ["-t", "raw", "-r", str(sample_rate), "-e", "signed", "-b", "16", "-c", "1", "-L"]
+    command = [sox, *raw, "-", *raw, "-", "tempo", "-s", f"{tempo:g}"]
+    try:
+        result = subprocess.run(  # fixed argv, no shell
+            command, input=pcm, capture_output=True, timeout=_SOX_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        log.warning("tts_qwen3: sox tempo failed to run; tempo is not applied", exc_info=True)
+        return pcm, 1.0
+    out = result.stdout
+    if result.returncode != 0 or not out:
+        log.warning("tts_qwen3: sox tempo exited %d; tempo is not applied", result.returncode)
+        return pcm, 1.0
+    return out[: len(out) - len(out) % BYTES_PER_SAMPLE], tempo
 
 
 #: The container prefix a model profile names (`/models/tts/qwen3-tts`), and the environment
@@ -337,6 +678,7 @@ def create_app(
     model_factory: ModelFactory | None = None,
     device: str = "cuda:0",
     variant: str | None = None,
+    runtime: GenerationRuntime | None = None,
 ) -> FastAPI:
     """Build the app. `model_dir`/`model_factory` are overridable so tests can inject a fake
     factory and a throwaway directory — production callers (`scripts/run.py`-equivalent /
@@ -355,7 +697,11 @@ def create_app(
     `model.safetensors`, not `SIM_TTS_QWEN3_MODEL_DIR` itself (which is the parent both variants'
     subdirectories share, `make models-tts-qwen3`'s own download layout). An explicit `model_dir`
     (tests; a caller that already knows the exact checkpoint path) bypasses this join entirely and
-    is used as-is."""
+    is used as-is.
+
+    `runtime` (I8 V1) owns the torch side effects (seeding, `empty_cache()`). Omitted, the real
+    loader gets `TorchRuntime` and an injected fake factory gets `NullRuntime` — a test with a fake
+    model never imports torch or touches a GPU."""
     resolved_variant = (
         variant
         if variant is not None
@@ -378,12 +724,15 @@ def create_app(
         resolved_model_dir = base_model_dir / variant_config.subdirectory
 
     factory = model_factory or _default_model_factory
+    if runtime is None:
+        runtime = TorchRuntime() if model_factory is None else NullRuntime()
     state = WorkerState(
         model_dir=resolved_model_dir,
         model_factory=factory,
         device=device,
         variant_repo=variant_config.repo,
         variant_revision=variant_config.revision,
+        runtime=runtime,
     )
 
     app = FastAPI(title="tts_qwen3")
@@ -428,15 +777,14 @@ def create_app(
         async with state.inference_lock:
             started = time.monotonic()
             try:
-                assert state.model is not None  # ensure_loaded() above guarantees this
-                pcm, sample_rate = await asyncio.to_thread(_run_generate, state.model, payload)
+                synthesis = await _generate_speech(state, payload)
             except Exception:
                 log.exception("tts_qwen3: warm_up generation failed")
                 return JSONResponse(status_code=503, content=_ERROR_BODY)
             generate_ms = int((time.monotonic() - started) * 1000)
-        audio_ms = _pcm_audio_ms(pcm, sample_rate)
+        audio_ms = _pcm_audio_ms(synthesis.pcm, synthesis.sample_rate)
         # The audio is discarded here, deliberately: nobody ever hears a warm-up.
-        del pcm
+        del synthesis
         log.info("tts_qwen3: warm_up generated %d ms of audio in %d ms", audio_ms, generate_ms)
         return JSONResponse(
             content={
@@ -471,18 +819,29 @@ def create_app(
 
             started = time.monotonic()
             try:
-                assert state.model is not None  # ensure_loaded() above guarantees this
-                pcm, sample_rate = await asyncio.to_thread(_run_generate, state.model, payload)
+                synthesis = await _generate_speech(
+                    state, payload, is_disconnected=request.is_disconnected
+                )
             except Exception:
                 log.exception("tts_qwen3: synthesis failed (request_id=%s)", payload.request_id)
                 return JSONResponse(status_code=503, content=_ERROR_BODY)
             gen_ms = int((time.monotonic() - started) * 1000)
 
-        audio_ms = _pcm_audio_ms(pcm, sample_rate)
+        # Outside the inference lock: `sox` is CPU work and must not delay the next generation.
+        pcm, tempo = await asyncio.to_thread(
+            _apply_tempo, state, synthesis.pcm, synthesis.sample_rate, payload.tempo
+        )
+        audio_ms = _pcm_audio_ms(pcm, synthesis.sample_rate)
         headers = {
-            "X-Sample-Rate": str(sample_rate),
+            "X-Sample-Rate": str(synthesis.sample_rate),
             "X-Audio-Ms": str(audio_ms),
             "X-Gen-Ms": str(gen_ms),
+            # I8 V1: what was actually generated (the adapter records them on
+            # CALLER_TTS_STARTED). `X-Seed` is the seed that WON per segment, `none` unseeded.
+            "X-Tempo": f"{tempo:g}",
+            "X-Seed": ",".join("none" if seed is None else str(seed) for seed in synthesis.seeds),
+            "X-QC": synthesis.qc,
+            "X-Units": str(synthesis.units),
         }
         return Response(content=pcm, media_type="audio/L16", headers=headers)
 

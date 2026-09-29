@@ -2334,3 +2334,68 @@ PAIN override), `test_qwen3_tts.py` (preset instruct, PAIN, case-insensitive spe
 `tests/unit/config/test_profile.py` / `test_apply_profile.py` (new profile, key validation,
 overlay, unchanged defaults), `tests/unit/domain/scenario/test_caller_voice.py` (voice_style
 schema/R01/dump, warnings, the 8 PAIN tickets), `workers/tts_qwen3/tests/test_server.py`.
+
+## 71.20.V1 I8 V1 — Qwen3-TTS worker pipeline: token cap, seed, rate check, tempo, pauses
+
+Design as built (A1-plan §2.2 / §4 V1 with the manager's decisions). No GPU, no migration, no API
+or frontend change; score/checksum paths untouched.
+
+**Worker (`workers/tts_qwen3/`).** `/synthesize` takes, all optional: `seed` (0..2^31-1),
+`max_new_tokens` (only lowers the cap), `tempo` (0.5-2.0, default 1), `pause_s` (default 0.2) and
+the lab's sampling set (`temperature 0.65, top_p 0.9, top_k 30, subtalker_* same,
+repetition_penalty 1.05`, now explicit). Per request, under the inference lock:
+
+1. digits spelled out by the vendored `normalize_numbers` (`num2words`, added to `pyproject.toml`;
+   missing -> raw text + one WARN);
+2. a unit over `SAFETY_NET_MAX_CHARS = 100` is split by the vendored `segment_text`, generated per
+   segment and `stitch`ed with `pause_s`;
+3. each generation gets `max_new_tokens = clamp(ceil(expected_s x 12 x 2), 64, 400)`,
+   `expected_s = spoken chars (letters/digits) / 10` — the library default was 2048 (~170 s);
+4. `seed` given -> `torch.manual_seed` + `cuda.manual_seed_all` before each generation;
+   `torch.cuda.empty_cache()` after each one (in a `finally`), through an injectable
+   `GenerationRuntime` (`TorchRuntime` for the real loader, `NullRuntime` for a fake factory);
+5. rate check on the RAW clip: < 6 spoken chars/s or > 3x the expected length -> ONE regeneration
+   with `seed + 1` (unseeded: a plain second sample), the passing or shorter clip kept, never a
+   second retry, and no retry for a client that already left. **Technical deviation:** units of
+   fewer than `QC_MIN_CHARS = 10` spoken chars skip the check (`X-QC: skipped`) — a one-word unit
+   is mostly the model's lead-in/tail, its chars/s would trigger a pointless retry, and the token
+   cap already bounds it to 64 tokens (~5.3 s);
+6. outside the lock, `sox -t raw ... tempo -s <tempo>`; a missing `sox` (one WARN) or a failing one
+   returns the clip untouched with `X-Tempo: 1` — never a 503.
+
+New response headers: `X-Tempo`, `X-Seed` (winning seed per segment, `none` unseeded), `X-QC`
+(`ok` | `regenerated` | `skipped` | `failed` — the client left before the retry), `X-Units`.
+`/warm_up` runs the same recipe.
+`tts_qwen3/pipeline.py` is vendored from `~/emo-lab/tools/qwen3_pipeline.py` (emo-lab commit
+`5a02e3e8`): `segment_text`, `stitch`, `normalize_numbers`, `restore_yo` — the last **not applied**
+(its ж/ш heuristic writes «ужё», «жёна», «решёние»; a test pins that). Compose's `tts-qwen3` sets
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`; the README documents it for host runs.
+
+**Client (`backend`, `workers/voice_agent`).** `TtsVoiceSpec.seed` (additive). `ChunkedTtsStream`
+gains `inter_unit_pause_ms` (silence between units only, `<= max_chunk_ms` chunks covering no text,
+exact alignment — `delivered_text` unchanged) and `seed_scope=(session_id, turn_index)` ->
+per-unit `derive_tts_seed` = SHA-256(session, turn, unit) `& 0x7fffffff`; it collects each unit
+stream's duck-typed `synthesis_attributes` into `unit_attributes`. `TtsSpeechSink(inter_unit_pause_ms,
+seed_mode)` from `Settings.tts_inter_unit_pause_ms` / `tts_seed_mode` (both sinks in
+`voice_agent.wiring`). `Qwen3TTS(tempo_by_emotion=Settings.tts_tempo_by_emotion)` sends `seed`
+and `tempo` (`tempo_for`: the `voice_style` row wins, else the emotion, CALM for none, 1.0 without
+a table) and turns `X-Seed/X-Tempo/X-QC` + `STYLE_VERSION` into `synthesis_attributes`.
+`CALLER_TTS_STARTED` gains optional `style_version`, `seed`, `tempo`, `retried` for the first unit
+(HLD 10 §10.13; absent for Piper/Fake; redacted for trainees like `voice_id_native`).
+`inference_metrics` has no free-form attributes column, so nothing is stored there (no migration).
+Fallback marking unchanged.
+
+**Not done here.** `benchmarks/benchmark_tts.py` / `benchmark_e2e.py` / `benchmark_vram.py` still
+build `Qwen3TTS` without a tempo table or seeds — tempo on/off and the 100-turn growth run are
+I8 V2's. The rate-check thresholds and `QC_MIN_CHARS` are unmeasured on real audio (V2/V5).
+
+**Tests.** `workers/tts_qwen3/tests/test_server.py` (token formula, sampling, lower cap, seeding
+and release order incl. on failure, runtime selection, rate check incl. the 3x bound, one retry
+with seed+1, no second retry, retry kept only when better, unseeded retry, short-unit skip, no
+retry after disconnect, header contract, safety-net split + stitch, number normalisation, missing
+num2words, missing / failing sox, real `sox` tempo — skipped without sox — and warm-up through the
+recipe), new `tests/test_pipeline.py` (the lab's cases for the vendored functions + the
+`restore_yo` misses); backend `test_qwen3_worker_shape.py` (package-relative load, new headers,
+seed echo), `test_qwen3_tts.py` (seed/tempo on the wire, tempo table incl. PAIN, header parsing,
+pre-V1 worker), `test_sentence_chunker.py` (pauses, derived seeds, attributes),
+`test_tts_speech_sink.py` (event keys, malformed attributes dropped, seed_mode derived/off).

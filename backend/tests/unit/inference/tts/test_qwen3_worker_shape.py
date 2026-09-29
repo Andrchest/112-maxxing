@@ -30,18 +30,30 @@ import httpx
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
-_SERVER_PATH = _REPO_ROOT / "workers" / "tts_qwen3" / "tts_qwen3" / "server.py"
+_PACKAGE_DIR = _REPO_ROOT / "workers" / "tts_qwen3" / "tts_qwen3"
+_SERVER_PATH = _PACKAGE_DIR / "server.py"
+#: The alias the worker package is loaded under here — never `tts_qwen3` itself, so nothing in this
+#: venv can ever resolve the real name (`check_imports.py`'s "nothing imports tts_qwen3" rule).
+_PACKAGE_ALIAS = "tts_qwen3_shape_test"
 
 
 def _load_server_module() -> ModuleType:
+    """Load the worker's package under `_PACKAGE_ALIAS`, then its `server` submodule.
+
+    I8 V1: `server.py` imports its sibling `pipeline.py` relatively (`from .pipeline import ...`),
+    so it is loaded as a submodule of the package rather than as a lone file."""
     if not _SERVER_PATH.is_file():  # pragma: no cover - repository layout invariant
         pytest.skip(f"workers/tts_qwen3/tts_qwen3/server.py not found at {_SERVER_PATH}")
-    spec = importlib.util.spec_from_file_location("tts_qwen3_server_shape_test", _SERVER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        _PACKAGE_ALIAS,
+        _PACKAGE_DIR / "__init__.py",
+        submodule_search_locations=[str(_PACKAGE_DIR)],
+    )
     assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    package = importlib.util.module_from_spec(spec)
+    sys.modules[_PACKAGE_ALIAS] = package
+    spec.loader.exec_module(package)
+    return importlib.import_module(f"{_PACKAGE_ALIAS}.server")
 
 
 server = _load_server_module()
@@ -49,7 +61,7 @@ server = _load_server_module()
 
 class _FakeModel:
     def generate_custom_voice(
-        self, *, text: str, language: str, speaker: str, instruct: str
+        self, *, text: str, language: str, speaker: str, instruct: str, **kwargs: object
     ) -> tuple[list, int]:
         n_samples = server.SAMPLE_RATE // 4  # 250 ms
         return [[0.05] * n_samples], server.SAMPLE_RATE
@@ -82,10 +94,38 @@ async def test_synthesize_returns_audio_l16_with_the_documented_headers() -> Non
         )
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/L16"
-    for header in ("X-Sample-Rate", "X-Audio-Ms", "X-Gen-Ms"):
+    # I8 V1 added X-Tempo/X-Seed/X-QC/X-Units — the adapter reads them for CALLER_TTS_STARTED.
+    for header in (
+        "X-Sample-Rate",
+        "X-Audio-Ms",
+        "X-Gen-Ms",
+        "X-Tempo",
+        "X-Seed",
+        "X-QC",
+        "X-Units",
+    ):
         assert header in response.headers
     assert len(response.content) % 2 == 0
     struct.unpack(f"<{len(response.content) // 2}h", response.content)
+
+
+async def test_the_fields_the_adapter_sends_are_accepted_and_echoed() -> None:
+    """I8 V1: `Qwen3TTS` sends `seed` and `tempo`; the worker answers which seed won."""
+    async with await _client() as client:
+        response = await client.post(
+            "/synthesize",
+            json={
+                "text": "Проверка.",
+                "speaker": "eric",
+                "request_id": "shape-v1",
+                "seed": 123,
+                "tempo": 1.0,
+            },
+        )
+    assert response.status_code == 200
+    assert response.headers["X-Seed"] == "123"
+    assert response.headers["X-Tempo"] == "1"
+    assert response.headers["X-QC"] in {"ok", "regenerated", "skipped", "failed"}
 
 
 async def test_unknown_speaker_maps_to_the_stable_503_body() -> None:

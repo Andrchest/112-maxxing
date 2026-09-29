@@ -28,6 +28,10 @@ dependencies = [
     "accelerate==1.12.0",
     "huggingface-hub==0.36.2",
     "numpy>=2,<3",
+    # I8 V1: `tts_qwen3.pipeline.normalize_numbers` (digits -> Russian words), vendored from the
+    # owner's TTS lab, which ran it on 0.5.14. Pure Python; the worker degrades to the raw text
+    # with one WARN when it is missing, so an older venv keeps synthesising.
+    "num2words>=0.5.14,<0.6",
 ]
 
 [project.optional-dependencies]

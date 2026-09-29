@@ -27,7 +27,8 @@ COPY tts_qwen3/ tts_qwen3/
 
 # No `uv.lock` here (this package is deliberately outside the workspace lock — its README explains
 # why): `uv pip install` against the exact pins `pyproject.toml` already carries, the same
-# mechanism `scripts/setup_tts_qwen3.sh` uses for the host venv.
+# mechanism `scripts/setup_tts_qwen3.sh` uses for the host venv. I8 V1: that includes `num2words`
+# (digits -> words, `tts_qwen3/pipeline.py`); `sox` below is also what `/synthesize`'s tempo uses.
 RUN uv venv --python 3.12 /app/.venv \
     && uv pip install --python /app/.venv/bin/python -e .
 

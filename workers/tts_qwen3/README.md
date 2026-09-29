@@ -75,10 +75,40 @@ the default here is **8112**.
   got the inference lock is dropped, not generated. Every failure is `503` with a stable JSON body
   that never echoes exception text (mirrors the owner's own worker's failure contract, recon §1.1).
 
+### I8 V1: the lab's generation recipe
+
+`/synthesize` also accepts, all optional: `seed` (0..2^31-1), `max_new_tokens` (may only lower the
+cap), `tempo` (0.5-2.0, default 1.0), `pause_s` (safety-net pause, default 0.2) and the sampling
+set `temperature`/`top_p`/`top_k`/`subtalker_temperature`/`subtalker_top_p`/`subtalker_top_k`/
+`repetition_penalty` (defaults = the owner's lab set: 0.65 / 0.9 / 30 / 0.65 / 0.9 / 30 / 1.05).
+
+| Step | Rule |
+|:--|:--|
+| Numbers | digits spelled out by `pipeline.normalize_numbers` (`num2words`; missing -> raw text + one WARN) |
+| Safety net | a unit over 100 chars is split by the vendored `segment_text`, each segment generated alone, stitched with `pause_s` |
+| Token cap | `max_new_tokens = clamp(ceil(expected_s x 12 x 2), 64, 400)`, `expected_s = spoken chars (no spaces/punctuation) / 10` — the library default was 2048 (~170 s) |
+| Seed | `torch.manual_seed` + `cuda.manual_seed_all` before each generation when `seed` is given |
+| Rate check | on the RAW clip (before tempo), units of >= 10 spoken chars: < 6 chars/s or > 3x the expected length -> ONE regeneration with `seed + 1`; the better clip is kept |
+| Memory | `torch.cuda.empty_cache()` after every generation; compose sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (set it yourself for a host run: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True make run-tts-qwen3`) |
+| Tempo | `sox ... tempo -s <tempo>` (pitch-preserving WSOLA), outside the inference lock; missing or failing `sox` -> tempo 1 + WARN, never a 503 |
+
+Extra response headers: `X-Tempo` (applied factor, `1` = none), `X-Seed` (the seed that won, per
+segment, comma-separated; `none` when unseeded), `X-QC` (`ok` | `regenerated` | `skipped` — the
+unit was too short for the rate check | `failed` — it failed and the client left before the
+retry), `X-Units` (segments generated). `X-Audio-Ms` is the
+returned (post-tempo) length. The client (`backend/app/inference/tts/qwen3_tts.py`) sends `seed`
+and `tempo` and records `style_version`/`seed`/`tempo`/`retried` on `CALLER_TTS_STARTED`.
+
+`pipeline.py` is vendored from `~/emo-lab/tools/qwen3_pipeline.py` (emo-lab commit `5a02e3e8`);
+its `restore_yo` is kept but NOT applied (it rewrites «уже», «жена», «решение» wrongly).
+
 ## Tests
 
 `tests/test_server.py` drives the FastAPI app with a **fake** model factory — no `torch`/
-`qwen-tts` import anywhere in the test process. It runs in this package's own venv
+`qwen-tts` import anywhere in the test process (I8 V1: the torch side effects go through an
+injectable `GenerationRuntime`; tests record them with a fake one). `tests/test_pipeline.py`
+covers the vendored helpers; the tempo test that shells out to `sox` is skipped when `sox` is not
+installed, and the `normalize_numbers` cases when `num2words` is not. It runs in this package's own venv
 (`make test-tts-qwen3`). A second, narrower copy of the same request/response-shape assertions
 also runs under the main backend gate — see
 `backend/tests/unit/inference/tts/test_qwen3_worker_shape.py`'s module docstring for why that is

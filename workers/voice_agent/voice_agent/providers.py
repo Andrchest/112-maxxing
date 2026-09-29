@@ -191,6 +191,8 @@ def _build_named_tts(provider: str, settings: Settings, *, primary: bool = True)
             warmup_timeout_ms=settings.tts_warmup_timeout_ms,
             voice_map=voice_map,
             default_voice=default_voice,
+            # I8 V1: the profile's closed emotion -> tempo table (A1-plan §2.4); empty = none.
+            tempo_by_emotion=settings.tts_tempo_by_emotion,
         )
     if provider == TTS_PIPER:
         # Lazy: `piper-tts` is the `tts-piper` extra.

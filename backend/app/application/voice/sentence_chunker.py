@@ -30,14 +30,29 @@ Splitting rules (the brief's, which are §2.4's "sentence granularity" made conc
    whitespace between sentences, belongs to exactly one unit, and `TextUnit.start` / `.end` are
    offsets into the original text. `delivered_text` (§6.3) is a prefix of that original text, so
    an offset that drifted by one space would be a wrong transcript row.
+
+I8 V1 (the owner's Qwen3-TTS recipe, provider-agnostic here):
+
+* **Pauses between units.** `inter_unit_pause_ms` (`tts.inter_unit_pause_ms`, 200 on the voice
+  profile) of silence is yielded *between* two units — never before the first, never after the
+  last, never after a cancel. The silence chunks cover no text (`text_offset_start ==
+  text_offset_end == the finished unit's end`, exact), so `delivered_text` is unchanged by them.
+* **Per-unit seeds.** With a `seed_scope = (session_id, turn_index)` (the sink passes it when
+  `tts.seed_mode` is `derived`), every unit's `TtsVoiceSpec.seed` is `derive_tts_seed(session_id,
+  turn_index, unit_index)` — a stable hash, so a replay of the same turn asks for the same audio.
+* **What the provider reported.** A provider stream that exposes `synthesis_attributes` (duck-typed,
+  like the sink's `native_voice_id`; `Qwen3TTS` does) is read once per unit, at its first chunk,
+  into `unit_attributes` — the sink records the first unit's on `CALLER_TTS_STARTED`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
+from app.application.ports.call_transport import AudioFrame
 from app.application.ports.tts import TtsChunk, TTSProvider, TtsStream, TtsVoiceSpec
 
 __all__ = [
@@ -45,8 +60,26 @@ __all__ = [
     "DEFAULT_MAX_UNIT_CHARS",
     "ChunkedTtsStream",
     "TextUnit",
+    "derive_tts_seed",
     "split_for_tts",
 ]
+
+#: A derived seed is 31 bits wide (`& 0x7fffffff`), so `seed + 1` (the worker's one retry) and
+#: every consumer that stores it as a signed 32-bit integer stay in range.
+_SEED_MASK = 0x7FFFFFFF
+_BYTES_PER_SAMPLE = 2
+_MS_PER_S = 1000
+
+
+def derive_tts_seed(session_id: str, turn_index: int, unit_index: int) -> int:
+    """`stable_hash(session_id, turn_index, unit_index) & 0x7fffffff` (I8 V1, `seed_mode: derived`).
+
+    SHA-256 of the three values, not Python's `hash()` — that one is salted per process, and the
+    whole point is that a replay of the same turn, in any process, asks for the same seed.
+    """
+    digest = hashlib.sha256(f"{session_id}:{turn_index}:{unit_index}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") & _SEED_MASK
+
 
 #: `tts_max_unit_chars`'s default — the brief's 120 characters. Long enough that an ordinary
 #: Russian sentence is one unit (so alignment stays sentence-exact), short enough that a run-on
@@ -228,6 +261,8 @@ class ChunkedTtsStream:
         max_chunk_ms: int = 20,
         max_unit_chars: int = DEFAULT_MAX_UNIT_CHARS,
         units: Sequence[TextUnit] | None = None,
+        inter_unit_pause_ms: int = 0,
+        seed_scope: tuple[str, int] | None = None,
     ) -> None:
         self._provider = provider
         self._text = text
@@ -239,12 +274,17 @@ class ChunkedTtsStream:
             if units is not None
             else split_for_tts(text, max_unit_chars=max_unit_chars)
         )
+        self._inter_unit_pause_ms = max(0, inter_unit_pause_ms)
+        self._seed_scope = seed_scope
         self._cancelled = False
         self._inner: TtsStream | None = None
         #: Every unit a request was actually issued for, in request order.
         self.requested_units: list[TextUnit] = []
         #: Every chunk yielded to the caller, re-based onto the whole text.
         self.yielded: list[TtsChunk] = []
+        #: What each unit's provider stream reported it actually generated (I8 V1), in unit
+        #: order — only for units whose stream exposes `synthesis_attributes`.
+        self.unit_attributes: list[Mapping[str, object]] = []
 
     @property
     def request_id(self) -> str:
@@ -277,19 +317,59 @@ class ChunkedTtsStream:
         """Chunks of the whole text, with offsets re-based onto it."""
         return self._iterate()
 
+    def _voice_for_unit(self, position: int) -> TtsVoiceSpec:
+        """The voice of unit `position`: with a `seed_scope`, its own derived seed (I8 V1)."""
+        if self._seed_scope is None:
+            return self._voice
+        session_id, turn_index = self._seed_scope
+        return replace(self._voice, seed=derive_tts_seed(session_id, turn_index, position))
+
+    def _silence(self, at_offset: int, chunk_index: int) -> list[TtsChunk]:
+        """`inter_unit_pause_ms` of silence as `<= max_chunk_ms` chunks covering no text."""
+        sample_rate = self._provider.output_sample_rate
+        remaining_ms = self._inter_unit_pause_ms
+        step_ms = max(1, self._max_chunk_ms)
+        chunks: list[TtsChunk] = []
+        elapsed_ms = 0
+        while remaining_ms > 0:
+            chunk_ms = min(step_ms, remaining_ms)
+            samples = (sample_rate * chunk_ms) // _MS_PER_S
+            chunks.append(
+                TtsChunk(
+                    frame=AudioFrame(
+                        pcm=bytes(samples * _BYTES_PER_SAMPLE),
+                        sample_rate=sample_rate,
+                        num_channels=1,
+                        samples_per_channel=samples,
+                        capture_offset_ms=elapsed_ms,
+                    ),
+                    text_offset_start=at_offset,
+                    text_offset_end=at_offset,
+                    # Exact: the whole previous unit has been handed over before this silence.
+                    alignment_is_exact=True,
+                    chunk_index=chunk_index + len(chunks),
+                    audio_ms=chunk_ms,
+                )
+            )
+            elapsed_ms += chunk_ms
+            remaining_ms -= chunk_ms
+        return chunks
+
     async def _iterate(self) -> AsyncIterator[TtsChunk]:
         chunk_index = 0
+        last_position = len(self._units) - 1
         for position, unit in enumerate(self._units):
             if self._cancelled:
                 return
             inner = self._provider.stream(
                 unit.text,
-                self._voice,
+                self._voice_for_unit(position),
                 request_id=f"{self._request_id}:{position}",
                 max_chunk_ms=self._max_chunk_ms,
             )
             self._inner = inner
             self.requested_units.append(unit)
+            first_of_unit = True
             try:
                 async for chunk in inner:
                     if self._cancelled:
@@ -297,6 +377,11 @@ class ChunkedTtsStream:
                         # away, never played. Yielding it would put sound on the wire *after*
                         # the trainee started speaking.
                         return
+                    if first_of_unit:
+                        first_of_unit = False
+                        attributes = getattr(inner, "synthesis_attributes", None)
+                        if isinstance(attributes, Mapping):
+                            self.unit_attributes.append(attributes)
                     rebased = replace(
                         chunk,
                         text_offset_start=unit.start + chunk.text_offset_start,
@@ -310,3 +395,10 @@ class ChunkedTtsStream:
                 self._inner = None
             if self._cancelled:
                 return
+            if position < last_position and self._inter_unit_pause_ms > 0:
+                for silence in self._silence(unit.end, chunk_index):
+                    if self._cancelled:
+                        return
+                    self.yielded.append(silence)
+                    yield silence
+                    chunk_index += 1

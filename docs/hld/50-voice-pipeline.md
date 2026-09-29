@@ -431,6 +431,35 @@ synthesised sentence into `max_chunk_ms` frames as they are produced, and set
 - `ChatterboxTTS` — Chatterbox Multilingual, GPU.
 - `FakeTTS` — deterministic silence of a length proportional to the text; exact alignment.
 
+**I8 V1 addition (additive; the owner's Qwen3-TTS lab recipe, A1-plan §2.2).**
+
+- `TtsVoiceSpec.seed: int | None = None` — the seed of ONE unit. `ChunkedTtsStream` sets it per unit
+  when the profile's `tts.seed_mode` is `derived`: `derive_tts_seed(session_id, turn_index,
+  unit_index)` = SHA-256 of the three, `& 0x7fffffff` (stable across processes, so a replay of a
+  turn asks for the same audio). `off` (the default) leaves it `None`. A provider without a seed
+  lever ignores it.
+- `ChunkedTtsStream(inter_unit_pause_ms=...)` (`tts.inter_unit_pause_ms`, 0 = none; 200 on
+  `DEV_3060TI_VOICE`) yields that much silence **between** units — never before the first, never
+  after the last or after a cancel — as `<= max_chunk_ms` chunks at the provider's output rate
+  that cover no text (`text_offset_start == text_offset_end ==` the finished unit's end,
+  `alignment_is_exact = True`), so §6.3's `delivered_text` is unchanged by them. Provider-agnostic:
+  Piper gets the same cadence.
+- `Qwen3TTS` sends `seed` (when set) and `tempo` — the profile's closed `tts.tempo_by_emotion`
+  table keyed by the scenario `voice_style` when the table names it (`PAIN`), else by the emotion
+  label (CALM when `None`); 1.0 without a table. The worker (`workers/tts_qwen3/README.md`) spells
+  digits out, caps `max_new_tokens = clamp(ceil(spoken_chars / 10 x 12 x 2), 64, 400)`, samples
+  with the lab's explicit set, seeds, runs a rate check on the raw clip (units of >= 10 spoken
+  chars: < 6 chars/s or > 3x the expected length -> one regeneration with `seed + 1`, never a
+  second), calls `torch.cuda.empty_cache()` after each generation, splits a unit still over 100
+  chars with the lab's vendored `segment_text`, and applies `sox tempo -s` (a missing/failing
+  `sox` -> tempo 1 + WARN, never a failure). Its `X-Seed`/`X-Tempo`/`X-QC` headers become the
+  stream's duck-typed `synthesis_attributes` (`style_version`, `seed`, `tempo`, `retried`);
+  `ChunkedTtsStream.unit_attributes` collects them per unit and `TtsSpeechSink` records the first
+  unit's on `CALLER_TTS_STARTED` (additive optional keys, absent for providers that report
+  nothing). `inference_metrics` has no free-form column, so they are not stored there.
+- Fallback marking is unchanged: a failed Qwen3 unit still retries the whole utterance on the
+  configured fallback with `MODEL_FALLBACK_USED`, and `CALLER_TTS_STARTED.provider` names who spoke.
+
 ### 2.5 `LLMClient`
 
 Target file: `backend/app/application/ports/llm.py`

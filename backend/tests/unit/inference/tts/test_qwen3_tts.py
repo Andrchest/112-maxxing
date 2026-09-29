@@ -434,3 +434,144 @@ async def test_without_a_warmup_timeout_warm_up_keeps_the_request_timeout() -> N
     )
     await tts.warm_up()
     assert recorder.read_timeouts["/warm_up"] == 8.0
+
+
+# -- I8 V1: seed, tempo and what the worker reports back -------------------------------------------
+
+#: DEV_3060TI_VOICE's table (A1-plan §2.4).
+_TEMPO_TABLE = {
+    "CALM": 1.10,
+    "WORRIED": 1.15,
+    "FRIGHTENED": 1.20,
+    "PANICKED": 1.20,
+    "ANGRY": 1.15,
+    "CONFUSED": 1.10,
+    "APATHETIC": 1.10,
+    "PAIN": 1.25,
+}
+
+
+def _v1_client(handler, *, tempo_by_emotion: dict[str, float] | None = None) -> Qwen3TTS:
+    return Qwen3TTS(
+        base_url="http://127.0.0.1:8112",
+        speaker="serena",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        tempo_by_emotion=tempo_by_emotion,
+    )
+
+
+def _v1_response(headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(
+        200,
+        content=_tone_pcm(OUTPUT_SAMPLE_RATE // 10),
+        headers={"X-Sample-Rate": str(OUTPUT_SAMPLE_RATE), **(headers or {})},
+    )
+
+
+async def test_the_seed_and_the_emotion_tempo_are_sent() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return _v1_response()
+
+    tts = _v1_client(handler, tempo_by_emotion=_TEMPO_TABLE)
+    voice = TtsVoiceSpec(
+        voice_id="serena",
+        speaking_rate=1.0,
+        emotion=EmotionState(emotion=EmotionLabel.PANICKED, stress_level=0.9),
+        seed=987654,
+    )
+    [_ async for _ in tts.stream("Горит!", voice, request_id="v1")]
+
+    assert captured[0]["seed"] == 987654
+    assert captured[0]["tempo"] == 1.20
+
+
+async def test_no_seed_on_the_voice_sends_no_seed_and_no_table_sends_tempo_1() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return _v1_response()
+
+    tts = _v1_client(handler)
+    [_ async for _ in tts.stream("Алло.", _VOICE, request_id="v1")]
+
+    assert "seed" not in captured[0]
+    assert captured[0]["tempo"] == 1.0
+
+
+def test_tempo_follows_the_table_the_voice_style_wins_and_none_emotion_is_calm() -> None:
+    tts = _v1_client(lambda request: _v1_response(), tempo_by_emotion=_TEMPO_TABLE)
+    worried = EmotionState(emotion=EmotionLabel.WORRIED, stress_level=0.2)
+
+    assert tts.tempo_for(TtsVoiceSpec(voice_id="x", speaking_rate=1.0, emotion=worried)) == 1.15
+    assert (
+        tts.tempo_for(
+            TtsVoiceSpec(
+                voice_id="x",
+                speaking_rate=1.0,
+                emotion=worried,
+                voice_style=CallerVoiceStyle.PAIN,
+            )
+        )
+        == 1.25
+    )
+    assert tts.tempo_for(TtsVoiceSpec(voice_id="x", speaking_rate=1.0)) == 1.10
+
+
+def test_a_table_without_a_pain_row_falls_back_to_the_emotion() -> None:
+    table = {key: value for key, value in _TEMPO_TABLE.items() if key != "PAIN"}
+    tts = _v1_client(lambda request: _v1_response(), tempo_by_emotion=table)
+    voice = TtsVoiceSpec(
+        voice_id="x",
+        speaking_rate=1.0,
+        emotion=EmotionState(emotion=EmotionLabel.FRIGHTENED, stress_level=0.5),
+        voice_style=CallerVoiceStyle.PAIN,
+    )
+
+    assert tts.tempo_for(voice) == 1.20
+
+
+async def test_the_workers_answer_becomes_the_streams_synthesis_attributes() -> None:
+    tts = _v1_client(
+        lambda request: _v1_response(
+            {"X-Seed": "43", "X-Tempo": "1.2", "X-QC": "regenerated", "X-Units": "1"}
+        )
+    )
+    stream = tts.stream("Горит!", _VOICE, request_id="v1")
+    [_ async for _ in stream]
+
+    assert stream.synthesis_attributes == {
+        "style_version": 2,
+        "seed": 43,
+        "tempo": 1.2,
+        "retried": True,
+    }
+
+
+async def test_an_unseeded_answer_has_no_seed_and_a_multi_segment_one_reports_the_first() -> None:
+    unseeded = _v1_client(
+        lambda request: _v1_response({"X-Seed": "none", "X-Tempo": "1", "X-QC": "skipped"})
+    )
+    stream = unseeded.stream("Да.", _VOICE, request_id="v1")
+    [_ async for _ in stream]
+    assert stream.synthesis_attributes == {"style_version": 2, "tempo": 1.0, "retried": False}
+
+    segmented = _v1_client(
+        lambda request: _v1_response({"X-Seed": "7,8", "X-Tempo": "1.1", "X-QC": "regenerated"})
+    )
+    stream = segmented.stream("Длинно.", _VOICE, request_id="v2")
+    [_ async for _ in stream]
+    assert stream.synthesis_attributes is not None
+    assert stream.synthesis_attributes["seed"] == 7
+
+
+async def test_a_pre_v1_worker_reports_only_the_style_version() -> None:
+    """No V1 headers -> nothing is guessed."""
+    tts = _v1_client(lambda request: _v1_response())
+    stream = tts.stream("Алло.", _VOICE, request_id="v1")
+    [_ async for _ in stream]
+
+    assert stream.synthesis_attributes == {"style_version": 2}

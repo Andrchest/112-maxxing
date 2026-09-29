@@ -368,6 +368,10 @@ def caller_tts_started_event(
     model_version: str,
     first_audio_offset_ms: int,
     voice_id_native: str | None = None,
+    style_version: int | None = None,
+    seed: int | None = None,
+    tempo: float | None = None,
+    retried: bool | None = None,
 ) -> DomainEvent:
     """`CALLER_TTS_STARTED` — the **first** frame has been handed to the transport (§3.7).
 
@@ -385,7 +389,24 @@ def caller_tts_started_event(
     (`app.application.realtime.redaction`, HLD 40 §40.4 row 12 — that row already whitelists only
     `{call_id, turn_index, at_offset_ms}`, so the key never reaches a trainee socket). `None`
     when the provider does not resolve voices (`FakeTTS`) — the key is then absent.
+
+    ADDITIVE, optional (I8 V1): what the provider reports it actually generated for the FIRST unit
+    of the utterance (the one this event announces) — `style_version` (the instruct table's
+    `STYLE_VERSION`), `seed` (the seed that won; absent when unseeded), `tempo` (the factor
+    applied, 1.0 = none) and `retried` (the worker's rate check regenerated it once). Only
+    `Qwen3TTS` reports them; each key is absent when `None`. Redacted for trainees like
+    `voice_id_native` (not in §40.4 row 12's whitelist).
     """
+    synthesis = {
+        key: value
+        for key, value in (
+            ("style_version", style_version),
+            ("seed", seed),
+            ("tempo", tempo),
+            ("retried", retried),
+        )
+        if value is not None
+    }
     return _event(
         EventType.CALLER_TTS_STARTED,
         _SIMULATION,
@@ -405,6 +426,7 @@ def caller_tts_started_event(
             "model_version": model_version,
             "first_audio_offset_ms": first_audio_offset_ms,
             **({"voice_id_native": voice_id_native} if voice_id_native is not None else {}),
+            **synthesis,
         },
         correlation_id=turn_id,
     )

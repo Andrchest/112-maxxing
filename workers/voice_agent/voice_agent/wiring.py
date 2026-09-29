@@ -504,6 +504,9 @@ def build_speech_sink(
         first_chunk_timeout_ms=settings.tts_first_chunk_timeout_ms,
         max_unit_chars=settings.tts_max_unit_chars,
         guard=guard,
+        # I8 V1: `tts.inter_unit_pause_ms` / `tts.seed_mode` of the active profile.
+        inter_unit_pause_ms=settings.tts_inter_unit_pause_ms,
+        seed_mode=settings.tts_seed_mode,
     )
 
 
@@ -674,6 +677,8 @@ def build_service_head_responder(
             first_chunk_timeout_ms=settings.tts_first_chunk_timeout_ms,
             max_unit_chars=settings.tts_max_unit_chars,
             guard=guard,
+            inter_unit_pause_ms=settings.tts_inter_unit_pause_ms,
+            seed_mode=settings.tts_seed_mode,
         ),
         uow_factory=deps.uow_factory,
         mode=settings.responder_dialogue,

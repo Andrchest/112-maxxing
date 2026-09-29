@@ -30,10 +30,19 @@ seam is gone (MANAGER RULING on E14-B's gap 1, E14 close-out): `TtsVoiceSpec.emo
 additive field of the port itself (§2.4), so `stream()` reads `voice.emotion` directly — the
 neutral default `EmotionState(emotion=CALM, stress_level=0.0)` is used only when `voice.emotion`
 is `None` (e.g. a warm-up call with no live `CallerBelief` to read).
+
+**I8 V1 — the lab's recipe on the wire.** Each `/synthesize` also carries `seed`
+(`TtsVoiceSpec.seed`, set per unit by `ChunkedTtsStream` under `tts.seed_mode: derived`; omitted
+when `None`) and `tempo` (`tempo_for`: the profile's closed `tts.tempo_by_emotion` table, keyed by
+the scenario's `voice_style` when the table names it, else by the emotion label; 1.0 without a
+table). The worker caps tokens, seeds, rate-checks with one `seed + 1` retry and applies the tempo
+(`workers/tts_qwen3/README.md`); its `X-Seed`/`X-Tempo`/`X-QC` answer, plus `STYLE_VERSION`,
+becomes the stream's `synthesis_attributes`, which the sink records on `CALLER_TTS_STARTED`.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -51,7 +60,7 @@ from app.domain.caller.emotion import EmotionState
 from app.domain.enums import EmotionLabel
 from app.inference.errors import InferenceOutOfMemoryError, ModelNotAvailableError
 from app.inference.loopback import validate_loopback_base_url
-from app.inference.tts.instruct import build_instruct
+from app.inference.tts.instruct import STYLE_VERSION, build_instruct
 
 __all__ = [
     "DEFAULT_ALLOWED_INTERNAL_HOSTS",
@@ -186,6 +195,29 @@ def _looks_like_oom(body_text: str) -> bool:
     )
 
 
+def _synthesis_attributes(headers: Mapping[str, str]) -> dict[str, object]:
+    """The worker's I8 V1 answer headers -> the attributes `CALLER_TTS_STARTED` records.
+
+    `style_version` is ours (the instruct table this adapter used). `seed` is the seed that won for
+    the unit's first segment (`X-Seed` is comma-separated per safety-net segment; `none` =
+    unseeded -> absent), `tempo` what `sox` applied, `retried` whether the rate check regenerated
+    any segment. A worker older than V1 sends none of these headers and only `style_version` is
+    reported — never a guess.
+    """
+    attributes: dict[str, object] = {"style_version": STYLE_VERSION}
+    first_seed = headers.get("X-Seed", "").split(",")[0].strip()
+    if first_seed.isdigit():
+        attributes["seed"] = int(first_seed)
+    tempo = headers.get("X-Tempo")
+    if tempo is not None:
+        with contextlib.suppress(ValueError):
+            attributes["tempo"] = float(tempo)
+    qc = headers.get("X-QC")
+    if qc is not None:
+        attributes["retried"] = qc == "regenerated"
+    return attributes
+
+
 def _chunk_pcm(pcm: bytes, sample_rate: int, text: str, max_chunk_ms: int) -> list[TtsChunk]:
     """Whole-sentence PCM (one `/synthesize` response) -> `<= max_chunk_ms` `TtsChunk`s.
 
@@ -252,6 +284,9 @@ class _Qwen3TtsStream:
     _max_chunk_ms: int
     _speaker: str
     _cancelled: bool = field(default=False, init=False)
+    #: I8 V1: what the worker reports it generated for this unit (`style_version`, `seed`,
+    #: `tempo`, `retried`), set once the response headers are in — before the first chunk.
+    synthesis_attributes: dict[str, object] | None = field(default=None, init=False)
 
     @property
     def request_id(self) -> str:
@@ -302,8 +337,12 @@ class Qwen3TTS:
         client: httpx.AsyncClient | None = None,
         voice_map: Mapping[str, str] | None = None,
         default_voice: str | None = None,
+        tempo_by_emotion: Mapping[str, float] | None = None,
     ) -> None:
         validate_tts_qwen3_base_url(base_url, allowed_internal_hosts=allowed_internal_hosts)
+        #: I8 V1: the profile's `tts.tempo_by_emotion` (`Settings.tts_tempo_by_emotion`, validated
+        #: there: empty, or every `EmotionLabel` plus optionally a `CallerVoiceStyle`).
+        self._tempo_by_emotion = dict(tempo_by_emotion or {})
         speaker = canonical_speaker(speaker)
         if speaker not in VENDOR_SPEAKERS:
             raise ValueError(
@@ -433,6 +472,21 @@ class Qwen3TTS:
         """
         return self._voices.resolve(voice_id)
 
+    def tempo_for(self, voice: TtsVoiceSpec) -> float:
+        """The post-synthesis tempo for `voice` (I8 V1, A1-plan §2.4's table).
+
+        The scenario's `voice_style` (`PAIN`) wins when the table names it; otherwise the emotion
+        label (the neutral CALM when `voice.emotion` is `None`, as `build_instruct` does). No
+        table, or no entry: 1.0 — the worker then skips `sox` entirely.
+        """
+        table = self._tempo_by_emotion
+        if not table:
+            return 1.0
+        if voice.voice_style is not None and voice.voice_style.value in table:
+            return float(table[voice.voice_style.value])
+        emotion = voice.emotion if voice.emotion is not None else _NEUTRAL_EMOTION
+        return float(table.get(emotion.emotion.value, 1.0))
+
     async def close(self) -> None:
         for response in list(self._pending.values()):
             await response.aclose()
@@ -450,17 +504,21 @@ class Qwen3TTS:
         max_chunk_ms: int,
         stream_obj: _Qwen3TtsStream,
     ) -> list[TtsChunk]:
-        emotion = stream_obj._voice.emotion
-        body = {
+        voice = stream_obj._voice
+        emotion = voice.emotion
+        body: dict[str, object] = {
             "text": text,
             "speaker": speaker,
             "language": "Russian",
             "instruct": build_instruct(
                 emotion if emotion is not None else _NEUTRAL_EMOTION,
-                stream_obj._voice.voice_style,
+                voice.voice_style,
             ),
             "request_id": request_id,
+            "tempo": self.tempo_for(voice),
         }
+        if voice.seed is not None:
+            body["seed"] = voice.seed
         try:
             async with self._client.stream(
                 "POST",
@@ -481,6 +539,7 @@ class Qwen3TTS:
                     sample_rate = int(
                         response.headers.get("X-Sample-Rate", str(OUTPUT_SAMPLE_RATE))
                     )
+                    stream_obj.synthesis_attributes = _synthesis_attributes(response.headers)
                 finally:
                     self._pending.pop(request_id, None)
         except httpx.TimeoutException as exc:

@@ -191,6 +191,22 @@ TTS provider's `warm_up()` (a cold GPU load + one generation). When `tts.fallbac
 run-tts-qwen3`); DEV_3060TI ships `"0.6B"` by measurement (1.7B = 7448 MB > the 7168 MB budget,
 docs/benchmarks/vram.md §2.3).
 
+**As built (I8 V0 keys, consumed from I8 V1) — the Qwen3-TTS caller-voice recipe.** All optional;
+a profile that names none of them behaves exactly as before.
+
+| Key | Type | Meaning |
+|:--|:--|:--|
+| `tts.max_unit_chars` | int 20-400 \| null | overlays `Settings.tts_max_unit_chars` (default 120): `split_for_tts`'s unit length. `DEV_3060TI_VOICE`: 70 (the lab's 60-80 chars keep Qwen3-TTS from degenerating). The worker splits a unit still over 100 chars itself (vendored `segment_text`). |
+| `tts.inter_unit_pause_ms` | int 0-1000 \| null | overlays `Settings.tts_inter_unit_pause_ms` (default 0): silence `ChunkedTtsStream` yields between two units, any provider. `DEV_3060TI_VOICE`: 200. |
+| `tts.tempo_by_emotion` | dict[str, float] | overlays `Settings.tts_tempo_by_emotion`: empty, or a factor in [0.5, 2.0] for every `EmotionLabel` (+ optionally `PAIN`). `Qwen3TTS` sends the entry for the utterance (the `voice_style` row wins) as `tempo`; the worker applies `sox tempo -s` and echoes `X-Tempo` (1 when `sox` is missing — WARN, never a failure). |
+| `tts.seed_mode` | `off` \| `derived` \| null | overlays `Settings.tts_seed_mode` (default `off`): `derived` = one seed per unit, SHA-256(session_id, turn_index, unit_index) `& 0x7fffffff`; the worker regenerates a runaway once with `seed + 1`. |
+
+The worker side of the recipe (token cap `clamp(ceil(spoken_chars/10 x 12 x 2), 64, 400)`, the
+lab's sampling set, the rate check, `torch.cuda.empty_cache()` after each generation) needs no
+profile key; compose's `tts-qwen3` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. Whether
+the 1.7B worker's VRAM then stays bounded over a 100-turn session is I8 V2's measurement, not this
+table's claim.
+
 ### 2.2 `DEV_3060TI.yaml` (BUILT — E18-A; a dedicated card)
 
 OWNER DECISIONS 2026-09-21 (task reports e13-b3/e13-b4, e14-d) replaced the earlier partial-offload

@@ -430,6 +430,10 @@ services:
       # `sox`; /warm_up + /synthesize answered 503). FIXED E20-I: workers/tts_qwen3/Dockerfile
       # installs build-essential + sox in a late layer; /warm_up 200 in 25.9 s, a Russian line
       # synthesised in 4.3 s on the RTX 3060 Ti (docs/DOD_WALK.md §7).
+      # --- I8 V1 --- the worker calls `torch.cuda.empty_cache()` after every unit; expandable
+      # segments keep the allocator from fragmenting across a session of differently sized
+      # units (the lab saw 4.3 -> 7.5 GB growth without a token cap; A1-plan §3).
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     volumes:
       - ${MODELS_DIR:-../models}:/models:ro
       - recordings-data:/data

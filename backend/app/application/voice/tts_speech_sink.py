@@ -41,9 +41,10 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
+from typing import Literal
 
 from app.application.dialogue.emotion_updates import apply_dialogue_emotion_trigger
 from app.application.dialogue.speech_sink import PlannedCallerUtterance
@@ -122,6 +123,24 @@ def _native_voice_id(provider: TTSProvider, voice_id: str) -> str | None:
     except Exception:  # an audit field must never take a turn down
         return None
     return native if isinstance(native, str) and native else None
+
+
+# -- I8 V1: what a provider reports it generated, typed defensively (an audit field must never take
+# a turn down, and `synthesis_attributes` is duck-typed, not part of the port) ---------------------
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _bool_or_none(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -317,6 +336,12 @@ class _ActiveCallerUtterance:
         """The provider that actually synthesised (the fallback, after one)."""
         return self._provider
 
+    @property
+    def first_unit_attributes(self) -> Mapping[str, object]:
+        """What the provider reported generating for the first unit (I8 V1), or `{}`."""
+        attributes = self._stream.unit_attributes
+        return attributes[0] if attributes else {}
+
     def settle(self) -> bool:
         """Claim the natural end. Returns False when a barge-in already claimed it."""
         if self._settled or self._interrupted:
@@ -348,6 +373,8 @@ class TtsSpeechSink:
         first_chunk_timeout_ms: int = 1500,
         max_unit_chars: int = DEFAULT_MAX_UNIT_CHARS,
         guard: InferenceGuard | None = None,
+        inter_unit_pause_ms: int = 0,
+        seed_mode: Literal["off", "derived"] = "off",
     ) -> None:
         self._provider = provider
         self._fallback = fallback_provider
@@ -360,6 +387,10 @@ class TtsSpeechSink:
         self._timeout_ms = timeout_ms
         self._first_chunk_timeout_ms = first_chunk_timeout_ms
         self._max_unit_chars = max_unit_chars
+        #: I8 V1: `tts.inter_unit_pause_ms` (silence between units) and `tts.seed_mode` (`derived`
+        #: = one stable seed per (session, turn, unit) — `sentence_chunker.derive_tts_seed`).
+        self._inter_unit_pause_ms = inter_unit_pause_ms
+        self._derive_seeds = seed_mode == "derived"
         #: §4.4's `guard_inference("TTS")`. The default observes nothing (D13). The guard wraps
         #: the *playback* await, which is where a synthesis failure raised inside the frame
         #: iterator actually surfaces (`_ActiveCallerUtterance.failure`), not the `stream()` call
@@ -424,6 +455,10 @@ class TtsSpeechSink:
             request_id=request_id,
             max_chunk_ms=self._config.tts_chunk_ms,
             max_unit_chars=self._max_unit_chars,
+            inter_unit_pause_ms=self._inter_unit_pause_ms,
+            seed_scope=(
+                (str(context.session_id), planned.turn_index) if self._derive_seeds else None
+            ),
         )
         active = _ActiveCallerUtterance(
             self,
@@ -594,6 +629,7 @@ class TtsSpeechSink:
         context = active.context
         planned = active.planned
         voice_id = (await self._voice_for(context.session_id)).voice_id
+        synthesis = active.first_unit_attributes
         await context.appender.append(
             [
                 caller_tts_started_event(
@@ -607,6 +643,10 @@ class TtsSpeechSink:
                     provider=active.provider.provider_name,
                     model_version=active.provider.model_version,
                     first_audio_offset_ms=first_audio_offset_ms,
+                    style_version=_int_or_none(synthesis.get("style_version")),
+                    seed=_int_or_none(synthesis.get("seed")),
+                    tempo=_float_or_none(synthesis.get("tempo")),
+                    retried=_bool_or_none(synthesis.get("retried")),
                 )
             ]
         )

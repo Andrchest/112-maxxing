@@ -20,6 +20,7 @@ from app.application.ports.tts import TtsChunk, TtsUnavailableError
 from app.application.testing.fakes import FakeCallTransport, FakeClock
 from app.application.voice.config import VoiceTurnConfig
 from app.application.voice.events import VoiceEventAppender
+from app.application.voice.sentence_chunker import derive_tts_seed
 from app.application.voice.tts_speech_sink import TtsSpeechSink, delivered_text_for
 from app.application.voice.turn_pipeline import ActiveCallerUtterance, TurnContext
 from app.domain.caller.emotion import EmotionLabel, EmotionState
@@ -329,6 +330,112 @@ async def test_a_resolver_that_raises_never_takes_the_turn_down(
 
     assert types_of(store)[0] == EventType.CALLER_TTS_STARTED
     assert "voice_id_native" not in store.events[0].payload
+
+
+# -- I8 V1: what the provider generated, recorded on CALLER_TTS_STARTED; seeds and pauses --------
+
+
+class _ReportingTTS(FakeTTS):
+    """`FakeTTS` whose streams report `synthesis_attributes`, the way `Qwen3TTS`'s do."""
+
+    def __init__(self, attributes: dict[str, object]) -> None:
+        super().__init__()
+        self._attributes = attributes
+
+    def stream(self, text, voice, *, request_id, max_chunk_ms=20):  # type: ignore[no-untyped-def]
+        inner = super().stream(text, voice, request_id=request_id, max_chunk_ms=max_chunk_ms)
+        inner.synthesis_attributes = dict(self._attributes)  # type: ignore[attr-defined]
+        return inner
+
+
+async def test_caller_tts_started_records_what_the_provider_generated(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    provider = _ReportingTTS({"style_version": 2, "seed": 43, "tempo": 1.2, "retried": True})
+    sink = make_sink(factory, clock, config, NullMetricsRecorder(), provider=provider)
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    payload = store.events[0].payload
+    assert (payload["style_version"], payload["seed"], payload["tempo"], payload["retried"]) == (
+        2,
+        43,
+        1.2,
+        True,
+    )
+
+
+async def test_without_reported_attributes_the_keys_are_absent(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    sink = make_sink(factory, clock, config, NullMetricsRecorder())
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    assert not {"style_version", "seed", "tempo", "retried"} & set(store.events[0].payload)
+
+
+async def test_malformed_attributes_are_dropped_not_recorded(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    store: VoiceStore,
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    provider = _ReportingTTS({"style_version": "2", "seed": True, "tempo": "fast", "retried": 1})
+    sink = make_sink(factory, clock, config, NullMetricsRecorder(), provider=provider)
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    assert types_of(store)[0] == EventType.CALLER_TTS_STARTED
+    assert not {"style_version", "seed", "tempo", "retried"} & set(store.events[0].payload)
+
+
+async def test_seed_mode_derived_seeds_every_unit_from_session_turn_and_unit(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    provider = FakeTTS()
+    sink = TtsSpeechSink(
+        provider=provider,
+        metrics=NullMetricsRecorder(),
+        clock=clock,
+        config=config,
+        uow_factory=factory,
+        seed_mode="derived",
+        inter_unit_pause_ms=200,
+    )
+    planned = a_planned()
+
+    await sink.speak(planned, make_context(session_id, factory, clock, config))
+
+    assert provider.requests
+    for unit, (_text, voice, _request_id) in enumerate(provider.requests):
+        assert voice.seed == derive_tts_seed(str(session_id), planned.turn_index, unit)
+
+
+async def test_seed_mode_off_sends_no_seed(
+    session_id: SessionId,
+    factory: Callable[[], InMemoryVoiceUnitOfWork],
+    clock: FakeClock,
+    config: VoiceTurnConfig,
+) -> None:
+    provider = FakeTTS()
+    sink = make_sink(factory, clock, config, NullMetricsRecorder(), provider=provider)
+
+    await sink.speak(a_planned(), make_context(session_id, factory, clock, config))
+
+    assert all(voice.seed is None for _text, voice, _request_id in provider.requests)
 
 
 async def test_facts_delivered_names_every_planned_fact(

@@ -61,6 +61,10 @@ class TtsVoiceSpec:
     voice_style: CallerVoiceStyle | None = None
     # additive (I8 V0): the scenario's closed `caller_profile.voice_style` hint (`PAIN`), read
     # once per session with the voice. A provider without a style lever ignores it.
+    seed: int | None = None
+    # additive (I8 V1): the synthesis seed of ONE unit, set per unit by `ChunkedTtsStream` when
+    # the profile's `tts.seed_mode` is `derived` (`derive_tts_seed`). `None` = unseeded. A
+    # provider without a seed lever ignores it.
 
 
 @dataclass(frozen=True, slots=True)

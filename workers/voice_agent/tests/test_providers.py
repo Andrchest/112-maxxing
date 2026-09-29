@@ -291,6 +291,7 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
             warmup_timeout_ms: int | None = None,
             voice_map: Any = None,
             default_voice: Any = None,
+            tempo_by_emotion: Any = None,
         ) -> None:
             captured.update(
                 base_url=base_url,
@@ -299,10 +300,21 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
                 warmup_timeout_ms=warmup_timeout_ms,
                 voice_map=voice_map,
                 default_voice=default_voice,
+                tempo_by_emotion=tempo_by_emotion,
             )
 
     module = _stub_module("app.inference.tts.qwen3_tts", Qwen3TTS=StubQwen3TTS)
     monkeypatch.setitem(sys.modules, "app.inference.tts.qwen3_tts", module)
+    # I8 V1: a complete `tts.tempo_by_emotion` table, as `Settings` validates it.
+    tempo_table = {
+        "CALM": 1.1,
+        "WORRIED": 1.15,
+        "FRIGHTENED": 1.2,
+        "PANICKED": 1.2,
+        "ANGRY": 1.15,
+        "CONFUSED": 1.1,
+        "APATHETIC": 1.1,
+    }
 
     build_tts(
         settings(
@@ -313,6 +325,7 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
             tts_warmup_timeout_ms=45000,
             tts_voice_map={"ru_female_adult_01": "Serena"},
             tts_default_voice="Serena",
+            tts_tempo_by_emotion=tempo_table,
         )
     )
 
@@ -324,6 +337,8 @@ def test_the_qwen3_tts_branch_passes_the_configured_endpoint_and_speaker(
         # E20-G/G6: the PRIMARY slot carries the profile's logical -> native voice table.
         "voice_map": {"ru_female_adult_01": "Serena"},
         "default_voice": "Serena",
+        # I8 V1: the profile's emotion -> tempo table reaches the adapter.
+        "tempo_by_emotion": tempo_table,
     }
 
 
