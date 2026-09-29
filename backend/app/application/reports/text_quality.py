@@ -49,6 +49,7 @@ __all__ = [
     "TextQualityReport",
     "TextQualitySource",
     "flagged_issue_count",
+    "text_quality_issue_count",
     "text_quality_report",
 ]
 
@@ -138,14 +139,16 @@ def text_quality_report(
     card_values: Mapping[str, FactValue] | None,
     events: Sequence[_Event],
     checker: TextCheckerPort | None,
+    suggest: bool = True,
 ) -> TextQualityReport:
     """The section over one session's card and ДДС texts. `None` `checker` (or `card_values` and
-    no ДДС text at all) still returns a value — never raises."""
+    no ДДС text at all) still returns a value — never raises. (I7 E57) `suggest=False` is passed
+    through to both checker reads: no suggestions, and a not-`KNOWN` street is `UNKNOWN`."""
     if checker is None:
         return TextQualityReport(available=False, unavailable_message_ru=UNAVAILABLE_MESSAGE_RU)
     fields = [
-        *_card_fields(card_values, checker),
-        *_dds_fields(events, checker),
+        *_card_fields(card_values, checker, suggest),
+        *_dds_fields(events, checker, suggest),
     ]
     return TextQualityReport(
         available=True,
@@ -156,7 +159,7 @@ def text_quality_report(
 
 
 def _card_fields(
-    card_values: Mapping[str, FactValue] | None, checker: TextCheckerPort
+    card_values: Mapping[str, FactValue] | None, checker: TextCheckerPort, suggest: bool
 ) -> list[TextQualityField]:
     if not card_values:
         return []
@@ -166,19 +169,21 @@ def _card_fields(
         if not isinstance(value, str) or not value.strip():
             continue
         is_street = source is TextQualitySource.ADDRESS_STREET
-        street = checker.street_status(value) if is_street else None
+        street = checker.street_status(value, suggest=suggest) if is_street else None
         fields.append(
             TextQualityField(
                 source=source,
                 text=value,
-                misspellings=tuple(checker.misspellings(value)),
+                misspellings=tuple(checker.misspellings(value, suggest=suggest)),
                 street=street,
             )
         )
     return fields
 
 
-def _dds_fields(events: Sequence[_Event], checker: TextCheckerPort) -> list[TextQualityField]:
+def _dds_fields(
+    events: Sequence[_Event], checker: TextCheckerPort, suggest: bool
+) -> list[TextQualityField]:
     fields: list[TextQualityField] = []
     for event in events:
         source = _DDS_EVENT_SOURCES.get(event.event_type)
@@ -189,7 +194,9 @@ def _dds_fields(events: Sequence[_Event], checker: TextCheckerPort) -> list[Text
             continue
         fields.append(
             TextQualityField(
-                source=source, text=comment, misspellings=tuple(checker.misspellings(comment))
+                source=source,
+                text=comment,
+                misspellings=tuple(checker.misspellings(comment, suggest=suggest)),
             )
         )
     return fields
@@ -208,3 +215,19 @@ def flagged_issue_count(report: TextQualityReport) -> int | None:
         if field.street is not None and field.street.status is not StreetStatusKind.KNOWN:
             count += 1
     return count
+
+
+def text_quality_issue_count(
+    *,
+    card_values: Mapping[str, FactValue] | None,
+    events: Sequence[_Event],
+    checker: TextCheckerPort | None,
+) -> int | None:
+    """(I7 E57) `flagged_issue_count` of the session's report, built with `suggest=False`: the
+    count needs neither the suggestions nor `NEAR` vs `UNKNOWN` (both count one), and skipping
+    them is what makes a count per session cheap — `getMyHistory` takes one for every completed
+    session on every request, and the suggestion search there (~1 s a session) ran in the event
+    loop and stalled every other request, a login included (E57's own finding)."""
+    return flagged_issue_count(
+        text_quality_report(card_values=card_values, events=events, checker=checker, suggest=False)
+    )

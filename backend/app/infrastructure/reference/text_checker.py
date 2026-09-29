@@ -39,11 +39,13 @@ class FileTextChecker:
         self._spelling = spelling
         self._streets = streets
 
-    def misspellings(self, text: str) -> Sequence[MisspelledSpan]:
-        return self._spelling.misspellings(text)
+    def misspellings(self, text: str, *, suggest: bool = True) -> Sequence[MisspelledSpan]:
+        return self._spelling.misspellings(text, suggest=suggest)
 
-    def street_status(self, street: str, locality: str | None = None) -> StreetLookup:
-        return self._streets.status(street, locality)
+    def street_status(
+        self, street: str, locality: str | None = None, *, suggest: bool = True
+    ) -> StreetLookup:
+        return self._streets.status(street, locality, suggest=suggest)
 
     @property
     def dictionary_sha256(self) -> str:

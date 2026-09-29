@@ -16,6 +16,7 @@ lives on a second router of this module (`instructor_router`).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -321,12 +322,16 @@ async def get_lesson_report_csv(
                 "Content-Disposition": f'attachment; filename="lesson-{lesson_id}-report.csv"'
             },
         )
-    document = lesson_report_export_document(
-        view, filters_line="", generated_at=generated_at_moscow(container.clock)
+    # (I7 E57) Building and rendering the file is CPU-bound: a worker thread, never the loop.
+    document = await asyncio.to_thread(
+        lesson_report_export_document,
+        view,
+        filters_line="",
+        generated_at=generated_at_moscow(container.clock),
     )
     if format == "xlsx":
         return Response(
-            content=container.report_exporter.render_xlsx(document),
+            content=await asyncio.to_thread(container.report_exporter.render_xlsx, document),
             media_type=XLSX_MEDIA_TYPE,
             headers={
                 "Content-Disposition": content_disposition(
@@ -335,7 +340,7 @@ async def get_lesson_report_csv(
             },
         )
     return Response(
-        content=container.report_exporter.render_pdf(document),
+        content=await asyncio.to_thread(container.report_exporter.render_pdf, document),
         media_type=PDF_MEDIA_TYPE,
         headers={
             "Content-Disposition": content_disposition(

@@ -320,13 +320,20 @@ class _FakeChecker:
     dictionary_sha256 = "dict-sha"
     street_list_sha256 = "streets-sha"
 
-    def misspellings(self, text: str) -> tuple[MisspelledSpan, ...]:
+    def __init__(self) -> None:
+        self.suggest_args: list[bool] = []
+
+    def misspellings(self, text: str, *, suggest: bool = True) -> tuple[MisspelledSpan, ...]:
+        self.suggest_args.append(suggest)
         if "ошибка" not in text:
             return ()
         start = text.index("ошибка")
         return (MisspelledSpan(start=start, end=start + 6, word="ошибка"),)
 
-    def street_status(self, street: str, locality: str | None = None) -> StreetLookup:
+    def street_status(
+        self, street: str, locality: str | None = None, *, suggest: bool = True
+    ) -> StreetLookup:
+        self.suggest_args.append(suggest)
         return StreetLookup(status=StreetStatusKind.KNOWN)
 
 
@@ -344,12 +351,15 @@ async def test_the_history_carries_reaction_times_and_the_text_quality_count() -
         events=log,
         card_values={"description.text": "текст с ошибка внутри"},
     )
-    history = await GetMyHistory(FakeReader([session]), _FakeChecker())(_user(DISPATCHER))
+    checker = _FakeChecker()
+    history = await GetMyHistory(FakeReader([session]), checker)(_user(DISPATCHER))
     [row] = history.sessions
     # leg a: bound to DISPATCHER (+10s to open); leg b: unbound, DDS-covered (+5s); c: SCRIPTED.
     assert row.reaction_open_ms == round((10_000 + 5_000) / 2)
     assert row.reaction_first_status_ms == round((40_000 + 10_000) / 2)
     assert row.text_quality_issue_count == 1
+    # (I7 E57) only a count is shown: the checker's suggestion search is never asked for.
+    assert checker.suggest_args and not any(checker.suggest_args)
 
 
 async def test_the_history_s_text_quality_count_is_none_without_a_checker() -> None:

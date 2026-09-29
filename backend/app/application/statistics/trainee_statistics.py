@@ -44,6 +44,7 @@ and without its score.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -60,7 +61,7 @@ from app.application.reports.norms import (
     card_reaction_times,
 )
 from app.application.reports.pass_verdict import session_pass_verdict
-from app.application.reports.text_quality import flagged_issue_count, text_quality_report
+from app.application.reports.text_quality import text_quality_issue_count
 from app.application.sessions.queries import ForbiddenForRoleError
 from app.application.statistics.ports import (
     ScoredSession,
@@ -367,6 +368,9 @@ class GetMyHistory:
         ]
         shown_ids = {session.session_id for session in shown}
         listed = sorted(sessions, key=lambda session: session.completed_at, reverse=True)
+        # (I7 E57) The checker is CPU-bound pure Python: even the suggestion-free count runs on a
+        # worker thread, never in the event loop, so a long history cannot stall other requests.
+        issue_counts = await asyncio.to_thread(self._issue_counts, shown)
         return MyHistoryView(
             statistics=statistics_row(account, shown),
             sessions=tuple(
@@ -394,21 +398,22 @@ class GetMyHistory:
                         if session.session_id in shown_ids
                         else None
                     ),
-                    text_quality_issue_count=(
-                        flagged_issue_count(
-                            text_quality_report(
-                                card_values=session.card_values,
-                                events=session.events,
-                                checker=self._text_checker,
-                            )
-                        )
-                        if session.session_id in shown_ids
-                        else None
-                    ),
+                    text_quality_issue_count=issue_counts.get(session.session_id),
                 )
                 for session in listed
             ),
         )
+
+    def _issue_counts(self, sessions: Sequence[ScoredSession]) -> dict[SessionId, int | None]:
+        """`text_quality_issue_count` per shown session (`None`: checker unavailable)."""
+        return {
+            session.session_id: text_quality_issue_count(
+                card_values=session.card_values,
+                events=session.events,
+                checker=self._text_checker,
+            )
+            for session in sessions
+        }
 
 
 def _mean_reaction(

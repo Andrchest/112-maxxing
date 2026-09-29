@@ -14,6 +14,7 @@ own scope narrowed to lessons they created (`GetTypicalErrors`'s own reading), a
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -129,19 +130,23 @@ async def get_trainee_statistics_csv(
             media_type=CSV_MEDIA_TYPE,
             headers={"Content-Disposition": 'attachment; filename="statistics.csv"'},
         )
-    document = statistics_export_document(
-        view, filters_line=_filters_line(query), generated_at=generated_at_moscow(container.clock)
+    # (I7 E57) Building and rendering the file is CPU-bound: a worker thread, never the loop.
+    document = await asyncio.to_thread(
+        statistics_export_document,
+        view,
+        filters_line=_filters_line(query),
+        generated_at=generated_at_moscow(container.clock),
     )
     if format == "xlsx":
         return Response(
-            content=container.report_exporter.render_xlsx(document),
+            content=await asyncio.to_thread(container.report_exporter.render_xlsx, document),
             media_type=XLSX_MEDIA_TYPE,
             headers={
                 "Content-Disposition": content_disposition("Статистика.xlsx", "statistics.xlsx")
             },
         )
     return Response(
-        content=container.report_exporter.render_pdf(document),
+        content=await asyncio.to_thread(container.report_exporter.render_pdf, document),
         media_type=PDF_MEDIA_TYPE,
         headers={"Content-Disposition": content_disposition("Статистика.pdf", "statistics.pdf")},
     )
@@ -203,19 +208,23 @@ async def get_trainee_rating_csv(
             media_type=CSV_MEDIA_TYPE,
             headers={"Content-Disposition": 'attachment; filename="trainee-rating.csv"'},
         )
-    document = trainee_rating_export_document(
-        view, filters_line=_filters_line(query), generated_at=generated_at_moscow(container.clock)
+    # (I7 E57) Building and rendering the file is CPU-bound: a worker thread, never the loop.
+    document = await asyncio.to_thread(
+        trainee_rating_export_document,
+        view,
+        filters_line=_filters_line(query),
+        generated_at=generated_at_moscow(container.clock),
     )
     if format == "xlsx":
         return Response(
-            content=container.report_exporter.render_xlsx(document),
+            content=await asyncio.to_thread(container.report_exporter.render_xlsx, document),
             media_type=XLSX_MEDIA_TYPE,
             headers={
                 "Content-Disposition": content_disposition("Рейтинг.xlsx", "trainee-rating.xlsx")
             },
         )
     return Response(
-        content=container.report_exporter.render_pdf(document),
+        content=await asyncio.to_thread(container.report_exporter.render_pdf, document),
         media_type=PDF_MEDIA_TYPE,
         headers={"Content-Disposition": content_disposition("Рейтинг.pdf", "trainee-rating.pdf")},
     )

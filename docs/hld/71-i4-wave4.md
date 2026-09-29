@@ -2125,3 +2125,62 @@ query params as `getTraineeStatistics`); `getActivityHeatmap`
 
 **Not built (owner questions).** None — the brief's own scope, backend rule and «пусто → сообщение,
 никогда не рисуй пустой SVG» text were all explicit; nothing here needed a product-level guess.
+## 71.19.57 I7 E57 — `getMyHistory` no longer stalls the backend (scenario S15); no CPU work in the event loop
+
+- **Symptom**: S15 failed every time on the demo at S15.10 (or S15.22): the instructor's (or
+  admin's) «Войти» stayed «Вход…» and the page stayed on `/login`, although a direct API login
+  takes 0.1 s.
+- **Root cause**: `GetMyHistory` (I7 E50) built the full «Грамотность и адреса» report for every
+  completed session of the caller on every `GET /api/v1/me/history`, only to keep
+  `flagged_issue_count` of it. The full report asks the ru_RU dictionary (`spylls`, pure Python)
+  for up to three suggestions per misspelled word (~150 ms each) and runs `difflib`'s close-match
+  search for a non-`KNOWN` street — all synchronous inside the async handler, so in the event loop.
+  With the demo's 13 trainee sessions that was ~5 s per request (profile: 94 % in
+  `spylls … suggest`), during which the single-process backend answered nothing. S15 opens
+  «Мои результаты» twice (1920 and 390 px; the aborted first request still runs to the end), then
+  the next role signs in within ~0.1 s — its login POST waited behind ~10 s of blocked loop and
+  missed the 5 s step limit. The login throttling of E51 was not involved. At 21e3dce S15 passed
+  only because the local preview's fresh database had few sessions.
+- **Fix** (no score/UI change, same response body — checked byte-for-byte against the unpatched
+  backend on the same data): `TextCheckerPort.misspellings` and `street_status` take
+  `suggest: bool = True` (keyword-only); `suggest=False` skips the suggestion search (spans with no
+  suggestions) and the close-match search (a street the directory does not hold is `UNKNOWN`,
+  never `NEAR`). `text_quality_report(..., suggest=...)` passes it through, and the new
+  `text_quality_issue_count(card_values, events, checker)` is `flagged_issue_count` of the report
+  built with `suggest=False` — the count treats `NEAR` and `UNKNOWN` alike, so it is unchanged.
+  `GetMyHistory` uses it. `getMyHistory` on the demo data: 5.1 s → 0.05–0.2 s.
+- **Follow-up (manager): no CPU-bound work in the event loop on these paths.** All of these now run
+  on a worker thread through `asyncio.to_thread` (stdlib, so `check_imports` is unaffected), and
+  the results are unchanged:
+  - `GetSessionReport` builds `text_quality`, suggestions included, on a worker thread. So does
+    `getLessonReport`, which reads one such report per card, and so does every export built on them.
+  - `GetMyHistory` computes its suggestion-free counts on a worker thread.
+  - The E46b routers (`getSessionReportExport`, `getLessonReportCsv`, `getTraineeStatisticsCsv`,
+    `getTraineeRatingCsv`) build the export document and render the xlsx/pdf on a worker thread.
+    `render_pdf` holds a module lock, because ReportLab's registered fonts are process-global.
+  - The argon2id `verify` in `Login` and the `hash` in `CreateUser`/`ResetPassword` (~55 ms each)
+    run on a worker thread too.
+- `SpellingDictionary` caches suggestions (`functools.lru_cache`, 4096 words), and
+  `StreetDirectory` caches close matches (4096 keys). Both are pure functions of the pinned data
+  (INV 9), so a report read again, or a typo repeated across cards, is computed once per process.
+- **Limit, recorded**: a worker thread still shares the GIL. While a cold, typo-heavy report runs
+  (spylls is pure Python), the loop's own throughput drops. `health/live` stays under ~0.6 s
+  (2.7 s before), but a DB-heavy request such as a login takes ~2.3–2.5 s on a demo-sized load
+  (3.1 s before; 0.1 s when nothing is running). Full isolation would need a process pool for the
+  checker, at about +170 MB RSS per worker process: an open decision, not built.
+- **Numbers** (clone of the demo DB, the lesson whose card has 9 misspellings, health probed every
+  50 ms, one instructor login 0.3 s in):
+  - Before: the lesson report took 3.1–3.4 s and `health/live` peaked at 2.7 s. The same held for
+    its xlsx and pdf.
+  - After, first (cold) report: `health/live` peaked at 0.25–0.59 s.
+  - After, repeated reports, xlsx and pdf: 0.5–0.95 s, `health/live` peaked at ≤ 0.06 s, and the
+    login took 0.05–0.65 s.
+- **Tests**: `test_text_quality.py` (the count asks the checker with `suggest=False` only and
+  equals the full report's count; `None` without a checker), `test_trainee_statistics.py` (the
+  history never asks for suggestions), `test_text_checker.py` (real data: `suggest=False` flags the
+  same words with no suggestions; «ул. Зверенецкая» is `UNKNOWN`, a known street stays `KNOWN`;
+  a repeated check returns the same cached answer). `tests/api/reports/test_report_off_loop.py`
+  (real ASGI app, integration): a stand-in checker spends 0.4 s per call inside `getSessionReport`
+  (a `time.sleep`, so the bound does not depend on CPU load under `-n 4`). While it is still inside
+  the checker, `health/live` on the same loop must answer in < 0.5 s. The test fails on the in-loop
+  version ("the text check ran inside the event loop").

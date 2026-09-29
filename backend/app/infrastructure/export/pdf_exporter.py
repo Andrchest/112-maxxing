@@ -10,6 +10,7 @@ comma) so a number reads the same on the screen, in the CSV and on this page.
 
 from __future__ import annotations
 
+import threading
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
@@ -39,6 +40,9 @@ _FONTS_DIR = Path(__file__).parent / "fonts"
 _FONT_REGULAR = "DejaVuSans"
 _FONT_BOLD = "DejaVuSans-Bold"
 _FONTS_REGISTERED = False
+_LOCK = threading.Lock()
+"""(I7 E57) The routers call `render_pdf` on a worker thread (`asyncio.to_thread`); ReportLab's
+registered fonts are process-global and not documented as thread-safe, so one render at a time."""
 
 
 def _register_fonts() -> None:
@@ -52,6 +56,11 @@ def _register_fonts() -> None:
 
 def render_pdf(document: ExportDocument) -> bytes:
     """A4, the document's tables one after another, repeating headers, page numbers."""
+    with _LOCK:
+        return _render_pdf(document)
+
+
+def _render_pdf(document: ExportDocument) -> bytes:
     _register_fonts()
     buffer = BytesIO()
     margin = 1.5 * cm

@@ -20,6 +20,7 @@ dictionary is loaded once and reused (module-level cache, keyed by directory, mi
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 import threading
@@ -35,6 +36,10 @@ __all__ = ["SpellingDictionary", "SpellingDictionaryError"]
 
 _WORD = re.compile(r"[A-Za-zА-Яа-яЁё]+")
 _MAX_SUGGESTIONS = 3
+_SUGGESTION_CACHE_WORDS = 4096
+"""(I7 E57) Words whose suggestions are kept per dictionary: `suggest` is ~150 ms a word in
+pure Python and a pure function of the word (INV 9), so a report read twice, or a lesson's
+cards repeating a typo, pay for it once."""
 
 _CACHE: dict[Path, SpellingDictionary] = {}
 _LOCK = threading.Lock()
@@ -50,26 +55,33 @@ class SpellingDictionary:
     def __init__(self, dictionary: Dictionary, *, sha256: str) -> None:
         self._dictionary = dictionary
         self._sha256 = sha256
+        self._suggestions = functools.lru_cache(maxsize=_SUGGESTION_CACHE_WORDS)(
+            self._suggest_uncached
+        )
 
     @property
     def sha256(self) -> str:
         """sha256 of `ru_RU.aff` and `ru_RU.dic`, concatenated in that order."""
         return self._sha256
 
-    def misspellings(self, text: str) -> tuple[MisspelledSpan, ...]:
-        """Every word `_WORD` finds that the dictionary does not `lookup`, in reading order."""
+    def misspellings(self, text: str, *, suggest: bool = True) -> tuple[MisspelledSpan, ...]:
+        """Every word `_WORD` finds that the dictionary does not `lookup`, in reading order.
+        (I7 E57) `suggest=False` never calls `Dictionary.suggest` (the expensive part)."""
         spans: list[MisspelledSpan] = []
         for match in _WORD.finditer(text):
             word = match.group(0)
             if self._dictionary.lookup(word):
                 continue
-            suggestions = tuple(_first(self._dictionary.suggest(word), _MAX_SUGGESTIONS))
+            suggestions = self._suggestions(word) if suggest else ()
             spans.append(
                 MisspelledSpan(
                     start=match.start(), end=match.end(), word=word, suggestions=suggestions
                 )
             )
         return tuple(spans)
+
+    def _suggest_uncached(self, word: str) -> tuple[str, ...]:
+        return tuple(_first(self._dictionary.suggest(word), _MAX_SUGGESTIONS))
 
     @classmethod
     def load(cls, directory: Path) -> SpellingDictionary | None:

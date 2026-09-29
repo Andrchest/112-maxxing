@@ -65,6 +65,7 @@ after `score_report` is fixed, from the same rows the report already shows this 
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -327,6 +328,17 @@ class GetSessionReport:
         ]
         visible_report = _visible_report(score_report, scenario_version, visibility)
         rules_by_id = {rule.rule_id: rule for rule in scenario_version.scoring_rules}
+        # (I7 E57) The spelling/street check is CPU-bound pure Python (spylls suggestions ~150 ms a
+        # misspelled word, difflib over the street directory): run on a worker thread, never in
+        # the event loop, so a typo-heavy report — or a lesson report, one of these per card —
+        # cannot stall every other request (a login included). Same inputs, same result.
+        text_quality = await asyncio.to_thread(
+            _visible_text_quality,
+            card=card,
+            events=events,
+            visibility=visibility,
+            checker=self._text_checker,
+        )
 
         return SessionReportView(
             session_id=session_id,
@@ -376,9 +388,7 @@ class GetSessionReport:
             # (I4 E35) Built from `card`/`events` alone, after `score_report`/`checksum` are
             # already fixed above — the checker's presence can only add or remove `text_quality`
             # itself, never move the score or the checksum (§71.12's own acceptance item).
-            text_quality=_visible_text_quality(
-                card=card, events=events, visibility=visibility, checker=self._text_checker
-            ),
+            text_quality=text_quality,
             # (I7 E49, Q-E31-1) The session's actual recorded timers — the schema mapper uses this
             # to show a `DEADLINE` rule's real norm in its text, never to move the score.
             timers=recorded_timers(events, scenario_version.card_timers),

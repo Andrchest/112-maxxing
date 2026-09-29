@@ -17,6 +17,7 @@ from app.application.reports.text_quality import (
     TextQualitySource,
     flagged_issue_count,
     is_operator_source,
+    text_quality_issue_count,
     text_quality_report,
 )
 from app.domain.events.types import EventType
@@ -30,20 +31,31 @@ class _Event:
 
 class FakeChecker:
     """`misspellings` flags any word literally spelled `"ошибка"`; `street_status` is `KNOWN`
-    for `"Известная улица"` and `NEAR` (one suggestion) for everything else."""
+    for `"Известная улица"` and `NEAR` (one suggestion) for everything else — `UNKNOWN` with
+    `suggest=False`, as the real adapter answers. Every `suggest` it was asked with is recorded."""
 
     dictionary_sha256 = "dict-sha"
     street_list_sha256 = "streets-sha"
 
-    def misspellings(self, text: str) -> tuple[MisspelledSpan, ...]:
+    def __init__(self) -> None:
+        self.suggest_args: list[bool] = []
+
+    def misspellings(self, text: str, *, suggest: bool = True) -> tuple[MisspelledSpan, ...]:
+        self.suggest_args.append(suggest)
         if "ошибка" not in text:
             return ()
         start = text.index("ошибка")
-        return (MisspelledSpan(start=start, end=start + 6, word="ошибка", suggestions=("верно",)),)
+        suggestions = ("верно",) if suggest else ()
+        return (MisspelledSpan(start=start, end=start + 6, word="ошибка", suggestions=suggestions),)
 
-    def street_status(self, street: str, locality: str | None = None) -> StreetLookup:
+    def street_status(
+        self, street: str, locality: str | None = None, *, suggest: bool = True
+    ) -> StreetLookup:
+        self.suggest_args.append(suggest)
         if street == "Известная улица":
             return StreetLookup(status=StreetStatusKind.KNOWN)
+        if not suggest:
+            return StreetLookup(status=StreetStatusKind.UNKNOWN)
         return StreetLookup(status=StreetStatusKind.NEAR, suggestions=("Известная улица",))
 
 
@@ -161,3 +173,34 @@ def test_flagged_issue_count_is_zero_with_nothing_to_flag() -> None:
         card_values={"address.street": "Известная улица"}, events=(), checker=FakeChecker()
     )
     assert flagged_issue_count(report) == 0
+
+
+# -- text_quality_issue_count (I7 E57) ---------------------------------------------------------
+
+
+def test_the_issue_count_asks_the_checker_for_no_suggestions() -> None:
+    """E57: the count is taken per session on every `getMyHistory`; the suggestion search is the
+    expensive part and the count never shows it, so every checker read passes `suggest=False`."""
+    checker = FakeChecker()
+    count = text_quality_issue_count(
+        card_values={"address.street": "Незнакомая улица", "description.text": "ошибка"},
+        events=(_Event(EventType.DDS_INCIDENT_CLOSED, {"comment_ru": "ещё ошибка"}),),
+        checker=checker,
+    )
+    assert count == 3
+    # the street: spelling + directory; the description; the ДДС comment — all four without.
+    assert checker.suggest_args == [False, False, False, False]
+
+
+def test_the_issue_count_equals_the_full_report_s_count() -> None:
+    """`NEAR` (full report) and `UNKNOWN` (no suggestions) both count one: same number."""
+    card_values = {"address.street": "Незнакомая улица", "description.text": "текст с ошибка"}
+    events = (_Event(EventType.DDS_SERVICE_STATUS_SET, {"comment_ru": "ошибка"}),)
+    full = text_quality_report(card_values=card_values, events=events, checker=FakeChecker())
+    assert text_quality_issue_count(
+        card_values=card_values, events=events, checker=FakeChecker()
+    ) == flagged_issue_count(full)
+
+
+def test_the_issue_count_is_none_without_a_checker() -> None:
+    assert text_quality_issue_count(card_values=None, events=(), checker=None) is None

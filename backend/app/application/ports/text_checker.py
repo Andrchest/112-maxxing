@@ -70,12 +70,23 @@ class StreetLookup:
 class TextCheckerPort(Protocol):
     """Read access to the ru_RU dictionary and the Moscow street directory."""
 
-    def misspellings(self, text: str) -> Sequence[MisspelledSpan]:
-        """Every word of `text` the dictionary does not recognise, in reading order."""
+    def misspellings(self, text: str, *, suggest: bool = True) -> Sequence[MisspelledSpan]:
+        """Every word of `text` the dictionary does not recognise, in reading order.
+
+        (I7 E57) `suggest=False` skips the suggestion search — every span's `suggestions` is
+        empty. That search is the one expensive step (hunspell's, in pure Python: ~150 ms a
+        misspelled word, against under 0.1 ms a lookup), so a caller that only counts the spans
+        passes it."""
         ...
 
-    def street_status(self, street: str, locality: str | None = None) -> StreetLookup:
-        """Whether `street` is a known Moscow street name (§71.12; `locality` is unused today)."""
+    def street_status(
+        self, street: str, locality: str | None = None, *, suggest: bool = True
+    ) -> StreetLookup:
+        """Whether `street` is a known Moscow street name (§71.12; `locality` is unused today).
+
+        (I7 E57) `suggest=False` skips the close-match search over the whole directory: a street
+        it does not hold is then `UNKNOWN`, never `NEAR` — for a caller that only asks "is it
+        `KNOWN`"."""
         ...
 
     @property

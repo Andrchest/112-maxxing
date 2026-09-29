@@ -109,6 +109,36 @@ def test_the_organizer_verbatim_ticket_spelling_is_flagged_never_corrected() -> 
     assert "Зверинецкая улица" in lookup.suggestions
 
 
+def test_without_suggestions_the_same_words_are_flagged_with_none_suggested() -> None:
+    """I7 E57: `suggest=False` changes only the suggestions, never which words are flagged."""
+    checker = FileTextChecker.load()
+    assert checker is not None
+    full = checker.misspellings("пажар в подьезде")
+    bare = checker.misspellings("пажар в подьезде", suggest=False)
+    assert [(s.start, s.end, s.word) for s in bare] == [(s.start, s.end, s.word) for s in full]
+    assert all(span.suggestions == () for span in bare)
+
+
+def test_without_suggestions_a_near_street_is_unknown_and_a_known_one_stays_known() -> None:
+    """I7 E57: no close-match search — the organizer-verbatim «ул. Зверенецкая» (`NEAR` above)
+    is `UNKNOWN`, still never `KNOWN`."""
+    checker = FileTextChecker.load()
+    assert checker is not None
+    near = checker.street_status("ул. Зверенецкая", suggest=False)
+    assert (near.status, near.suggestions) == (StreetStatusKind.UNKNOWN, ())
+    known = checker.street_status("Дубининская улица", suggest=False)
+    assert known.status is StreetStatusKind.KNOWN
+
+
+def test_a_repeated_check_gives_the_same_suggestions_from_the_cache() -> None:
+    """I7 E57: suggestions and close matches are cached per word/key — a pure function of the
+    data (INV 9), so the second answer must equal the first, suggestions and all."""
+    checker = FileTextChecker.load()
+    assert checker is not None
+    assert checker.misspellings("пажар в подьезде") == checker.misspellings("пажар в подьезде")
+    assert checker.street_status("ул. Зверенецкая") == checker.street_status("ул. Зверенецкая")
+
+
 def test_the_data_sha_is_recorded_and_matches_the_files_on_disk() -> None:
     """§71.12's acceptance item: the data sha is recorded."""
     checker = FileTextChecker.load()

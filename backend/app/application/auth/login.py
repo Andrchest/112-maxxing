@@ -19,6 +19,7 @@ the request takes the same work either way and the response time is not an oracl
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from app.application.ports.password_hasher import PasswordHasher
@@ -90,7 +91,8 @@ class Login:
             await uow.commit()
 
         digest = user.password_hash if user is not None else _DUMMY_DIGEST
-        verified = self._hasher.verify(digest, command.password)
+        # (I7 E57) argon2id is ~50 ms of CPU by design: a worker thread, never the event loop.
+        verified = await asyncio.to_thread(self._hasher.verify, digest, command.password)
         if user is None or not user.is_active or not verified:
             raise InvalidCredentialsError()
 

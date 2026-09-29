@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import csv
 import difflib
+import functools
 import hashlib
 import re
 import threading
@@ -105,23 +106,36 @@ class StreetDirectory:
         self._by_key = by_key
         self._keys = tuple(by_key)
         self._sha256 = sha256
+        # (I7 E57) The close-match search scans the whole directory (difflib, pure Python):
+        # kept per normalised key, the same answer every time (INV 9).
+        self._close_matches = functools.lru_cache(maxsize=4096)(self._close_uncached)
 
     @property
     def sha256(self) -> str:
         return self._sha256
 
-    def status(self, street: str, locality: str | None = None) -> StreetLookup:
-        """`locality` is accepted, not used (module doc) — the one directory covers Moscow."""
+    def status(
+        self, street: str, locality: str | None = None, *, suggest: bool = True
+    ) -> StreetLookup:
+        """`locality` is accepted, not used (module doc) — the one directory covers Moscow.
+        (I7 E57) `suggest=False` stops before the close-match search: not `KNOWN` is `UNKNOWN`."""
         if not street.strip():
             return StreetLookup(status=StreetStatusKind.UNKNOWN)
         key = _normalise(street)
         if key in self._by_key:
             return StreetLookup(status=StreetStatusKind.KNOWN)
-        close = difflib.get_close_matches(key, self._keys, n=_MAX_SUGGESTIONS, cutoff=_NEAR_CUTOFF)
+        if not suggest:
+            return StreetLookup(status=StreetStatusKind.UNKNOWN)
+        close = self._close_matches(key)
         if close:
             suggestions = tuple(self._by_key[match][0] for match in close)
             return StreetLookup(status=StreetStatusKind.NEAR, suggestions=suggestions)
         return StreetLookup(status=StreetStatusKind.UNKNOWN)
+
+    def _close_uncached(self, key: str) -> tuple[str, ...]:
+        return tuple(
+            difflib.get_close_matches(key, self._keys, n=_MAX_SUGGESTIONS, cutoff=_NEAR_CUTOFF)
+        )
 
     @classmethod
     def load(cls, directory: Path) -> StreetDirectory | None:

@@ -12,6 +12,8 @@ concurrent duplicate still surfaces through `uq_users_username` at the database 
 
 from __future__ import annotations
 
+import asyncio
+
 from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.id_generator import IdGenerator
 from app.application.ports.password_hasher import PasswordHasher
@@ -51,12 +53,14 @@ class CreateUser:
         async with self._unit_of_work() as uow:
             if await uow.users.get_by_username(username) is not None:
                 raise UsernameTakenError(username)
+            # (I7 E57) argon2id is ~50 ms of CPU by design: a worker thread, never the loop.
+            digest = await asyncio.to_thread(self._hasher.hash, password)
             user = await uow.users.create(
                 user_id=UserId(self._ids.new()),
                 username=username,
                 display_name_ru=display_name_ru,
                 user_role=user_role,
-                password_hash=self._hasher.hash(password),
+                password_hash=digest,
             )
             await uow.commit()
         for field in ("username", "display_name_ru", "user_role", "is_active"):

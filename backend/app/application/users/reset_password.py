@@ -11,6 +11,8 @@ nor demoting an account.
 
 from __future__ import annotations
 
+import asyncio
+
 from app.application.ports.audit_changes import NO_AUDIT_CHANGES, AuditChangeCollector
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.unit_of_work import UnitOfWorkFactory
@@ -42,6 +44,8 @@ class ResetPassword:
             target = await uow.users.get(user_id)
             if target is None:
                 raise UserNotFoundError(user_id)
-            await uow.users.set_password_hash(user_id, self._hasher.hash(password))
+            # (I7 E57) argon2id is ~50 ms of CPU by design: a worker thread, never the loop.
+            digest = await asyncio.to_thread(self._hasher.hash, password)
+            await uow.users.set_password_hash(user_id, digest)
             await uow.commit()
         self._changes.record_secret("user", "password")
