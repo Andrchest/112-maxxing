@@ -22,7 +22,7 @@ node "server (docker compose)" as srv {
   component "frontend\nVite dev :5173 or built assets" as fe
   component "backend :8100\n/api/*, /api/v1/ws (upgrade)" as be
   component "livekit :7880 signalling\n:7882/udp media" as lk
-  component "sip-gateway :5060\n(plain SIP, Q-E15-2)" as sip
+  component "sip-gateway :5060 udp/tcp (plain)\n:5061 SIP over TLS + SRTP\n(I7 E44, same cert)" as sip
 }
 
 browser --> edge : HTTPS / WSS 443
@@ -30,8 +30,9 @@ edge --> fe : /  (http, inside compose)
 edge --> be : /api, /api/v1/ws
 edge --> lk : /rtc -> livekit:7880\n(SIM_LIVEKIT_PUBLIC_URL=wss://<host>)
 browser <--> lk : WebRTC media UDP 7882\n(DTLS-SRTP, already encrypted)
-phone --> sip : SIP 5060 / RTP (unchanged)
+phone --> sip : SIP-TLS 5061 / SRTP (SDES)\nor plain SIP 5060 / RTP (Q-I7-E44-1)
 ca ..> browser : trusts the edge cert
+ca ..> phone : trusts the gateway cert
 
 note right of edge
   First step of E27: pull the Caddy image within

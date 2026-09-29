@@ -3,7 +3,9 @@
 Parse and serialise requests and responses; the header shapes a registrar and a UAS need (`Via`
 with `rport`/`branch`/`received`, `From`/`To` tags, `CSeq`, `Contact`, `Expires`,
 `Content-Length`); Digest challenge/response (MD5, `qop=auth`, RFC 2617 §3.2.2); SDP offer/answer
-over the first audio m-line only (RFC 3264); and the Content-Length framing a TCP stream needs.
+over the first audio m-line only (RFC 3264) — its transport protocol (`RTP/AVP` or `RTP/SAVP`) and
+its `a=crypto` lines (I7 E44; negotiated in `srtp.py`); and the Content-Length framing a TCP or TLS
+stream needs.
 
 Nothing here does I/O. A message that does not parse raises `SipParseError`, which carries the
 part that *did* parse, so the listener can still answer `400 Bad Request` to a broken request
@@ -637,6 +639,16 @@ class SdpMedia:
     rtpmap: dict[int, str]
     ptime: int | None = None
     direction: str = "sendrecv"
+    #: I7 E44: the m-line's transport protocol (`RTP/AVP`, `RTP/SAVP`, …) and its raw `a=crypto`
+    #: values (RFC 4568), in offer order.
+    protocol: str = "RTP/AVP"
+    crypto: tuple[str, ...] = ()
+
+    def __repr__(self) -> str:  # an `a=crypto` value carries a key: never in a log line
+        return (
+            f"SdpMedia(address={self.address!r}, port={self.port}, protocol={self.protocol!r}, "
+            f"payload_types={self.payload_types}, crypto_lines={len(self.crypto)})"
+        )
 
     def codec_name(self, payload_type: int) -> str | None:
         name = self.rtpmap.get(payload_type) or STATIC_RTPMAP.get(payload_type)
@@ -655,6 +667,8 @@ def parse_sdp(body: bytes) -> SdpMedia:
     rtpmap: dict[int, str] = {}
     ptime: int | None = None
     direction = "sendrecv"
+    protocol = "RTP/AVP"
+    crypto: list[str] = []
     in_audio = False
     seen_audio = False
     for raw in text.replace("\r\n", "\n").split("\n"):
@@ -673,6 +687,7 @@ def parse_sdp(body: bytes) -> SdpMedia:
                 if len(fields) < 4:
                     raise ValueError("audio m-line too short")
                 port = int(fields[1])
+                protocol = fields[2]
                 payload_types = tuple(int(pt) for pt in fields[3:])
         elif kind == "c":
             fields = value.split()
@@ -689,6 +704,8 @@ def parse_sdp(body: bytes) -> SdpMedia:
                 rtpmap[int(pt_text)] = encoding.strip()
             elif name == "ptime" and in_audio:
                 ptime = int(float(attr))
+            elif name == "crypto" and in_audio:
+                crypto.append(attr.strip())
             elif name in ("sendrecv", "sendonly", "recvonly", "inactive"):
                 direction = name
     address = media_address or session_address
@@ -701,6 +718,8 @@ def parse_sdp(body: bytes) -> SdpMedia:
         rtpmap=rtpmap,
         ptime=ptime,
         direction=direction,
+        protocol=protocol,
+        crypto=tuple(crypto),
     )
 
 
@@ -713,7 +732,10 @@ def build_sdp(
     version: int = 1,
     ptime: int = 20,
     telephone_event: int | None = None,
+    protocol: str = "RTP/AVP",
+    crypto: tuple[str, ...] = (),
 ) -> bytes:
+    """One audio m-line; `protocol` / `crypto` (raw `a=crypto` values) for SRTP (I7 E44)."""
     formats = list(payload_types) + ([telephone_event] if telephone_event is not None else [])
     lines = [
         "v=0",
@@ -721,7 +743,7 @@ def build_sdp(
         "s=sim112",
         f"c=IN IP4 {address}",
         "t=0 0",
-        f"m=audio {port} RTP/AVP {' '.join(str(pt) for pt in formats)}",
+        f"m=audio {port} {protocol} {' '.join(str(pt) for pt in formats)}",
     ]
     for pt in payload_types:
         lines.append(f"a=rtpmap:{pt} {STATIC_RTPMAP[pt]}")
@@ -730,6 +752,7 @@ def build_sdp(
             f"a=rtpmap:{telephone_event} telephone-event/8000",
             f"a=fmtp:{telephone_event} 0-16",
         ]
+    lines += [f"a=crypto:{value}" for value in crypto]
     lines += [f"a=ptime:{ptime}", "a=sendrecv"]
     return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 

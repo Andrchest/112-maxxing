@@ -172,8 +172,9 @@ make settings-import FILE=./settings.xml OUT=./other.env     # другой пу
 
 ## SIP gateway (I3 E6a — `docs/hld/80-telephony.md` §80.2, §80.8)
 
-**Ports** (prove them free first: `ss -lntup | awk '$5 ~ /:(5060|8114|20[01][0-9][0-9])$/'`
-must print nothing): SIP **5060** udp+tcp, RTP **20000–20199**/udp, health **8114** on
+**Ports** (prove them free first: `ss -lntup | awk '$5 ~ /:(5060|5061|8114|20[01][0-9][0-9])$/'`
+must print nothing): SIP **5060** udp+tcp, SIP over TLS **5061**/tcp (I7 E44, «Шифрование SIP»
+below), RTP **20000–20199**/udp, health **8114** on
 `127.0.0.1`. Never 8000/8001/8011/8012/5000 (the entry point refuses them). Settings, all from the
 environment or `.env`: `SIM_SIP_PASSWORD` (required, never committed; [credential redacted] in
 every document), `SIM_SIP_REALM` (default `sim112`), `SIM_SIP_PORT`, `SIM_SIP_RTP_PORT_RANGE`,
@@ -239,6 +240,53 @@ The gateway above, wired to the backend: a trainee's registered softphone places
   although the softphone is registered = `SIM_TELEPHONY_ENDPOINTS` lacks `sip`, or the Redis key
   expired (re-register); a foreign softphone: account `sip:<login>@<realm>`, outbound proxy
   `<host>:5060`, the user's SIP password, G.711.
+
+## Шифрование SIP (I7 E44 — `docs/hld/71-i4-wave4.md` §71.19.44, Q-E15-2, ТЗ ¶293)
+
+Шлюз принимает **SIP поверх TLS** на порту **5061** (TCP) с тем же сертификатом, что и HTTPS
+(`make certs`, «HTTPS в классе»). Звонок, пришедший по TLS, идёт только с **SRTP** — шифрованием
+голоса (ключи SDES, RFC 4568, набор `AES_CM_128_HMAC_SHA1_80`); предложение без SRTP получает
+`488 Not Acceptable Here`. Обычный SIP на 5060 (udp/tcp, голос без шифрования) пока остаётся для
+телефонов, которые не умеют TLS. Выключить его — `SIM_SIP_TRANSPORTS=tls`; это решение владельца
+(Q-I7-E44-1), по умолчанию `tls,udp,tcp`.
+
+**Сервер.**
+
+1. Сертификат: `make certs` (или `infra/scripts/make-certs.sh --ip <IP сервера> --host <имя>`).
+   Адрес, который вписывают в софтфон, должен быть среди `--ip` / `--host`.
+2. Запуск: `docker compose -f infra/docker-compose.yml --env-file .env --profile sip up -d
+   sip-gateway`. Compose монтирует только `infra/certs/server.crt` и `server.key` (ключ CA в
+   контейнер не попадает); пока `make certs` не запускался, `up` останавливается с ошибкой,
+   называющей отсутствующий файл. Запуск на хосте: `SIM_SIP_TLS_CERT=infra/certs/server.crt
+   SIM_SIP_TLS_KEY=infra/certs/server.key uv run python -m voice_agent.sip_gateway`.
+3. Проверка: `curl -s http://127.0.0.1:8114/health` → `"sip_tls_port": 5061`,
+   `"transports": ["tls", "udp", "tcp"]`, `"srtp": "required over TLS"`; с любой машины
+   `openssl s_client -connect <IP сервера>:5061 -CAfile infra/certs/ca.crt </dev/null` →
+   `Verify return code: 0 (ok)`. Строка журнала «TLS is OFF» значит, что сертификат не найден или
+   не читается: шлюз работает только по обычному SIP (а при `SIM_SIP_TRANSPORTS=tls` не
+   запускается вовсе).
+
+**Софтфон** (названия пунктов зависят от программы):
+
+- транспорт **TLS**, сервер (прокси) `<IP или имя сервера>:5061`, учётная запись
+  `sip:<логин>@<realm>`, пароль — как раньше (`SIM_SIP_PASSWORD` или личный SIP-пароль);
+- шифрование голоса **SRTP, обязательно** (Mandatory), ключи **SDES** (не ZRTP и не DTLS-SRTP),
+  набор `AES_CM_128_HMAC_SHA1_80`; кодек G.711 (A-law или μ-law);
+- корневой сертификат: установите `infra/certs/ca.crt` в доверенные корневые сертификаты
+  системы (как в «HTTPS в классе», шаг 3). Если софтфон ведёт свой список сертификатов,
+  импортируйте `ca.crt` в него. Проверку сертификата сервера не отключайте.
+
+Наш софтфон: `uv run python -m voice_agent.tools.softphone --transport tls --server
+<IP сервера>:5061 --ca infra/certs/ca.crt --register <логин> --dial 999 --duration 5` печатает
+`media: SRTP`.
+
+**Симптомы.** `488` на звонок по TLS — софтфон предлагает голос без SRTP (SRTP выключен или
+«необязателен», выбран ZRTP / DTLS-SRTP вместо SDES, или другой набор шифров). `488` на звонок по
+5060 с включённым SRTP — ключи по открытому SIP не принимаются: переключите транспорт на TLS.
+Регистрация по TLS не проходит (ошибка сертификата, соединение сразу рвётся) — не установлен
+`ca.crt` или адрес в софтфоне не входит в сертификат: перевыпустите его `make-certs.sh --ip …`
+(CA сохранится). Звонок соединился, но тишина — закрыт диапазон 20000–20199/udp или не задан
+`SIM_SIP_MEDIA_IP`.
 
 ## E2E screenshot comparison (I3 E7a — the reference look, D20, C9)
 
@@ -493,6 +541,6 @@ UI_BASE=https://<LAN IP>:<edge port> UI_INSECURE_BASE=http://<non-loopback Vite 
 SIM_EDGE_CA_CERT=../infra/certs/ca.crt npx playwright test e2e/tls-edge.e2e.ts
 ```
 
-**What this does not cover.** SIP TLS/SRTP (Q-E15-2): `sip-gateway` stays plain SIP/RTP and is not
-behind the edge. The CA install is a manual step on each workstation. A second physical device
+**What this does not cover.** SIP: `sip-gateway` is not behind the edge; it terminates its own
+SIP over TLS + SRTP on 5061 with the same certificate («Шифрование SIP» below). The CA install is a manual step on each workstation. A second physical device
 was not tested; the same box through its LAN IP stands in for the secure-context rule (§71.15).

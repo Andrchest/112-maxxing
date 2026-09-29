@@ -116,7 +116,8 @@ def test_the_backend_trusts_the_edge_forwarded_headers_and_vite_gets_its_allowed
 
 
 def test_the_sip_gateway_is_not_behind_the_edge(compose_services: dict[str, Any]) -> None:
-    """Q-E15-2: SIP TLS/SRTP is an owner question; the gateway keeps its plain ports."""
+    """Q-E15-2: the gateway terminates its own SIP over TLS (I7 E44, 5061) beside its plain
+    ports; it is never proxied by the edge."""
     assert "sip-gateway" not in compose_services["edge"]["depends_on"]
     assert "5060:5060/udp" in compose_services["sip-gateway"]["ports"]
 

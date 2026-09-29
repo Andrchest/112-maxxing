@@ -8,6 +8,11 @@ PT 8 (PCMA) preferred, PT 0 (PCMU) accepted, `telephone-event` (any other PT) ig
 Ports come from `SIM_SIP_RTP_PORT_RANGE` ("20000-20199": 100 concurrent calls at an even RTP port
 each, the odd neighbour reserved for RTCP, which this stack does not send). `port_range=None`
 binds an ephemeral port — what the gate tests use.
+
+SRTP (I7 E44): a session given an `SrtpContext` (`srtp.py`, libsrtp) protects every packet it sends
+and authenticates + decrypts every packet it receives; one that fails is dropped and counted, and
+never latches the far address. `require_srtp` (a call whose INVITE came over TLS) makes the session
+send and accept nothing until that context is set — no plaintext fallback.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from voice_agent.transport.sip.message import PT_PCMA, PT_PCMU
+from voice_agent.transport.sip.srtp import SrtpContext, SrtpError
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
@@ -351,6 +357,11 @@ class RtpSession:
         self.sent = 0
         self.ignored = 0
         self.stats = RtpStats()
+        #: I7 E44: the call's SRTP context (set once both keys are known) and whether it is
+        #: mandatory; `srtp_dropped` counts inbound packets that failed SRTP authentication.
+        self.srtp: SrtpContext | None = None
+        self.require_srtp = False
+        self.srtp_dropped = 0
 
     async def open(self) -> int:
         loop = asyncio.get_running_loop()
@@ -387,7 +398,12 @@ class RtpSession:
         self._ts = (self._ts + SAMPLES_PER_FRAME) % _TS_MOD
         if self._transport is None or self.remote is None:
             return None
-        self._transport.sendto(packet.to_bytes(), self.remote)
+        data = packet.to_bytes()
+        if self.srtp is not None:
+            data = self.srtp.protect(data)
+        elif self.require_srtp:
+            return None  # never plaintext on a call that must be encrypted
+        self._transport.sendto(data, self.remote)
         self.sent += 1
         return packet
 
@@ -396,6 +412,16 @@ class RtpSession:
 
     def _on_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
         arrival = self._clock()
+        if self.srtp is not None:
+            try:
+                data = self.srtp.unprotect(data)
+            except SrtpError:
+                self.srtp_dropped += 1
+                self.ignored += 1
+                return
+        elif self.require_srtp:
+            self.ignored += 1
+            return
         try:
             packet = RtpPacket.parse(data)
         except ValueError:

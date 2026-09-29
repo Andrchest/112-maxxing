@@ -6,6 +6,9 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "sim-backend",
     "numpy",
+    # I7 E44 (Q-E15-2, ТЗ ¶293): SRTP (RFC 3711) for the SIP gateway's media — libsrtp2 in a binary
+    # abi3 wheel (cffi); the gateway does no crypto of its own (transport/sip/srtp.py).
+    "pylibsrtp>=1.0,<2",
 ]
 
 [project.optional-dependencies]

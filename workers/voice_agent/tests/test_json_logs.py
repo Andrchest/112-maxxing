@@ -51,6 +51,9 @@ def _run(script: str, log_format: str | None) -> subprocess.CompletedProcess[str
         "SIM_ENV_FILE": "",
         "SIM_SIP_PASSWORD": "e25-probe",
         "SIM_SIP_PORT": "5099",
+        # I7 E44: plain transports only — with the default `tls,udp,tcp` and no certificate the
+        # gateway logs one more (JSON) line, the "TLS is OFF" warning.
+        "SIM_SIP_TRANSPORTS": "udp,tcp",
     }
     env.pop("SIM_SIP_BACKEND_URL", None)
     env.pop("SIM_LOG_FORMAT", None)

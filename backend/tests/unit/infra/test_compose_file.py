@@ -143,11 +143,12 @@ def test_the_sip_gateway_is_profiled_gpu_free_and_publishes_exactly_its_ports(
     compose_doc: dict,
 ) -> None:
     """I3 E6a (HLD 80 §80.2.1): `profiles: ["sip"]`, SIP 5060 udp+tcp, RTP 20000-20199/udp; the
-    health port 8114 stays loopback inside the container; no GPU runtime (it loads no model)."""
+    health port 8114 stays loopback inside the container; no GPU runtime (it loads no model).
+    I7 E44: plus SIP over TLS on 5061/tcp."""
     gateway = compose_doc["services"][SIP_GATEWAY]
     assert gateway.get("profiles") == ["sip"]
     assert sorted(gateway["ports"]) == sorted(
-        ["5060:5060/udp", "5060:5060/tcp", "20000-20199:20000-20199/udp"]
+        ["5060:5060/udp", "5060:5060/tcp", "5061:5061/tcp", "20000-20199:20000-20199/udp"]
     )
     assert "runtime" not in gateway and "deploy" not in gateway
     assert gateway["command"] == ["python", "-m", "voice_agent.sip_gateway"]
@@ -170,3 +171,21 @@ def test_the_sip_gateway_is_wired_to_the_backend_without_a_committed_secret(
     assert environment["SIM_SIP_INVITE_AUTH"] == "${SIM_SIP_INVITE_AUTH:-challenge}"
     assert "SIM_SIP_GATEWAY_SECRET" not in environment
     assert "backend" in gateway["depends_on"]
+
+
+def test_the_sip_gateway_serves_tls_with_the_make_certs_server_certificate_only(
+    compose_doc: dict,
+) -> None:
+    """I7 E44 (Q-E15-2): TLS beside plain SIP by default, the server certificate and key mounted
+    read-only and never created as empty directories; the CA key never enters the container."""
+    gateway = compose_doc["services"][SIP_GATEWAY]
+    environment = gateway["environment"]
+    assert environment["SIM_SIP_TRANSPORTS"] == "${SIM_SIP_TRANSPORTS:-tls,udp,tcp}"
+    assert environment["SIM_SIP_TLS_PORT"] == "5061"
+    assert environment["SIM_SIP_TLS_CERT"] == "/certs/server.crt"
+    assert environment["SIM_SIP_TLS_KEY"] == "/certs/server.key"
+    mounts = {volume["source"]: volume for volume in gateway["volumes"]}
+    assert set(mounts) == {"./certs/server.crt", "./certs/server.key"}
+    for volume in mounts.values():
+        assert volume["read_only"] is True
+        assert volume["bind"]["create_host_path"] is False

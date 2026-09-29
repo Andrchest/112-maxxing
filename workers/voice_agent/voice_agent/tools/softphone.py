@@ -18,6 +18,10 @@ received / lost, sequence and timestamp continuity, jitter, and the echo round t
 the bursts. `--headset` (bench-only) swaps the tone for `sox`'s `rec` (microphone → RTP) and the
 capture for `play` (RTP → speakers); `sox` must be installed (it is on the dev machine).
 
+Encrypted (I7 E44): `--transport tls --server <host>:5061 --ca infra/certs/ca.crt` registers
+over TLS (the gateway's certificate checked against the local CA) and talks SRTP; the summary's
+`media` says `SRTP` or `RTP`.
+
 The password is read from the environment variable named by `--password-env` (default
 `SIM_SIP_PASSWORD`, then the `.env` file) — never from the command line, never printed.
 """
@@ -50,10 +54,10 @@ _CODEC_NAMES = {PT_PCMA: "PCMA", PT_PCMU: "PCMU"}
 _SOX_FORMAT = ["-q", "-r", "8000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw"]
 
 
-def _server(text: str) -> tuple[str, int]:
+def _server(text: str, default_port: int = 5060) -> tuple[str, int]:
     host, _, port = text.rpartition(":")
     if not host:
-        return text, 5060
+        return text, default_port
     return host, int(port)
 
 
@@ -151,7 +155,8 @@ async def _pump_headset(call: SoftCall, duration_s: float) -> int:
 
 
 async def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
-    host, port = _server(args.server)
+    transport = str(args.transport)
+    host, port = _server(args.server, 5061 if transport == "tls" else 5060)
     local_host = args.local_host or _local_host_for(host)
     codecs = {"pcma": (PT_PCMA, PT_PCMU), "pcmu": (PT_PCMU, PT_PCMA)}[args.codec]
     summary: dict[str, Any] = {"server": f"{host}:{port}", "user": args.register}
@@ -160,7 +165,8 @@ async def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         server=(host, port),
         username=args.register,
         password=password,
-        transport=args.transport,
+        transport=transport,
+        tls_ca=getattr(args, "ca", None),
         local_host=local_host,
         domain=args.domain,
         codecs=codecs,
@@ -191,6 +197,7 @@ async def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             summary["call"] = {"provisional": call.provisional, "final": call.final_status}
             summary["invite_challenged"] = call.challenged  # the gateway's 407 (E6e)
         summary["codec"] = _CODEC_NAMES.get(call.codec) if call.codec is not None else None
+        summary["media"] = "SRTP" if call.srtp else "RTP"
         if not args.headset:
             call.on_audio = probe.observe
         started = time.monotonic()
@@ -247,7 +254,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--answer-delay", type=float, default=1.0, help="ring this long first")
     parser.add_argument("--password-env", default="SIM_SIP_PASSWORD", metavar="NAME")
-    parser.add_argument("--transport", choices=("udp", "tcp"), default="udp")
+    parser.add_argument("--transport", choices=("udp", "tcp", "tls"), default="udp")
+    parser.add_argument(
+        "--ca", default=None, help="CA file for --transport tls (e.g. infra/certs/ca.crt)"
+    )
     parser.add_argument("--codec", choices=("pcma", "pcmu"), default="pcma", help="offer order")
     parser.add_argument("--domain", default=None, help="SIP domain (default: the server host)")
     parser.add_argument("--local-host", default=None, help="our address (default: auto)")

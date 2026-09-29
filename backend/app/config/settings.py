@@ -373,6 +373,15 @@ class Settings(BaseSettings):
     sip_media_ip: str = ""
     sip_bind_host: str = "0.0.0.0"
     sip_jitter_ms: int = 40
+    # -- I7 E44: SIP over TLS + SRTP (Q-E15-2, ТЗ ¶293; the gateway's `SipGatewayConfig`) --------
+    #: `SIM_SIP_TRANSPORTS`: the gateway's listeners, comma-separated `tls`, `udp`, `tcp`. TLS
+    #: calls require SRTP; plain ones stay RTP. Plain off (`tls` alone) is Q-I7-E44-1.
+    sip_transports: str = "tls,udp,tcp"
+    #: `SIM_SIP_TLS_PORT`: SIP over TLS (RFC 3261 §26.2's 5061).
+    sip_tls_port: int = 5061
+    #: `SIM_SIP_TLS_CERT` / `SIM_SIP_TLS_KEY`: the `make certs` server certificate chain and key.
+    sip_tls_cert: str = ""
+    sip_tls_key: str = ""
 
     @property
     def telephony_endpoint_set(self) -> frozenset[str]:

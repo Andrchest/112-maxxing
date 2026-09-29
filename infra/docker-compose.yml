@@ -346,11 +346,35 @@ services:
       SIM_SIP_GATEWAY_HTTP_PORT: "8114"
       SIM_SIP_BACKEND_URL: http://backend:8100
       SIM_SIP_INVITE_AUTH: ${SIM_SIP_INVITE_AUTH:-challenge}
+      # I7 E44 (Q-E15-2, ТЗ ¶293): SIP over TLS on 5061 with the `make certs` server certificate,
+      # SRTP required on every call that arrives over it; plain 5060 udp/tcp stays for phones
+      # without TLS until the owner decides (Q-I7-E44-1: SIM_SIP_TRANSPORTS=tls turns it off).
+      SIM_SIP_TRANSPORTS: ${SIM_SIP_TRANSPORTS:-tls,udp,tcp}
+      SIM_SIP_TLS_PORT: "5061"
+      SIM_SIP_TLS_CERT: /certs/server.crt
+      SIM_SIP_TLS_KEY: /certs/server.key
+    volumes:
+      # The server certificate and key only (the CA key never enters a container), exactly as the
+      # `edge` service below mounts them; `create_host_path: false` makes `up` name the missing
+      # file when `make certs` has not run yet (RUNBOOK «Шифрование SIP»).
+      - type: bind
+        source: ./certs/server.crt
+        target: /certs/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./certs/server.key
+        target: /certs/server.key
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
-      # SIP signalling (udp+tcp) and the RTP range, published so softphones on other
-      # workstations reach them; SDP advertises SIM_SIP_MEDIA_IP (the host's LAN address).
+      # SIP signalling (udp+tcp, and TLS on 5061) and the RTP/SRTP range, published so softphones
+      # on other workstations reach them; SDP advertises SIM_SIP_MEDIA_IP (the host's LAN address).
       - "5060:5060/udp"
       - "5060:5060/tcp"
+      - "5061:5061/tcp"
       - "20000-20199:20000-20199/udp"
     depends_on:
       livekit:
@@ -474,7 +498,8 @@ services:
     # `infra/scripts/make-certs.sh` has issued `infra/certs/server.{crt,key}` for this server's LAN
     # IP/hostname, and a plain `make up` must keep working on a box where that has not happened yet.
     # With the edge up, set SIM_LIVEKIT_PUBLIC_URL=wss://<host> (`.env.example`, I4 E27 section).
-    # SIP stays plain (Q-E15-2): `sip-gateway` is not behind this edge.
+    # `sip-gateway` is not behind this edge: it terminates its own SIP over TLS on 5061 with the
+    # same certificate (I7 E44, Q-E15-2).
     profiles: ["tls"]
     # Pinned by digest (caddy 2.11.4, pulled 2026-09-25), never a floating tag, same rule as
     # livekit above.

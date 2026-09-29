@@ -35,6 +35,15 @@ is spoofable), else `403`. `registered_only` is E6a's behaviour: the registratio
 the only one. A malformed request is answered `400` when enough of it survived to address an
 answer, and never raises out of the listener. The gateway logs no credential, no HA1, no token and
 no `Authorization` / `Proxy-Authorization` header.
+
+**Encryption (I7 E44, Q-E15-2, ТЗ ¶293).** `SIM_SIP_TRANSPORTS` (default `tls,udp,tcp`) picks the
+listeners: SIP over **TLS** on `SIM_SIP_TLS_PORT` (5061) with the `make certs` certificate
+(`SIM_SIP_TLS_CERT` / `SIM_SIP_TLS_KEY`), beside plain UDP/TCP on `SIM_SIP_PORT` for phones that
+cannot do TLS (turning plain off is the owner's Q-I7-E44-1). A call whose INVITE arrived over TLS
+must negotiate **SRTP** (SDES, `AES_CM_128_HMAC_SHA1_80`, `srtp.py`): an `RTP/AVP` offer, or one
+with no usable `a=crypto`, is `488`. A call over plain SIP stays RTP (an `RTP/SAVP` offer there is
+`488`: the key would travel in clear). The gateway's own INVITE to a softphone registered over TLS
+offers SRTP and hangs up (`leg FAILED 488`) on an answer without it. No key is ever logged.
 """
 
 from __future__ import annotations
@@ -60,11 +69,13 @@ from voice_agent.transport.sip.dialog import (
     ServerTransactionCache,
     SipEndpoint,
     TransactionTimeout,
+    server_tls_context,
     stamp_received,
 )
 from voice_agent.transport.sip.message import (
     PT_PCMA,
     PT_PCMU,
+    SdpMedia,
     SipMessage,
     SipParseError,
     build_response,
@@ -95,6 +106,17 @@ from voice_agent.transport.sip.rtp import (
     RtpSession,
     decode,
 )
+from voice_agent.transport.sip.srtp import (
+    PROTO_AVP,
+    PROTO_SAVP,
+    CryptoAttribute,
+    MediaRejected,
+    SrtpContext,
+    SrtpError,
+    accept_answer,
+    negotiate_answer,
+    new_crypto,
+)
 from voice_agent.transport.sip.telephony import (
     BackendCredentials,
     BackendUnavailableError,
@@ -112,6 +134,7 @@ __all__ = [
     "SipGateway",
     "SipGatewayConfig",
     "default_router",
+    "parse_transports",
     "sip_status_for_end_reason",
 ]
 
@@ -123,6 +146,9 @@ SERVER_NAME = "sim112-sip-gateway"
 _STOP_BYE_TIMEOUT_S = 2.0
 _UNACKED_2XX_TIMEOUT_S = 32.0
 INVITE_AUTH_MODES = ("challenge", "registered_only")
+#: I7 E44: the listeners `SIM_SIP_TRANSPORTS` may name, and its default (TLS beside plain SIP).
+SIP_TRANSPORTS = ("tls", "udp", "tcp")
+DEFAULT_SIP_TRANSPORTS = "tls,udp,tcp"
 _END_REASON_SIP_STATUS = {"BUSY": 486, "NO_ANSWER": 480, "HANGUP": 487}
 
 
@@ -131,6 +157,19 @@ def sip_status_for_end_reason(reason: str | None) -> int:
     `BUSY` ⇒ `486`, `NO_ANSWER` ⇒ `480`, the trainee's `HANGUP` (from the browser) ⇒ `487`,
     `ABORT` / `TRANSPORT_LOST` ⇒ `480`."""
     return _END_REASON_SIP_STATUS.get(reason or "", 480)
+
+
+def parse_transports(text: str | None) -> frozenset[str]:
+    """`SIM_SIP_TRANSPORTS` (`"tls,udp,tcp"`) → the set of listeners; `ValueError` on an unknown
+    name or an empty list."""
+    names = {part.strip().lower() for part in (text or DEFAULT_SIP_TRANSPORTS).split(",")}
+    names.discard("")
+    unknown = names - set(SIP_TRANSPORTS)
+    if unknown:
+        raise ValueError(f"SIM_SIP_TRANSPORTS: unknown transport(s) {sorted(unknown)}")
+    if not names:
+        raise ValueError("SIM_SIP_TRANSPORTS names no transport")
+    return frozenset(names)
 
 
 @dataclass(frozen=True)
@@ -165,10 +204,26 @@ class SipGatewayConfig:
     leg_retry_s: float = 1.0
     #: How often a waiting call is re-read (`getTelephonyCall`) — covers a lost Redis event.
     answer_poll_s: float = 2.0
+    #: I7 E44 (`SIM_SIP_TRANSPORTS` names `tls`): SIP over TLS on `tls_port`; calls over it
+    #: require SRTP. `from_env` turns it on by default; the dataclass default is off (tests).
+    tls: bool = False
+    #: `SIM_SIP_TLS_PORT` (5061, RFC 3261 §26.2). `0` = ephemeral (tests).
+    tls_port: int = 5061
+    #: `SIM_SIP_TLS_CERT` / `SIM_SIP_TLS_KEY`: the server certificate chain and key (`make certs`:
+    #: `infra/certs/server.crt` / `server.key`; compose mounts them at `/certs/`).
+    tls_cert: str | None = None
+    tls_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.invite_auth not in INVITE_AUTH_MODES:
             raise ValueError(f"SIM_SIP_INVITE_AUTH must be one of {INVITE_AUTH_MODES}")
+        if not (self.udp or self.tcp or self.tls):
+            raise ValueError("SIM_SIP_TRANSPORTS: at least one of tls, udp, tcp")
+
+    @property
+    def transports(self) -> tuple[str, ...]:
+        on = {"tls": self.tls, "udp": self.udp, "tcp": self.tcp}
+        return tuple(name for name in SIP_TRANSPORTS if on[name])
 
     @classmethod
     def from_env(cls, read: Callable[[str], str | None] | None = None) -> SipGatewayConfig:
@@ -181,6 +236,7 @@ class SipGatewayConfig:
             value = read(name)
             return int(value) if value else default
 
+        transports = parse_transports(read("SIM_SIP_TRANSPORTS"))
         return cls(
             password=read("SIM_SIP_PASSWORD") or "",
             realm=read("SIM_SIP_REALM") or "sim112",
@@ -193,6 +249,12 @@ class SipGatewayConfig:
             invite_auth=read("SIM_SIP_INVITE_AUTH") or "challenge",
             backend_url=read("SIM_SIP_BACKEND_URL") or None,
             gateway_secret=read("SIM_SIP_GATEWAY_SECRET") or "",
+            udp="udp" in transports,
+            tcp="tcp" in transports,
+            tls="tls" in transports,
+            tls_port=_int("SIM_SIP_TLS_PORT", 5061),
+            tls_cert=read("SIM_SIP_TLS_CERT") or None,
+            tls_key=read("SIM_SIP_TLS_KEY") or None,
         )
 
 
@@ -250,6 +312,10 @@ class _Call:
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     dds_answered: bool = False
     dds_ended: str | None = None
+    #: I7 E44: our SDES crypto line on an SRTP call (the key we send with), and the `build_sdp`
+    #: arguments of our answer (rebuilt when a re-INVITE picks another crypto tag).
+    local_crypto: CryptoAttribute | None = None
+    answer_args: dict[str, Any] = field(default_factory=dict)
 
 
 def _record_room(_dialed: DialedCall) -> RoomPort:
@@ -311,6 +377,10 @@ class SipGateway:
         return self._endpoint.tcp_port
 
     @property
+    def tls_port(self) -> int | None:
+        return self._endpoint.tls_port
+
+    @property
     def live_calls(self) -> int:
         return len(self._calls)
 
@@ -320,6 +390,11 @@ class SipGateway:
             port = await self._endpoint.listen_udp(host, port)
         if self.config.tcp:
             await self._endpoint.listen_tcp(host, port)
+        if self.config.tls:
+            if not (self.config.tls_cert and self.config.tls_key):
+                raise ValueError("SIP over TLS needs SIM_SIP_TLS_CERT and SIM_SIP_TLS_KEY")
+            context = server_tls_context(self.config.tls_cert, self.config.tls_key)
+            await self._endpoint.listen_tls(host, self.config.tls_port, context)
         if self.config.http_port is not None:
             self._http = await asyncio.start_server(
                 self._serve_http, "127.0.0.1", self.config.http_port
@@ -327,9 +402,11 @@ class SipGateway:
             sockets = self._http.sockets or ()
             self.http_port = int(sockets[0].getsockname()[1]) if sockets else None
         logger.info(
-            "SIP gateway listening udp=%s tcp=%s host=%s realm=%s rtp=%s health=127.0.0.1:%s",
+            "SIP gateway listening udp=%s tcp=%s tls=%s host=%s realm=%s rtp=%s "
+            "health=127.0.0.1:%s",
             self.udp_port,
             self.tcp_port,
+            self.tls_port,
             host,
             self.config.realm,
             self.config.rtp_port_range or "ephemeral",
@@ -379,6 +456,9 @@ class SipGateway:
             "realm": self.config.realm,
             "sip_udp_port": self.udp_port,
             "sip_tcp_port": self.tcp_port,
+            "sip_tls_port": self.tls_port,
+            "transports": list(self.config.transports),
+            "srtp": "required over TLS" if self.config.tls else "off",
             "registrations": len(self.registrar.bindings()),
             "calls": self.live_calls,
             "dds_calls": len(self._dds),
@@ -560,6 +640,12 @@ class SipGateway:
             logger.info("INVITE %s: no PCMA/PCMU in offer %s", dialed, offer.payload_types)
             self._respond(request, channel, build_response(request, 488, to_tag=new_tag()))
             return
+        try:  # I7 E44: over TLS the media must be SRTP; over plain SIP it stays RTP
+            sdes = negotiate_answer(offer, secure_signalling=channel.secure)
+        except MediaRejected as exc:
+            logger.info("INVITE %s from %s over %s: 488 (%s)", dialed, from_user, channel.kind, exc)
+            self._respond(request, channel, build_response(request, 488, to_tag=new_tag()))
+            return
         dds: DialedCall | None = None
         if self._backend is not None and dialed != ECHO_EXTENSION and from_user is not None:
             # I3 E6e: the backend's dial plan (§80.2.3 step 2). `100 Trying` first — the
@@ -613,11 +699,12 @@ class SipGateway:
             self._dds[call.dds_call_id] = call
         self._calls[request.call_id] = call
         logger.info(
-            "INVITE %s from %s (%r) codec=%s call-id=%s",
+            "INVITE %s from %s (%r) codec=%s media=%s call-id=%s",
             dialed,
             from_user,
             channel,
             "PCMA" if codec == 8 else "PCMU",
+            "SRTP" if sdes is not None else "RTP",
             request.call_id,
         )
         try:
@@ -628,15 +715,24 @@ class SipGateway:
                 on_packet=lambda packet, arrival: self._on_rtp(call, packet, arrival),
                 clock=self._clock,
             )
+            rtp.require_srtp = channel.secure
+            if sdes is not None:
+                rtp.srtp = SrtpContext(local_key=sdes.local.key, remote_key=sdes.remote.key)
+                call.local_crypto = sdes.local
             await rtp.open()
             call.rtp = rtp
             rtp.set_remote((offer.address, offer.port))
             advertised = self._advertised_ip(channel.peer[0])
+            call.answer_args = {
+                "address": advertised,
+                "port": rtp.local_port,
+                "payload_types": (codec,),
+                "session_id": int(self._clock() * 1000) % 1_000_000_000,
+                "protocol": PROTO_SAVP if sdes is not None else PROTO_AVP,
+            }
             call.answer_sdp = build_sdp(
-                address=advertised,
-                port=rtp.local_port,
-                payload_types=(codec,),
-                session_id=int(self._clock() * 1000) % 1_000_000_000,
+                **call.answer_args,
+                crypto=() if sdes is None else (sdes.local.sdp_value(),),
             )
             ringing = build_response(
                 request, 180, to_tag=dialog.local_tag, headers=[self._contact(call, channel)]
@@ -694,12 +790,22 @@ class SipGateway:
         self._on_reinvite(call, request, channel)
 
     def _on_reinvite(self, call: _Call, request: SipMessage, channel: Channel) -> None:
-        """A re-INVITE (hold, refresh): answered with the same SDP; the far RTP address updates."""
-        with contextlib.suppress(ValueError):
-            offer = parse_sdp(request.body)
-            if call.rtp is not None:
-                call.rtp.set_remote((offer.address, offer.port))
+        """A re-INVITE (hold, refresh): answered with the same SDP; the far RTP address updates.
+
+        I7 E44: on an SRTP call the new offer must again carry an acceptable crypto line (else
+        `488`, the call keeps its current keys); a changed far key re-keys the inbound side."""
         call.dialog.remote_cseq = request.cseq[0]
+        try:
+            offer: SdpMedia | None = parse_sdp(request.body)
+        except ValueError:
+            offer = None
+        srtp_call = call.local_crypto is not None and call.rtp is not None
+        if offer is not None and srtp_call and not self._rekey(call, offer):
+            response = build_response(request, 488, to_tag=call.dialog.local_tag)
+            self._respond(request, channel, response)
+            return
+        if offer is not None and call.rtp is not None:
+            call.rtp.set_remote((offer.address, offer.port))
         response = build_response(
             request,
             200,
@@ -708,6 +814,25 @@ class SipGateway:
             body=call.answer_sdp,
         )
         self._respond(request, channel, response)
+
+    def _rekey(self, call: _Call, offer: SdpMedia) -> bool:
+        """An SRTP call's re-offer: accept its crypto line (re-keying inbound if the far key
+        changed; answering under the offer's tag); `False` ⇒ `488`, the current keys stay."""
+        assert call.local_crypto is not None and call.rtp is not None
+        try:
+            sdes = negotiate_answer(offer, secure_signalling=True)
+            assert sdes is not None and call.rtp.srtp is not None
+            if call.rtp.srtp.rekey_inbound(sdes.remote.key):
+                logger.info("re-INVITE call-id=%s: SRTP re-keyed", call.dialog.call_id)
+        except (MediaRejected, SrtpError) as exc:
+            logger.info("re-INVITE call-id=%s: 488 (%s)", call.dialog.call_id, exc)
+            return False
+        if sdes.remote.tag != call.local_crypto.tag and call.answer_args:
+            local = call.local_crypto
+            call.local_crypto = CryptoAttribute(sdes.remote.tag, local.suite, local.key)
+            call.answer_args["version"] = int(call.answer_args.get("version", 1)) + 1
+            call.answer_sdp = build_sdp(**call.answer_args, crypto=(call.local_crypto.sdp_value(),))
+        return True
 
     def _on_ack(self, request: SipMessage, channel: Channel) -> None:
         call = self._calls.get(request.call_id)
@@ -872,9 +997,14 @@ class SipGateway:
             return
         channel = binding.channel
         if not isinstance(channel, Channel) or channel.closed or not channel.reliable:
+            if binding.transport == "TLS" or not self.config.udp:
+                # I7 E44: a TLS registration is never rung in clear; its connection is gone.
+                logger.info("ДДС call %s: %s's connection is closed", call_id, sip_user)
+                await self._report(call_id, "FAILED", 480)
+                return
             channel = self._endpoint.udp_channel(binding.source)
         host = self._advertised_ip(binding.source[0])
-        port = (self.tcp_port if channel.reliable else self.udp_port) or 0
+        port = self._listen_port(channel)
         kind = str(payload.get("call_kind") or "dds").lower()
         local_uri = f"sip:{kind}@{self.config.realm}"
         sip_call_id = new_call_id(host)
@@ -886,8 +1016,7 @@ class SipGateway:
         invite.add("To", f"<{binding.aor}>")
         invite.add("Call-ID", sip_call_id)
         invite.add("CSeq", "1 INVITE")
-        transport = ";transport=tcp" if channel.reliable else ""
-        invite.add("Contact", f"<sip:{kind}@{host}:{port}{transport}>")
+        invite.add("Contact", f"<sip:{kind}@{host}:{port}{channel.transport_param}>")
         invite.add("User-Agent", SERVER_NAME)
         invite.add("Content-Type", "application/sdp")
         dialog = Dialog(
@@ -908,6 +1037,7 @@ class SipGateway:
             started_at=self._clock(),
             dds_call_id=call_id,
             uac=True,
+            local_crypto=new_crypto() if channel.secure else None,
         )
         self._dds[call_id] = call
         self._calls[sip_call_id] = call
@@ -919,6 +1049,7 @@ class SipGateway:
                 on_packet=lambda packet, arrival: self._on_rtp(call, packet, arrival),
                 clock=self._clock,
             )
+            rtp.require_srtp = channel.secure
             await rtp.open()
             call.rtp = rtp
             invite.body = build_sdp(
@@ -926,6 +1057,8 @@ class SipGateway:
                 port=rtp.local_port,
                 payload_types=(PT_PCMA, PT_PCMU),
                 session_id=int(self._clock() * 1000) % 1_000_000_000,
+                protocol=PROTO_SAVP if call.local_crypto is not None else PROTO_AVP,
+                crypto=() if call.local_crypto is None else (call.local_crypto.sdp_value(),),
             )
             logger.info("ДДС call %s: INVITE %s at %s", call_id, sip_user, binding.contact)
             response = await self._invite_softphone(call, channel)
@@ -1016,6 +1149,16 @@ class SipGateway:
             if call.rtp is not None:
                 call.rtp.payload_type = answer.payload_types[0]
                 call.rtp.set_remote((answer.address, answer.port))
+                if call.local_crypto is not None:  # I7 E44: our SRTP offer needs an SRTP answer
+                    self._accept_srtp_answer(call, answer)
+        if call.local_crypto is not None and (call.rtp is None or call.rtp.srtp is None):
+            if not report:
+                return  # the cancel race: the caller hangs up anyway
+            if call.dds_call_id is not None and call.dds_ended is None:
+                call.dds_ended = "ABORT"
+                await self._report(call.dds_call_id, "FAILED", 488)
+            await self._bye_and_terminate(call, "answer without SRTP on a TLS call")
+            return
         if not report or call.dds_call_id is None:
             return
         await self._join_room(
@@ -1033,9 +1176,17 @@ class SipGateway:
         if state == "ENDED" or call.dds_ended is not None:
             await self._bye_and_terminate(call, "ДДС call ended while the softphone answered")
 
+    def _accept_srtp_answer(self, call: _Call, answer: SdpMedia) -> None:
+        assert call.local_crypto is not None and call.rtp is not None
+        try:
+            remote = accept_answer(answer, call.local_crypto)
+            call.rtp.srtp = SrtpContext(local_key=call.local_crypto.key, remote_key=remote.key)
+        except (MediaRejected, SrtpError) as exc:
+            logger.info("ДДС call %s: softphone answer refused (%s)", call.dds_call_id, exc)
+
     def _send_uac_ack(self, call: _Call) -> None:
         channel = call.dialog.channel
-        port = (self.tcp_port if channel.reliable else self.udp_port) or 0
+        port = self._listen_port(channel)
         ack = call.dialog.ack_for_2xx(
             call.invite.cseq[0], via_host=self._advertised_ip(channel.peer[0]), via_port=port
         )
@@ -1110,9 +1261,10 @@ class SipGateway:
 
     async def _send_bye(self, call: _Call) -> None:
         channel = call.dialog.channel
-        port = self.tcp_port if channel.reliable else self.udp_port
         bye = call.dialog.in_dialog_request(
-            "BYE", via_host=self._advertised_ip(channel.peer[0]), via_port=port or 0
+            "BYE",
+            via_host=self._advertised_ip(channel.peer[0]),
+            via_port=self._listen_port(channel),
         )
         bye.add("User-Agent", SERVER_NAME)
         try:
@@ -1166,11 +1318,16 @@ class SipGateway:
             except OSError:
                 return "127.0.0.1"
 
+    def _listen_port(self, channel: Channel) -> int:
+        """Our listening port for the channel's transport (Via sent-by, Contact)."""
+        port = {"TLS": self.tls_port, "TCP": self.tcp_port}.get(channel.kind, self.udp_port)
+        return port or 0
+
     def _contact(self, call: _Call, channel: Channel) -> tuple[str, str]:
-        port = self.tcp_port if channel.reliable else self.udp_port
-        transport = ";transport=tcp" if channel.reliable else ""
+        port = self._listen_port(channel)
         host = self._advertised_ip(channel.peer[0])
-        return ("Contact", f"<sip:{call.dialed or 'gateway'}@{host}:{port}{transport}>")
+        target = f"sip:{call.dialed or 'gateway'}@{host}:{port}{channel.transport_param}"
+        return ("Contact", f"<{target}>")
 
 
 def _ack_non_2xx(invite: SipMessage, response: SipMessage) -> SipMessage:

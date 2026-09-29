@@ -64,7 +64,8 @@ async def make_phone() -> AsyncIterator[Callable[..., object]]:
         transport: str = "udp",
         **kwargs: object,
     ) -> SoftPhone:
-        port = gateway.tcp_port if transport == "tcp" else gateway.udp_port
+        # I7 E44: `transport="tls"` reaches the gateway's TLS listener (pass `tls_ca=`).
+        port = {"tcp": gateway.tcp_port, "tls": gateway.tls_port}.get(transport, gateway.udp_port)
         assert port is not None
         phone = SoftPhone(
             server=("127.0.0.1", port),

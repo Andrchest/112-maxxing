@@ -1234,3 +1234,69 @@ the labels the rest of the UI uses (roles, modes, lesson/session states, memo st
   downgrade/upgrade round-trip, an UPDATE adding `changes` is refused by the append-only trigger;
   `test_audit_log_table.py` unchanged and passing;
 - vitest `audit-log-tab.test.tsx`: expand/collapse with Russian lines, the filter's query.
+## 71.19.44 I7 E44 — SIP over TLS + SRTP
+
+**Purpose.** The owner's answer to Q-E15-2 (2026-09-26): «SIP шифруем (TLS/SRTP)». ТЗ ¶293
+REQ-2241 asks for «шифрование всех передаваемых данных»; E27 (§71.4) encrypted browser ↔ server
+and left the SIP gateway plain.
+
+**Sources:** Q-E15-2 (`docs/owner-decisions.md`), ТЗ ¶293; HLD 80 §80.2 (the gateway), §71.4 (the
+local CA of `make certs`).
+
+**Design** (manager decisions, final).
+- **Signalling.** `SipEndpoint.listen_tls` (`transport/sip/dialog.py`) serves SIP over TLS on
+  `SIM_SIP_TLS_PORT` (5061/tcp) with `server_tls_context`: the `make certs` server chain + key
+  (`SIM_SIP_TLS_CERT` / `SIM_SIP_TLS_KEY`), TLS 1.2+, no client certificate (Digest stays the
+  authentication). A TLS connection is a `Channel` of kind `TLS` (`reliable`, `secure`); Via,
+  Contact (`;transport=tls`), the registrar's binding (`transport=TLS`) and the gateway's own
+  requests on it (BYE, UAC INVITE/ACK) use the TLS port. `SIM_SIP_TRANSPORTS` (default
+  `tls,udp,tcp`) picks the listeners; plain UDP/TCP on 5060 stays for phones without TLS
+  (Q-I7-E44-1). `voice_agent.sip_gateway.resolve_tls`: a missing/unreadable certificate switches
+  TLS off with a warning while a plain transport remains, and refuses to start when TLS is the only
+  one.
+- **Media.** `transport/sip/srtp.py`: SDES (RFC 4568) with the one suite
+  `AES_CM_128_HMAC_SHA1_80` (30-byte `inline:` key+salt; lines with an MKI, several keys or a
+  session parameter other than `WSH` are skipped); SRTP itself is `pylibsrtp` (libsrtp2, a new
+  dependency of `sim-voice-agent`) — no cryptography in our code. The answerer's rule
+  (`negotiate_answer`): INVITE over **TLS** ⇒ the offer must be `RTP/SAVP` with an acceptable
+  crypto line, else `488`, and the answer is `RTP/SAVP` + our own fresh key under the offer's tag;
+  over **plain SIP** ⇒ `RTP/AVP` is answered plain RTP (any `a=crypto` ignored), `RTP/SAVP` is `488`
+  (a key in clear SIP protects nothing). `RtpSession` gains `srtp` (protect on send, authenticate +
+  decrypt on receive; a failing packet is dropped, counted `srtp_dropped`, and never latches the
+  far address) and `require_srtp` (a TLS call sends and accepts nothing until its keys are set).
+  The gateway's UAC INVITE to a softphone registered over TLS offers SRTP and rings it only over
+  that TLS connection (closed ⇒ `leg FAILED 480`, never plain UDP); an answer without SRTP ⇒ BYE
+  and `leg FAILED 488`. A re-INVITE on an SRTP call must keep an acceptable crypto line (else
+  `488`, keys unchanged); a new far key re-keys the inbound side. Keys never reach a log line
+  (`CryptoAttribute` / `SdpMedia` reprs redact them).
+- **Softphone** (`transport/sip/softphone.py`, CLI `voice_agent.tools.softphone`): `transport="tls"`
+  (`--transport tls --ca infra/certs/ca.crt`, server certificate verified), SRTP offered by default
+  over TLS (`srtp=` overrides), and incoming calls answered with the same rule as the gateway.
+- **Config / infra.** `SipGatewayConfig` gains `tls`, `tls_port`, `tls_cert`, `tls_key`; the same
+  keys on `Settings` (`sip_transports`, `sip_tls_port`, `sip_tls_cert`, `sip_tls_key`); compose
+  publishes `5061:5061/tcp` and bind-mounts `infra/certs/server.{crt,key}` read-only with
+  `create_host_path: false` (like `edge`; the CA key never enters the container) — so
+  `--profile sip up` now needs `make certs` first. `.env.example` section «I7 E44»; RUNBOOK
+  «Шифрование SIP» (server, softphone settings, symptoms).
+
+**Data / DB.** None. **API.** None.
+
+**Acceptance** (`workers/voice_agent/tests/sip/test_sip_srtp.py`, `test_sip_tls_srtp.py`).
+- Unit: crypto-line parsing (tag/suite/key, lifetime, `WSH`; refusals: other suites, MKI, short
+  key, bad base64, non-inline, several keys, session parameters); the answerer's decision (TLS +
+  SAVP accepted with a fresh key; TLS + AVP / no crypto / unsupported suite ⇒ `488`; plain AVP ⇒
+  RTP; plain SAVP ⇒ `488`); the offerer's check of an answer; libsrtp protect/unprotect, tamper,
+  replay and wrong key refused, inbound re-key.
+- Integration (certificate from `infra/scripts/make-certs.sh` into a temp dir): TLS REGISTER +
+  407-challenged INVITE with SDES to the echo `999` completes; every RTP datagram on the wire
+  differs from its plaintext, is 10 bytes longer, does not contain the G.711 payload and decrypts
+  back to it through an independent `pylibsrtp` session under the SDP's key, both directions; a
+  re-INVITE keeps the media; `RTP/AVP` over TLS ⇒ `488`; UDP beside TLS stays plain RTP and
+  refuses `RTP/SAVP`; a client without the local CA cannot connect; the gateway rings a
+  TLS-registered softphone with SRTP (UAC) and the room hears it; `SIM_SIP_TRANSPORTS` parsing and
+  the entry point's TLS refusals.
+- baresip interop: NOT_RUN (not installed on this machine).
+
+**Not built (owner questions).** Q-I7-E44-1: whether plain SIP (5060) is turned off. A TLS client
+certificate, SRTCP (the stack sends no RTCP), DTLS-SRTP / ZRTP and the `AES_CM_128_HMAC_SHA1_32` /
+AES-256 / GCM suites are not offered (technical scope: the one mandatory SDES suite).

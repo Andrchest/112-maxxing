@@ -1,7 +1,8 @@
 """`python -m voice_agent.sip_gateway` — the SIP gateway process (HLD 80 §80.2.1, D22, D27).
 
 Reads the `SIM_SIP_*` keys (`SipGatewayConfig.from_env`: process environment first, then the
-`.env` file), binds SIP on `SIM_SIP_PORT` (udp+tcp, default 5060), RTP from
+`.env` file), binds SIP on `SIM_SIP_PORT` (udp+tcp, default 5060) and SIP over TLS on
+`SIM_SIP_TLS_PORT` (default 5061; I7 E44 — `SIM_SIP_TRANSPORTS`, default `tls,udp,tcp`), RTP from
 `SIM_SIP_RTP_PORT_RANGE` (default 20000-20199) and health on `127.0.0.1:SIM_SIP_GATEWAY_HTTP_PORT`
 (default 8114), and serves until SIGTERM/SIGINT, when it sends a `BYE` to every live call.
 
@@ -15,14 +16,18 @@ a token minted locally from `SIM_LIVEKIT_URL` / `SIM_LIVEKIT_API_KEY` / `SIM_LIV
 
 Refuses to start without `SIM_SIP_PASSWORD`, or with a backend URL but no
 `SIM_SIP_GATEWAY_SECRET` — there is no default credential ([credential redacted] in every document;
-SPEC §41). Never binds 8000/8001/8011/8012/5000 (owner ports).
+SPEC §41). Never binds 8000/8001/8011/8012/5000 (owner ports). TLS without a readable
+`SIM_SIP_TLS_CERT` / `SIM_SIP_TLS_KEY` (`make certs`) is switched off with a warning while a plain
+transport is still configured, and refuses to start when TLS is the only one.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import logging
+import os
 import signal
 import sys
 from collections.abc import Sequence
@@ -39,7 +44,7 @@ from voice_agent.transport.sip.telephony import (
     RedisTelephonySignals,
 )
 
-__all__ = ["main", "serve"]
+__all__ = ["main", "resolve_tls", "serve"]
 
 logger = logging.getLogger("voice_agent.sip_gateway")
 
@@ -101,6 +106,29 @@ async def serve(config: SipGatewayConfig) -> None:
             await redis.aclose()
 
 
+def resolve_tls(config: SipGatewayConfig) -> tuple[SipGatewayConfig | None, str | None]:
+    """I7 E44: check the TLS certificate before binding. `(config, warning)` to start with —
+    TLS switched off (and a warning) when its files are unset or unreadable but a plain transport
+    remains — or `(None, error)` when TLS is the only transport and cannot start."""
+    if not config.tls:
+        return config, None
+    missing = [
+        f"{name}={path or '(unset)'}"
+        for name, path in (
+            ("SIM_SIP_TLS_CERT", config.tls_cert),
+            ("SIM_SIP_TLS_KEY", config.tls_key),
+        )
+        if not path or not os.access(path, os.R_OK)
+    ]
+    if not missing:
+        return config, None
+    problem = "SIP over TLS has no readable certificate/key (" + ", ".join(missing) + ")"
+    if not (config.udp or config.tcp):
+        return None, f"{problem}; SIM_SIP_TRANSPORTS names no other transport"
+    fixed = dataclasses.replace(config, tls=False)
+    return fixed, f"{problem}: TLS is OFF, serving {','.join(fixed.transports)} only (make certs)"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m voice_agent.sip_gateway", description=__doc__)
     parser.add_argument("--log-level", default="INFO")
@@ -112,7 +140,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         service="sip-gateway",
         level=args.log_level,
     )
-    config = SipGatewayConfig.from_env()
+    try:
+        config = SipGatewayConfig.from_env()
+    except ValueError as exc:
+        print(f"sip_gateway: {exc}; refusing to start", file=sys.stderr)
+        return 2
     if not config.password:
         print("sip_gateway: SIM_SIP_PASSWORD is not set; refusing to start", file=sys.stderr)
         return 2
@@ -123,7 +155,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    used = {port for port in (config.sip_port, config.http_port) if port is not None}
+    resolved, tls_note = resolve_tls(config)
+    if resolved is None:
+        print(f"sip_gateway: {tls_note}; refusing to start", file=sys.stderr)
+        return 2
+    if tls_note:
+        logger.warning("%s", tls_note)
+    config = resolved
+    ports = (config.sip_port, config.http_port, config.tls_port if config.tls else None)
+    used = {port for port in ports if port is not None}
     if used & _OWNER_PORTS:
         print(f"sip_gateway: refusing owner port(s) {sorted(used & _OWNER_PORTS)}", file=sys.stderr)
         return 2

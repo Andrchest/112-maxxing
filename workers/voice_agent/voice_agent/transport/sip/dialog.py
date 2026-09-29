@@ -3,9 +3,10 @@
 Shared by both ends of a call — the gateway (UAS; UAC for its own `BYE`) and the headless
 softphone (UAC):
 
-* `SipEndpoint` — the UDP socket and/or TCP listener/connections, turning bytes into
-  `(SipMessage-bytes, Channel)` for a handler; a `Channel` is "where to answer": the datagram's
-  source address, or the TCP connection it came on (RFC 3581 symmetric response);
+* `SipEndpoint` — the UDP socket and/or TCP and TLS listeners/connections (TLS: I7 E44, RFC 3261
+  §26.2, the certificate of `make certs`), turning bytes into `(SipMessage-bytes, Channel)` for a
+  handler; a `Channel` is "where to answer": the datagram's source address, or the TCP / TLS
+  connection it came on (RFC 3581 symmetric response);
 * `ClientTransactions` — requests we send: matched to responses by `Via` branch, retransmitted
   over UDP (RFC 3261 §17.1 timers A/E, T1 = 500 ms, T2 = 4 s) until a final response or 32 s;
 * `ServerTransactionCache` — a retransmitted request gets the last response again, never a
@@ -20,6 +21,7 @@ import asyncio
 import contextlib
 import enum
 import logging
+import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -42,6 +44,8 @@ __all__ = [
     "ServerTransactionCache",
     "SipEndpoint",
     "TransactionTimeout",
+    "client_tls_context",
+    "server_tls_context",
 ]
 
 logger = logging.getLogger(__name__)
@@ -56,14 +60,25 @@ class Channel:
     """Where a message came from and where its answer goes."""
 
     def __init__(self, kind: str, peer: Address, sender: Callable[[bytes], None]) -> None:
-        self.kind = kind  # "UDP" | "TCP"
+        self.kind = kind  # "UDP" | "TCP" | "TLS"
         self.peer = peer
         self._sender = sender
         self.closed = False
 
     @property
     def reliable(self) -> bool:
-        return self.kind == "TCP"
+        """A stream (TCP or TLS): no retransmissions, the answer goes back on the connection."""
+        return self.kind in ("TCP", "TLS")
+
+    @property
+    def secure(self) -> bool:
+        """I7 E44: the signalling is encrypted (SIP over TLS), so SDES keys may travel on it."""
+        return self.kind == "TLS"
+
+    @property
+    def transport_param(self) -> str:
+        """The `;transport=` URI parameter a Contact reached over this channel needs."""
+        return {"TCP": ";transport=tcp", "TLS": ";transport=tls"}.get(self.kind, "")
 
     def send(self, data: bytes) -> None:
         if self.closed:
@@ -81,6 +96,23 @@ class Channel:
 
 
 Handler = Callable[[bytes, Channel], None]
+
+
+def server_tls_context(cert_file: str, key_file: str) -> ssl.SSLContext:
+    """I7 E44: the gateway's TLS context — the `make certs` server certificate (chain) and key,
+    TLS 1.2+, no client certificate (a softphone authenticates with Digest, as over UDP/TCP)."""
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert_file, key_file)
+    return context
+
+
+def client_tls_context(cafile: str | None = None) -> ssl.SSLContext:
+    """A UA's TLS context: the server certificate is verified (hostname included) against
+    `cafile` (the local CA, `infra/certs/ca.crt`), else the system store."""
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=cafile)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 class _UdpProtocol(asyncio.DatagramProtocol):
@@ -110,10 +142,12 @@ class SipEndpoint:
         self._handler = handler
         self._udp: asyncio.DatagramTransport | None = None
         self._tcp_server: asyncio.Server | None = None
+        self._tls_server: asyncio.Server | None = None
         self._tcp_tasks: set[asyncio.Task[None]] = set()
         self._tcp_writers: set[asyncio.StreamWriter] = set()
         self.udp_port: int | None = None
         self.tcp_port: int | None = None
+        self.tls_port: int | None = None
 
     def dispatch(self, data: bytes, channel: Channel) -> None:
         try:
@@ -143,6 +177,15 @@ class SipEndpoint:
         self.tcp_port = int(sockets[0].getsockname()[1]) if sockets else port
         return self.tcp_port
 
+    async def listen_tls(self, host: str, port: int, context: ssl.SSLContext) -> int:
+        """I7 E44: SIP over TLS (default 5061); every accepted connection is a `TLS` channel."""
+        self._tls_server = await asyncio.start_server(
+            self._serve_tls, host, port, ssl=context, ssl_handshake_timeout=10.0
+        )
+        sockets = self._tls_server.sockets or ()
+        self.tls_port = int(sockets[0].getsockname()[1]) if sockets else port
+        return self.tls_port
+
     async def connect_tcp(self, peer: Address) -> Channel:
         """An outbound TCP connection (UA side); its inbound frames go to the handler too."""
         reader, writer = await asyncio.open_connection(peer[0], peer[1])
@@ -154,13 +197,39 @@ class SipEndpoint:
         task.add_done_callback(self._tcp_tasks.discard)
         return channel
 
-    def _tcp_channel(self, writer: asyncio.StreamWriter, peer: Address) -> Channel:
+    async def connect_tls(
+        self, peer: Address, context: ssl.SSLContext, *, server_hostname: str | None = None
+    ) -> Channel:
+        """An outbound TLS connection (UA side, I7 E44); the server certificate is verified
+        against `context` (the local CA of `make certs`)."""
+        reader, writer = await asyncio.open_connection(
+            peer[0], peer[1], ssl=context, server_hostname=server_hostname or peer[0]
+        )
+        channel = self._tcp_channel(writer, peer, kind="TLS")
+        sockname = writer.get_extra_info("sockname")
+        self.tls_port = int(sockname[1]) if sockname else None
+        task = asyncio.create_task(self._read_tcp(reader, writer, channel))
+        self._tcp_tasks.add(task)
+        task.add_done_callback(self._tcp_tasks.discard)
+        return channel
+
+    def _tcp_channel(
+        self, writer: asyncio.StreamWriter, peer: Address, *, kind: str = "TCP"
+    ) -> Channel:
         self._tcp_writers.add(writer)
-        return Channel("TCP", peer, writer.write)
+        return Channel(kind, peer, writer.write)
 
     async def _serve_tcp(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await self._serve_stream(reader, writer, "TCP")
+
+    async def _serve_tls(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await self._serve_stream(reader, writer, "TLS")
+
+    async def _serve_stream(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, kind: str
+    ) -> None:
         peername = writer.get_extra_info("peername") or ("?", 0)
-        channel = self._tcp_channel(writer, (str(peername[0]), int(peername[1])))
+        channel = self._tcp_channel(writer, (str(peername[0]), int(peername[1])), kind=kind)
         task = asyncio.current_task()
         if task is not None:
             self._tcp_tasks.add(task)
@@ -183,7 +252,7 @@ class SipEndpoint:
                     break
                 for frame in frames:
                     self.dispatch(frame, channel)
-        except (ConnectionError, asyncio.IncompleteReadError):
+        except (ConnectionError, asyncio.IncompleteReadError, ssl.SSLError):
             pass
         finally:
             channel.closed = True
@@ -195,8 +264,9 @@ class SipEndpoint:
         if self._udp is not None:
             self._udp.close()
             self._udp = None
-        if self._tcp_server is not None:
-            self._tcp_server.close()
+        for server in (self._tcp_server, self._tls_server):
+            if server is not None:
+                server.close()
         for writer in list(self._tcp_writers):
             with contextlib.suppress(Exception):
                 writer.close()
@@ -205,10 +275,12 @@ class SipEndpoint:
         for task in list(self._tcp_tasks):
             with contextlib.suppress(BaseException):
                 await task
-        if self._tcp_server is not None:
-            with contextlib.suppress(Exception):
-                await self._tcp_server.wait_closed()
-            self._tcp_server = None
+        for server in (self._tcp_server, self._tls_server):
+            if server is not None:
+                with contextlib.suppress(Exception):
+                    await server.wait_closed()
+        self._tcp_server = None
+        self._tls_server = None
 
 
 class TransactionTimeout(TimeoutError):

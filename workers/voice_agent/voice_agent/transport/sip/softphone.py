@@ -12,6 +12,11 @@ UAC: REGISTER (answering the 401 Digest challenge), INVITE with a PCMA/PCMU offe
 `answer_delay_s`) or `ring` (`180` forever: the gateway's ring timeout); every incoming call is put
 on `SoftPhone.incoming`. BYE and OPTIONS are answered in every mode. Audio is 8 kHz s16le mono in
 20 ms frames on the caller's side of `SoftCall.send_pcm` / `SoftCall.received`.
+
+I7 E44: `transport="tls"` connects over TLS (the server certificate verified against `tls_ca`, the
+local CA of `make certs`) and then offers SRTP (`RTP/SAVP` + an SDES `a=crypto` line, `srtp.py`)
+and answers an incoming call with it; `srtp=False` offers plain `RTP/AVP` anyway (the gateway's
+`488` check). `SoftCall.received` holds the decrypted packets either way.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import ssl
 import struct
 import time
 from collections.abc import Callable
@@ -31,6 +37,7 @@ from voice_agent.transport.sip.dialog import (
     Dialog,
     DialogState,
     SipEndpoint,
+    client_tls_context,
 )
 from voice_agent.transport.sip.message import (
     PT_PCMA,
@@ -51,6 +58,17 @@ from voice_agent.transport.sip.message import (
     user_of,
 )
 from voice_agent.transport.sip.rtp import PortAllocator, RtpPacket, RtpSession, decode
+from voice_agent.transport.sip.srtp import (
+    PROTO_AVP,
+    PROTO_SAVP,
+    CryptoAttribute,
+    MediaRejected,
+    SrtpContext,
+    SrtpError,
+    accept_answer,
+    negotiate_answer,
+    new_crypto,
+)
 
 __all__ = ["CallFailed", "SoftCall", "SoftPhone", "ToneBurstProbe"]
 
@@ -96,6 +114,14 @@ class SoftCall:
     #: An incoming call: our To tag and our `200 OK` (re-sent for a retransmitted INVITE).
     local_tag: str = ""
     ok: SipMessage | None = None
+    #: I7 E44: our SDES crypto line (the key we send with) and the far end's, on an SRTP call.
+    local_crypto: CryptoAttribute | None = None
+    remote_crypto: CryptoAttribute | None = None
+
+    @property
+    def srtp(self) -> bool:
+        """The call's media is SRTP (both keys negotiated)."""
+        return self.rtp is not None and self.rtp.srtp is not None
 
     @property
     def is_up(self) -> bool:
@@ -163,9 +189,15 @@ class SoftPhone:
         clock: Callable[[], float] = time.monotonic,
         answer_mode: str = "busy",
         answer_delay_s: float = 0.2,
+        tls_ca: str | None = None,
+        tls_context: ssl.SSLContext | None = None,
+        tls_server_name: str | None = None,
+        srtp: bool | None = None,
     ) -> None:
         if answer_mode not in ("busy", "auto", "ring"):
             raise ValueError(f"unknown answer_mode {answer_mode!r}")
+        if transport.upper() not in ("UDP", "TCP", "TLS"):
+            raise ValueError(f"unknown transport {transport!r}")
         self.server = server
         self.username = username
         self._password = password
@@ -187,13 +219,25 @@ class SoftPhone:
         self.local_port = 0
         self.answer_mode = answer_mode
         self.answer_delay_s = answer_delay_s
+        #: I7 E44: TLS (the CA file or a ready context; the name checked in the certificate) and
+        #: whether our offers are SRTP (default: exactly when the signalling is TLS).
+        self._tls_context = tls_context
+        self._tls_ca = tls_ca
+        self._tls_server_name = tls_server_name
+        self.srtp = self.transport == "TLS" if srtp is None else srtp
         #: Every call the gateway placed to us, in arrival order (I3 E6e).
         self.incoming: asyncio.Queue[SoftCall] = asyncio.Queue()
 
     # -- lifecycle ------------------------------------------------------------------------------
 
     async def start(self) -> None:
-        if self.transport == "TCP":
+        if self.transport == "TLS":
+            context = self._tls_context or client_tls_context(self._tls_ca)
+            self._channel = await self._endpoint.connect_tls(
+                self.server, context, server_hostname=self._tls_server_name
+            )
+            self.local_port = self._endpoint.tls_port or 0
+        elif self.transport == "TCP":
             self._channel = await self._endpoint.connect_tcp(self.server)
             self.local_port = self._endpoint.tcp_port or 0
         else:
@@ -221,7 +265,7 @@ class SoftPhone:
         return f"sip:{self.username}@{self.domain}"
 
     def _contact(self) -> str:
-        suffix = ";transport=tcp" if self.transport == "TCP" else ""
+        suffix = {"TCP": ";transport=tcp", "TLS": ";transport=tls"}.get(self.transport, "")
         return f"<sip:{self.username}@{self.local_host}:{self.local_port or 5060}{suffix}>"
 
     def _via(self) -> str:
@@ -300,14 +344,25 @@ class SoftPhone:
         invite.add("Contact", self._contact())
         invite.add("User-Agent", USER_AGENT)
         invite.add("Content-Type", "application/sdp")
+        local_crypto = new_crypto() if self.srtp else None
+        rtp.require_srtp = local_crypto is not None
         invite.body = build_sdp(
             address=self.local_host,
             port=rtp.local_port,
             payload_types=offered,
             session_id=int(self._clock() * 1000) % 1_000_000_000,
             telephone_event=101,
+            protocol=PROTO_SAVP if local_crypto is not None else PROTO_AVP,
+            crypto=() if local_crypto is None else (local_crypto.sdp_value(),),
         )
-        call = SoftCall(number=number, call_id=call_id, invite=invite, phone=self, rtp=rtp)
+        call = SoftCall(
+            number=number,
+            call_id=call_id,
+            invite=invite,
+            phone=self,
+            rtp=rtp,
+            local_crypto=local_crypto,
+        )
         rtp.on_packet = call._on_rtp
         self._calls[call_id] = call
         loop = asyncio.get_running_loop()
@@ -412,6 +467,14 @@ class SoftPhone:
         if call.rtp is not None and call.codec is not None:
             call.rtp.payload_type = call.codec
             call.rtp.set_remote((answer.address, answer.port))
+            if call.local_crypto is not None:  # I7 E44: our SRTP offer needs an SRTP answer
+                try:
+                    call.remote_crypto = accept_answer(answer, call.local_crypto)
+                    call.rtp.srtp = SrtpContext(
+                        local_key=call.local_crypto.key, remote_key=call.remote_crypto.key
+                    )
+                except (MediaRejected, SrtpError) as exc:
+                    logger.info("softphone: answer without usable SRTP: %s", exc)
         self._send_ack(call)
         dialog.state = DialogState.CONFIRMED
 
@@ -470,6 +533,8 @@ class SoftPhone:
             port=call.rtp.local_port if call.rtp is not None else 0,
             payload_types=self.codecs,
             session_id=int(self._clock() * 1000) % 1_000_000_000,
+            protocol=PROTO_SAVP if call.local_crypto is not None else PROTO_AVP,
+            crypto=() if call.local_crypto is None else (call.local_crypto.sdp_value(),),
         )
         channel = self._channel_or_raise()
         response = await self._transactions.request(request, channel)
@@ -574,12 +639,20 @@ class SoftPhone:
         if codec is None:
             channel.send_message(build_response(invite, 488, to_tag=new_tag()))
             return
+        try:  # I7 E44: the same rule as the gateway's — SRTP over TLS, RTP over plain SIP
+            sdes = negotiate_answer(offer, secure_signalling=channel.secure)
+        except MediaRejected:
+            channel.send_message(build_response(invite, 488, to_tag=new_tag()))
+            return
         rtp = RtpSession(
             bind_host=self.local_host,
             allocator=self._allocator,
             payload_type=codec,
             clock=self._clock,
         )
+        rtp.require_srtp = channel.secure
+        if sdes is not None:
+            rtp.srtp = SrtpContext(local_key=sdes.local.key, remote_key=sdes.remote.key)
         await rtp.open()
         rtp.set_remote((offer.address, offer.port))
         sender = parse_name_addr(invite.get("From") or "")
@@ -592,6 +665,8 @@ class SoftPhone:
             rtp=rtp,
             codec=codec,
             incoming=True,
+            local_crypto=None if sdes is None else sdes.local,
+            remote_crypto=None if sdes is None else sdes.remote,
         )
         call.local_tag = new_tag()
         rtp.on_packet = call._on_rtp
@@ -623,6 +698,8 @@ class SoftPhone:
                 port=rtp.local_port,
                 payload_types=(codec,),
                 session_id=int(self._clock() * 1000) % 1_000_000_000,
+                protocol=PROTO_SAVP if sdes is not None else PROTO_AVP,
+                crypto=() if sdes is None else (sdes.local.sdp_value(),),
             ),
         )
         call.final_status = 200
