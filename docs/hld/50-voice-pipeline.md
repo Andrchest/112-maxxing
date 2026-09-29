@@ -460,6 +460,35 @@ synthesised sentence into `max_chunk_ms` frames as they are produced, and set
 - Fallback marking is unchanged: a failed Qwen3 unit still retries the whole utterance on the
   configured fallback with `MODEL_FALLBACK_USED`, and `CALLER_TTS_STARTED.provider` names who spoke.
 
+**I8 V4 addition (additive; the caller-voice fixed-line cache + offline QC, A1-plan §4 V4).** The
+voice agent's persona-line cache (`workers/voice_agent/voice_agent/tts_cache.py`, HLD
+`80-telephony.md` §80.4.3) is extended to the caller's own fixed §7.8 fallback lines: after the
+persona pass, `VoiceAgent.warm_line_cache` gender-matches §7.8's rows (row 2 excluded — its
+`{labels_and_values}` is filled per turn, not a fixed line) to every logical voice id in the active
+profile's `tts.voice_map`, and warms each one through `TtsLineCache.warm(..., qc=CallerLineQc(asr=
+self._asr))` — the process's own already-loaded ASR, never a second model. A new pure module,
+`voice_agent/tts_qc.py`, checks each clip offline: a rate check (`chars_per_s` in `[6, 22]`)
+always, and a CER check (case/punctuation/`ё`-`е`/digit-word normalised, Levenshtein, threshold
+`0.15`) only when `asr` is real and loaded — `asr is None` or `asr.provider_name == "fake"` both
+degrade to rate-only, so the gate's scripted `FakeASR` can never decide a cached line's fate.
+`TtsLineCache.warm(..., qc=...)` synthesises with a seed derived from `(voice_id, text)`, retries
+on `seed + 1`, `seed + 2` on a QC failure (`CallerLineQc.max_tries`, default 3), and — on the same
+"a miss is only a miss" rule the cache has always had — leaves a line that never passes uncached
+rather than storing a clip nobody QC'd clean; a line that does pass gets a `{sha}.qc.json` sidecar
+beside its `{sha}.wav` with the winning seed and the QC numbers. Two new settings bound the pass:
+`Settings.tts_warm_caller_lines` (`SIM_TTS_WARM_CALLER_LINES`, tri-state — an explicit value wins,
+unset resolves to `tts_provider == "qwen3_tts"`) and `Settings.tts_warm_caller_lines_budget_s`
+(`SIM_TTS_WARM_CALLER_LINES_BUDGET_S`, default 600) — the wall clock is checked before every line,
+and whatever the budget does not reach is logged and left a miss (falls back to live synthesis).
+
+§7.8's own templates are now gender-aware: each row of
+`backend/app/application/dialogue/fallback_templates_ru.py` carries `text_female`/`text_male`
+(only row 1's «расслышала»/«расслышал» differs; every other row's two fields are the identical
+string), chosen by `gender_from_voice_id(caller_profile.voice_id)` — `ru_male_*` -> male, else
+female (the templates' original wording, unchanged as the default) — and threaded through
+`FallbackTemplates.select(..., gender=...)` by `DialogueResponder`, which derives it once per turn
+from `inputs.caller_profile.voice_id`.
+
 ### 2.5 `LLMClient`
 
 Target file: `backend/app/application/ports/llm.py`
@@ -1570,7 +1599,11 @@ There is exactly one retry (SPEC §24). A second failure never leads to a third 
 
 ### 7.8 Deterministic fallback table, keyed by gate outcome
 
-Selected by `FallbackTemplates.select(package, interpreted)`; first matching row wins.
+Selected by `FallbackTemplates.select(package, interpreted, gender=...)`; first matching row wins.
+`gender` (I8 V4, `Gender = Literal["female", "male"]`) is `gender_from_voice_id(caller_profile.
+voice_id)`, derived once per turn by `DialogueResponder`; the table below is the `"female"` wording
+(the default and the templates' original text) — row 1 is the only row a male caller hears
+differently: «Простите, я не расслышал, повторите, пожалуйста.»
 
 | # | Gate / interpreter condition | Template (Russian) |
 |:--|:--|:--|
@@ -1586,10 +1619,10 @@ Selected by `FallbackTemplates.select(package, interpreted)`; first matching row
 Row 2 is the only row that reveals facts, and it reveals them through the normal path: the text goes
 to TTS, `CALLER_TTS_ENDED` fires, `FACTS_DELIVERED` follows. Rows 1 and 3–8 reveal nothing. Every
 fallback also emits `MODEL_FALLBACK_USED {turn_id, stage, reason, failure_codes, template_row}`.
-Templates are data in `backend/app/application/dialogue/fallback_templates_ru.py` and contain no
-scenario values other than the caller values passed in for row 2; the selector
-`FallbackTemplates.select` that reads them lives beside it in
-`backend/app/application/dialogue/fallbacks.py`.
+Templates are data in `backend/app/application/dialogue/fallback_templates_ru.py` (each row a
+`text_female`/`text_male` pair, `FallbackTemplate.text_for(gender)`) and contain no scenario values
+other than the caller values passed in for row 2; the selector `FallbackTemplates.select` that
+reads them lives beside it in `backend/app/application/dialogue/fallbacks.py`.
 
 ---
 

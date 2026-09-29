@@ -48,6 +48,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.application.dialogue.fallback_templates_ru import (
+    FALLBACK_TEMPLATES_RU,
+    FallbackRow,
+    gender_from_voice_id,
+)
 from app.application.dialogue.prompt_builder import DISPATCHER_LABEL_RU
 from app.application.ports.asr import ASRProvider
 from app.application.ports.call_transport import CallTransport
@@ -78,7 +83,7 @@ from voice_agent.health import (
 )
 from voice_agent.preflight_http import PreflightHttpServer, resolve_preflight_port
 from voice_agent.providers import build_asr, build_vad
-from voice_agent.tts_cache import CACHE_DIR_NAME, CachedTTSProvider, TtsLineCache
+from voice_agent.tts_cache import CACHE_DIR_NAME, CachedTTSProvider, CallerLineQc, TtsLineCache
 from voice_agent.wiring import (
     TRANSPORT_LIVEKIT,
     VoiceAgentDeps,
@@ -948,7 +953,9 @@ class VoiceAgent:
         return list(found.values())
 
     async def warm_line_cache(self) -> int:
-        """Pre-synthesise every persona's fixed lines in its voice (I3 E6c, `tts_cache`).
+        """Pre-synthesise every persona's fixed lines in its voice (I3 E6c, `tts_cache`), then
+        (I8 V4) the caller's own §7.8 fallback lines for every caller voice the active profile
+        knows.
 
         Runs in the background after the warm-up, never before READY: with a whole-utterance TTS
         it takes minutes the first time, and a restart reads the files back instead. Returns how
@@ -974,6 +981,66 @@ class VoiceAgent:
                 )
             except Exception:
                 logger.exception("warming the line cache for %s failed", voice_id)
+        cached += await self._warm_caller_lines()
+        return cached
+
+    def _warm_caller_lines_enabled(self, settings: Settings) -> bool:
+        """`SIM_TTS_WARM_CALLER_LINES`: explicit wins; unset resolves to "a Qwen TTS is primary"
+        (I8 V4 — the brief's "default true only in profiles with a Qwen TTS; false elsewhere"),
+        so no profile has to name the key just to get that default."""
+        if settings.tts_warm_caller_lines is not None:
+            return settings.tts_warm_caller_lines
+        return settings.tts_provider == "qwen3_tts"
+
+    async def _warm_caller_lines(self) -> int:
+        """I8 V4: §7.8's fallback lines, gender-matched, for every caller voice the active
+        profile's `tts.voice_map` names — QC'd offline against the already-warmed ASR
+        (`voice_agent.tts_qc`; `self._asr` is reused, never a second model load), bounded by
+        `SIM_TTS_WARM_CALLER_LINES_BUDGET_S` so a slow card cannot hold the process's warm-up
+        pass open forever. Row 2 (`ALLOWED_FACTS`) is skipped: its `{labels_and_values}` is
+        filled per turn from the gate's output, so it is not a *fixed* line and cannot be
+        pre-synthesised."""
+        settings = self._deps.settings
+        if self._tts is None or not self._warm_caller_lines_enabled(settings):
+            return 0
+        voice_ids = sorted(settings.tts_voice_map)
+        if not voice_ids:
+            return 0
+        qc = CallerLineQc(asr=self._asr)
+        clock = self._deps.clock
+        deadline_ms = clock.monotonic_ms() + settings.tts_warm_caller_lines_budget_s * MS_PER_S
+        cached = 0
+        missing: list[str] = []
+        for voice_id in voice_ids:
+            if self._stopping.is_set():
+                break
+            gender = gender_from_voice_id(voice_id)
+            lines = [
+                template.text_for(gender)
+                for template in FALLBACK_TEMPLATES_RU
+                if template.row is not FallbackRow.ALLOWED_FACTS
+            ]
+            voice = TtsVoiceSpec(voice_id=voice_id, speaking_rate=settings.tts_speaking_rate)
+            for line in lines:
+                if self._stopping.is_set():
+                    break
+                if clock.monotonic_ms() >= deadline_ms:
+                    missing.append(f"{voice_id}: {line!r}")
+                    continue
+                try:
+                    cached += await self._line_cache.warm(self._tts, voice, [line], qc=qc)
+                except Exception:
+                    logger.exception(
+                        "warming the caller line cache for %s failed on %r", voice_id, line
+                    )
+        if missing:
+            logger.warning(
+                "caller line warm-up ran out of its %ds budget; %d line(s) never started and "
+                "fall back to live synthesis: %s",
+                settings.tts_warm_caller_lines_budget_s,
+                len(missing),
+                missing,
+            )
         return cached
 
     async def _session_started_at(self, session_id: SessionId) -> datetime | None:

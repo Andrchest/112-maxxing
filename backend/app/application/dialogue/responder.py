@@ -50,6 +50,7 @@ from app.application.dialogue.events import (
     fact_gate_evaluated_payload,
     model_fallback_used_payload,
 )
+from app.application.dialogue.fallback_templates_ru import gender_from_voice_id
 from app.application.dialogue.fallbacks import FallbackChoice, FallbackTemplates
 from app.application.dialogue.forbidden_values import forbidden_values
 from app.application.dialogue.generator import (
@@ -308,6 +309,8 @@ class DialogueResponder:
     ) -> tuple[GeneratedResponse | None, FallbackChoice | None]:
         """§7.7's flow, then §7.8's table. `asyncio.CancelledError` is never swallowed."""
         turn_id = transcribed.turn.turn_id
+        # I8 V4: §7.8's wording is gender-matched to the scenario's caller voice.
+        gender = gender_from_voice_id(inputs.caller_profile.voice_id)
         try:
             generated = await self._generator.generate(
                 package,
@@ -340,7 +343,7 @@ class DialogueResponder:
                 failure_codes=(),
                 model_error=None,
             )
-            return None, self._fallbacks.select(package, interpreted)
+            return None, self._fallbacks.select(package, interpreted, gender=gender)
 
         if generated.validated:
             return generated, None
@@ -352,7 +355,7 @@ class DialogueResponder:
             failure_codes=generated.failure_codes,
             model_error=generated.error_kind,
         )
-        return generated, self._fallbacks.select(package, interpreted)
+        return generated, self._fallbacks.select(package, interpreted, gender=gender)
 
     async def _fallback_events(
         self,

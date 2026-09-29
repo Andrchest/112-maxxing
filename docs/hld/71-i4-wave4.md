@@ -2399,3 +2399,73 @@ recipe), new `tests/test_pipeline.py` (the lab's cases for the vendored function
 seed echo), `test_qwen3_tts.py` (seed/tempo on the wire, tempo table incl. PAIN, header parsing,
 pre-V1 worker), `test_sentence_chunker.py` (pauses, derived seeds, attributes),
 `test_tts_speech_sink.py` (event keys, malformed attributes dropped, seed_mode derived/off).
+
+## 71.20.V4 I8 V4 — Gender-aware fallback lines; the caller-voice fixed-line cache + offline QC
+
+Design as built (A1-plan §4 V4, plus the fallback-template half of §4 V3 that needs no LLM). No
+GPU, no migration, no API or frontend change; score/checksum paths untouched.
+
+**Gender-aware fallback templates (`backend/app/application/dialogue/`).** §7.8's eight rows now
+each carry `text_female`/`text_male` (`fallback_templates_ru.py`); only row 1's «я не
+расслышала»/«расслышал» actually differs — every other row's Russian has no gendered verb, so its
+two fields hold the identical string. `FallbackTemplate.text_for(gender)` is the one place that
+choice is made. `gender_from_voice_id(voice_id)`: `ru_male_*` -> `"male"`, everything else
+(including `ru_female_*` and an id the pattern does not name) -> `"female"` — the template set's
+original wording, unchanged as a default. `FallbackTemplates.select(..., gender="female")`
+threads it through row selection and row 2's `{labels_and_values}` fill; `DialogueResponder._answer`
+now derives `gender_from_voice_id(inputs.caller_profile.voice_id)` once per turn and passes it on
+both fallback calls (invalid-answer path and the prompt-budget path). Nothing else about §7.8's
+selection logic changed.
+
+**The caller-voice fixed-line cache (`workers/voice_agent/`).** `VoiceAgent.warm_line_cache` now
+runs a second pass after the persona lines: for every logical voice id in the active profile's
+`tts.voice_map` (`Settings.tts_voice_map`), it gender-matches §7.8's fallback lines (skipping row 2
+— `{labels_and_values}` is filled per turn from the gate, so it is not a fixed line) and warms them
+through `TtsLineCache.warm(..., qc=CallerLineQc(asr=self._asr))` — the SAME already-loaded ASR
+provider the turn pipeline uses, never a second model load.
+
+New pure module `voice_agent/tts_qc.py`: `check_clip` runs a rate check
+(`chars_per_s = (letters+digits)/audio_s`, band `[6, 22]`) unconditionally, and a CER check
+(`normalize_for_cer`: lower-case, strip punctuation, `ё`->`е`, digit runs spelled out to Russian
+words; Levenshtein over the folded strings; threshold `0.15`) only against a *real*, loaded ASR —
+`asr is None` or `asr.provider_name == "fake"` both degrade to the rate check alone, so the gate's
+scripted `FakeASR` can never decide a cached line's fate by test-script fiat.
+`TtsLineCache.warm(..., qc=...)` (`tts_cache.py`) synthesises with a seed derived from
+`(voice_id, text)` (`sha256(voice_id:text) & 0x7ffffff0`, the low 4 bits masked off to leave
+headroom for the retry seeds below `0x7fffffff`), QCs the clip, and retries on `seed+1`, `seed+2`
+(`CallerLineQc.max_tries`, default 3) until one passes; a
+line that never passes stays uncached — the module's own long-standing "a miss is only a miss"
+rule, now covering a QC failure too. A line that does pass gets a `{sha}.qc.json` sidecar beside
+its `{sha}.wav` with the winning seed, `cer`, `chars_per_s`, `checked_cer` and `asr_provider`.
+`qc=None` (every call site before this epic, still what persona lines use) is byte-for-byte the
+old, unseeded, unQC'd behaviour.
+
+**Bounded warm-up.** `Settings.tts_warm_caller_lines: bool | None` (`SIM_TTS_WARM_CALLER_LINES`):
+an explicit value always wins; unset resolves at the call site to `tts_provider == "qwen3_tts"` —
+true only where a whole-utterance TTS benefits from a warm cache, false for `piper`/`fake`, with no
+profile needing to name the key. `Settings.tts_warm_caller_lines_budget_s` (default 600,
+`SIM_TTS_WARM_CALLER_LINES_BUDGET_S`): `VoiceAgent._warm_caller_lines` checks the wall clock before
+every line and stops once the budget is spent, logging every voice/line it never got to — those
+stay a miss and fall back to live synthesis, same as any other cache miss.
+
+**Not done here.** `_number_to_words_ru` in `tts_qc.py` is a compact nominative-case speller (0 to
+just under 10^9), not a full TTS-grade normaliser — no case/gender agreement beyond «две тысячи»,
+no ordinals or fractions. None of today's eight fallback templates contain a digit, so this path is
+untested against real audio; it exists so a future digit-bearing fixed line still gets a fair CER
+instead of a guaranteed near-miss. The rate band (`[6, 22]` chars/s) and the CER threshold (`0.15`)
+are the same technical defaults I8 A1 §2.2 proposed for the *live* worker check; they are unmeasured
+against this offline path on real audio (that needs I8 V2/V5's GPU lock).
+
+**Tests.** `workers/voice_agent/tests/test_tts_qc.py` (normalisation incl. digit spelling and
+«две тысячи», CER incl. case/punctuation-insensitivity, rate bounds, `check_clip`'s fake/no-ASR
+degrade-to-rate-only rule and its real-provider CER path, rate-precedence-over-CER on a combined
+failure); `test_tts_cache.py` (first-attempt pass, seed-retry until one passes, "never passes ->
+stays a miss", the fake-ASR degrade rule again at the cache layer, seed determinism across a fresh
+rebuild, the `.wav`/`.qc.json` pair on disk, the unchanged `qc=None` path); new
+`test_caller_line_warmup.py` (the enablement rule incl. the explicit-setting override, gender-
+matched lines per voice with row 2 excluded, the empty-voice-map and disabled no-ops, the spent-
+budget stop, `warm_line_cache`'s end-to-end call into the new pass); `test_fallbacks.py` gains the
+male row-1 variant, the female default, "every other row reads the same in both genders", and
+`gender_from_voice_id`. `test_service_head_in_agent.py`'s persona-only exact-set assertion is
+untouched (its `SIM_TTS_PROVIDER=fake` / empty `tts_voice_map` gate settings never enable the new
+pass).

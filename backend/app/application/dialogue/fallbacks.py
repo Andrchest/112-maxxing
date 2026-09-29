@@ -19,6 +19,7 @@ from app.application.dialogue.fallback_templates_ru import (
     ROW_2_MAX_FACTS,
     FallbackRow,
     FallbackTemplate,
+    Gender,
 )
 from app.application.dialogue.interpreter import InterpretedUtterance
 from app.domain.enums import GateReason, SpeechAct
@@ -54,43 +55,49 @@ class FallbackTemplates:
         self._max_facts = max_facts
 
     def select(
-        self, package: AllowedFactsPackage, interpreted: InterpretedUtterance
+        self,
+        package: AllowedFactsPackage,
+        interpreted: InterpretedUtterance,
+        *,
+        gender: Gender = "female",
     ) -> FallbackChoice:
-        """The first row of §7.8 whose condition holds for this turn's gate output."""
+        """The first row of §7.8 whose condition holds for this turn's gate output, worded in
+        `gender` (I8 V4; §7.8's own wording, `text_female`, is the default so a caller that does
+        not know the scenario's voice gender behaves exactly as before)."""
         if (
             interpreted.speech_act is SpeechAct.UNINTELLIGIBLE
             or interpreted.semantic_confidence < LOW_CONFIDENCE_THRESHOLD
         ):
-            return self._plain(FallbackRow.UNINTELLIGIBLE)
+            return self._plain(FallbackRow.UNINTELLIGIBLE, gender)
 
         if package.allowed:
-            return self._allowed_facts(package)
+            return self._allowed_facts(package, gender)
 
         reasons = {fact.reason for fact in package.unavailable}
         if package.unavailable and reasons == {GateReason.CALLER_DOES_NOT_KNOW}:
-            return self._plain(FallbackRow.ALL_UNKNOWN)
+            return self._plain(FallbackRow.ALL_UNKNOWN, gender)
         if GateReason.NEVER_DISCLOSE in reasons or package.withheld_count > 0:
-            return self._plain(FallbackRow.WITHHELD_OR_NEVER)
+            return self._plain(FallbackRow.WITHHELD_OR_NEVER, gender)
         if GateReason.NOT_YET_AVAILABLE in reasons:
-            return self._plain(FallbackRow.NOT_YET)
+            return self._plain(FallbackRow.NOT_YET, gender)
         if not interpreted.requested_facts and interpreted.speech_act is not SpeechAct.CLOSING:
-            return self._plain(FallbackRow.NOTHING_ASKED)
+            return self._plain(FallbackRow.NOTHING_ASKED, gender)
         if interpreted.speech_act is SpeechAct.CLOSING:
-            return self._plain(FallbackRow.CLOSING)
-        return self._plain(FallbackRow.OTHERWISE)
+            return self._plain(FallbackRow.CLOSING, gender)
+        return self._plain(FallbackRow.OTHERWISE, gender)
 
     # -- rows ---------------------------------------------------------------------------------
 
-    def _plain(self, row: FallbackRow) -> FallbackChoice:
-        return FallbackChoice(template_row=row, text=_TEMPLATES[row].text, fact_ids=())
+    def _plain(self, row: FallbackRow, gender: Gender) -> FallbackChoice:
+        return FallbackChoice(template_row=row, text=_TEMPLATES[row].text_for(gender), fact_ids=())
 
-    def _allowed_facts(self, package: AllowedFactsPackage) -> FallbackChoice:
+    def _allowed_facts(self, package: AllowedFactsPackage, gender: Gender) -> FallbackChoice:
         """Row 2: `{label_ru} — {caller_value_ru}` joined by «, », capped at `max_facts`."""
         spoken = package.allowed[: self._max_facts]
         rendered = ", ".join(f"{fact.label_ru} — {fact.value_ru}" for fact in spoken)
         template = _TEMPLATES[FallbackRow.ALLOWED_FACTS]
         return FallbackChoice(
             template_row=FallbackRow.ALLOWED_FACTS,
-            text=template.text.format(labels_and_values=rendered),
+            text=template.text_for(gender).format(labels_and_values=rendered),
             fact_ids=tuple(fact.fact_id for fact in spoken),
         )

@@ -330,6 +330,18 @@ class Settings(BaseSettings):
     #: `SIM_TTS_SEED_MODE` — `off` (no seed, today's behaviour) | `derived` (I8 A1 §2.2).
     #: Overlaid from the profile's `tts.seed_mode`.
     tts_seed_mode: TtsSeedMode = "off"
+    # -- I8 V4: the caller-voice fixed-line cache (`voice_agent.main.warm_line_cache`) ----------
+    #: `SIM_TTS_WARM_CALLER_LINES` — pre-synthesise §7.8's fallback lines, gender-matched, for
+    #: every caller voice in `tts_voice_map` at warm-up. `None` (the default, and what an unset
+    #: env var leaves it at) resolves at the call site to `tts_provider == "qwen3_tts"`: true only
+    #: where a whole-utterance TTS actually benefits from a warm cache, false for `piper`/`fake` —
+    #: no profile needs to name this key just to get that default. An explicit
+    #: `SIM_TTS_WARM_CALLER_LINES=true|false` always wins.
+    tts_warm_caller_lines: bool | None = None
+    #: `SIM_TTS_WARM_CALLER_LINES_BUDGET_S` — the wall-clock budget for the caller-line warm-up
+    #: pass; once it is spent, warm-up stops and logs which voices/lines it never got to. Those
+    #: stay a miss, same as a line that failed to synthesise: the provider answers live instead.
+    tts_warm_caller_lines_budget_s: int = Field(default=600, ge=0)
     # -- E14-B: the real TTS providers (OWNER DECISION: Qwen3-TTS GPU default; `PiperTTS` CPU
     # fallback). `voice_agent.providers.build_tts`/`build_tts_fallback` are the only readers.
     #: `Qwen3TTS`'s httpx client target — the standalone `workers/tts_qwen3` worker on loopback,

@@ -12,6 +12,7 @@ from app.application.dialogue.fallback_templates_ru import (
     FALLBACK_TEMPLATES_RU,
     ROW_2_MAX_FACTS,
     FallbackRow,
+    gender_from_voice_id,
 )
 from app.application.dialogue.fallbacks import FallbackTemplates
 from app.domain.enums import SpeechAct
@@ -141,6 +142,40 @@ def test_row_8_is_the_catch_all() -> None:
     plain = TEMPLATES.select(package, interpreted("address.street"))
     assert plain.template_row is FallbackRow.OTHERWISE
     assert plain.text == "Я не знаю, что сказать."
+
+
+def test_row_1_male_variant() -> None:
+    """I8 V4: the only row whose Russian carries a gendered verb («расслышала»/«расслышал»)."""
+    package = AllowedFactsPackage()
+    choice = TEMPLATES.select(
+        package, interpreted(speech_act=SpeechAct.UNINTELLIGIBLE), gender="male"
+    )
+    assert choice.template_row is FallbackRow.UNINTELLIGIBLE
+    assert choice.text == "Простите, я не расслышал, повторите, пожалуйста."
+
+
+def test_default_gender_is_female_the_original_wording() -> None:
+    """A caller that never learns the scenario's voice gender behaves exactly as before I8 V4."""
+    package = AllowedFactsPackage()
+    choice = TEMPLATES.select(package, interpreted(speech_act=SpeechAct.UNINTELLIGIBLE))
+    assert choice.text == "Простите, я не расслышала, повторите, пожалуйста."
+
+
+def test_every_other_row_reads_the_same_in_both_genders() -> None:
+    """I8 V4: rows 2-8 have no gendered verb, so `text_female` and `text_male` are equal."""
+    for template in FALLBACK_TEMPLATES_RU:
+        if template.row is FallbackRow.UNINTELLIGIBLE:
+            continue
+        assert template.text_female == template.text_male, template.row
+
+
+def test_gender_from_voice_id() -> None:
+    assert gender_from_voice_id("ru_male_adult_01") == "male"
+    assert gender_from_voice_id("ru_male_elderly_01") == "male"
+    assert gender_from_voice_id("ru_female_adult_01") == "female"
+    assert gender_from_voice_id("ru_female_elderly_01") == "female"
+    # An id the pattern does not name defaults to the original wording, not an error.
+    assert gender_from_voice_id("ru_unknown_01") == "female"
 
 
 def test_first_match_wins_over_a_later_row() -> None:
