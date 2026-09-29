@@ -170,9 +170,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("voice:health subscriber started")
     else:
         logger.info("simulation runner disabled (SIM_RUNNER_ENABLED=false)")
+    ml_worker = None
+    if container.settings.ml_audit_auto_enabled and container.ml_audit_available:
+        ml_worker = container.ml_audit_worker()
+        await ml_worker.start()
     try:
         yield
     finally:
+        if ml_worker is not None:
+            await ml_worker.stop()
         # `stop()` cancels *and awaits* every task and releases every lock this instance holds, so
         # `asyncio.all_tasks()` is back where it started by the time this returns.
         if runner_enabled:

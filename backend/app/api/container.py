@@ -158,6 +158,8 @@ from app.application.reports.explanation.generate_explanation import GenerateExp
 from app.application.reports.explanation.get_explanation import GetExplanation
 from app.application.reports.explanation.ports import ScoreReportReader
 from app.application.reports.list_inference_metrics import ListInferenceMetrics
+from app.application.reports.ml_audit import MLAuditor, Rubric, RubricCatalog
+from app.application.reports.ml_audit_service import MLAuditService, MLAuditWorker
 from app.application.reports.release_report import ReleaseReportToTrainee
 from app.application.reports.serve_audio_segment import ServeAudioSegment
 from app.application.reports.serve_audio_segment_mp3 import ServeAudioSegmentMp3
@@ -222,6 +224,7 @@ from app.infrastructure.ids import Uuid4Generator
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.persistence.admin_monitoring_repository import SqlAlchemyAdminMonitoring
 from app.infrastructure.persistence.audit_log_repository import SqlAlchemyAuditLog
+from app.infrastructure.persistence.ml_audit_repository import SqlAlchemyMLAuditRepository
 from app.infrastructure.persistence.statistics_reader import SqlAlchemyStatisticsReader
 from app.infrastructure.persistence.unit_of_work import unit_of_work_factory
 from app.infrastructure.realtime.redis_idempotency_store import RedisIdempotencyStore
@@ -1244,6 +1247,64 @@ class Container:
         if cached is None:
             cached = _UowScoreReportReader(self.unit_of_work)
             self._score_report_reader: ScoreReportReader = cached
+        return cached
+
+    def ml_audit_rubric(self, scenario_version_id: str) -> Rubric:
+        path = (
+            Path(self.settings.ml_audit_rubrics_path)
+            if self.settings.ml_audit_rubrics_path
+            else Path(__file__).parents[1] / "config" / "ml_audit_rubrics.json"
+        )
+        catalog = RubricCatalog.model_validate_json(path.read_text(encoding="utf-8"))
+        return catalog.resolve(scenario_version_id)
+
+    def ml_auditor(self) -> MLAuditor:
+        cached: MLAuditor | None = getattr(self, "_ml_auditor", None)
+        if cached is None:
+            if self.settings.ml_audit_provider == "attention":
+                from app.inference.llm.attention_auditor import AttentionAuditor
+
+                cached = AttentionAuditor(
+                    self.explanation_llm_client(),
+                    self.settings.ml_audit_attention_model_path,
+                    max_tokens=self.settings.ml_audit_attention_max_tokens,
+                    timeout_ms=self.settings.ml_audit_timeout_ms,
+                )
+            else:
+                cached = MLAuditor(
+                    self.explanation_llm_client(),
+                    timeout_ms=self.settings.ml_audit_timeout_ms,
+                )
+            self._ml_auditor = cached
+        return cached
+
+    @property
+    def ml_audit_available(self) -> bool:
+        if self.settings.ml_audit_provider == "attention":
+            return bool(self.settings.ml_audit_attention_model_path)
+        return self.settings.explanation_llm_provider == "llama_cpp"
+
+    def ml_audit_service(self) -> MLAuditService:
+        settings = self.settings
+        engine_key = (
+            f"v3-forced-binary:{settings.ml_audit_provider}:{settings.explanation_llm_provider}:"
+            f"{settings.explanation_llm_base_url}:{settings.explanation_llm_model_name}:"
+            f"{settings.ml_audit_attention_model_path}:{settings.ml_audit_attention_max_tokens}"
+        )
+        return MLAuditService(
+            self.get_session_report(),
+            SqlAlchemyMLAuditRepository(self.session_factory),
+            self.ml_auditor(),
+            self.ml_audit_rubric,
+            engine_key=engine_key,
+            available=self.ml_audit_available,
+        )
+
+    def ml_audit_worker(self) -> MLAuditWorker:
+        cached: MLAuditWorker | None = getattr(self, "_ml_audit_worker", None)
+        if cached is None:
+            cached = MLAuditWorker(self.ml_audit_service())
+            self._ml_audit_worker = cached
         return cached
 
     def generate_explanation(self) -> GenerateExplanation:

@@ -1781,6 +1781,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/{session_id}/ml-audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the stored ML audit for this viewer's visible inputs.
+         * @description The latest `generateMLAudit` result scoped to this viewer's exact visible input and the
+         *     rubric it was run against; `null` when nothing has been generated yet for that scope (an
+         *     instructor's richer report is never served to a DDS-only trainee, even for the same
+         *     `session_id`).
+         */
+        get: operations["getMLAudit"];
+        put?: never;
+        /**
+         * Advisory atomic ML audit; never changes official scores.
+         * @description An atomic binary-graded LLM audit of the same visibility-filtered inputs
+         *     `getSessionReport` would show this viewer: one forced да/нет token per rubric criterion,
+         *     weighted and summed in code (HealthBench-style), never a model-produced score. Purely
+         *     advisory (`advisory: true`) — it has no write path to `score_results` / `score_evidence`.
+         *
+         *     A cached result for this viewer's exact visible input (`input_checksum`) and rubric
+         *     (`rubric_checksum`) is reused unless `regenerate=true`, which always runs a fresh audit
+         *     and appends a new immutable history row.
+         */
+        post: operations["generateMLAudit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reports/{session_id}/export": {
         parameters: {
             query?: never;
@@ -4258,6 +4292,74 @@ export interface components {
             llm_model: string;
             /** @description Equals `ScoreReportView.checksum` of the report it explains. */
             score_report_checksum: string;
+        };
+        /** @description One rubric criterion — code-owned weight, never shown to the model. */
+        MLAuditCriterion: {
+            id: string;
+            category: string;
+            question: string;
+            weight: number;
+            /** @enum {string} */
+            source: "dialogue" | "card";
+        };
+        /** @description A code-point offset span into one `MLAuditSource.text` (HTTP mode never emits any). */
+        MLAuditEvidence: {
+            source_id: string;
+            start: number;
+            end: number;
+            quote: string;
+        };
+        MLAuditCriterionResult: {
+            criterion: components["schemas"]["MLAuditCriterion"];
+            passed: boolean | null;
+            /** @enum {string|null} */
+            decision_token: "да" | "нет" | null;
+            awarded_weight: number | null;
+            evidence: components["schemas"]["MLAuditEvidence"][];
+            /** @description `no_source` | `context_too_large` | `inference_error` | `provider_not_configured` | `attention_unavailable`, when `passed` is `null`. */
+            issue: string | null;
+        };
+        MLAuditCategoryResult: {
+            category: string;
+            earned_weight: number;
+            total_weight: number;
+            score_percent: number | null;
+        };
+        /** @description One already visibility-filtered input the audit graded against. */
+        MLAuditSource: {
+            id: string;
+            text: string;
+            /** @enum {string} */
+            kind: "dialogue" | "card";
+        };
+        /**
+         * @description Advisory atomic ML audit result (HealthBench-style: one forced да/нет token per
+         *     criterion, weighted and summed in code). `advisory: true` always; the model never writes
+         *     `score_results` / `score_evidence`.
+         */
+        MLAuditReport: {
+            /** @enum {boolean} */
+            advisory: true;
+            /** @enum {string} */
+            evidence_method: "binary_token" | "attention_weights";
+            /** @enum {string} */
+            decision_method: "forced_binary_token";
+            /** Format: uuid */
+            run_id: string | null;
+            /** Format: date-time */
+            generated_at: string | null;
+            model: string;
+            rubric_version: string;
+            rubric_checksum: string;
+            input_checksum: string;
+            /** @description `null` when any criterion could not be assessed (technical failure, never a model grade). */
+            score_percent: number | null;
+            coverage_percent: number;
+            earned_weight: number;
+            total_weight: number;
+            results: components["schemas"]["MLAuditCriterionResult"][];
+            categories: components["schemas"]["MLAuditCategoryResult"][];
+            sources: components["schemas"]["MLAuditSource"][];
         };
         /** @description One `inference_metrics` row — the SPEC §27 `InferenceMetric` fields. */
         InferenceMetricView: {
@@ -7363,6 +7465,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getMLAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored audit report, or `null`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MLAuditReport"] | null;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    generateMLAudit: {
+        parameters: {
+            query?: {
+                regenerate?: boolean;
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The audit report (cached or freshly generated). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MLAuditReport"];
                 };
             };
             401: components["responses"]["Unauthorized"];

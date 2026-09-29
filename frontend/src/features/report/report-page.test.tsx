@@ -24,6 +24,9 @@ function problemResponse(code: string, status: number): Response {
 function mockReportFetch(report: ReturnType<typeof makeSessionReport>): (input: RequestInfo | URL) => Promise<Response> {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes('/ml-audit')) {
+      return jsonResponse(null);
+    }
     if (url.includes('/inference-metrics')) {
       return jsonResponse({ items: [], total: 0, timing_metrics: report.timing_metrics });
     }

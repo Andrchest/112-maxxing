@@ -42,6 +42,7 @@ import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
 import { RecommendationsSection } from './recommendations-section';
 import { ExplanationPanel } from './explanation-panel';
+import { MLAuditPanel } from './ml-audit-panel';
 import { CommentsSection } from './comments-section';
 import { SessionReportExportButtons } from './session-report-export-buttons';
 
@@ -211,6 +212,9 @@ export function ReportPage() {
       </div>
       <div className="mt-4">
         <RecommendationsSection recommendations={report.recommendations} />
+      </div>
+      <div className="mt-4">
+        <MLAuditPanel key={`${sessionId}:${user?.id}:${user?.user_role}`} sessionId={sessionId} />
       </div>
       <div className="mt-4">
         <ExplanationPanel

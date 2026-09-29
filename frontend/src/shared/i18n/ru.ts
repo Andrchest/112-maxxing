@@ -1495,4 +1495,41 @@ export const ru = {
   adminActivityWeekdayFri: 'Пт',
   adminActivityWeekdaySat: 'Сб',
   adminActivityWeekdaySun: 'Вс',
+
+  // -- I8 ML audit: advisory LLM audit of the card and dialogue (owner's integration) ------------
+  mlAuditTitle: 'ML-аудит карточки и диалога',
+  mlAuditDescription:
+    'Учебная рекомендация, не официальный балл и не юридическое заключение. ' +
+    'Результаты сохраняются в истории аудита. Автоматическая проверка запускается после ' +
+    'завершения вызова. Повторная проверка создаёт новую запись, не меняя официальный балл.',
+  mlAuditRunButton: 'Оценить с помощью ML',
+  mlAuditRunning: 'Проверяем…',
+  mlAuditGenerateError: 'Не удалось выполнить ML-аудит. Основной отчёт не изменён.',
+  mlAuditLoadError: 'Не удалось загрузить сохранённый аудит.',
+  mlAuditScoreLabel: 'ML-балл:',
+  mlAuditScoreUnavailable: 'технически недоступен',
+  mlAuditCoverageLabel: 'Проверено:',
+  mlAuditCoverageSuffix: 'веса критериев',
+  mlAuditWeightSumLabel: 'Сумма весов выполненных критериев:',
+  mlAuditModelLabel: 'Модель:',
+  mlAuditRubricLabel: 'Регламент:',
+  mlAuditMethodLabel: 'Метод:',
+  mlAuditMethodAttention: 'принудительный да/нет + attention-веса',
+  mlAuditMethodBinary: 'принудительный да/нет; HTTP-режим без attention и цитат',
+  mlAuditSavedLabel: 'Сохранено:',
+  mlAuditCategoryUndetermined: 'не определён',
+  mlAuditTechnicalFailure: 'Технический сбой',
+  mlAuditWeightLabel: 'Вес:',
+  mlAuditTokenLabel: 'Токен:',
+  mlAuditContributionLabel: 'Вклад:',
+  mlAuditNoEvidence: 'Подтверждение действия не найдено; цитаты отсутствия не существует.',
+  mlAuditCardField: 'Поле карточки',
+  mlAuditOperatorLine: 'Реплика оператора',
+  mlAuditIssueNoSource: 'Нет доступного текста для проверки.',
+  mlAuditIssueContextTooLarge: 'Текст превышает контекст модели; он не был обрезан.',
+  mlAuditIssueInferenceError: 'Технический сбой: модель не выдала ровно один токен «да» или «нет».',
+  mlAuditIssueProviderNotConfigured:
+    'Настройте локальную модель SIM_EXPLANATION_LLM_PROVIDER=llama_cpp или attention-адаптер.',
+  mlAuditIssueAttentionUnavailable: 'Attention-модель недоступна, несовместима или не уложилась в лимит.',
+  mlAuditIssueFallback: 'Оценка недоступна.',
 } as const;

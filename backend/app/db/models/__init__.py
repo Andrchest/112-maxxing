@@ -37,6 +37,7 @@ from app.db.models.layers import (
     IncidentWorldState,
 )
 from app.db.models.materials import TrainingMaterial
+from app.db.models.ml_audit import MLAuditJob, MLAuditRun
 from app.db.models.reference import (
     Scenario,
     ScenarioVersion,
@@ -73,6 +74,8 @@ __all__ = [
     "IncidentWorldState",
     "InferenceMetric",
     "Lesson",
+    "MLAuditJob",
+    "MLAuditRun",
     "Notification",
     "RecordingPurgeAudit",
     "ReportExplanation",

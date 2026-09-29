@@ -198,6 +198,15 @@ uv run python benchmarks/benchmark_voip.py --path sip-loopback        # delay pr
 Any SIP softphone registers as `sip:<username>@<SIM_SIP_REALM>` with the deployment password. In
 this epic only `999` (echo) answers; ДДС numbers arrive with E6e.
 
+## ML-аудит карточек
+
+В отчёте завершённой симуляции доступен ML-аудит: один принудительный токен «да»/«нет»
+на атомарный вопрос и взвешенный итог, рассчитанный кодом. Attention-адаптер извлекает
+фрагменты исходного текста без генерации цитат. Результаты сохраняются в БД, аудит
+запускается автоматически после завершения сессии. Официальный детерминированный балл
+не меняется. Настройка локальной модели, регламентов и ограничения:
+[docs/ML-AUDIT.md](docs/ML-AUDIT.md).
+
 ## Documentation
 
 - `docs/SPEC.md` — the owner's specification, verbatim. The law; never edit it.

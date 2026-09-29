@@ -472,6 +472,13 @@ class Settings(BaseSettings):
     #: than improvising a persona, so R8 asks for a more deterministic register (DO item 1).
     explanation_temperature: float = 0.2
     explanation_timeout_ms: int = 8000
+    # Advisory audit; separate from the official deterministic score.
+    ml_audit_rubrics_path: str = ""
+    ml_audit_timeout_ms: int = Field(default=20000, ge=100, le=60000)
+    ml_audit_provider: Literal["llm", "attention"] = "llm"
+    ml_audit_auto_enabled: bool = True
+    ml_audit_attention_model_path: str = ""
+    ml_audit_attention_max_tokens: int = Field(default=2048, ge=128, le=4096)
     # -- I3 E9a: difficulty-weight proposals for a lesson (HLD 70 §70.3.7) ------------------------
     # Over the same backend `LLMClient` as the explanation (`SIM_EXPLANATION_LLM_*`): one
     # JSON-schema-constrained call per lesson; any failure answers the deterministic heuristic.

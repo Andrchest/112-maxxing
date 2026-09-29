@@ -56,6 +56,7 @@ from app.application.ports.report_exporter import (
     generated_at_moscow,
 )
 from app.application.reports.list_inference_metrics import DEFAULT_LIMIT, MAX_LIMIT
+from app.application.reports.ml_audit import AuditReport
 from app.application.reports.session_report_export import session_report_export_document
 from app.application.scoring.rescore_session import RescoreOutcome
 from app.domain.common.ids import SessionId
@@ -81,6 +82,41 @@ async def get_session_report(
     an unfinished, aborted or unscored session is refused with `409 REPORT_NOT_READY`."""
     view = await container.get_session_report()(SessionId(session_id), user)
     return session_report_schema(view)
+
+
+@router.post(
+    "/{session_id}/ml-audit",
+    operation_id="generateMLAudit",
+    summary="Advisory atomic ML audit; never changes official scores.",
+    response_model=AuditReport,
+    status_code=200,
+)
+async def generate_ml_audit(
+    session_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+    regenerate: bool = False,
+) -> AuditReport:
+    return await container.ml_audit_service().generate(
+        SessionId(session_id),
+        user,
+        regenerate=regenerate,
+    )
+
+
+@router.get(
+    "/{session_id}/ml-audit",
+    operation_id="getMLAudit",
+    summary="Read the stored ML audit for this viewer's visible inputs.",
+    response_model=AuditReport | None,
+    status_code=200,
+)
+async def get_ml_audit(
+    session_id: UUID,
+    container: ContainerDep,
+    user: CurrentUserDep,
+) -> AuditReport | None:
+    return await container.ml_audit_service().get(SessionId(session_id), user)
 
 
 # --- I7 E46b (owner item 6): the session report has no CSV, so it goes straight to Excel/PDF ----

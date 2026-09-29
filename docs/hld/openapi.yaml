@@ -2421,6 +2421,66 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  # --- I8 ML audit ---
+  /api/v1/reports/{session_id}/ml-audit:
+    post:
+      tags: [reports]
+      operationId: generateMLAudit
+      summary: Advisory atomic ML audit; never changes official scores.
+      description: |
+        An atomic binary-graded LLM audit of the same visibility-filtered inputs
+        `getSessionReport` would show this viewer: one forced да/нет token per rubric criterion,
+        weighted and summed in code (HealthBench-style), never a model-produced score. Purely
+        advisory (`advisory: true`) — it has no write path to `score_results` / `score_evidence`.
+
+        A cached result for this viewer's exact visible input (`input_checksum`) and rubric
+        (`rubric_checksum`) is reused unless `regenerate=true`, which always runs a fresh audit
+        and appends a new immutable history row.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+        - name: regenerate
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The audit report (cached or freshly generated).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MLAuditReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [reports]
+      operationId: getMLAudit
+      summary: Read the stored ML audit for this viewer's visible inputs.
+      description: |
+        The latest `generateMLAudit` result scoped to this viewer's exact visible input and the
+        rubric it was run against; `null` when nothing has been generated yet for that scope (an
+        instructor's richer report is never served to a DDS-only trainee, even for the same
+        `session_id`).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/SessionIdParam'
+      responses:
+        '200':
+          description: The stored audit report, or `null`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/MLAuditReport'
+                  - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  # --- end I8 ML audit ---
+
   # --- I7 E46b (owner item 6): the session report has no CSV, so it goes straight to Excel/PDF ---
   /api/v1/reports/{session_id}/export:
     get:
@@ -6392,6 +6452,129 @@ components:
         score_report_checksum:
           type: string
           description: Equals `ScoreReportView.checksum` of the report it explains.
+
+    # --- I8 ML audit ---
+    MLAuditCriterion:
+      type: object
+      description: One rubric criterion — code-owned weight, never shown to the model.
+      additionalProperties: false
+      required: [id, category, question, weight, source]
+      properties:
+        id: { type: string }
+        category: { type: string }
+        question: { type: string }
+        weight: { type: number }
+        source:
+          type: string
+          enum: [dialogue, card]
+
+    MLAuditEvidence:
+      type: object
+      description: A code-point offset span into one `MLAuditSource.text` (HTTP mode never emits any).
+      additionalProperties: false
+      required: [source_id, start, end, quote]
+      properties:
+        source_id: { type: string }
+        start: { type: integer }
+        end: { type: integer }
+        quote: { type: string }
+
+    MLAuditCriterionResult:
+      type: object
+      additionalProperties: false
+      required: [criterion, passed, decision_token, awarded_weight, evidence, issue]
+      properties:
+        criterion: { $ref: '#/components/schemas/MLAuditCriterion' }
+        passed: { type: [boolean, 'null'] }
+        decision_token:
+          type: [string, 'null']
+          enum: [да, нет, null]
+        awarded_weight: { type: [number, 'null'] }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/MLAuditEvidence' }
+        issue:
+          type: [string, 'null']
+          description: >-
+            `no_source` | `context_too_large` | `inference_error` | `provider_not_configured` |
+            `attention_unavailable`, when `passed` is `null`.
+
+    MLAuditCategoryResult:
+      type: object
+      additionalProperties: false
+      required: [category, earned_weight, total_weight, score_percent]
+      properties:
+        category: { type: string }
+        earned_weight: { type: number }
+        total_weight: { type: number }
+        score_percent: { type: [number, 'null'] }
+
+    MLAuditSource:
+      type: object
+      description: One already visibility-filtered input the audit graded against.
+      additionalProperties: false
+      required: [id, text, kind]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        kind:
+          type: string
+          enum: [dialogue, card]
+
+    MLAuditReport:
+      type: object
+      description: |
+        Advisory atomic ML audit result (HealthBench-style: one forced да/нет token per
+        criterion, weighted and summed in code). `advisory: true` always; the model never writes
+        `score_results` / `score_evidence`.
+      additionalProperties: false
+      required:
+        - advisory
+        - evidence_method
+        - decision_method
+        - run_id
+        - generated_at
+        - model
+        - rubric_version
+        - rubric_checksum
+        - input_checksum
+        - score_percent
+        - coverage_percent
+        - earned_weight
+        - total_weight
+        - results
+        - categories
+        - sources
+      properties:
+        advisory: { type: boolean, enum: [true] }
+        evidence_method:
+          type: string
+          enum: [binary_token, attention_weights]
+        decision_method:
+          type: string
+          enum: [forced_binary_token]
+        run_id: { type: [string, 'null'], format: uuid }
+        generated_at: { type: [string, 'null'], format: date-time }
+        model: { type: string }
+        rubric_version: { type: string }
+        rubric_checksum: { type: string }
+        input_checksum: { type: string }
+        score_percent:
+          type: [number, 'null']
+          description: '`null` when any criterion could not be assessed (technical failure, never a model grade).'
+        coverage_percent: { type: number }
+        earned_weight: { type: number }
+        total_weight: { type: number }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/MLAuditCriterionResult' }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/MLAuditCategoryResult' }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/MLAuditSource' }
+    # --- end I8 ML audit ---
 
     InferenceMetricView:
       type: object
