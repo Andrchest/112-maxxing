@@ -1229,3 +1229,20 @@ export function exportSettingsXml(): Promise<Blob> {
 // --- I7 E43: «было → стало» in the audit journal (Q-E15-3) — `AuditEntryView.changes` items;
 // `listAuditLog`'s `withChanges` filter is above. ---
 export type AuditChangeView = components['schemas']['AuditChangeView'];
+
+// --- I7 E53: scenario categories (G13), «Скачать» a scenario version (G14a) ---
+export type ScenarioCategory = components['schemas']['ScenarioCategory'];
+export type ScenarioDocumentFormat = 'yaml' | 'json';
+
+/** `getScenarioVersionDocument` (I7 E53, G14a) — INSTRUCTOR / ADMIN; the stored version as a
+ * YAML (default) or JSON file that uploads back through {@link importScenarioVersion}. */
+export function getScenarioVersionDocument(
+  scenarioVersionId: string,
+  format: ScenarioDocumentFormat = 'yaml',
+): Promise<Blob> {
+  const query = format === 'yaml' ? '' : `?format=${format}`;
+  return fetchFile(
+    `/scenarios/versions/${encodeURIComponent(scenarioVersionId)}/document${query}`,
+    format === 'yaml' ? 'application/yaml' : 'application/json',
+  );
+}

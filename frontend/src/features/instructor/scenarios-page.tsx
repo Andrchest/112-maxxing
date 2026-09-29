@@ -4,6 +4,9 @@
 // content is read client-side; `format` comes from the file extension (`.yaml`/`.yml` → YAML,
 // `.json` → JSON) — "Edit" means uploading a new version, because versions are immutable (D4).
 // Archive/unarchive (ТЗ ¶229, «удалять неактуальные сценарии») lists every scenario beside it.
+// I7 E53: the list filters by «Категория событий» (G13), each scenario's versions can be downloaded
+// as YAML/JSON (G14a — download → edit → upload as the next version), and validation issues read
+// in Russian by rule number (G19, `scenario-issue-ru.ts`).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/shared/ui/app-shell';
@@ -16,18 +19,26 @@ import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
 import {
   archiveScenario,
+  getScenarioVersionDocument,
   importScenarioVersion,
   listScenarioPage,
+  listScenarioVersions,
   problemMessageRu,
   queryKeys,
   unarchiveScenario,
   validateScenarioFile,
   type ProblemCode,
+  type ScenarioDocumentFormat,
   type ScenarioSummary,
   type ScenarioValidationReport,
+  type ScenarioVersionListItem,
   type UserRole,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
+import { saveBlob } from '@/shared/lib/download';
+import { CategoryChips } from './category-chips';
+import { categoryOptionsOf, matchesCategories } from './scenario-categories';
+import { scenarioIssueMessageRu } from './scenario-issue-ru';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -148,8 +159,8 @@ function UploadCard() {
             {report.issues.length > 0 ? (
               <ul className="mt-1 flex flex-col gap-1">
                 {report.issues.map((issue, index) => (
-                  <li key={index} className="text-xs text-muted-foreground">
-                    R{issue.rule_number} · {issue.location} — {issue.message}
+                  <li key={index} className="text-xs text-muted-foreground" title={issue.message}>
+                    R{issue.rule_number} · {issue.location} — {scenarioIssueMessageRu(issue)}
                   </li>
                 ))}
               </ul>
@@ -177,31 +188,96 @@ function ArchiveAction({ scenario }: { scenario: ScenarioSummary }) {
   );
 }
 
+function VersionDownloads({ version, slug }: { version: ScenarioVersionListItem; slug: string }) {
+  const [failed, setFailed] = useState(false);
+  const download = useMutation({
+    mutationFn: async (format: ScenarioDocumentFormat) => {
+      saveBlob(await getScenarioVersionDocument(version.id, format), `${slug}-v${version.version}.${format}`);
+    },
+    onMutate: () => setFailed(false),
+    onError: () => setFailed(true),
+  });
+
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-xs">
+      <span>
+        {t('scenarioVersionLabel')} {version.version}
+      </span>
+      <Button type="button" variant="outline" size="sm" disabled={download.isPending} onClick={() => download.mutate('yaml')}>
+        {t('scenarioDownloadButton')}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" disabled={download.isPending} onClick={() => download.mutate('json')}>
+        {t('scenarioDownloadJsonButton')}
+      </Button>
+      {failed ? (
+        <span role="alert" className="text-destructive">
+          {t('scenarioDownloadFailed')}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+function ScenarioVersions({ scenario }: { scenario: ScenarioSummary }) {
+  const versionsQuery = useQuery({
+    queryKey: queryKeys.scenarios.versions(scenario.scenario_id),
+    queryFn: () => listScenarioVersions(scenario.scenario_id),
+  });
+  return (
+    <ul className="flex flex-col gap-1 pl-2">
+      {(versionsQuery.data?.items ?? []).map((version) => (
+        <VersionDownloads key={version.id} version={version} slug={scenario.slug} />
+      ))}
+    </ul>
+  );
+}
+
+function ScenarioRow({ scenario }: { scenario: ScenarioSummary }) {
+  const [showVersions, setShowVersions] = useState(false);
+  return (
+    <div className="flex flex-col gap-1 border-b border-border pb-2 last:border-0">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm">{scenario.title_ru}</span>
+          <Badge variant="secondary">{scenario.category?.name_ru ?? t('scenarioCategoryNone')}</Badge>
+          {scenario.archived_at ? <Badge variant="outline">{t('scenarioArchivedBadge')}</Badge> : null}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button type="button" variant="ghost" size="sm" aria-expanded={showVersions} onClick={() => setShowVersions((value) => !value)}>
+            {showVersions ? t('scenarioVersionsHide') : t('scenarioVersionsButton')}
+          </Button>
+          <ArchiveAction scenario={scenario} />
+        </div>
+      </div>
+      {showVersions ? <ScenarioVersions scenario={scenario} /> : null}
+    </div>
+  );
+}
+
 function ScenarioListCard() {
   const [showArchived, setShowArchived] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<number[]>([]);
   const scenariosQuery = useQuery({
     queryKey: queryKeys.scenarioPicker.list(showArchived),
     queryFn: () => listScenarioPage({ limit: 200, includeArchived: showArchived }),
   });
+  const scenarios = scenariosQuery.data?.items ?? [];
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-col gap-2">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />
           {t('scenarioShowArchivedLabel')}
         </label>
+        <CategoryChips options={categoryOptionsOf(scenarios)} selected={categoryFilter} onChange={setCategoryFilter} />
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {(scenariosQuery.data?.items ?? []).map((scenario) => (
-          <div key={scenario.scenario_id} className="flex items-center justify-between gap-2 border-b border-border pb-2 last:border-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm">{scenario.title_ru}</span>
-              {scenario.archived_at ? <Badge variant="outline">{t('scenarioArchivedBadge')}</Badge> : null}
-            </div>
-            <ArchiveAction scenario={scenario} />
-          </div>
-        ))}
+        {scenarios
+          .filter((scenario) => matchesCategories(scenario, categoryFilter))
+          .map((scenario) => (
+            <ScenarioRow key={scenario.scenario_id} scenario={scenario} />
+          ))}
       </CardContent>
     </Card>
   );

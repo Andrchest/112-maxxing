@@ -44,8 +44,14 @@ async def test_list_scenarios_returns_identity_only(
         "latest_version",
         "latest_difficulty",
         "archived_at",  # additive, I4 E32
+        "category",  # additive, I7 E53
     }
     assert item["archived_at"] is None
+    # I7 E53 (G13): the schema-1 demo names no incident code or type — «без категории»; the
+    # schema-2 example's prefab card ticks «101» (`incident.types: ["1"]`) — group 1.
+    assert item["category"] is None
+    rubbish = next(entry for entry in body["items"] if entry["slug"] == "street-rubbish-fire")
+    assert rubbish["category"] == {"group_no": 1, "name_ru": "Пожары и задымления"}
 
 
 async def test_list_scenario_versions(

@@ -12,12 +12,16 @@ validation report names the scenario's internal structure.
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+import yaml
+from fastapi import APIRouter, Query, Response
 
 from app.api.deps import ContainerDep
+from app.api.export_headers import content_disposition
 from app.api.schemas.common import PageSchema
 from app.api.schemas.scenarios import (
     ScenarioImportRequestSchema,
@@ -200,3 +204,56 @@ async def unarchive_scenario(
 
 
 # --- end I4 E32 -----------------------------------------------------------------------------
+
+
+# --- I7 E53: download a scenario version (G14a; ТЗ ¶222 «Создавать, редактировать…», ¶229) ------
+
+YAML_MEDIA_TYPE = "application/yaml"
+JSON_MEDIA_TYPE = "application/json"
+
+
+def _render_document(document: Mapping[str, Any], format: str) -> str:
+    """The stored document as YAML (block style, Cyrillic unescaped) or indented JSON.
+
+    Either form parses back to the same mapping through `parse_scenario_document`, so uploading the
+    file unchanged is the idempotent re-import.
+    """
+    if format == "json":
+        return json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    rendered: str = yaml.safe_dump(
+        dict(document), allow_unicode=True, sort_keys=False, default_flow_style=False, width=100
+    )
+    return rendered
+
+
+@router.get(
+    "/versions/{scenario_version_id}/document",
+    operation_id="getScenarioVersionDocument",
+    summary="Download a stored scenario version as YAML or JSON (INSTRUCTOR / ADMIN).",
+    status_code=200,
+    response_class=Response,
+)
+async def get_scenario_version_document(
+    scenario_version_id: UUID,
+    container: ContainerDep,
+    _user: AdminOrInstructorDep,
+    format: Annotated[
+        Literal["yaml", "json"], Query(description="I7 E53: `yaml` (default) or `json`.")
+    ] = "yaml",
+) -> Response:
+    """The version's full document — instructor-only, because it carries `world_truth`, the caller
+    layers and the scoring rules a trainee must never read (D3). Audited like every request (E25).
+    """
+    detail, document = await container.get_scenario_version_document()(
+        ScenarioVersionId(scenario_version_id)
+    )
+    file_name = f"{detail.scenario_slug}-v{detail.version}.{format}"
+    ascii_name = file_name if file_name.isascii() else f"scenario-v{detail.version}.{format}"
+    return Response(
+        content=_render_document(document, format).encode("utf-8"),
+        media_type=YAML_MEDIA_TYPE if format == "yaml" else JSON_MEDIA_TYPE,
+        headers={"Content-Disposition": content_disposition(file_name, ascii_name)},
+    )
+
+
+# --- end I7 E53 -------------------------------------------------------------------------------

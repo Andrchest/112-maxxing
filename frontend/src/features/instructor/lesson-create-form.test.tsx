@@ -463,4 +463,88 @@ describe('LessonCreateForm — the instructor plan editor (70 §70.3.1-§70.3.3)
     expect(screen.getByRole('option', { name: `${ru.difficultyLabel} 4 · Hard ticket` })).toBeInTheDocument();
     expect(screen.getByText(ru.lessonFormEntryWeightHint)).toBeInTheDocument();
   });
+
+  // I7 E53 (G13, ТЗ ¶324/¶334): «Категория событий», several at once.
+  it('filters the scenario picker by one or several event categories', async () => {
+    const user = userEvent.setup();
+    const categorized = {
+      items: [
+        { ...SCENARIOS_RESPONSE.items[0], category: { group_no: 1, name_ru: 'Fire group' } },
+        { ...SCENARIOS_RESPONSE.items[1], category: { group_no: 2, name_ru: 'Road group' } },
+        { scenario_id: 's3', slug: 'plain', title_ru: 'Plain scenario', version_count: 1, latest_version: 1, latest_difficulty: 2, category: null },
+      ],
+      total: 3,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/scenarios?limit=200') return jsonResponse(categorized);
+        if (url === '/api/v1/users?role=TRAINEE') return jsonResponse(TRAINEES_RESPONSE);
+        if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse({ items: [], total: 0 });
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    renderForm();
+    const fire = `${ru.difficultyLabel} 1 · Fire test scenario`;
+    const road = `${ru.difficultyLabel} 4 · Hard ticket`;
+    const plain = `${ru.difficultyLabel} 2 · Plain scenario`;
+    await screen.findByRole('option', { name: plain });
+    const group = screen.getByRole('group', { name: ru.scenarioCategoryFilterLabel });
+    expect(group).toHaveTextContent(ru.scenarioCategoryNone);
+
+    await user.click(screen.getByRole('button', { name: 'Road group' }));
+    expect(screen.getByRole('button', { name: 'Road group' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('option', { name: fire })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: plain })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: road })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: ru.scenarioCategoryNone }));
+    expect(screen.getByRole('option', { name: plain })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: fire })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: ru.scenarioCategoryAll }));
+    expect(screen.getByRole('option', { name: fire })).toBeInTheDocument();
+  });
+
+  // I7 E53 (G12a, ТЗ ¶340): «Случайный порядок карточек» — the server draws the seed.
+  it('sends shuffle only when «random card order» is ticked', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios?limit=200' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/trainee-groups?limit=200' && method === 'GET') return jsonResponse({ items: [], total: 0 });
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/lessons' && method === 'POST') return jsonResponse({ ...makeLesson(), shuffle_seed: 42 }, 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await user.type(screen.getByLabelText(ru.lessonFormTitleFieldLabel), 'Shuffled');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire test scenario` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryScenarioLabel), 's1');
+    await screen.findByRole('option', { name: `${ru.difficultyLabel} 1 · Fire scenario v1 (v1)` });
+    await user.selectOptions(screen.getByLabelText(ru.lessonFormEntryVersionLabel), 'v1');
+    const participantSelect = await screen.findByLabelText(`${ru.instructorParticipantUserIdLabel} — ${ru.roleTypeDds}`);
+    await screen.findByRole('option', { name: 'Trainee One' });
+    await user.selectOptions(participantSelect, 'trainee-1');
+
+    const checkbox = screen.getByLabelText(ru.lessonFormShuffleLabel);
+    expect(checkbox).not.toBeChecked();
+    await user.click(checkbox);
+    await user.click(screen.getByRole('button', { name: ru.lessonFormCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/lessons' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string).shuffle).toBe(true);
+  });
 });

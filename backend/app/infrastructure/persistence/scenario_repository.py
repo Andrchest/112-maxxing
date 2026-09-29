@@ -8,6 +8,7 @@ PostgreSQL itself.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
@@ -39,6 +40,62 @@ __all__ = ["SqlAlchemyScenarioRepository"]
 _SCENARIOS = ScenarioRow.__table__
 _VERSIONS = ScenarioVersionRow.__table__
 _RULES = ScoringRuleRow.__table__
+
+
+# --- I7 E53 (G13): the latest version's incident facts, for the scenario's category -----------
+
+
+def _latest_content_value(expression: Any, label: str) -> Any:
+    """One value of the latest version's `content`, as a correlated scalar subquery."""
+    latest = _VERSIONS.alias("latest_facts")
+    return (
+        sa.select(expression(latest.c.content))
+        .where(latest.c.scenario_id == _SCENARIOS.c.id)
+        .order_by(latest.c.version.desc())
+        .limit(1)
+        .scalar_subquery()
+        .label(label)
+    )
+
+
+def _category_fact_columns() -> tuple[Any, Any, Any]:
+    """`latest_reference_pack`, `latest_classifier_code`, `latest_incident_types` (jsonb)."""
+
+    def card_values(content: Any) -> Any:
+        return content["expected_response"]["prefab_handoff"]["card_values"]
+
+    return (
+        _latest_content_value(
+            lambda content: content["reference_pack"].astext, "latest_reference_pack"
+        ),
+        _latest_content_value(
+            lambda content: sa.func.coalesce(
+                card_values(content)["incident.classifier_code"].astext,
+                content["world_truth"]["facts"]["incident.classifier_code"]["world_value"].astext,
+            ),
+            "latest_classifier_code",
+        ),
+        _latest_content_value(
+            lambda content: card_values(content)["incident.types"], "latest_incident_types"
+        ),
+    )
+
+
+def _category_facts(row: Any) -> dict[str, Any]:
+    """The three raw values of a row selected with `_category_fact_columns`."""
+    types = row.latest_incident_types
+    if isinstance(types, str):
+        types = json.loads(types)
+    return {
+        "latest_reference_pack": row.latest_reference_pack,
+        "latest_classifier_code": row.latest_classifier_code,
+        "latest_incident_types": (
+            tuple(str(code) for code in types) if isinstance(types, list) else ()
+        ),
+    }
+
+
+# --- end I7 E53 --------------------------------------------------------------------------------
 
 
 class SqlAlchemyScenarioRepository:
@@ -153,6 +210,7 @@ class SqlAlchemyScenarioRepository:
                 sa.func.count(_VERSIONS.c.id).label("version_count"),
                 sa.func.max(_VERSIONS.c.version).label("latest_version"),
                 latest_difficulty.label("latest_difficulty"),
+                *_category_fact_columns(),
             )
             .select_from(
                 _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
@@ -174,6 +232,7 @@ class SqlAlchemyScenarioRepository:
                 latest_difficulty=(
                     None if row.latest_difficulty is None else int(row.latest_difficulty)
                 ),
+                **_category_facts(row),
             )
             for row in result.all()
         ]
@@ -325,6 +384,7 @@ class SqlAlchemyScenarioRepository:
                 _SCENARIOS.c.archived_at,
                 sa.func.count(_VERSIONS.c.id).label("version_count"),
                 sa.func.max(_VERSIONS.c.version).label("latest_version"),
+                *_category_fact_columns(),
             )
             .select_from(
                 _SCENARIOS.outerjoin(_VERSIONS, _VERSIONS.c.scenario_id == _SCENARIOS.c.id)
@@ -349,6 +409,7 @@ class SqlAlchemyScenarioRepository:
             version_count=int(row.version_count),
             latest_version=None if row.latest_version is None else int(row.latest_version),
             latest_difficulty=None if latest_difficulty is None else int(latest_difficulty),
+            **_category_facts(row),
         )
 
 

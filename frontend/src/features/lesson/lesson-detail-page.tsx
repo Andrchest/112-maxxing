@@ -270,6 +270,12 @@ export function LessonDetailPage() {
                   {t('lessonDetailGroupLabel')}: {groupName ?? '—'}
                 </p>
               ) : null}
+              {/* I7 E53 (G12a): the plan below already is the seeded order; the seed is the record. */}
+              {lesson.shuffle_seed !== undefined && lesson.shuffle_seed !== null ? (
+                <p className="text-sm" data-slot="lesson-shuffle">
+                  {t('lessonDetailShuffleSeed')}: <span className="font-mono">{lesson.shuffle_seed}</span>
+                </p>
+              ) : null}
               <ul className="flex flex-col gap-1">
                 {lesson.scenario_plan.map((entry) => (
                   <li key={entry.position} className="rounded-md border border-border p-2 text-sm">

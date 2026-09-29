@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import RoleType
+from app.domain.scenario.category import ScenarioCategory
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.scoring.rules import ScoringRule
 from app.domain.session.variants import ScenarioVariants
@@ -74,6 +75,15 @@ class StoredScenarioListing(BaseModel):
     """I3 E9a: the latest version's `difficulty` (1–5), so a picker can show and filter it."""
     archived_at: datetime | None = None
     """I4 E32 (§20.11.3): `None` = active; hidden from `listScenarios` unless `include_archived`."""
+    # --- I7 E53 (G13): the latest version's incident facts, read raw by the adapter, and the
+    # category the application derives from them (`app.domain.scenario.category`) ---
+    latest_reference_pack: str | None = None
+    latest_classifier_code: str | None = None
+    """The prefab card's `incident.classifier_code`, else the `world_truth` fact of that id."""
+    latest_incident_types: tuple[str, ...] = ()
+    """The prefab card's `incident.types` chips."""
+    category: ScenarioCategory | None = None
+    """Set by the application (`with_category`); the adapter leaves it `None`."""
 
 
 class StoredScenarioVersionDetail(BaseModel):

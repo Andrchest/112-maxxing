@@ -59,6 +59,8 @@ import { arrivalKindLabelRu } from '@/features/lesson/lesson-labels';
 import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
 import { PassCriteriaFields } from './pass-criteria-fields';
 import { DEFAULT_PASS_CRITERIA_DRAFT, passCriteriaField, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
+import { CategoryChips } from './category-chips';
+import { categoryOptionsOf, matchesCategories } from './scenario-categories';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -253,6 +255,8 @@ interface PlanEntryFieldsProps {
   isFirst: boolean;
   canRemove: boolean;
   difficultyFilter: number | null;
+  /** I7 E53 (G13): the chosen event categories; empty = every category. */
+  categoryFilter: readonly number[];
   onChange: (patch: Partial<PlanEntryRow>) => void;
   /** I4 E31: a timer edit changes nothing the participants derive from (no refresh). */
   onTimersChange: (timerSeconds: TimerSeconds) => void;
@@ -265,6 +269,7 @@ function PlanEntryFields({
   isFirst,
   canRemove,
   difficultyFilter,
+  categoryFilter,
   onChange,
   onTimersChange,
   onRemove,
@@ -275,7 +280,9 @@ function PlanEntryFields({
   });
   const scenarioOptions: ScenarioSummary[] = (scenariosQuery.data?.items ?? []).filter(
     (scenario) =>
-      difficultyFilter === null || scenario.latest_difficulty === difficultyFilter || scenario.scenario_id === row.scenarioId,
+      scenario.scenario_id === row.scenarioId ||
+      ((difficultyFilter === null || scenario.latest_difficulty === difficultyFilter) &&
+        matchesCategories(scenario, categoryFilter)),
   );
   const versionsQuery = useQuery({
     queryKey: queryKeys.scenarios.versions(row.scenarioId),
@@ -488,6 +495,14 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
   const [groupId, setGroupId] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState<number | null>(null);
   const [passDraft, setPassDraft] = useState<PassCriteriaDraft>(DEFAULT_PASS_CRITERIA_DRAFT);
+  // I7 E53: the event-category filter (G13, multi-select) and the random card order (G12a).
+  const [categoryFilter, setCategoryFilter] = useState<number[]>([]);
+  const [shuffle, setShuffle] = useState(false);
+  const pickerQuery = useQuery({
+    queryKey: queryKeys.scenarioPicker.list(),
+    queryFn: () => listScenarioPage({ limit: 200 }),
+  });
+  const categoryOptions = useMemo(() => categoryOptionsOf(pickerQuery.data?.items ?? []), [pickerQuery.data]);
 
   const groupsQuery = useQuery({ queryKey: queryKeys.traineeGroups.list(), queryFn: listTraineeGroups });
   const selectedGroup = (groupsQuery.data?.items ?? []).find((group) => group.group_id === groupId) ?? null;
@@ -685,6 +700,8 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
       })),
       ...(groupId !== '' ? { group_id: groupId } : {}),
       ...passCriteriaField(passDraft),
+      // I7 E53: no key at all unless ticked — the request is unchanged from before.
+      ...(shuffle ? { shuffle: true } : {}),
     };
     createMutation.mutate(body);
   }
@@ -771,6 +788,8 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           </div>
         </div>
 
+        <CategoryChips options={categoryOptions} selected={categoryFilter} onChange={setCategoryFilter} />
+
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">{t('lessonFormPlanLabel')}</span>
           {entries.map((row, index) => (
@@ -781,6 +800,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
               isFirst={index === 0}
               canRemove={entries.length > 1}
               difficultyFilter={difficultyFilter}
+              categoryFilter={categoryFilter}
               onChange={(patch) => updateEntry(index, patch)}
               onTimersChange={(timerSeconds) => updateEntryTimers(index, timerSeconds)}
               onRemove={() => removeEntry(index)}
@@ -789,6 +809,18 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           <Button type="button" variant="outline" size="sm" onClick={addEntry}>
             {t('lessonFormEntryAddButton')}
           </Button>
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-primary"
+                checked={shuffle}
+                onChange={(event) => setShuffle(event.target.checked)}
+              />
+              {t('lessonFormShuffleLabel')}
+            </label>
+            <Hint text={t('lessonFormShuffleHint')} />
+          </div>
         </div>
 
         {participants.length > 0 ? (

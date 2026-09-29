@@ -82,6 +82,9 @@ class Lesson(Base):
     )
     #: I3 E9a: the latest `WeightProposalSet`, never applied until the instructor accepts it.
     weight_proposals = sa.Column(JSONB_T, nullable=True)
+    #: I7 E53 (`0020_lesson_shuffle_seed`): «Случайный порядок карточек» — the seed the plan was
+    #: permuted with once at creation; `NULL` = the instructor's own order.
+    shuffle_seed = sa.Column(sa.BigInteger(), nullable=True)
 
     __table_args__ = (
         sa.Index("ix_lessons_state", "state"),

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -78,7 +78,10 @@ describe('ScenariosPage', () => {
     await user.click(screen.getByRole('button', { name: ru.scenarioUploadValidateButton }));
 
     expect(await screen.findByText(ru.scenarioUploadInvalidRu)).toBeInTheDocument();
-    expect(screen.getByText(/unknown role/)).toBeInTheDocument();
+    // I7 E53 (G19): the rule's Russian template is shown; the English detail stays as the title.
+    const issue = screen.getByText(new RegExp(ru.scenarioIssueR18.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    expect(issue).toHaveAttribute('title', 'unknown role');
+    expect(screen.queryByText(/unknown role/)).not.toBeInTheDocument();
   });
 
   it('import posts the file content with the extension-derived format', async () => {
@@ -145,5 +148,97 @@ describe('ScenariosPage', () => {
     expect(screen.getByText(ru.scenarioArchivedBadge)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: ru.scenarioUnarchiveButton })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('include_archived=true'), expect.anything());
+  });
+
+  // I7 E53 (G13): «Категория событий» — several categories at once, and «Без категории».
+  it('filters the scenario list by event category', async () => {
+    const user = userEvent.setup();
+    signIn();
+    const items = [
+      { ...SCENARIOS_RESPONSE.items[0], category: { group_no: 1, name_ru: 'Fire group' } },
+      { ...SCENARIOS_RESPONSE.items[0], scenario_id: 's2', slug: 'crash', title_ru: 'Crash scenario', category: { group_no: 2, name_ru: 'Road group' } },
+      { ...SCENARIOS_RESPONSE.items[0], scenario_id: 's3', slug: 'plain', title_ru: 'Plain scenario', category: null },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ items, total: 3 })));
+    renderPage();
+    await screen.findByText('Crash scenario');
+
+    const group = screen.getByRole('group', { name: ru.scenarioCategoryFilterLabel });
+    await user.click(within(group).getByRole('button', { name: 'Road group' }));
+    expect(screen.queryByText('Fire test scenario')).not.toBeInTheDocument();
+    expect(screen.getByText('Crash scenario')).toBeInTheDocument();
+
+    await user.click(within(group).getByRole('button', { name: 'Fire group' }));
+    expect(screen.getByText('Fire test scenario')).toBeInTheDocument();
+    expect(screen.queryByText('Plain scenario')).not.toBeInTheDocument();
+
+    await user.click(within(group).getByRole('button', { name: ru.scenarioCategoryAll }));
+    expect(screen.getByText('Plain scenario')).toBeInTheDocument();
+  });
+
+  // I7 E53 (G14a): «Скачать» per version — YAML by default, JSON on request.
+  it('downloads a version as YAML or JSON', async () => {
+    const user = userEvent.setup();
+    signIn();
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    const createObjectURL = vi.fn(() => 'blob:scenario');
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/scenarios/s1/versions')) {
+        return jsonResponse({ items: [{ id: 'ver-1', scenario_id: 's1', version: 1 }], total: 1 });
+      }
+      if (url.includes('/document')) {
+        return new Response('slug: apartment-fire\n', { status: 200, headers: { 'content-type': 'application/yaml' } });
+      }
+      return jsonResponse(SCENARIOS_RESPONSE);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      renderPage();
+      await screen.findByText('Fire test scenario');
+
+      await user.click(screen.getByRole('button', { name: ru.scenarioVersionsButton }));
+      await user.click(await screen.findByRole('button', { name: ru.scenarioDownloadButton }));
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/v1/scenarios/versions/ver-1/document', expect.anything()),
+      );
+
+      await user.click(screen.getByRole('button', { name: ru.scenarioDownloadJsonButton }));
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/v1/scenarios/versions/ver-1/document?format=json', expect.anything()),
+      );
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(2));
+      expect(createObjectURL).toHaveBeenCalledTimes(2);
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+      click.mockRestore();
+    }
+  });
+
+  // I7 E53 (G19): a rule number without a Russian template keeps the server's English text.
+  it('keeps the English message for a rule number without a Russian template', async () => {
+    const user = userEvent.setup();
+    signIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST' && String(input).endsWith('/scenarios/validate')) {
+          return jsonResponse({ valid: false, issues: [{ rule_number: 99, severity: 'ERROR', location: 'x', message: 'future rule text' }], checked_rule_count: 44 });
+        }
+        return jsonResponse(SCENARIOS_RESPONSE);
+      }),
+    );
+    renderPage();
+    await screen.findByText('Fire test scenario');
+
+    await user.upload(screen.getByLabelText(ru.scenarioUploadFieldLabel) as HTMLInputElement, makeFile('bad.yaml', 'x: 1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: ru.scenarioUploadValidateButton })).not.toBeDisabled());
+    await user.click(screen.getByRole('button', { name: ru.scenarioUploadValidateButton }));
+
+    expect(await screen.findByText(/future rule text/)).toBeInTheDocument();
   });
 });

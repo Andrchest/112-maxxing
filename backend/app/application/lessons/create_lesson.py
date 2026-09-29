@@ -20,6 +20,11 @@ A lesson may be created "for a group" (I3 E9a, §70.3.7): `group_id` names an ex
 group (`404 NOT_FOUND` otherwise) and is recorded on the row; the participants are the request's
 own — the form pre-fills them from the group, and the instructor may change them.
 
+(I7 E53, G12a) «Случайный порядок карточек»: with `shuffle` the use case draws a seed from the
+`IdGenerator` (the application's one source of randomness), and `create_lesson` permutes the plan's
+cards once with it (`app.domain.lesson.shuffle`). The seed is stored on the lesson and returned by
+`getLesson`; the cards are created in the permuted order, so everything after this is unchanged.
+
 A refusal is `createSession`'s own for the offending entry (`LessonPlanEntryRefusedError`, same
 `ProblemCode`, `detail` naming the position). Nothing ticks until `startLesson`.
 """
@@ -42,6 +47,7 @@ from app.domain.common.ids import LessonId, TraineeGroupId, UserId
 from app.domain.enums import SessionMode
 from app.domain.lesson.lesson import Lesson, create_lesson
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry
+from app.domain.lesson.shuffle import SHUFFLE_SEED_MAX
 from app.domain.session.pass_criteria import PassCriteria
 from app.domain.session.variants import SWITCHES, PartialVariants
 
@@ -63,6 +69,8 @@ class CreateLessonCommand:
     """I3 E9a: the trainee group the lesson is created for (recorded, not expanded)."""
     pass_criteria: PassCriteria | None = None
     """(I5 E38) «Сдал / не сдал» for every card of the lesson; `None` = the defaults."""
+    shuffle: bool = False
+    """(I7 E53) «Случайный порядок карточек»: draw a seed and permute the plan's cards once."""
 
 
 def merge_variants(lesson: PartialVariants, entry: PartialVariants | None) -> PartialVariants:
@@ -130,6 +138,7 @@ class CreateLesson:
             created_at=self._clock.now(),
             variants=command.variants,
             group_id=command.group_id,
+            shuffle_seed=self._ids.new().int % (SHUFFLE_SEED_MAX + 1) if command.shuffle else None,
         )
         async with self._unit_of_work() as uow:
             if (
@@ -220,3 +229,5 @@ class CreateLesson:
             record("lesson", "time_scale", None, command.time_scale)
         if command.pass_criteria is not None:
             record("lesson", "pass_criteria", None, command.pass_criteria)
+        if lesson.shuffle_seed is not None:
+            record("lesson", "shuffle_seed", None, lesson.shuffle_seed)

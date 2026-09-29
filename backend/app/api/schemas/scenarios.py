@@ -38,6 +38,7 @@ from app.domain.session.variants import (
 )
 
 __all__ = [
+    "ScenarioCategorySchema",
     "ScenarioImportRequestSchema",
     "ScenarioSummarySchema",
     "ScenarioValidationIssueSchema",
@@ -52,6 +53,13 @@ __all__ = [
 ]
 
 
+class ScenarioCategorySchema(ApiModel):
+    """(I7 E53, G13) `openapi.yaml`'s `ScenarioCategory` — one classifier group (ТЗ ¶324/¶334)."""
+
+    group_no: int = Field(ge=1)
+    name_ru: str
+
+
 class ScenarioSummarySchema(ApiModel):
     """`openapi.yaml`'s `ScenarioSummary` — "identity only (D4): slug and title, never content"."""
 
@@ -64,6 +72,8 @@ class ScenarioSummarySchema(ApiModel):
     """I3 E9a: the latest version's «Сложность» (1–5)."""
     archived_at: datetime | None = None
     """(additive, I4 E32) `null` = active; set = hidden from pickers by default (ТЗ ¶229)."""
+    category: ScenarioCategorySchema | None = None
+    """(additive, I7 E53) the latest version's event category; `null` = «без категории»."""
 
 
 class VariantSupportViewSchema(ApiModel):
@@ -188,6 +198,13 @@ def scenario_summary_schema(listing: StoredScenarioListing) -> ScenarioSummarySc
         latest_version=listing.latest_version,
         latest_difficulty=listing.latest_difficulty,
         archived_at=listing.archived_at,
+        category=(
+            None
+            if listing.category is None
+            else ScenarioCategorySchema(
+                group_no=listing.category.group_no, name_ru=listing.category.name_ru
+            )
+        ),
     )
 
 

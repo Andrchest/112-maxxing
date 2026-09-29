@@ -21,6 +21,7 @@ const FIELD_LABEL_KEY: Record<string, I18nKey> = {
   'lesson.timers': 'adminAuditFieldLessonTimers',
   'lesson.time_scale': 'adminAuditFieldLessonTimeScale',
   'lesson.pass_criteria': 'adminAuditFieldLessonPassCriteria',
+  'lesson.shuffle_seed': 'adminAuditFieldLessonShuffleSeed', // I7 E53
   'lesson.state': 'adminAuditFieldLessonState',
   'lesson.aborted_cards': 'adminAuditFieldLessonAbortedCards',
   'lesson.report_released': 'adminAuditFieldLessonReportReleased',

@@ -1546,3 +1546,86 @@ no new npm dependency.
   «Импортировать»).
 - **Test scenario S17 «Обучение»** (`frontend/e2e/scenarios/s17-tutorial.ts`,
   `docs/test-scenarios/S17.md`).
+
+## 71.19.53 I7 E53 — Scenario categories, random card order, scenario download, Russian validation messages (G13, G12a, G14a, G19)
+
+**Purpose.** Four ТЗ gaps from `reports/i7/E42-gaps.md` §2 items 6, 7, 10 and 14: the instructor
+could not pick scenarios by «категория событий» (ТЗ ¶324/¶334, multi-select), a lesson could not
+give the trainee its cards in a random order (¶340 «Система формирует для обучающегося случайную
+карточку»), a stored scenario version could not be downloaded to edit it (¶222/¶229), and the
+validation report showed the backend's English messages (¶186 «Локализация на русском языке»).
+
+**Sources:** `reports/i7/E42-gaps.md` G13, G12a, G14a, G19; the manager's E53 brief.
+
+**Design.**
+- **G13 (category).** No scenario key carries a category and none is added: it is derived from
+  the latest version's incident against the classifier of its own reference pack
+  (`app.domain.scenario.category.scenario_category`, pure). The classifier row of
+  `incident.classifier_code` — the prefab card's value, else a `world_truth` fact of that id —
+  gives `group_no`/`group_ru`; otherwise the first `incident.types` chip whose code is a classifier
+  group number (the v2 card schema's «Что случилось?» codes *are* the group numbers: `'1'`, `'15'`,
+  `'10:…'`) gives that group; otherwise there is none («Без категории»). The chip fallback covers
+  the tickets whose prefab names no row (ticket 18 call 1); every one of the 108 ticket scenarios
+  gets a category (unit test). The adapter reads the three raw values of the latest version with
+  correlated jsonb subqueries (the `latest_difficulty` pattern) into `StoredScenarioListing`;
+  `ListScenarios`, `ArchiveScenario` and `UnarchiveScenario` set `category` via `with_category`
+  with the container's reference pack. `ScenarioSummary.category` = `{group_no, name_ru} | null`.
+  UI: a shared chip group «Категория событий» (`category-chips.tsx`, one toggle per category
+  present, «Все категории» clears; several at once) above the plan in the lesson form (combined
+  with the difficulty filter; a card's already chosen scenario stays in its own picker) and on the
+  «Сценарии» page, where each row also shows its category badge.
+- **G12a (random card order).** `LessonCreateRequest.shuffle: bool` (absent = false). When set,
+  `CreateLesson` draws a seed from the `IdGenerator` (`uuid.int mod 2^53`, the application's one
+  source of randomness; deterministic under the test fakes) and `create_lesson` permutes the
+  validated plan **once** with `app.domain.lesson.shuffle.shuffle_plan`: a plan position is a slot
+  (its `arrival` on the lesson clock and its `participants`), a card is what fills it
+  (`scenario_version_id`, `variants`, `weight`, `timers`); cards move only among the slots of the
+  same participant set (so after «Раздать карточки» each trainee gets their own cards in a random
+  order; everyone-cards move among everyone-slots), and position 1 keeps its `AT_OFFSET`. The draw
+  is a Fisher–Yates over `sha256(f"{seed}:{set}:{i}")`, stable across Python versions. The permuted
+  plan is what is stored and what the cards are created from; the seed is stored on the lesson
+  (`lessons.shuffle_seed`), returned as `LessonDetail.shuffle_seed`, recorded in the «было → стало»
+  audit of `createLesson` (`lesson.shuffle_seed`) and shown on the lesson page. Restart, replay and
+  reports read the stored plan and never re-apply the seed. UI: checkbox «Случайный порядок
+  карточек» under the plan, with a beginner hint.
+- **G14a (download).** `GET /api/v1/scenarios/versions/{scenario_version_id}/document?format=yaml|json`
+  (`getScenarioVersionDocument`, INSTRUCTOR / ADMIN — the document carries `world_truth` and the
+  scoring rules, D3): the stored document as `<slug>-v<version>.yaml` (`yaml.safe_dump`, block
+  style, Cyrillic unescaped) or `.json` (indented). Either file parses back to the stored mapping,
+  so re-uploading it unchanged is the idempotent re-import, and «edit» is download → change
+  `version` (and the rest) → upload as the next version (D4 keeps versions immutable). Audited by
+  E25's middleware like every request. UI: «Версии» per scenario on the «Сценарии» page lists the
+  versions with «Скачать» (YAML) and «JSON».
+- **G19 (Russian validation messages).** `ru.ts` holds one template per rule number
+  (`scenarioIssueR1` … `scenarioIssueR44`, every number `VALIDATION_RULE_NUMBERS` registers) plus
+  one for the only loader WARNING (§30.6.4, a caller-belief change on an unobservable event);
+  `scenario-issue-ru.ts` picks it by `rule_number`, and an unknown number keeps the server's English
+  text. The English detail stays available as the issue line's `title`.
+
+**Data / DB.** Migration `0020_lesson_shuffle_seed` (down `0019_audit_changes`): nullable
+`lessons.shuffle_seed bigint` (HLD 20 §20.12.53). A jsonb key was not used: `variants` and
+`scenario_plan` are closed shapes (`extra="forbid"`).
+
+**API** (additive, `docs/hld/openapi.yaml`): `ScenarioSummary.category` + schema
+`ScenarioCategory`; `LessonCreateRequest.shuffle`; `LessonDetail.shuffle_seed`; operation
+`getScenarioVersionDocument`. No new `ProblemCode`.
+
+**Acceptance.**
+- Backend: `tests/unit/domain/lesson/test_shuffle.py` (same seed → same order, a permutation,
+  slots keep position/arrival/participants, cards stay within their participant set,
+  `create_lesson` applies and records the seed); `tests/unit/domain/scenario/test_category.py`
+  (all 108 tickets categorised, row beats chip, fallbacks, no classifier → none);
+  `tests/api/lessons/test_lesson_shuffle.py` (seed on create and `getLesson`, stored plan =
+  `shuffle_plan(request, seed)`, unticked = unchanged, seed in the audit record);
+  `tests/api/test_scenario_download.py` (YAML default and JSON re-import as the same version,
+  download → edit → upload = v2, trainee 403, unknown 404, audited); `test_scenarios.py`'s listing
+  asserts `category`; `tests/integration/db/test_lesson_shuffle_seed_migration.py`; `test_contract`
+  and `test_audit_log` cover the new operation.
+- Frontend: `lesson-create-form.test.tsx` (category chips filter the picker, several at once;
+  `shuffle: true` sent only when ticked); `scenarios-page.test.tsx` (category filter, «Скачать»
+  YAML/JSON, the Russian R18 text with the English as title, an unknown rule keeps English);
+  `scenario-issue-ru.test.ts` (a Russian template for R1–R44, the warning).
+
+**Not built (owner questions).** None — the four items are manager-decided.
+
+**HLD gaps.** None found.

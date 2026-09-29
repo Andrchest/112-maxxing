@@ -33,6 +33,7 @@ from app.domain.common.state_machine import (
 )
 from app.domain.enums import ActorType, SessionMode, SessionState
 from app.domain.lesson.plan import LessonParticipant, LessonPlanError, PlanEntry, validate_plan
+from app.domain.lesson.shuffle import shuffle_plan
 from app.domain.lesson.weights import WeightProposalSet
 from app.domain.session.variants import PartialVariants
 
@@ -167,6 +168,10 @@ class Lesson(BaseModel):
     `participants` stay authoritative (the group may change or go away afterwards)."""
     weight_proposals: WeightProposalSet | None = None
     """E9a: the latest weight proposals (§70.3.7) — never applied until `accept_weights`."""
+    shuffle_seed: int | None = Field(default=None, ge=0)
+    """(I7 E53, G12a) «Случайный порядок карточек»: the seed `scenario_plan` was permuted with
+    once, at creation (`shuffle_plan`); `None` = the instructor's own order. Recorded, never
+    re-applied — the stored plan is the order."""
 
     @property
     def is_terminal(self) -> bool:
@@ -267,10 +272,17 @@ def create_lesson(
     created_at: datetime,
     variants: PartialVariants | None = None,
     group_id: TraineeGroupId | None = None,
+    shuffle_seed: int | None = None,
 ) -> Lesson:
-    """A `CREATED` lesson with its plan checked and put in `position` order (`LessonPlanError`)."""
+    """A `CREATED` lesson with its plan checked and put in `position` order (`LessonPlanError`).
+
+    (I7 E53) With a `shuffle_seed` the checked plan's cards are permuted once by `shuffle_plan`.
+    """
     if not participants:
         raise LessonPlanError("a lesson needs at least one participant")
+    plan = validate_plan(tuple(scenario_plan))
+    if shuffle_seed is not None:
+        plan = shuffle_plan(plan, shuffle_seed)
     return Lesson(
         lesson_id=lesson_id,
         title_ru=title_ru,
@@ -278,7 +290,8 @@ def create_lesson(
         session_mode=session_mode,
         variants=variants if variants is not None else PartialVariants(),
         participants=tuple(participants),
-        scenario_plan=validate_plan(tuple(scenario_plan)),
+        scenario_plan=plan,
         created_at=created_at,
         group_id=group_id,
+        shuffle_seed=shuffle_seed,
     )

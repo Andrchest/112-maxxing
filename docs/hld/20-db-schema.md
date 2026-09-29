@@ -1228,3 +1228,19 @@ Index `ix_training_materials_sha256 (sha256)`, `ix_training_materials_created (c
 The column is described with its table (`audit_log`, above). `down_revision` =
 `0018_training_materials`; downgrade drops the column.
 <!-- --- end I7 E43 --- -->
+
+<!-- --- I7 E53 --- -->
+## 20.12.53 I7 E53 — migration `0020_lesson_shuffle_seed` (G12a, ТЗ ¶340)
+
+| Migration | Epic | Change | Kind |
+|:--|:--|:--|:--|
+| `0020_lesson_shuffle_seed` | I7 E53 | column `lessons.shuffle_seed bigint NULL` | additive column, no backfill |
+
+`shuffle_seed` is the seed `createLesson` permuted the plan's cards with, once, when the instructor
+ticked «Случайный порядок карточек» (0 … 2^53 − 1, so a browser reads it back exactly); `NULL` = the
+instructor's own order, and every lesson created before this revision. It is written with the row
+and never updated (not in the repository's mutable columns); `scenario_plan` already holds the
+permuted order, so nothing re-applies the seed. A column rather than a key in an existing jsonb
+document: `variants` (`VariantsRequest`) and `scenario_plan` (`PlanEntry[]`) are closed shapes.
+`down_revision` = `0019_audit_changes`; downgrade drops the column.
+<!-- --- end I7 E53 --- -->

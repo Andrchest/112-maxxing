@@ -161,6 +161,7 @@ from app.application.scenarios.archive import ArchiveScenario, UnarchiveScenario
 from app.application.scenarios.import_scenario_version import ImportScenarioVersion
 from app.application.scenarios.queries import (
     GetScenarioValidationReport,
+    GetScenarioVersionDocument,  # I7 E53
     GetScenarioVersionSummary,
     ListScenarios,
     ListScenarioVersions,
@@ -536,7 +537,7 @@ class Container:
 
     def list_scenarios(self) -> ListScenarios:
         """`listScenarios`."""
-        return ListScenarios(self.unit_of_work)
+        return ListScenarios(self.unit_of_work, self.reference)  # I7 E53: `category`
 
     def list_scenario_versions(self) -> ListScenarioVersions:
         """`listScenarioVersions`."""
@@ -562,11 +563,15 @@ class Container:
 
     def archive_scenario(self) -> ArchiveScenario:
         """`archiveScenario` (I4 E32)."""
-        return ArchiveScenario(self.unit_of_work, changes=self._audit_changes())
+        return ArchiveScenario(
+            self.unit_of_work, changes=self._audit_changes(), reference=self.reference
+        )
 
     def unarchive_scenario(self) -> UnarchiveScenario:
         """`unarchiveScenario` (I4 E32)."""
-        return UnarchiveScenario(self.unit_of_work, changes=self._audit_changes())
+        return UnarchiveScenario(
+            self.unit_of_work, changes=self._audit_changes(), reference=self.reference
+        )
 
     def create_session(self) -> CreateSession:
         """`createSession`; records `SESSION_CREATED.reference_pack` (HLD 70 §70.6.1)."""
@@ -1332,6 +1337,14 @@ class Container:
         return GetTraineeRating(self.statistics_reader)
 
     # --- end I5 E36 -------------------------------------------------------------------------
+
+    # --- I7 E53: scenario version download (G14a) --------------------------------------------
+
+    def get_scenario_version_document(self) -> GetScenarioVersionDocument:
+        """`getScenarioVersionDocument` — INSTRUCTOR / ADMIN only (the router checks)."""
+        return GetScenarioVersionDocument(self.unit_of_work)
+
+    # --- end I7 E53 -------------------------------------------------------------------------
 
     # -- lifecycle -----------------------------------------------------------------------------
 

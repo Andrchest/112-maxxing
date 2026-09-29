@@ -430,6 +430,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scenarios/versions/{scenario_version_id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I7 E53) Download a stored scenario version as YAML or JSON (INSTRUCTOR / ADMIN).
+         * @description The version's complete stored document (the one `importScenarioVersion` stored), as a file
+         *     named `<slug>-v<version>.<format>`. Instructor-only: it carries `world_truth`, the caller
+         *     layers and `scoring_rules`, which no trainee may read (D3). Versions are immutable (D4), so
+         *     «редактировать» is: download → change (at least `version`) → upload as the next version;
+         *     uploading the file unchanged is the idempotent re-import. Audited like every request (E25).
+         */
+        get: operations["getScenarioVersionDocument"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scenarios/{scenario_id}/archive": {
         parameters: {
             query?: never;
@@ -2884,6 +2908,13 @@ export interface components {
              * @description (additive, I4 E32) `null` = active; set = hidden from pickers.
              */
             archived_at: string | null;
+            /** @description (additive, I7 E53, G13; ТЗ ¶324/¶334) The latest version's event category — the classifier group of its `incident.classifier_code` (prefab card, else `world_truth`), else of its first numeric `incident.types` chip; `null` = «без категории». */
+            category?: components["schemas"]["ScenarioCategory"] | null;
+        };
+        /** @description (additive, I7 E53) One classifier group (`reference/classifier`), as a scenario's category. */
+        ScenarioCategory: {
+            group_no: number;
+            name_ru: string;
         };
         ScenarioVersionListItem: {
             /** Format: uuid */
@@ -4425,6 +4456,8 @@ export interface components {
             group_id?: string | null;
             /** @description (additive, I5 E38, Q-E9b-3) «Сдал / не сдал» for every card of the lesson, recorded in each card's `SESSION_CREATED.pass_criteria`; absent = the defaults. */
             pass_criteria?: components["schemas"]["PassCriteriaRequest"] | null;
+            /** @description (additive, I7 E53, G12a; ТЗ ¶340) «Случайный порядок карточек». `true`: the server draws a seed and permutes the plan's cards once, at creation — each card moves only among the positions ticked for the same participants, and every position keeps its `arrival` — then records the seed in `LessonDetail.shuffle_seed`. Absent/`false` = the request's own order (unchanged). (No `default:` keyword on purpose: the generated client would make the key required, and an unticked form sends no key at all.) */
+            shuffle?: boolean;
         };
         LessonSessionView: {
             position: number;
@@ -4478,6 +4511,8 @@ export interface components {
              * @description (additive, I5 E39) The lesson's owner — the instructor who created it. Only this instructor or an ADMIN may change the lesson (`403 NOT_RESOURCE_OWNER` otherwise).
              */
             created_by_user_id: string;
+            /** @description (additive, I7 E53, G12a) The seed the plan's cards were permuted with at creation («Случайный порядок карточек»); `null` = the instructor's own order. A record only: `scenario_plan` already is the permuted order, and restarts/replays read it. */
+            shuffle_seed?: number | null;
         };
         LessonReport: {
             /** Format: uuid */
@@ -5495,6 +5530,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioValidationReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getScenarioVersionDocument: {
+        parameters: {
+            query?: {
+                /** @description (I7 E53) `yaml` (default) or `json`. */
+                format?: "yaml" | "json";
+            };
+            header?: never;
+            path: {
+                scenario_version_id: components["parameters"]["ScenarioVersionIdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The scenario document (`format`). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];

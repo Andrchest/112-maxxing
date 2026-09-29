@@ -90,6 +90,8 @@ def lesson_row_values(lesson: Lesson) -> dict[str, Any]:
         ),
         "group_id": None if lesson.group_id is None else UUID(str(lesson.group_id)),
         "weight_proposals": _proposals_document(lesson),
+        # I7 E53: written once with the row; not in `_MUTABLE_COLUMNS` — the plan's order is fixed.
+        "shuffle_seed": lesson.shuffle_seed,
     }
 
 
@@ -98,6 +100,7 @@ def lesson_from_row(row: Mapping[str, Any]) -> Lesson:
     released_by = row["report_released_by_user_id"]
     group_id = row["group_id"]
     proposals = row["weight_proposals"]
+    shuffle_seed = row.get("shuffle_seed")
     return Lesson(
         lesson_id=LessonId(UUID(str(row["id"]))),
         title_ru=str(row["title_ru"]),
@@ -120,6 +123,8 @@ def lesson_from_row(row: Mapping[str, Any]) -> Lesson:
         weight_proposals=(
             None if proposals is None else WeightProposalSet.model_validate(proposals)
         ),
+        # I7 E53: `.get` — a row read at a revision before `0020_lesson_shuffle_seed` has no column.
+        shuffle_seed=None if shuffle_seed is None else int(shuffle_seed),
     )
 
 

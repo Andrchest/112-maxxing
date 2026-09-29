@@ -659,6 +659,40 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # --- I7 E53: download a scenario version (G14a; ТЗ ¶222, ¶229) ---
+  /api/v1/scenarios/versions/{scenario_version_id}/document:
+    get:
+      tags: [scenarios]
+      operationId: getScenarioVersionDocument
+      summary: (additive, I7 E53) Download a stored scenario version as YAML or JSON (INSTRUCTOR / ADMIN).
+      description: |
+        The version's complete stored document (the one `importScenarioVersion` stored), as a file
+        named `<slug>-v<version>.<format>`. Instructor-only: it carries `world_truth`, the caller
+        layers and `scoring_rules`, which no trainee may read (D3). Versions are immutable (D4), so
+        «редактировать» is: download → change (at least `version`) → upload as the next version;
+        uploading the file unchanged is the idempotent re-import. Audited like every request (E25).
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioVersionIdParam'
+        - name: format
+          in: query
+          required: false
+          description: (I7 E53) `yaml` (default) or `json`.
+          schema: { type: string, enum: [yaml, json], default: yaml }
+      responses:
+        '200':
+          description: The scenario document (`format`).
+          content:
+            application/yaml:
+              schema: { type: string }
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  # --- end I7 E53 ---
+
   # ------------------------------------------ I4 E32: scenario archive ----
   /api/v1/scenarios/{scenario_id}/archive:
     post:
@@ -4328,6 +4362,27 @@ components:
           description: (additive, I4 E32) `null` = active; set = hidden from pickers.
           type: [string, 'null']
           format: date-time
+        # --- I7 E53 ---
+        category:
+          description: >-
+            (additive, I7 E53, G13; ТЗ ¶324/¶334) The latest version's event category — the
+            classifier group of its `incident.classifier_code` (prefab card, else `world_truth`),
+            else of its first numeric `incident.types` chip; `null` = «без категории».
+          oneOf:
+            - $ref: '#/components/schemas/ScenarioCategory'
+            - type: 'null'
+        # --- end I7 E53 ---
+
+    # --- I7 E53 ---
+    ScenarioCategory:
+      type: object
+      description: (additive, I7 E53) One classifier group (`reference/classifier`), as a scenario's category.
+      additionalProperties: false
+      required: [group_no, name_ru]
+      properties:
+        group_no: { type: integer, minimum: 1 }
+        name_ru: { type: string }
+    # --- end I7 E53 ---
 
     ScenarioVersionListItem:
       type: object
@@ -6576,6 +6631,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/PassCriteriaRequest'
             - type: 'null'
+        # --- I7 E53 ---
+        shuffle:
+          description: >-
+            (additive, I7 E53, G12a; ТЗ ¶340) «Случайный порядок карточек». `true`: the server
+            draws a seed and permutes the plan's cards once, at creation — each card moves only
+            among the positions ticked for the same participants, and every position keeps its
+            `arrival` — then records the seed in `LessonDetail.shuffle_seed`. Absent/`false` = the
+            request's own order (unchanged). (No `default:` keyword on purpose: the generated
+            client would make the key required, and an unticked form sends no key at all.)
+          type: boolean
+        # --- end I7 E53 ---
     LessonSessionView:
       type: object
       additionalProperties: false
@@ -6634,6 +6700,16 @@ components:
             instructor or an ADMIN may change the lesson (`403 NOT_RESOURCE_OWNER` otherwise).
           type: string
           format: uuid
+        # --- I7 E53 ---
+        shuffle_seed:
+          description: >-
+            (additive, I7 E53, G12a) The seed the plan's cards were permuted with at creation
+            («Случайный порядок карточек»); `null` = the instructor's own order. A record only:
+            `scenario_plan` already is the permuted order, and restarts/replays read it.
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 9007199254740991
+        # --- end I7 E53 ---
     LessonReport:
       type: object
       additionalProperties: false

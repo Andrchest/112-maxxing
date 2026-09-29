@@ -8,7 +8,12 @@ Five reads, one class each, all over the existing `ScenarioRepository`:
 * `GetScenarioValidationReport` — `getScenarioValidationReport`, the §30.8 verdict of a stored
   version;
 * `ValidateScenarioDocument` — `validateScenarioFile`, the same verdict for a document that was
-  never imported.
+  never imported;
+* (I7 E53, G14a) `GetScenarioVersionDocument` — `getScenarioVersionDocument`, the stored document
+  itself, for «Скачать» (instructor-only at the router: it carries `world_truth` and the rest).
+
+(I7 E53, G13) Every listing carries its `category` — the classifier group of the latest version's
+incident (`with_category`, `app.domain.scenario.category`).
 
 The trainee summary is the one that carries a rule rather than a query. `openapi.yaml` is explicit:
 "Deliberately free of `world_truth`, `caller_knowledge`, `disclosure_rules`, `expected_response`,
@@ -41,12 +46,14 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import ScenarioId, ScenarioVersionId
 from app.domain.enums import AgeGroup, CallerRelationship, RoleType
 from app.domain.routing.catalog import LEGACY_REFERENCE, ReferenceCatalog
+from app.domain.scenario.category import scenario_category
 from app.domain.scenario.validation import VALIDATION_RULE_NUMBERS, validate_scenario_document
 from app.domain.scenario.version import ScenarioVersion
 from app.domain.session.variants import ScenarioVariants
 
 __all__ = [
     "GetScenarioValidationReport",
+    "GetScenarioVersionDocument",
     "GetScenarioVersionSummary",
     "ListScenarioVersions",
     "ListScenarios",
@@ -56,6 +63,7 @@ __all__ = [
     "ValidationReport",
     "scenario_version_trainee_summary",
     "validation_report_of",
+    "with_category",
 ]
 
 CHECKED_RULE_COUNT = len(VALIDATION_RULE_NUMBERS)
@@ -315,11 +323,28 @@ def _positive_int(document: Mapping[str, Any], key: str) -> int | None:
 # ---------------------------------------------------------------------------------------------
 
 
-class ListScenarios:
-    """`listScenarios` — one page of scenario identities (D4)."""
+def with_category(
+    listing: StoredScenarioListing, catalog: ReferenceCatalog
+) -> StoredScenarioListing:
+    """(I7 E53, G13) `listing` with its `category`, derived from the adapter's raw facts against
+    the classifier of the latest version's own pack (`legacy-r1`, which has none, when absent)."""
+    pack_id = listing.latest_reference_pack or LEGACY_REFERENCE.newest_pack_id
+    category = scenario_category(
+        catalog.classifier(pack_id),
+        classifier_code=listing.latest_classifier_code,
+        incident_types=listing.latest_incident_types,
+    )
+    return listing.model_copy(update={"category": category})
 
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+
+class ListScenarios:
+    """`listScenarios` — one page of scenario identities (D4), each with its category (I7 E53)."""
+
+    def __init__(
+        self, unit_of_work: UnitOfWorkFactory, reference: ReferencePort | None = None
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._reference = reference
 
     async def __call__(
         self, *, limit: int, offset: int, include_archived: bool = False
@@ -330,11 +355,12 @@ class ListScenarios:
         unless it asks for them explicitly.
         """
         async with self._unit_of_work() as uow:
-            page = await uow.scenarios.list_scenarios(
+            listings, total = await uow.scenarios.list_scenarios(
                 limit=limit, offset=offset, include_archived=include_archived
             )
             await uow.commit()
-        return page
+        catalog = reference_catalog(self._reference)
+        return [with_category(listing, catalog) for listing in listings], total
 
 
 class ListScenarioVersions:
@@ -369,6 +395,30 @@ class GetScenarioVersionSummary:
             raise ScenarioNotFoundError(f"no scenario version {scenario_version_id}")
         version = ScenarioVersion.model_validate(dict(document))
         return scenario_version_trainee_summary(version, detail.scenario_slug)
+
+
+class GetScenarioVersionDocument:
+    """(I7 E53, G14a) `getScenarioVersionDocument` — the stored document of one version.
+
+    The document is the one `importScenarioVersion` stored (`canonical_content`), so downloading
+    it and uploading it again unchanged is the idempotent re-import, and «edit» is download →
+    change `version` and the rest → upload as the next version (versions are immutable, D4).
+    """
+
+    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
+        self._unit_of_work = unit_of_work
+
+    async def __call__(
+        self, scenario_version_id: ScenarioVersionId
+    ) -> tuple[StoredScenarioVersionDetail, Mapping[str, Any]]:
+        """The version's detail and document; `ScenarioNotFoundError` when it does not exist."""
+        async with self._unit_of_work() as uow:
+            detail = await uow.scenarios.get_version_detail(scenario_version_id)
+            document = await uow.scenarios.get_version_document(scenario_version_id)
+            await uow.commit()
+        if detail is None or document is None:
+            raise ScenarioNotFoundError(f"no scenario version {scenario_version_id}")
+        return detail, document
 
 
 class GetScenarioValidationReport:

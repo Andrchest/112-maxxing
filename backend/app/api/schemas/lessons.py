@@ -163,6 +163,9 @@ class LessonCreateRequestSchema(ApiModel):
     """I3 E9a: the trainee group the lesson is created for (recorded; `404` when unknown)."""
     pass_criteria: PassCriteriaRequestSchema | None = None
     """(additive, I5 E38) «Сдал / не сдал» for every card; absent = the defaults."""
+    shuffle: bool = False
+    """(additive, I7 E53) «Случайный порядок карточек»: the server draws a seed and permutes the
+    plan's cards once; `LessonDetail.shuffle_seed` records it."""
 
     def domain_group_id(self) -> TraineeGroupId | None:
         return None if self.group_id is None else TraineeGroupId(self.group_id)
@@ -226,6 +229,9 @@ class LessonDetailSchema(ApiModel):
     # (additive, I5 E39, Q-E9b-4 а) the lesson's owner: only this instructor (or an ADMIN) may
     # change it; the UI disables the controls for everyone else.
     created_by_user_id: UUID
+    # (additive, I7 E53) the seed the plan's cards were permuted with at creation; `null` = the
+    # instructor's own order («Случайный порядок карточек» not ticked).
+    shuffle_seed: int | None = None
 
 
 class UnscoredCardTimesSchema(ApiModel):
@@ -384,6 +390,7 @@ def lesson_detail_schema(view: LessonDetailView) -> LessonDetailSchema:
         report_released_at=lesson.report_released_at,
         group_id=None if lesson.group_id is None else UUID(str(lesson.group_id)),
         created_by_user_id=UUID(str(lesson.created_by_user_id)),
+        shuffle_seed=lesson.shuffle_seed,
     )
 
 
