@@ -51,6 +51,7 @@ from app.application.ports.text_checker import MisspelledSpan, StreetLookup
 from app.application.reports.assemble_report import SessionReportView
 from app.application.reports.dds_decisions import DdsDecision, DdsParticipantTotals
 from app.application.reports.list_inference_metrics import InferenceMetricsPage
+from app.application.reports.recommendations import Recommendation
 from app.application.reports.resource_timeline import ResourceTimelineEntry
 from app.application.reports.rule_text import report_rule_text
 from app.application.reports.text_quality import TextQualityField, TextQualityReport
@@ -86,6 +87,7 @@ __all__ = [
     "MisspelledSpanViewSchema",
     "PassCriteriaViewSchema",
     "PassVerdictViewSchema",
+    "RecommendationViewSchema",
     "ReportExplanationSchema",
     "ReportReleaseViewSchema",
     "RescoreDifferenceSchema",
@@ -111,6 +113,7 @@ __all__ = [
     "inference_metrics_page_schema",
     "misspelled_span_schema",
     "pass_verdict_schema",
+    "recommendation_schema",
     "report_explanation_schema",
     "report_release_schema",
     "rescore_result_schema",
@@ -472,6 +475,14 @@ class PassVerdictViewSchema(ApiModel):
     critical_error_count: int = Field(ge=0)
 
 
+class RecommendationViewSchema(ApiModel):
+    """`openapi.yaml`'s `RecommendationView` (I7 E54, G10) — one «Рекомендации по улучшению
+    навыков» line, worst `ScoringCategory` first."""
+
+    category: ScoringCategory
+    text_ru: str
+
+
 class SessionReportSchema(ApiModel):
     """`openapi.yaml`'s `SessionReport` — every SPEC §29 item, in SPEC's own order."""
 
@@ -494,6 +505,9 @@ class SessionReportSchema(ApiModel):
     """(additive, I4 E35) «Грамотность и адреса» — report-only, no score effect (D35)."""
     pass_verdict: PassVerdictViewSchema | None
     """(additive, I5 E38) «Сдал / не сдал» under the session's recorded criteria."""
+    recommendations: list[RecommendationViewSchema]
+    """(additive, I7 E54, G10) «Рекомендации по улучшению навыков» — empty when this viewer's
+    visible rules all passed."""
 
 
 class MisspelledSpanViewSchema(ApiModel):
@@ -778,6 +792,13 @@ def pass_verdict_schema(verdict: PassVerdict | None) -> PassVerdictViewSchema | 
     )
 
 
+def recommendation_schema(recommendation: Recommendation) -> RecommendationViewSchema:
+    """`Recommendation` -> the wire model (I7 E54, G10)."""
+    return RecommendationViewSchema(
+        category=recommendation.category, text_ru=recommendation.text_ru
+    )
+
+
 def session_report_schema(view: SessionReportView) -> SessionReportSchema:
     """`SessionReportView` -> the wire model — every §29 item, none of them omitted."""
     rules_by_id = {rule.rule_id: rule for rule in view.scoring_rules}
@@ -810,6 +831,7 @@ def session_report_schema(view: SessionReportView) -> SessionReportSchema:
         ],
         text_quality=text_quality_report_schema(view.text_quality),
         pass_verdict=pass_verdict_schema(view.pass_verdict),
+        recommendations=[recommendation_schema(item) for item in view.recommendations],
     )
 
 

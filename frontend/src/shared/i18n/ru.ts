@@ -1423,6 +1423,7 @@ export const ru = {
   scenarioIssueR42: 'Неверная персона службы, способ доклада или шаг CALL_IN без телефона ДДС.',
   scenarioIssueR43: 'Неверное происхождение сценария: номер билета от 1 до 32, номер вызова от 1 до 3.',
   scenarioIssueR44: 'Таймер правила DEADLINE должен быть accept_within_ms или fill_within_ms.',
+  scenarioIssueR45: 'Рекомендация (advice) правила оценки не должна быть пустой и не длиннее 300 символов.',
 
   // --- I7 E51: login throttling (G5, ТЗ ¶295) ------------------------------------------------
   // A generic fallback for any surface besides the login page that might see LOGIN_THROTTLED;
@@ -1454,4 +1455,16 @@ export const ru = {
   ddsMarksDoneButton: 'Готово',
   ddsMarksLabel: 'Отметки ДДС',
   eventTypeDdsCardMarksSet: 'ДДС изменила отметки ЧС / ЧП',
+  // --- I7 E54: «Рекомендации по улучшению навыков» (G10, ТЗ ¶267/¶237) -----------------------
+  reportRecommendationsTitle: 'Рекомендации по улучшению навыков',
+  reportRecommendationsEmpty: 'Замечаний нет.',
+  historyRecommendationsHint: 'Есть рекомендации по улучшению навыков — откройте отчёт.',
+
+  // --- I7 E54: «Типичные ошибки» (G11, ТЗ ¶233) --------------------------------------------
+  typicalErrorsTitle: 'Типичные ошибки',
+  typicalErrorsEmpty: 'Данных недостаточно.',
+  typicalErrorsColumnRule: 'Правило',
+  typicalErrorsColumnCategory: 'Категория',
+  typicalErrorsColumnSessions: 'Сессий с ошибкой',
+  typicalErrorsColumnShare: 'Доля, %',
 } as const;

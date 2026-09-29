@@ -7,6 +7,9 @@ ADMIN only. Each CSV is its JSON's own view rendered as a file.
 
 (I7 E46b, owner item 6) Both `.csv` endpoints also answer `?format=xlsx|pdf` — same view, same
 filters, same auth, `format=csv` (the default) byte-identical to before this epic.
+
+(I7 E54, G11) `getTypicalErrors` reuses the same filter — INSTRUCTOR / ADMIN only, an INSTRUCTOR's
+own scope narrowed to lessons they created (`GetTypicalErrors`'s own reading), an ADMIN's not.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from app.api.schemas.statistics import (
     trainee_statistics_schema,
 )
 from app.api.schemas.trainee_rating import TraineeRatingSchema, trainee_rating_schema
+from app.api.schemas.typical_errors import TypicalErrorsSchema, typical_errors_schema
 from app.api.security import CurrentUserDep
 from app.application.ports.report_exporter import (
     PDF_MEDIA_TYPE,
@@ -214,3 +218,27 @@ async def get_trainee_rating_csv(
         media_type=PDF_MEDIA_TYPE,
         headers={"Content-Disposition": content_disposition("Рейтинг.pdf", "trainee-rating.pdf")},
     )
+
+
+# --- I7 E54: «Типичные ошибки» (G11, ТЗ ¶233) ------------------------------------------------
+
+
+@router.get(
+    "/statistics/typical-errors",
+    operation_id="getTypicalErrors",
+    summary="(I7 E54) Top failed rules in scope (INSTRUCTOR/ADMIN; own lessons for an INSTRUCTOR).",
+    response_model=TypicalErrorsSchema,
+    status_code=200,
+)
+async def get_typical_errors(
+    container: ContainerDep,
+    user: CurrentUserDep,
+    trainee_id: TraineeIdQuery = None,
+    group_id: GroupIdQuery = None,
+    from_utc: FromQuery = None,
+    to_utc: ToQuery = None,
+) -> TypicalErrorsSchema:
+    view = await container.get_typical_errors()(
+        _filter(trainee_id, group_id, from_utc, to_utc), user
+    )
+    return typical_errors_schema(view)

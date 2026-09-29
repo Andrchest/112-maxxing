@@ -3600,6 +3600,35 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ------------------------------------------------ I7 E54: «Типичные ошибки» (G11, ТЗ ¶233) ----
+  /api/v1/statistics/typical-errors:
+    get:
+      tags: [statistics]
+      operationId: getTypicalErrors
+      summary: (additive, I7 E54) Top failed rules across sessions in scope (INSTRUCTOR/ADMIN).
+      description: |
+        Same filters as `getTraineeStatistics` (one trainee, one group, a `completed_at` window).
+        Deterministic, no ML (ТЗ ¶233's own reading): the rules most of the scoped sessions
+        failed, worst first, at most 10, each with its failed-session count and share of the
+        scope. INSTRUCTOR / ADMIN only (`403 FORBIDDEN_FOR_ROLE` for a TRAINEE); an INSTRUCTOR's
+        scope is narrowed to sessions of lessons they created, an ADMIN's is every scored session.
+      x-action: '-'
+      x-emits: []
+      parameters:
+        - $ref: '#/components/parameters/TraineeIdQueryParam'
+        - $ref: '#/components/parameters/GroupIdQueryParam'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: The top failed rules, worst first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypicalErrors' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -6138,6 +6167,7 @@ components:
         - dds_participant_totals
         - text_quality
         - pass_verdict
+        - recommendations
       properties:
         session_id: { type: string, format: uuid }
         session: { $ref: '#/components/schemas/SessionDetail' }
@@ -6193,6 +6223,29 @@ components:
           oneOf:
             - $ref: '#/components/schemas/PassVerdictView'
             - type: 'null'
+        recommendations:
+          description: >-
+            (additive, I7 E54, G10, ТЗ ¶267/¶237) «Рекомендации по улучшению навыков» — one line
+            per failed ScoringCategory this viewer's own visible rules cost, worst first, at most
+            5. Empty when every visible rule passed (the UI then shows «Замечаний нет»). Never
+            part of the checksum.
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/RecommendationView' }
+
+    RecommendationView:
+      type: object
+      additionalProperties: false
+      required: [category, text_ru]
+      properties:
+        category: { $ref: '#/components/schemas/ScoringCategory' }
+        text_ru:
+          type: string
+          maxLength: 300
+          description: >-
+            The rule's own `advice` override (scenario schema-2, ≤300 chars, rule R45) when the
+            failed rule that cost this category the most points set one, else the pinned default
+            of `reference/advice/v1.yaml`.
 
     RescoreRequest:
       type: object
@@ -6817,7 +6870,7 @@ components:
     LessonReport:
       type: object
       additionalProperties: false
-      required: [lesson_id, cards, weighted_total, weighted_max]
+      required: [lesson_id, cards, weighted_total, weighted_max, typical_errors]
       properties:
         lesson_id: { type: string, format: uuid }
         cards:
@@ -6865,6 +6918,12 @@ components:
                   - type: 'null'
         weighted_total: { type: number, description: Scored cards only (unchanged). }
         weighted_max: { type: number }
+        typical_errors:
+          description: >-
+            (additive, I7 E54, G11) «Типичные ошибки» over this lesson's own sessions; empty rows
+            for a trainee's own copy of the report (INSTRUCTOR/ADMIN only).
+          allOf:
+            - $ref: '#/components/schemas/TypicalErrors'
     # ------------------------------------------- I3 E9a: weights & groups ----
     ProposalSource:
       type: string
@@ -7224,6 +7283,32 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/TraineeRatingRow' }
+    # ------------------------------------------------ I7 E54: typical errors (G11, ТЗ ¶233) -----
+    TypicalErrorRow:
+      description: (additive, I7 E54, G11) One rule, worst (most failed sessions) first.
+      type: object
+      additionalProperties: false
+      required: [rule_id, name_ru, category, failed_session_count, session_count, share_percent]
+      properties:
+        rule_id: { type: string }
+        name_ru: { type: string }
+        category: { $ref: '#/components/schemas/ScoringCategory' }
+        failed_session_count: { type: integer, minimum: 0 }
+        session_count:
+          description: The scope's own session count (the same for every row).
+          type: integer
+          minimum: 0
+        share_percent: { type: number, minimum: 0, maximum: 100 }
+    TypicalErrors:
+      description: (additive, I7 E54, G11) `getTypicalErrors`, and `LessonReport.typical_errors`.
+      type: object
+      additionalProperties: false
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/TypicalErrorRow' }
     # ------------------------------------------- I4 E35: text quality (§71.12, D35) -----------
     # «Грамотность и адреса» — report-only, no score effect until the owner answers Q-E11-1.
     # This section is E35's own (§71.16: "E35's report-section schema is left out of the delta");

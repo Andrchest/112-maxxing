@@ -1,7 +1,8 @@
 """One failing fixture per §30.8 rule R01-R31 and I3's R32-R40, R43
 (`docs/hld/30-scenario-format.md`, `docs/hld/70-i3-alignment.md` §70.2.3; R43 is I3 E8's,
-HLD 30 §30.13 — R41/R42 are reserved by the telephony HLD), and I4's R44 (E31, HLD 71 §71.8:
-a `DEADLINE` rule's `max_offset_timer` names a card timer).
+HLD 30 §30.13 — R41/R42 are reserved by the telephony HLD), I4's R44 (E31, HLD 71 §71.8:
+a `DEADLINE` rule's `max_offset_timer` names a card timer), and I7's R45 (E54, G10: a rule's own
+`advice` override is at most 300 characters).
 
 Every fixture is produced at test time by applying ONE minimal mutation to the committed demo
 document (`scenarios/examples/apartment-fire/v1.yaml`). The test asserts that the resulting
@@ -333,6 +334,11 @@ def _r44_deadline_names_an_unknown_timer(document: Document) -> None:
     config["max_offset_timer"] = "handoff_within_ms"
 
 
+def _r45_advice_over_300_characters(document: Document) -> None:
+    # I7 E54, G10: a rule's own `advice` override over the 300-character cap.
+    _rule(document, "deadline_handoff")["advice"] = "x" * 301
+
+
 MUTATIONS: dict[int, Mutation] = {
     1: _r01_unknown_top_level_key,
     2: _r02_caller_fact_without_world_fact,
@@ -378,6 +384,7 @@ MUTATIONS: dict[int, Mutation] = {
     42: _r42_persona_override_without_the_phone,
     43: _r43_provenance_names_a_ticket_that_does_not_exist,
     44: _r44_deadline_names_an_unknown_timer,
+    45: _r45_advice_over_300_characters,
 }
 
 # Rule numbers a fixture may additionally report because the second rule is logically implied by
@@ -421,8 +428,9 @@ def test_mutation_table_covers_exactly_the_rule_registry() -> None:
 
 
 def test_the_rule_registry_after_e31() -> None:
-    """R01-R44: R41 from I3 E6b, R42 from I3 E6c, R43 from I3 E8, R44 from I4 E31."""
-    assert list(VALIDATION_RULE_NUMBERS) == list(range(1, 45))
+    """R01-R45: R41 from I3 E6b, R42 from I3 E6c, R43 from I3 E8, R44 from I4 E31, R45 from I7
+    E54."""
+    assert list(VALIDATION_RULE_NUMBERS) == list(range(1, 46))
 
 
 @pytest.mark.parametrize("timer", ["accept_within_ms", "fill_within_ms"])

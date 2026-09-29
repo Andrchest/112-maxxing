@@ -5,7 +5,7 @@ Two public entry points:
 
 * `validate_scenario_version(version, *, role_modules=ROLE_MODULES, reference=LEGACY_REFERENCE)` —
   the rules of §30.8 (R01-R31, plus I3's R32-R40, HLD 70 §70.2.3, R41-R42, HLD 80 §80.5, R43,
-  and I4's R44, HLD 71 §71.8)
+  I4's R44, HLD 71 §71.8, and I7's R45, G10)
   against an already-parsed `ScenarioVersion`. It raises **one** `ScenarioValidationError` whose
   `violations` lists *every* violation found, each message starting with `R<nn>:` and naming the
   offending id or path.
@@ -948,6 +948,23 @@ def _check_deadline_timers(version: ScenarioVersion, out: list[str]) -> None:
             )
 
 
+def _check_advice_length(version: ScenarioVersion, out: list[str]) -> None:
+    """Rule R45 (I7 E54, G10, ТЗ ¶267/¶460/¶469): a rule's own `advice` override, when set, is a
+    non-empty string of at most 300 characters — the same cap the pinned category defaults
+    (`reference/advice/v1.yaml`) are authored under, so a report line is always "short and
+    practical" whichever text it ends up showing."""
+    for rule in version.scoring_rules:
+        if rule.advice is None:
+            continue
+        if not rule.advice.strip():
+            out.append(f"R45: scoring_rules['{rule.rule_id}'].advice is blank")
+        elif len(rule.advice) > 300:
+            out.append(
+                f"R45: scoring_rules['{rule.rule_id}'].advice is {len(rule.advice)} characters, "
+                "over the 300-character cap"
+            )
+
+
 def _check_seed(version: ScenarioVersion, out: list[str]) -> None:
     if not version.deterministic_seed.strip():
         out.append("R30: deterministic_seed must be a non-empty string")
@@ -1007,6 +1024,7 @@ _CHECKS: tuple[tuple[tuple[int, ...], _Check], ...] = (
     ((42,), lambda version, _modules, reference, out: _check_personas(version, reference, out)),
     ((43,), lambda version, _modules, _reference, out: _check_provenance(version, out)),
     ((44,), lambda version, _modules, _reference, out: _check_deadline_timers(version, out)),
+    ((45,), lambda version, _modules, _reference, out: _check_advice_length(version, out)),
 )
 """The rule registry: every check `scenario_version_violations` runs, with the §30.8 rule numbers
 it implements. Adding a rule means adding its check here, and `VALIDATION_RULE_NUMBERS` — hence
@@ -1016,7 +1034,8 @@ VALIDATION_RULE_NUMBERS: tuple[int, ...] = tuple(
     sorted({number for numbers, _check in _CHECKS for number in numbers})
 )
 """Every §30.8 rule number a validation run executes (R01-R40 after I3 E4a, R43 after I3 E8, R41
-after I3 E6b, R42 after I3 E6c — `80-telephony.md` §80.5 —, R44 after I4 E31, HLD 71 §71.8)."""
+after I3 E6b, R42 after I3 E6c — `80-telephony.md` §80.5 —, R44 after I4 E31, HLD 71 §71.8, R45
+after I7 E54, G10)."""
 
 
 def scenario_version_violations(
@@ -1154,6 +1173,11 @@ def _rule_for_parse_error(loc: tuple[int | str, ...], message: str) -> str:
         return "R20"
     if "scoring_rules" in names and "applies_to_variants" in names:
         return "R40"
+    if "scoring_rules" in names and "advice" in names:
+        # R45 (I7 E54): the model's own `max_length=300` on `advice` catches an over-long override
+        # before this function ever runs; still mapped for `validate_scenario_document`'s raw-file
+        # path (§30.8's own "map every structural failure back to its rule" rule).
+        return "R45"
     if loc and loc[0] == "provenance":
         # R43 (I3 E8): a malformed `provenance` — a missing or unknown field, a wrong type, an
         # unknown `source` — is the rule's "well-formed" half.

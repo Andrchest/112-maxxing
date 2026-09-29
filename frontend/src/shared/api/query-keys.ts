@@ -90,6 +90,9 @@ export const queryKeys = {
     // I5 E36, Q-E12-2: the trainee rating, same filters as `list`.
     rating: (groupId?: string, from?: string, to?: string) =>
       ['statistics', 'rating', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
+    // I7 E54, G11: «Типичные ошибки», same filters as `list`.
+    typicalErrors: (groupId?: string, from?: string, to?: string) =>
+      ['statistics', 'typical-errors', groupId ?? 'ALL', from ?? '', to ?? ''] as const,
   },
   // -- I4 E30: Admin UI (71 §71.7) — E28's accounts and E29's monitoring reads ----------------
   admin: {

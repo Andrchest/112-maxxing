@@ -4,8 +4,8 @@ import { scenarioIssueMessageRu } from './scenario-issue-ru';
 
 // I7 E53 (G19): Russian scenario validation messages, keyed by rule number.
 describe('scenarioIssueMessageRu', () => {
-  it('has a Russian template for every rule the backend registers (R1-R44)', () => {
-    for (let rule = 1; rule <= 44; rule += 1) {
+  it('has a Russian template for every rule the backend registers (R1-R45)', () => {
+    for (let rule = 1; rule <= 45; rule += 1) {
       const text = scenarioIssueMessageRu({ rule_number: rule, severity: 'ERROR', location: 'x', message: 'english' });
       expect(text).not.toBe('english');
       expect(text).toMatch(/[Ѐ-ӿ]/);

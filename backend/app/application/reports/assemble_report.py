@@ -54,6 +54,13 @@ the session's recorded criteria (`SESSION_CREATED.pass_criteria`, defaults for a
 **whole** stored report's totals and counters — like `failed_rule_count`, never the viewer's
 filtered list. Derived after `score_report`/`checksum` are fixed and stored nowhere, so it cannot
 move the score, the checksum or a rescore.
+
+**«Рекомендации по улучшению навыков» (I7 E54, G10, ТЗ ¶267/¶237, final criteria ¶460/¶469).**
+`recommendations` is `recommendations.session_recommendations` over this viewer's own **visible**
+`score_report.results` (after `_visible_report` narrows them, unlike `failed_rule_count` and the
+other whole-report counters above) — a deterministic, non-ML line per failed `ScoringCategory`,
+worst first, capped at five. Stored nowhere and never part of the checksum (D11): built strictly
+after `score_report` is fixed, from the same rows the report already shows this viewer.
 """
 
 from __future__ import annotations
@@ -89,6 +96,7 @@ from app.application.reports.norms import (
     recorded_timers,
 )
 from app.application.reports.pass_verdict import session_pass_verdict
+from app.application.reports.recommendations import Recommendation, session_recommendations
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
 from app.application.reports.text_quality import (
     TextQualityReport,
@@ -114,7 +122,7 @@ from app.domain.common.ids import ScenarioVersionId, SessionId, SnapshotId
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.call import dds_call_ids
 from app.domain.dds.card_status import CardTimers
-from app.domain.enums import RoleType, SessionState
+from app.domain.enums import RoleType, ScoringCategory, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
 from app.domain.layers.card_schema import CardSchema
@@ -200,6 +208,10 @@ class SessionReportView:
     """(I7 E49, Q-E31-1) `SESSION_CREATED.timers`, or the scenario's own for a log that records
     none (`norms.recorded_timers`) — the schema mapper reads it to show a `DEADLINE` rule's ACTUAL
     norm in its text (`app.application.reports.rule_text.report_rule_text`), never the score."""
+    recommendations: tuple[Recommendation, ...] = ()
+    """(I7 E54, G10) «Рекомендации по улучшению навыков» — `recommendations.session_recommendations`
+    over this viewer's own visible `score_report.results`, never the checksum or a score (module
+    doc). Empty when nothing failed, or when this viewer's visible rules all passed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +238,7 @@ class GetSessionReport:
         clock: Clock,
         reference: ReferencePort | None = None,
         text_checker: TextCheckerPort | None = None,
+        advice: Mapping[ScoringCategory, str] | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._clock = clock
@@ -233,6 +246,10 @@ class GetSessionReport:
         # (I4 E35) `None` when the lexicon/street data is absent — `text_quality_report` reads
         # that as `available: false`, never raises.
         self._text_checker = text_checker
+        # (I7 E54, G10) The pinned `reference/advice/v1.yaml` defaults, category -> text; `{}`
+        # when the composition root found no file (`recommendations` then shows only the rules
+        # that carry their own `advice` override, never raises).
+        self._advice: Mapping[ScoringCategory, str] = advice or {}
 
     async def __call__(self, session_id: SessionId, user: AuthenticatedUser) -> SessionReportView:
         async with self._unit_of_work() as uow:
@@ -308,11 +325,13 @@ class GetSessionReport:
             for segment in transcript
             if _transcript_visible(visibility, segment.turn_index, calls_by_turn, dds_ids)
         ]
+        visible_report = _visible_report(score_report, scenario_version, visibility)
+        rules_by_id = {rule.rule_id: rule for rule in scenario_version.scoring_rules}
 
         return SessionReportView(
             session_id=session_id,
             session=detail,
-            score_report=_visible_report(score_report, scenario_version, visibility),
+            score_report=visible_report,
             scoring_rules=scenario_version.scoring_rules,
             # The checksum is of the WHOLE stored report, never of the filtered view: there is one
             # report and one checksum (R3, D11), and a client comparing it with an explanation's
@@ -363,6 +382,12 @@ class GetSessionReport:
             # (I7 E49, Q-E31-1) The session's actual recorded timers — the schema mapper uses this
             # to show a `DEADLINE` rule's real norm in its text, never to move the score.
             timers=recorded_timers(events, scenario_version.card_timers),
+            # (I7 E54, G10) Over this viewer's own visible rules (`visible_report`, above) — never
+            # the whole stored report, so a trainee is never advised on a rule they had no chance
+            # to affect (module doc).
+            recommendations=session_recommendations(
+                visible_report.results, rules_by_id, self._advice
+            ),
         )
 
     async def unscored(

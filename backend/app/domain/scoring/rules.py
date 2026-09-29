@@ -46,12 +46,22 @@ class ScoringRule(BaseModel):
     predates it) is listed. Keys and values are plain strings here; rule R40 checks that every key
     is a `SessionVariants` field and every value a member of that switch's enum.
     """
+    advice: str | None = Field(default=None, max_length=300)
+    """(I7 E54, G10, ТЗ ¶267/¶460/¶469) Optional per-rule «Рекомендация» that overrides the
+    author's `ScoringCategory` default (`reference/advice/v1.yaml`) for a failed session's
+    recommendations section. Report-only: it never enters scoring, `ScoreResult` or the checksum
+    (D11) — `app.application.reports.recommendations` reads it, nothing else does. Rule R45
+    enforces the same 300-character cap the pinned defaults are authored under."""
 
     @model_serializer(mode="wrap")
-    def _omit_empty_applies_to_variants(self, handler: SerializerFunctionWrapHandler) -> Any:
-        """Leave an empty `applies_to_variants` out of a dump, so a rule written before the key
-        existed dumps exactly as it did (the scenario content hash is its identity, D4)."""
+    def _omit_empty_extras(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """Leave an empty `applies_to_variants` / unset `advice` out of a dump, so a rule written
+        before either key existed dumps exactly as it did (the scenario content hash is its
+        identity, D4)."""
         data = handler(self)
-        if isinstance(data, dict) and not data.get("applies_to_variants"):
-            data.pop("applies_to_variants", None)
+        if isinstance(data, dict):
+            if not data.get("applies_to_variants"):
+                data.pop("applies_to_variants", None)
+            if data.get("advice") is None:
+                data.pop("advice", None)
         return data

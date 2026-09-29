@@ -322,6 +322,7 @@ export function makeSessionReport(overrides: Partial<SessionReport> = {}): Sessi
     dds_participant_totals: [],
     text_quality: makeTextQualityReport(),
     pass_verdict: makePassVerdict(),
+    recommendations: [],
     ...overrides,
   };
 }

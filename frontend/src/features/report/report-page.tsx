@@ -40,6 +40,7 @@ import { DdsParticipantTotalsSection } from './dds-participant-totals-section';
 import { ResourceTimelineSection } from './resource-timeline-section';
 import { TimingMetricsSection } from './timing-metrics-section';
 import { RuleEvidenceSection } from './rule-evidence-section';
+import { RecommendationsSection } from './recommendations-section';
 import { ExplanationPanel } from './explanation-panel';
 import { CommentsSection } from './comments-section';
 import { SessionReportExportButtons } from './session-report-export-buttons';
@@ -207,6 +208,9 @@ export function ReportPage() {
       </div>
       <div className="mt-4">
         <RuleEvidenceSection results={report.score_report.results} onJumpToEvent={handleJumpToEvent} />
+      </div>
+      <div className="mt-4">
+        <RecommendationsSection recommendations={report.recommendations} />
       </div>
       <div className="mt-4">
         <ExplanationPanel

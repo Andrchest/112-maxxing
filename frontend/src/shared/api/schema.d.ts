@@ -2565,6 +2565,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/statistics/typical-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (additive, I7 E54) Top failed rules across sessions in scope (INSTRUCTOR/ADMIN).
+         * @description Same filters as `getTraineeStatistics` (one trainee, one group, a `completed_at` window).
+         *     Deterministic, no ML (ТЗ ¶233's own reading): the rules most of the scoped sessions
+         *     failed, worst first, at most 10, each with its failed-session count and share of the
+         *     scope. INSTRUCTOR / ADMIN only (`403 FORBIDDEN_FOR_ROLE` for a TRAINEE); an INSTRUCTOR's
+         *     scope is narrowed to sessions of lessons they created, an ADMIN's is every scored session.
+         */
+        get: operations["getTypicalErrors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4108,6 +4132,13 @@ export interface components {
             text_quality: components["schemas"]["TextQualityReportView"];
             /** @description (additive, I5 E38, Q-E9b-3) «Сдал / не сдал» under the session's recorded criteria — derived at report time, never stored, never part of the checksum. */
             pass_verdict: components["schemas"]["PassVerdictView"] | null;
+            /** @description (additive, I7 E54, G10, ТЗ ¶267/¶237) «Рекомендации по улучшению навыков» — one line per failed ScoringCategory this viewer's own visible rules cost, worst first, at most 5. Empty when every visible rule passed (the UI then shows «Замечаний нет»). Never part of the checksum. */
+            recommendations: components["schemas"]["RecommendationView"][];
+        };
+        RecommendationView: {
+            category: components["schemas"]["ScoringCategory"];
+            /** @description The rule's own `advice` override (scenario schema-2, ≤300 chars, rule R45) when the failed rule that cost this category the most points set one, else the pinned default of `reference/advice/v1.yaml`. */
+            text_ru: string;
         };
         RescoreRequest: {
             /**
@@ -4612,6 +4643,8 @@ export interface components {
             /** @description Scored cards only (unchanged). */
             weighted_total: number;
             weighted_max: number;
+            /** @description (additive, I7 E54, G11) «Типичные ошибки» over this lesson's own sessions; empty rows for a trainee's own copy of the report (INSTRUCTOR/ADMIN only). */
+            typical_errors: components["schemas"]["TypicalErrors"];
         };
         /** @enum {string} */
         ProposalSource: "LLM" | "HEURISTIC";
@@ -4847,6 +4880,20 @@ export interface components {
         /** @description (additive, I5 E36, Q-E12-2) `getTraineeRating`. */
         TraineeRating: {
             rows: components["schemas"]["TraineeRatingRow"][];
+        };
+        /** @description (additive, I7 E54, G11) One rule, worst (most failed sessions) first. */
+        TypicalErrorRow: {
+            rule_id: string;
+            name_ru: string;
+            category: components["schemas"]["ScoringCategory"];
+            failed_session_count: number;
+            /** @description The scope's own session count (the same for every row). */
+            session_count: number;
+            share_percent: number;
+        };
+        /** @description (additive, I7 E54, G11) `getTypicalErrors`, and `LessonReport.typical_errors`. */
+        TypicalErrors: {
+            rows: components["schemas"]["TypicalErrorRow"][];
         };
         /** @description (I4 E35) One word the ru_RU dictionary does not recognise, as an offset into its field's `text`. */
         MisspelledSpanView: {
@@ -8437,6 +8484,38 @@ export interface operations {
                     "text/csv": string;
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
                     "application/pdf": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getTypicalErrors: {
+        parameters: {
+            query?: {
+                /** @description (additive, I4 E33) */
+                trainee_id?: components["parameters"]["TraineeIdQueryParam"];
+                /** @description (additive, I4 E33) */
+                group_id?: components["parameters"]["GroupIdQueryParam"];
+                /** @description (additive, I4 E33) Inclusive lower bound (UTC). */
+                from?: components["parameters"]["FromParam"];
+                /** @description (additive, I4 E33) Exclusive upper bound (UTC). */
+                to?: components["parameters"]["ToParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The top failed rules, worst first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypicalErrors"];
                 };
             };
             401: components["responses"]["Unauthorized"];

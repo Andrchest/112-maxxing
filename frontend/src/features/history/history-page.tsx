@@ -176,6 +176,15 @@ export function HistoryPage() {
                           <Link className="text-primary underline-offset-2 hover:underline" to={`/report/${session.session_id}`}>
                             {t('historyOpenReport')}
                           </Link>
+                          {/* I7 E54 (G10): a one-line hint that the report has «Рекомендации по
+                              улучшению навыков» — reuses `failed_rule_count` (I7 E50), no new
+                              server data (the recommendations themselves are per-rule `advice`,
+                              only computed inside `getSessionReport`). */}
+                          {session.score_percent !== null && (session.failed_rule_count ?? 0) > 0 ? (
+                            <p className="mt-0.5 text-xs text-muted-foreground" data-slot="history-recommendations-hint">
+                              {t('historyRecommendationsHint')}
+                            </p>
+                          ) : null}
                         </td>
                       </tr>
                     ))}

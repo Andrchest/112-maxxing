@@ -38,6 +38,7 @@ from app.api.schemas.statistics import (
     leg_reaction_time_schema,
     norm_view_schema,
 )
+from app.api.schemas.typical_errors import TypicalErrorsSchema, typical_errors_schema
 from app.application.lessons.lesson_report import LessonReportView
 from app.application.lessons.queries import IncidentListItemView, LessonDetailView
 from app.application.lessons.weight_proposals import WeightProposalsView
@@ -284,6 +285,9 @@ class LessonReportSchema(ApiModel):
     cards: list[LessonReportCardSchema]
     weighted_total: float
     weighted_max: float
+    typical_errors: TypicalErrorsSchema
+    """(additive, I7 E54, G11) «Типичные ошибки» over this lesson's own sessions; empty rows for
+    a trainee's own copy of the report."""
 
 
 class WeightProposalLineSchema(ApiModel):
@@ -458,6 +462,7 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
         cards=cards,
         weighted_total=view.weighted_total,
         weighted_max=view.weighted_max,
+        typical_errors=typical_errors_schema(view.typical_errors),
     )
 
 

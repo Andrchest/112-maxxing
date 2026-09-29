@@ -9,6 +9,10 @@ It is its own port rather than a Unit of Work repository because it spans half t
 belongs to no aggregate — the same shape as E25's `AuditReader`. The adapter is
 `app.infrastructure.persistence.statistics_reader.SqlAlchemyStatisticsReader`, a few set-based
 queries per call, which is what keeps ¶165's 30 seconds at a class's volume.
+
+`scoped_session_ids` + `typical_errors` (I7 E54, G11, ТЗ ¶233) are the same reading, narrower:
+«Типичные ошибки» needs only session ids and a `GROUP BY rule_id` over `score_results`, never the
+full `ScoredSession` shape `scored_sessions` builds for the trainee statistics page.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ __all__ = [
     "StatisticsParticipant",
     "StatisticsReader",
     "TraineeAccount",
+    "TypicalErrorRow",
 ]
 
 
@@ -101,6 +106,16 @@ class ScoredSession:
     evaluator runs here, only the stored/folded values it was already reading)."""
 
 
+@dataclass(frozen=True, slots=True)
+class TypicalErrorRow:
+    """One set-based `score_results` row (I7 E54, G11): a rule some sessions in scope failed."""
+
+    rule_id: str
+    category: str
+    name_ru: str
+    failed_session_count: int
+
+
 class StatisticsReader(Protocol):
     """The statistics' reads (adapter: `SqlAlchemyStatisticsReader`)."""
 
@@ -124,4 +139,26 @@ class StatisticsReader(Protocol):
         to_utc: datetime | None = None,
     ) -> tuple[ScoredSession, ...]:
         """Every scored session one of `user_ids` took part in, completed in the window."""
+        ...
+
+    async def scoped_session_ids(
+        self,
+        *,
+        user_ids: Sequence[UserId] | None = None,
+        lesson_id: LessonId | None = None,
+        owner_id: UserId | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
+    ) -> tuple[SessionId, ...]:
+        """`COMPLETED`, scored session ids in scope (I7 E54, G11): `user_ids`' sessions, or one
+        `lesson_id`'s, further narrowed to `owner_id`'s own lessons when given (an INSTRUCTOR sees
+        only lessons they created; `None` is an ADMIN's unrestricted read, `GetTypicalErrors`'s
+        own reading). Lighter than `scored_sessions`: ids only, for `typical_errors` below."""
+        ...
+
+    async def typical_errors(
+        self, session_ids: Sequence[SessionId], *, limit: int = 10
+    ) -> tuple[TypicalErrorRow, ...]:
+        """The `limit` rules most of `session_ids` failed, worst (most failed sessions) first,
+        ties broken by `rule_id` (I7 E54, G11) — one `GROUP BY`, no evaluator, D11."""
         ...

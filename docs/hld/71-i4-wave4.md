@@ -1948,3 +1948,88 @@ with every E55 field filled and both marks set, rescore included); `tests/api/dd
 `tests/api/operator/test_card_schema_v2.py` (61 fields, the 1999 cap over HTTP);
 `card-form-v2-e55.test.tsx`, `work-item-panel.test.tsx`, `apply-work-item-event.test.ts`
 (vitest).
+## 71.19.54 I7 E54 — Recommendations (G10) + typical errors (G11)
+
+**Purpose.** Two remaining MANDATORY-by-letter gaps from the E42 analysis, both read as
+deterministic, no-ML by the manager's design (`reports/i7/E42-gaps.md` §2 items 8 and 13): G10 —
+ТЗ ¶267/¶237, final criteria ¶460/¶469 «рекомендации по улучшению навыков», nothing existed; G11 —
+ТЗ ¶233 «инсайты… по типичным ошибкам группы», statistics were per-trainee only, no per-rule
+aggregate across sessions.
+
+**G10 — design (as built).**
+- Reference: `reference/advice/v1.yaml` — one Russian text (≤300 chars) per `ScoringCategory`
+  (7/7), pinned in `reference/manifest.json`'s `files` (`backend/tools/import_manifest.py`'s
+  `FILES` tuple, no organizer `SOURCES` entry — hand-authored, like `personas/v1.yaml`). Loaded by
+  `infrastructure/reference/advice_catalog.py` (`load_advice_catalog`, cached per path, `None` only
+  when the file is absent) — a flat file, not folded into `ReferenceCatalog`'s pack-scoped shape,
+  because the 7 categories never vary per pack.
+- Domain: `ScoringRule.advice: str | None` (`domain/scoring/rules.py`, `max_length=300`, omitted
+  from a dump when unset like `applies_to_variants`) — an optional per-rule override, report-only,
+  never read by scoring itself. Rule R45 (`domain/scenario/validation.py`): a non-`None` `advice`
+  is non-blank and ≤300 chars (the model's own `max_length` already refuses the length case at
+  parse time; R45's length branch is the raw-document/`validate_scenario_document` path's mirror,
+  same reasoning as rules 24-26).
+- Application: `application/reports/recommendations.py` (`session_recommendations`) — pure: groups
+  the caller's own **visible** `score_report.results` (after `assemble_report._visible_report`
+  narrows them, never the whole stored report) by category, keeps only categories with a failed
+  result, picks the failed rule that lost the most points in each category to decide whether its
+  own `advice` overrides the category's pinned default, sorts by points lost (worst first), caps at
+  `MAX_RECOMMENDATIONS = 5`. Wired into `GetSessionReport.__call__` as `SessionReportView.
+  recommendations`, computed strictly after `score_report`/`checksum` are fixed — never stored,
+  never part of either (D11, no evaluator involved).
+- Contract: `openapi.yaml`'s `RecommendationView` (`category`, `text_ru`), `SessionReport.
+  recommendations` (additive, required, array, `maxItems: 5`); `api/schemas/reports.py`'s
+  `RecommendationViewSchema` / `recommendation_schema`.
+- Wiring: `Container.advice_catalog` (`load_advice_catalog(settings.reference_dir)` or `{}`),
+  passed into `GetSessionReport`; `GetLessonReport` inherits it for free (it reuses `GetSessionReport`
+  per card).
+- UI: `features/report/recommendations-section.tsx` («Рекомендации по улучшению навыков», «Замечаний
+  нет» when empty), on the report page after the rule-evidence section. `/history`: a one-line hint
+  (`historyRecommendationsHint`) on a released, failed session — reuses the existing `failed_rule_count`
+  column (I7 E50), no new server field.
+- **Tests**: `tests/unit/application/reports/test_recommendations.py` (advice selection — a rule's
+  own override vs. the category default, the worst-rule-in-category tiebreak —, dedup, ordering,
+  the 5-item cap); `tests/unit/reference/test_advice_catalog.py`; `tests/unit/domain/scenario/
+  test_validation_rules.py` (R45 fixture + registry count); `tests/api/reports/test_session_report.py`
+  (`recommendations` present, at most one per category, names only a category the viewer's own
+  results actually failed, and reading the report twice leaves it and the checksum unchanged —
+  same R1 invariant as the rest of the report); `recommendations-section.test.tsx`, `history-page.
+  test.tsx`'s hint test.
+
+**G11 — design (as built).**
+- Application: `application/statistics/typical_errors.py` (`GetTypicalErrors`) — two call sites,
+  one aggregate: `__call__(query, user)` (the statistics page, `StatisticsFilter` reused verbatim
+  from `getTraineeStatistics`) is INSTRUCTOR/ADMIN only, an INSTRUCTOR's scope narrowed to sessions
+  of lessons *they* created (`owner_id`), an ADMIN's `owner_id=None` (every scored session,
+  unrestricted — same reading as `getTraineeStatistics`'s own INSTRUCTOR/ADMIN read); `for_lesson
+  (lesson_id)` (the lesson report's own table) is that lesson's sessions only, no ownership filter
+  — `GetLessonReport` already decided who may see the lesson at all.
+- Reader: `StatisticsReader.scoped_session_ids` (`user_ids` / `lesson_id` / `owner_id` / window —
+  one `SELECT sessions.id`, no `ScoredSession` payload) and `.typical_errors(session_ids, limit=10)`
+  (one `GROUP BY rule_id` over `score_results` joined to `scoring_rules` for `name_ru`, `count(
+  DISTINCT session_id) FILTER (WHERE NOT passed)`, worst first) — both on `SqlAlchemyStatisticsReader`
+  (`infrastructure/persistence/statistics_reader.py`), set-based like every other E33 read (¶165's
+  30 s). `share_percent` / `session_count` are derived in the application layer from the scope size,
+  never re-summed per row.
+- Contract: `openapi.yaml`'s `TypicalErrorRow` (`rule_id`, `name_ru`, `category`,
+  `failed_session_count`, `session_count`, `share_percent`), `TypicalErrors` (`rows`, `maxItems: 10`);
+  new endpoint `GET /api/v1/statistics/typical-errors` (`getTypicalErrors`, same filter params as
+  `getTraineeStatistics`); `LessonReport.typical_errors` (additive, required) — empty `rows` for a
+  trainee's own copy of the report (`GetLessonReport` only calls `for_lesson` for an
+  INSTRUCTOR/ADMIN viewer).
+- Wiring: `Container.get_typical_errors()`; `Container.get_lesson_report()` now passes it to
+  `GetLessonReport`'s new optional third constructor argument.
+- UI: `features/statistics/typical-errors-table.tsx` (its own component, so the parallel E46a
+  charts epic can add its own section without touching this one) — a rule/category/sessions/share
+  table, used on `/instructor/statistics` (own query, own filter) and embedded in
+  `lesson-detail-page.tsx`'s `LessonReportSection` (that lesson's own scope).
+- **No migration**: both reads are set-based `SELECT`s over `score_results`/`simulation_sessions`/
+  `lessons`, no new column, no new table.
+- **Tests**: `tests/unit/application/statistics/test_typical_errors.py` (a fake reader: TRAINEE
+  refused, unknown `trainee_id`/`group_id` is 404, an INSTRUCTOR sees only their own lessons, a
+  different INSTRUCTOR sees none, an ADMIN is unscoped, `for_lesson` ignores ownership, an empty
+  scope never divides by zero); `tests/api/lessons/test_typical_errors.py` (real HTTP + Postgres: a
+  TRAINEE is refused, an instructor who created nothing sees no rows while the lesson's own creator
+  does, an ADMIN's rows are a superset, the lesson report's own `typical_errors` is populated for
+  INSTRUCTOR/ADMIN and empty for a trainee's own copy, and reading either endpoint writes nothing);
+  `typical-errors-table.test.tsx`, `statistics-page.test.tsx`, `lesson-detail-page.test.tsx`.

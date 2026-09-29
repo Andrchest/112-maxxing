@@ -1851,6 +1851,19 @@
       "additionalProperties": false,
       "description": "One scenario-defined scoring rule (§10.14, §30.7).",
       "properties": {
+        "advice": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Advice"
+        },
         "applies_to_roles": {
           "default": [],
           "items": {

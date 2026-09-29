@@ -29,7 +29,7 @@ The lesson must have ended (`COMPLETED` or `ABORTED`), else `409 REPORT_NOT_READ
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.application.auth.get_current_user import AuthenticatedUser
 from app.application.lessons.errors import (
@@ -44,6 +44,7 @@ from app.application.reports.assemble_report import (
     UnscoredSessionView,
 )
 from app.application.sessions.authorisation import ParticipantNotAssignedError
+from app.application.statistics.typical_errors import GetTypicalErrors, TypicalErrorsView
 from app.domain.common.ids import LessonId, SessionId
 from app.domain.enums import SessionState
 
@@ -68,16 +69,24 @@ class LessonReportView:
     cards: tuple[LessonReportCard, ...]
     weighted_total: float
     weighted_max: float
+    typical_errors: TypicalErrorsView = field(default_factory=lambda: TypicalErrorsView(rows=()))
+    """(I7 E54, G11) «Типичные ошибки» over this lesson's own sessions — INSTRUCTOR/ADMIN only;
+    empty for a trainee's own copy of the report (module doc's ownership note is a statistics-page
+    concern, not this one: `GetLessonReport`'s own visibility already decided who reaches here)."""
 
 
 class GetLessonReport:
     """`getLessonReport`."""
 
     def __init__(
-        self, unit_of_work: UnitOfWorkFactory, get_session_report: GetSessionReport
+        self,
+        unit_of_work: UnitOfWorkFactory,
+        get_session_report: GetSessionReport,
+        get_typical_errors: GetTypicalErrors | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._get_session_report = get_session_report
+        self._get_typical_errors = get_typical_errors
 
     async def __call__(self, lesson_id: LessonId, user: AuthenticatedUser) -> LessonReportView:
         async with self._unit_of_work() as uow:
@@ -117,6 +126,11 @@ class GetLessonReport:
             except ParticipantNotAssignedError:
                 continue  # a trainee's report lists only the cards they took part in
         scored = [(card.weight, card.report) for card in listed if card.report is not None]
+        typical_errors = (
+            await self._get_typical_errors.for_lesson(lesson_id)
+            if self._get_typical_errors is not None and user.is_instructor_or_admin
+            else TypicalErrorsView(rows=())
+        )
         return LessonReportView(
             lesson_id=lesson_id,
             cards=tuple(listed),
@@ -126,4 +140,5 @@ class GetLessonReport:
             weighted_max=sum(
                 weight * report.score_report.total_max_points for weight, report in scored
             ),
+            typical_errors=typical_errors,
         )

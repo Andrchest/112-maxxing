@@ -32,15 +32,18 @@ from app.application.statistics.ports import (
     StatisticsFilter,
     StatisticsParticipant,
     TraineeAccount,
+    TypicalErrorRow,
 )
 from app.db.models.events import SessionEvent as SessionEventRow
 from app.db.models.layers import IncidentCard as IncidentCardRow
 from app.db.models.reference import ScenarioVersion as ScenarioVersionRow
+from app.db.models.reference import ScoringRule as ScoringRuleRow
 from app.db.models.reference import TraineeGroup as TraineeGroupRow
 from app.db.models.reference import TraineeGroupMember as TraineeGroupMemberRow
 from app.db.models.reference import User as UserRow
 from app.db.models.scoring import ScoreResult as ScoreResultRow
 from app.db.models.session import Incident as IncidentRow
+from app.db.models.session import Lesson as LessonRow
 from app.db.models.session import SessionParticipant as SessionParticipantRow
 from app.db.models.session import SimulationSession as SimulationSessionRow
 from app.domain.common.ids import LessonId, SessionId, TraineeGroupId, UserId
@@ -171,6 +174,48 @@ class SqlAlchemyStatisticsReader:
             for head in heads
         )
 
+    async def scoped_session_ids(
+        self,
+        *,
+        user_ids: Sequence[UserId] | None = None,
+        lesson_id: LessonId | None = None,
+        owner_id: UserId | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
+    ) -> tuple[SessionId, ...]:
+        """(I7 E54, G11) One set-based `SELECT`, no data beyond the ids — `typical_errors`'s own
+        scope, never the full `ScoredSession` shape `scored_sessions` builds."""
+        statement = _scoped_session_ids_statement(
+            user_ids=user_ids,
+            lesson_id=lesson_id,
+            owner_id=owner_id,
+            from_utc=from_utc,
+            to_utc=to_utc,
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).scalars().all()
+        return tuple(SessionId(row) for row in rows)
+
+    async def typical_errors(
+        self, session_ids: Sequence[SessionId], *, limit: int = 10
+    ) -> tuple[TypicalErrorRow, ...]:
+        """(I7 E54, G11) One `GROUP BY rule_id` over `score_results`, worst (most failed sessions)
+        first — the rule's own `name_ru` joined in from `scoring_rules`."""
+        if not session_ids:
+            return ()
+        statement = _typical_errors_statement(session_ids, limit=limit)
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).all()
+        return tuple(
+            TypicalErrorRow(
+                rule_id=row.rule_id,
+                category=row.category,
+                name_ru=row.name_ru,
+                failed_session_count=int(row.failed_session_count),
+            )
+            for row in rows
+        )
+
 
 class _Totals:
     """One session's stored sums, folded from its `(category)` rows."""
@@ -267,4 +312,75 @@ def _events_statement(session_ids: Sequence[UUID]) -> sa.Select[Any]:
             events.event_type.in_(_STATISTICS_EVENT_TYPE_VALUES),
         )
         .order_by(events.session_id, events.seq_no)
+    )
+
+
+# -- I7 E54 (G11): «Типичные ошибки группы» — set-based over `score_results` alone ---------------
+
+
+def _scoped_session_ids_statement(
+    *,
+    user_ids: Sequence[UserId] | None,
+    lesson_id: LessonId | None,
+    owner_id: UserId | None,
+    from_utc: datetime | None,
+    to_utc: datetime | None,
+) -> sa.Select[Any]:
+    """`COMPLETED`, scored session ids narrowed by whichever of `user_ids` / `lesson_id` /
+    `owner_id` (an instructor's own-lessons restriction) / the window is given."""
+    sessions = SimulationSessionRow
+    statement = sa.select(sessions.id).where(
+        sessions.state == _COMPLETED,
+        sessions.completed_at.is_not(None),
+        sa.exists().where(ScoreResultRow.session_id == sessions.id),
+    )
+    if user_ids is not None:
+        statement = statement.where(
+            sa.exists().where(
+                SessionParticipantRow.session_id == sessions.id,
+                SessionParticipantRow.user_id.in_(list(user_ids)),
+            )
+        )
+    if lesson_id is not None:
+        statement = statement.where(sessions.lesson_id == lesson_id)
+    if owner_id is not None:
+        statement = statement.where(
+            sa.exists().where(
+                LessonRow.id == sessions.lesson_id, LessonRow.created_by_user_id == owner_id
+            )
+        )
+    if from_utc is not None:
+        statement = statement.where(sessions.completed_at >= from_utc)
+    if to_utc is not None:
+        statement = statement.where(sessions.completed_at < to_utc)
+    return statement
+
+
+def _typical_errors_statement(session_ids: Sequence[SessionId], *, limit: int) -> sa.Select[Any]:
+    """The `limit` rules most of `session_ids` failed: one `GROUP BY rule_id`, the rule's own
+    `name_ru` joined in from `scoring_rules` (`min()` picks one deterministically when the same
+    `rule_id` happens to carry different text across scenario versions)."""
+    results = ScoreResultRow
+    rules = ScoringRuleRow
+    failed_sessions = sa.func.count(sa.func.distinct(results.session_id)).label(
+        "failed_session_count"
+    )
+    return (
+        sa.select(
+            results.rule_id,
+            sa.func.min(results.category).label("category"),
+            sa.func.min(rules.name_ru).label("name_ru"),
+            failed_sessions,
+        )
+        .join(
+            rules,
+            sa.and_(
+                rules.scenario_version_id == results.scenario_version_id,
+                rules.rule_id == results.rule_id,
+            ),
+        )
+        .where(results.session_id.in_(list(session_ids)), sa.not_(results.passed))
+        .group_by(results.rule_id)
+        .order_by(failed_sessions.desc(), results.rule_id)
+        .limit(limit)
     )

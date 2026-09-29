@@ -22,6 +22,7 @@ import {
   getTraineeRatingCsv,
   getTraineeStatistics,
   getTraineeStatisticsCsv,
+  getTypicalErrors,
   listTraineeGroups,
   problemMessageRu,
   queryKeys,
@@ -30,6 +31,7 @@ import {
   type TraineeStatisticsQuery,
   type UserRole,
 } from '@/shared/api';
+import { TypicalErrorsTable } from './typical-errors-table';
 import { ProblemError } from '@/shared/lib/api';
 import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import { failedRulesLines, formatMeanDeviationMs, formatMeanDurationMs, formatPercent } from '@/entities/statistics';
@@ -86,6 +88,11 @@ export function StatisticsPage() {
   const ratingQuery = useQuery({
     queryKey: queryKeys.statistics.rating(query.group_id, query.from, query.to),
     queryFn: () => getTraineeRating(query),
+  });
+  // I7 E54, G11: the same filters, top failed rules worst first (INSTRUCTOR's own lessons).
+  const typicalErrorsQuery = useQuery({
+    queryKey: queryKeys.statistics.typicalErrors(query.group_id, query.from, query.to),
+    queryFn: () => getTypicalErrors(query),
   });
 
   async function handleDownload(format: ReportFileFormat) {
@@ -290,6 +297,18 @@ export function StatisticsPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {/* I7 E54, G11: its own section — a parallel epic (E46a) may add charts to this page
+          without touching this table (owner note, `E42-gaps.md` §2 item 13). */}
+      <div className="mt-4">
+        {typicalErrorsQuery.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {problemText(typicalErrorsQuery.error)}
+          </p>
+        ) : (
+          <TypicalErrorsTable rows={typicalErrorsQuery.data?.rows ?? []} />
+        )}
+      </div>
     </AppShell>
   );
 }

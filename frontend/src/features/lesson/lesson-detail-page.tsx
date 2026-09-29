@@ -50,6 +50,7 @@ import { arrivalKindLabelRu, cardStatusLabelRu, isRedFlagCardStatus, lessonState
 import { AbortLessonButton } from './abort-lesson-button';
 import { WeightProposalsCard } from './weight-proposals-card';
 import { DownloadLessonReportCsvButton, LessonReportTable } from './lesson-report-table';
+import { TypicalErrorsTable } from '@/features/statistics/typical-errors-table';
 
 const USER_ROLE_LABEL_KEY: Record<UserRole, keyof typeof ru> = {
   TRAINEE: 'userRoleTrainee',
@@ -173,6 +174,9 @@ function LessonReportSection({ lessonId }: { lessonId: string }) {
       <p className="text-sm font-medium" data-slot="weighted-total">
         {t('lessonDetailWeightedTotalLabel')}: {reportQuery.data.weighted_total} / {reportQuery.data.weighted_max}
       </p>
+      {/* I7 E54 (G11): empty rows for a trainee's own copy of this report (server-side gate) —
+          the table then just shows its own empty state, never an error. */}
+      <TypicalErrorsTable rows={reportQuery.data.typical_errors.rows} />
     </div>
   );
 }

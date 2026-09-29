@@ -145,6 +145,20 @@ describe('HistoryPage', () => {
     expect(await screen.findByText(ru.historyEmpty)).toBeInTheDocument();
   });
 
+  // I7 E54 (G10): a released session with failed rules hints at the report's recommendations;
+  // an unreleased one (no score yet) never does, even with a `failed_rule_count`.
+  it('hints at recommendations only for a released session with failed rules', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(HISTORY)));
+    renderPage();
+
+    await screen.findByText('Apartment fire');
+    const rows = screen.getAllByRole('row').filter((row) => row.getAttribute('data-slot') === 'history-row');
+    const [unreleased, released] = rows;
+    if (!unreleased || !released) throw new Error('expected two history rows');
+    expect(released).toHaveTextContent(ru.historyRecommendationsHint);
+    expect(unreleased).not.toHaveTextContent(ru.historyRecommendationsHint);
+  });
+
   // I5 E37 (Q-E16-4): «Скачать профиль (JSON)» downloads the caller's own profile.
   it('downloads the own profile as JSON with the bearer token', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

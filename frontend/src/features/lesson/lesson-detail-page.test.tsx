@@ -168,6 +168,12 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
       ],
       weighted_total: 8,
       weighted_max: 10,
+      // I7 E54, G11: the lesson's own «Типичные ошибки» table.
+      typical_errors: {
+        rows: [
+          { rule_id: 'r1', name_ru: 'Rule one', category: 'CARD_QUALITY', failed_session_count: 1, session_count: 1, share_percent: 100 },
+        ],
+      },
     };
     vi.stubGlobal(
       'fetch',
@@ -187,6 +193,9 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
     expect(await screen.findByText('8 / 10')).toBeInTheDocument();
     expect(screen.getByText(`${ru.lessonDetailWeightedTotalLabel}: 8 / 10`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: ru.lessonDetailReleaseButton })).toBeInTheDocument();
+    // I7 E54, G11: the lesson's own «Типичные ошибки» table.
+    expect(screen.getByText('Rule one')).toBeInTheDocument();
+    expect(screen.getByText(ru.scoringCategoryCardQuality)).toBeInTheDocument();
   });
 
   it('lists a card aborted by an early end unscored, with its time at work and its actions (I4 E31)', async () => {
@@ -237,6 +246,7 @@ describe('LessonDetailPage — /instructor/lessons/:lessonId (70 §70.3)', () =>
       ],
       weighted_total: 0,
       weighted_max: 0,
+      typical_errors: { rows: [] },
     };
     vi.stubGlobal(
       'fetch',

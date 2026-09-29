@@ -1272,3 +1272,17 @@ export function getScenarioVersionDocument(
     format === 'yaml' ? 'application/yaml' : 'application/json',
   );
 }
+
+// --- I7 E54: «Рекомендации по улучшению навыков» (G10, ТЗ ¶267/¶237) ---------------------------
+export type RecommendationView = components['schemas']['RecommendationView'];
+
+// --- I7 E54: «Типичные ошибки» (G11, ТЗ ¶233) --------------------------------------------------
+export type TypicalErrors = components['schemas']['TypicalErrors'];
+export type TypicalErrorRow = components['schemas']['TypicalErrorRow'];
+
+/** `getTypicalErrors` (I7 E54, G11) — the top failed rules across sessions in scope, worst
+ * first; same filters and access as {@link getTraineeStatistics} (INSTRUCTOR / ADMIN only, an
+ * INSTRUCTOR's own lessons). */
+export function getTypicalErrors(params: TraineeStatisticsQuery = {}): Promise<TypicalErrors> {
+  return apiFetch(`/statistics/typical-errors${statisticsQueryString(params)}`);
+}

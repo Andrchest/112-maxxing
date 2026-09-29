@@ -76,6 +76,10 @@ FILES: tuple[str, ...] = (
     # `reference/` (its own sha is what `test_every_reference_file_has_the_sha256_the_manifest_pins`
     # checks; the sources it points to are verified by `app.tools.seed_materials` itself, not here).
     "materials/organizer.yaml",
+    # I7 E54 (G10, ТЗ ¶267/¶237): the pinned default «Рекомендации по улучшению навыков» text per
+    # `ScoringCategory` (`app.infrastructure.reference.advice_catalog`). Hand-authored, no
+    # organizer source to re-derive it from — same as `personas/v1.yaml` and the materials list.
+    "advice/v1.yaml",
 )
 
 CLASSIFIER_SOURCE = (

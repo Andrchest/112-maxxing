@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsPage } from './statistics-page';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
-import type { TraineeRating, TraineeStatistics } from '@/shared/api';
+import type { TraineeRating, TraineeStatistics, TypicalErrors } from '@/shared/api';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -73,6 +73,13 @@ const RATING: TraineeRating = {
 
 const GROUPS = { items: [{ group_id: 'group-1', name_ru: 'Group A', created_by_user_id: 'instr-1', members: [], created_at: '2026-09-21T00:00:00Z' }], total: 1 };
 
+// I7 E54, G11: top failed rules, worst first.
+const TYPICAL_ERRORS: TypicalErrors = {
+  rows: [
+    { rule_id: 'r1', name_ru: 'Rule one', category: 'CARD_QUALITY', failed_session_count: 3, session_count: 4, share_percent: 75 },
+  ],
+};
+
 // I4 E33 (71 §71.10): /instructor/statistics — one row per trainee, a group filter, the CSV.
 describe('StatisticsPage', () => {
   afterEach(() => {
@@ -88,6 +95,7 @@ describe('StatisticsPage', () => {
         const url = String(input);
         if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
         if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
+        if (url === '/api/v1/statistics/typical-errors') return jsonResponse(TYPICAL_ERRORS);
         if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -128,6 +136,7 @@ describe('StatisticsPage', () => {
       if (url.startsWith('/api/v1/statistics.csv')) return new Response('x', { status: 200, headers: { 'content-type': 'text/csv' } });
       if (url.startsWith('/api/v1/statistics/rating.csv')) return new Response('x', { status: 200, headers: { 'content-type': 'text/csv' } });
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
+      if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -167,6 +176,7 @@ describe('StatisticsPage', () => {
       const url = String(input);
       if (url.startsWith('/api/v1/statistics/rating.csv')) return new Response('x', { status: 200, headers: { 'content-type': 'text/csv' } });
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
+      if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -202,6 +212,7 @@ describe('StatisticsPage', () => {
         return new Response('x', { status: 200, headers: { 'content-type': contentType } });
       }
       if (url.startsWith('/api/v1/statistics/rating')) return jsonResponse(RATING);
+      if (url.startsWith('/api/v1/statistics/typical-errors')) return jsonResponse(TYPICAL_ERRORS);
       if (url.startsWith('/api/v1/statistics')) return jsonResponse(STATISTICS);
       if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
       throw new Error(`unexpected fetch: ${url}`);
@@ -229,5 +240,45 @@ describe('StatisticsPage', () => {
       URL.revokeObjectURL = original.revoke;
       click.mockRestore();
     }
+  });
+
+  // I7 E54, G11: its own table, same filters, rendered verbatim in the server's own order.
+  it('shows the typical-errors table, its own empty state when there are no rows', async () => {
+    signIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
+        if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
+        if (url === '/api/v1/statistics/typical-errors') return jsonResponse(TYPICAL_ERRORS);
+        if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    renderPage();
+
+    const row = await screen.findByRole('row', { name: /Rule one/ });
+    expect(row).toHaveTextContent(ru.scoringCategoryCardQuality);
+    expect(row).toHaveTextContent('3 / 4');
+    expect(row).toHaveTextContent('75%');
+  });
+
+  it('shows the empty state when the scope has no failed rules', async () => {
+    signIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/statistics') return jsonResponse(STATISTICS);
+        if (url === '/api/v1/statistics/rating') return jsonResponse(RATING);
+        if (url === '/api/v1/statistics/typical-errors') return jsonResponse({ rows: [] });
+        if (url === '/api/v1/trainee-groups?limit=200') return jsonResponse(GROUPS);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText(ru.typicalErrorsEmpty)).toBeInTheDocument();
   });
 });

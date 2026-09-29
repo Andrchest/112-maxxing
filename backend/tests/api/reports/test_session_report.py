@@ -70,6 +70,9 @@ async def test_the_instructor_report_has_every_spec_29_item(completed: OperatorF
         assert result["evidence"], f"SPEC §29 item 14: rule {result['rule_id']} has no evidence"
         assert result["name_ru"] and result["description_ru"]
 
+    # (additive, I7 E54, G10) «Рекомендации по улучшению навыков»
+    assert isinstance(body["recommendations"], list)
+
     # 4 complete event timeline, with a Russian one-line summary each
     timeline = body["timeline"]
     assert len(timeline) > 20, "SPEC §29 item 4: the whole cycle, not a sample"
@@ -353,6 +356,38 @@ async def test_the_report_checksum_is_the_stored_one(completed: OperatorFlow) ->
         json={"persist": False},
     )
     assert body["score_report"]["checksum"] == rescore.json()["stored_checksum"]
+
+
+async def test_recommendations_reflect_the_failed_rules_and_never_move_the_score(
+    completed: OperatorFlow, uow_factory: Any
+) -> None:
+    """G10 (I7 E54): `recommendations` is at most 5 lines, at most one per category, each of them
+    naming a category some `score_report.results` row actually failed — and reading the report
+    (which computes it) still writes nothing (R1, same invariant as `test_reading_the_report_
+    writes_nothing`, extended to this additive field)."""
+    before_counts = await _counts(uow_factory, completed.session_id)
+
+    body = (await report(completed)).json()
+    recommendations = body["recommendations"]
+    failed_categories = {
+        result["category"] for result in body["score_report"]["results"] if not result["passed"]
+    }
+
+    assert isinstance(recommendations, list)
+    assert len(recommendations) <= 5
+    categories = [item["category"] for item in recommendations]
+    assert len(categories) == len(set(categories)), "at most one line per category"
+    for item in recommendations:
+        assert item["category"] in failed_categories
+        assert item["text_ru"].strip()
+        assert len(item["text_ru"]) <= 300
+    if not failed_categories:
+        assert recommendations == []
+
+    again = (await report(completed)).json()
+    assert again["recommendations"] == recommendations
+    assert again["score_report"]["checksum"] == body["score_report"]["checksum"]
+    assert await _counts(uow_factory, completed.session_id) == before_counts
 
 
 # ---------------------------------------------------------------------------------------------

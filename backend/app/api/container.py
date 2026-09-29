@@ -24,7 +24,7 @@ use case as constructor arguments that this module reads and passes in.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 
@@ -182,6 +182,7 @@ from app.application.simulation.tick_session import TickSession
 from app.application.statistics.ports import StatisticsReader
 from app.application.statistics.trainee_rating import GetTraineeRating
 from app.application.statistics.trainee_statistics import GetMyHistory, GetTraineeStatistics
+from app.application.statistics.typical_errors import GetTypicalErrors
 from app.application.telephony.dial_from_sip import DialFromSip
 from app.application.telephony.reads import GetSipCredential, GetTelephonyCall
 from app.application.telephony.report_sip_leg import ReportSipLeg
@@ -196,6 +197,7 @@ from app.config.settings import Settings, get_settings
 from app.config.settings_xml import export_settings_xml as render_settings_xml
 from app.db.session import create_engine, create_session_factory
 from app.domain.common.ids import SessionId
+from app.domain.enums import ScoringCategory
 from app.domain.scoring.results import ScoreResult
 from app.inference.llm.explanation_client import build_explanation_llm_client
 from app.infrastructure.audit import ContextVarAuditChanges  # I7 E43
@@ -227,6 +229,7 @@ from app.infrastructure.realtime.redis_publisher import RedisEventPublisher
 from app.infrastructure.realtime.redis_runner_lock import RedisRunnerLock, lesson_runner_lock_key
 from app.infrastructure.realtime.redis_subscriber import RedisEventSubscriber
 from app.infrastructure.recording import LameMp3Encoder
+from app.infrastructure.reference.advice_catalog import load_advice_catalog
 from app.infrastructure.reference.file_catalog import FileReferenceCatalog
 from app.infrastructure.reference.text_checker import FileTextChecker
 from app.infrastructure.transport.livekit_token_service import LiveKitTokenService
@@ -299,6 +302,8 @@ class Container:
         report_exporter: ReportExporter | None = None,
         # --- I7 E51 login throttling: appended, never inserted among the params above ----------
         login_attempts: LoginAttemptStore | None = None,
+        # --- I7 E54 recommendations (G10): appended, never inserted among the params above -----
+        advice_catalog: Mapping[ScoringCategory, str] | None = None,
     ) -> None:
         self.settings = settings
         #: False when a test handed in its own engine/Redis and will close them itself.
@@ -524,6 +529,18 @@ class Container:
             login_attempts if login_attempts is not None else RedisLoginAttemptStore(self.redis)
         )
         # --- end I7 E51 -------------------------------------------------------------------------
+        # --- I7 E54 recommendations (G10, ТЗ ¶267) ----------------------------------------------
+        #
+        # `reference/advice/v1.yaml` under the same `settings.reference_dir` root the reference
+        # pack uses (I3 E2a, above); `load_advice_catalog` returns `None` when the file is absent
+        # (never raises) and `GetSessionReport` then shows only rules with their own `advice`
+        # override. A test passes its own mapping, or `{}` to force the "no defaults" path.
+        self.advice_catalog: Mapping[ScoringCategory, str] = (
+            advice_catalog
+            if advice_catalog is not None
+            else load_advice_catalog(Path(settings.reference_dir)) or {}
+        )
+        # --- end I7 E54 -------------------------------------------------------------------------
 
     # -- use-case factories --------------------------------------------------------------------
 
@@ -650,8 +667,11 @@ class Container:
         )
 
     def get_lesson_report(self) -> GetLessonReport:
-        """`getLessonReport` — the cards' own `getSessionReport`s, weighted."""
-        return GetLessonReport(self.unit_of_work, self.get_session_report())
+        """`getLessonReport` — the cards' own `getSessionReport`s, weighted, plus (I7 E54, G11)
+        the lesson's own «Типичные ошибки» table for an INSTRUCTOR/ADMIN viewer."""
+        return GetLessonReport(
+            self.unit_of_work, self.get_session_report(), self.get_typical_errors()
+        )
 
     def release_lesson_report(self) -> ReleaseLessonReport:
         """`releaseLessonReport` — `releaseReportToTrainee` for every completed card."""
@@ -762,7 +782,14 @@ class Container:
         """`getSessionReport` — reads the stored score, never recomputes it (E16 R1)."""
         # (I4 E35) `self.text_checker` is `None` when the lexicon/street data is absent; the
         # report's own `text_quality.available` carries that, the checksum above never does.
-        return GetSessionReport(self.unit_of_work, self.clock, self.reference, self.text_checker)
+        # (I7 E54) `self.advice_catalog` feeds `recommendations` the same way.
+        return GetSessionReport(
+            self.unit_of_work,
+            self.clock,
+            self.reference,
+            self.text_checker,
+            self.advice_catalog,
+        )
 
     def release_report_to_trainee(self) -> ReleaseReportToTrainee:
         """`releaseReportToTrainee` — a visibility flag that emits no event (E16 R2, D11)."""
@@ -1362,6 +1389,15 @@ class Container:
         return GetTraineeRating(self.statistics_reader)
 
     # --- end I5 E36 -------------------------------------------------------------------------
+
+    # --- I7 E54: «Типичные ошибки» (G11, ТЗ ¶233) ---------------------------------------------
+
+    def get_typical_errors(self) -> GetTypicalErrors:
+        """`getTypicalErrors` (statistics page) and `getLessonReport`'s own table — INSTRUCTOR /
+        ADMIN only, same reader as the rest of E33/E36."""
+        return GetTypicalErrors(self.statistics_reader)
+
+    # --- end I7 E54 -------------------------------------------------------------------------
 
     # --- I7 E53: scenario version download (G14a) --------------------------------------------
 
