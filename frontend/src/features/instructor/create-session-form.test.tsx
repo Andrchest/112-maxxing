@@ -308,6 +308,65 @@ describe('CreateSessionForm', () => {
     });
   });
 
+  it('sends the timer override the instructor typed, and none when every field is empty (I7 E49, Q-E31-2)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/health/ready' && method === 'GET') return jsonResponse(HEALTH_READY_RESPONSE);
+      if (url === '/api/v1/sessions' && method === 'POST') return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await fillInScenarioVersionAndParticipant(user);
+
+    await user.type(screen.getByLabelText(ru.lessonFormEntryAcceptTimerLabel), '45');
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/sessions' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    const body = JSON.parse(createCall[1].body as string) as { timers?: unknown };
+    expect(body.timers).toEqual({ accept_within_ms: 45000 });
+  });
+
+  it('sends no timers key at all when every field is left empty', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/scenarios' && method === 'GET') return jsonResponse(SCENARIOS_RESPONSE);
+      if (url === '/api/v1/scenarios/s1/versions' && method === 'GET') return jsonResponse(VERSIONS_RESPONSE);
+      if (url === '/api/v1/users?role=TRAINEE' && method === 'GET') return jsonResponse(TRAINEES_RESPONSE);
+      if (url === '/api/v1/health/ready' && method === 'GET') return jsonResponse(HEALTH_READY_RESPONSE);
+      if (url === '/api/v1/sessions' && method === 'POST') return jsonResponse(makeSessionDetail({ state: 'READY' }), 201);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderForm();
+    await fillInScenarioVersionAndParticipant(user);
+    await user.click(screen.getByRole('button', { name: ru.instructorCreateButton }));
+
+    const createCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url) === '/api/v1/sessions' && (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(call).toBeDefined();
+      return call as [string, RequestInit];
+    });
+    expect(JSON.parse(createCall[1].body as string)).not.toHaveProperty('timers');
+  });
+
   it('renders the Russian INFERENCE_NOT_READY message when start is refused', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -48,6 +48,7 @@ from app.application.reports.assemble_report import SessionReportView
 from app.application.reports.dds_decisions import DdsDecision, DdsParticipantTotals
 from app.application.reports.list_inference_metrics import InferenceMetricsPage
 from app.application.reports.resource_timeline import ResourceTimelineEntry
+from app.application.reports.rule_text import report_rule_text
 from app.application.reports.text_quality import TextQualityField, TextQualityReport
 from app.application.reports.timeline import TimelineEntry
 from app.application.reports.timing_metrics import TimingMetrics
@@ -55,6 +56,7 @@ from app.application.reports.transcript import AudioSegmentRef, TranscriptEntry,
 from app.application.reports.truth_vs_card import TruthVsCardEntry, Verdict
 from app.application.scoring.rescore_session import RescoreOutcome
 from app.domain.common.ids import SessionId
+from app.domain.dds.card_status import CardTimers
 from app.domain.dds.response import LegResponder, ServiceResponseStatus
 from app.domain.enums import (
     ActorType,
@@ -209,14 +211,23 @@ def score_evidence_view_schema(evidence: ScoreEvidence) -> ScoreEvidenceViewSche
 
 
 def score_result_view_schema(
-    result: ScoreResult, rules_by_id: Mapping[str, ScoringRule]
+    result: ScoreResult, rules_by_id: Mapping[str, ScoringRule], *, timers: CardTimers | None = None
 ) -> ScoreResultViewSchema:
-    """`ScoreResult` + its rule's `name_ru`/`description_ru` -> the wire model."""
+    """`ScoreResult` + its rule's `name_ru`/`description_ru` -> the wire model.
+
+    `timers` is the session's recorded per-card timers (I7 E49, Q-E31-1): with it, a `DEADLINE`
+    rule's text shows its ACTUAL norm (`report_rule_text`) instead of the scenario's literal
+    wording; `None` (the rescore preview, which carries no session timers) leaves the rule's own
+    text untouched, exactly as before this epic.
+    """
     rule = rules_by_id[result.rule_id]
+    name_ru, description_ru = (
+        (rule.name_ru, rule.description_ru) if timers is None else report_rule_text(rule, timers)
+    )
     return ScoreResultViewSchema(
         rule_id=result.rule_id,
-        name_ru=rule.name_ru,
-        description_ru=rule.description_ru,
+        name_ru=name_ru,
+        description_ru=description_ru,
         evaluator_type=result.evaluator_type,
         category=result.category,
         points_awarded=result.points_awarded,
@@ -235,10 +246,16 @@ def score_category_total_view_schema(total: ScoreCategoryTotal) -> ScoreCategory
 
 
 def score_report_view_schema(
-    report: ScoreReport, rules_by_id: Mapping[str, ScoringRule], *, checksum: str
+    report: ScoreReport,
+    rules_by_id: Mapping[str, ScoringRule],
+    *,
+    checksum: str,
+    timers: CardTimers | None = None,
 ) -> ScoreReportViewSchema:
     """`ScoreReport` -> the wire model. `checksum` is computed by the caller (`report_checksum`,
-    a pure domain function `app.api.schemas` never calls on its own)."""
+    a pure domain function `app.api.schemas` never calls on its own). `timers` (I7 E49, Q-E31-1)
+    is the session's recorded per-card timers, for a `DEADLINE` rule's ACTUAL-norm text; `None`
+    (the rescore preview) leaves every rule's text as the scenario wrote it."""
     return ScoreReportViewSchema(
         scenario_version_id=UUID(str(report.scenario_version_id)),
         session_id=UUID(str(report.session_id)),
@@ -246,9 +263,13 @@ def score_report_view_schema(
         total_max_points=report.total_max_points,
         by_category=[score_category_total_view_schema(total) for total in report.by_category],
         critical_errors=[
-            score_result_view_schema(result, rules_by_id) for result in report.critical_errors
+            score_result_view_schema(result, rules_by_id, timers=timers)
+            for result in report.critical_errors
         ],
-        results=[score_result_view_schema(result, rules_by_id) for result in report.results],
+        results=[
+            score_result_view_schema(result, rules_by_id, timers=timers)
+            for result in report.results
+        ],
         computed_from_event_count=report.computed_from_event_count,
         checksum=checksum,
     )
@@ -759,7 +780,7 @@ def session_report_schema(view: SessionReportView) -> SessionReportSchema:
         session_id=UUID(str(view.session_id)),
         session=session_detail_schema(view.session),
         score_report=score_report_view_schema(
-            view.score_report, rules_by_id, checksum=view.checksum
+            view.score_report, rules_by_id, checksum=view.checksum, timers=view.timers
         ),
         timeline=[timeline_entry_schema(entry) for entry in view.timeline],
         transcript=[transcript_segment_schema(entry) for entry in view.transcript],

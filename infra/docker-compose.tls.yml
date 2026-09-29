@@ -1,0 +1,36 @@
+# I7 E49 (Q-E27-1, owner decision 2026-09-29): with the `tls` profile active, the plain-http ports
+# 5173 (frontend), 8100 (backend) and 7880 (livekit signalling) are no longer published to the
+# host — only the Caddy https entrypoint (443, the `edge` service, `profiles: ["tls"]`) is. This
+# is the fix for the very thing `docs/RUNBOOK.md`'s HTTPS section used to warn about: "the old
+# plain ports ... stay published ... a PC that uses them gets no microphone" — now that PC has no
+# plain port to reach in the first place.
+#
+# `backend`/`frontend`/`livekit` keep listening on these ports INSIDE the compose network
+# unchanged: `edge` still reaches them by service name (`backend:8100`, `frontend:5173`,
+# `livekit:7880`, `infra/edge/Caddyfile`), and so does every other in-network caller (e.g.
+# `sip-gateway`'s `SIM_SIP_BACKEND_URL: http://backend:8100`) — only the HOST port MAPPING goes
+# away. `livekit`'s two WebRTC media ports (7881/tcp fallback, 7882/udp) are untouched: media never
+# goes through the edge (`docs/RUNBOOK.md`: "Media stays WebRTC DTLS-SRTP on UDP 7882 (TCP 7881
+# fallback), straight to the SFU"), so a PC still needs them published regardless of TLS.
+#
+# `!override` (compose-spec merge tag, https://docs.docker.com/reference/compose-file/merge/) is
+# required here, not a plain `ports: []`: Compose's default merge CONCATENATES a sequence field
+# across `-f` files (proven empirically for `ports:` — a plain `null` does not clear it either),
+# so only the explicit merge tag replaces the base file's list instead of adding to it.
+#
+# Layered in by `make up` / `make up-cpu` only when `.env`'s `COMPOSE_PROFILES` names `tls` (the
+# Makefile's `TLS_COMPOSE_FILE`, "I7 E49" section) — dev/demo (no `tls` profile) are unaffected,
+# exactly like `infra/docker-compose.gpu.yml`'s own opt-in-by-default pattern. `make compose-check`
+# renders this file layered on both the base and the GPU-layered invocation.
+
+services:
+  backend:
+    ports: !override []
+
+  frontend:
+    ports: !override []
+
+  livekit:
+    ports: !override
+      - "7881:7881"
+      - "7882:7882/udp"

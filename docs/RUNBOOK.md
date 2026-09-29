@@ -467,8 +467,19 @@ otherwise create an empty directory at that path.
 
 Check from any machine that already trusts the CA: `curl --cacert infra/certs/ca.crt
 https://<LAN IP>/api/v1/health/live` → `{"status":"LIVE",…}`. The PCs open **`https://<LAN IP or
-hostname>`**. The old plain ports (5173, 8100, 7880) stay published for the host-run and development
-paths, but a PC that uses them gets no microphone.
+hostname>`**.
+
+**I7 E49 (Q-E27-1, owner decision 2026-09-29):** with `COMPOSE_PROFILES=tls`, `make up` (and
+`make up-cpu`) now also layer `infra/docker-compose.tls.yml`, which stops publishing the plain http
+ports 5173 (frontend), 8100 (backend) and 7880 (livekit signalling) — only the edge's https
+entrypoint on 443 is reachable from outside the compose network. `backend`/`frontend`/`livekit`
+still listen on those ports *inside* the compose network unchanged (the edge, and every other
+in-network caller such as `sip-gateway`, reach them by service name), so nothing about the proxied
+paths above changes — only the old direct plain-http paths a PC (or a developer on the LAN) could
+previously reach are now unreachable, closing exactly the microphone-less side channel this
+section used to warn about. `livekit`'s two WebRTC media ports (7881/tcp fallback, 7882/udp) stay
+published: media never goes through the edge (see the table above). dev/demo (`tls` not in
+`COMPOSE_PROFILES`) are unaffected — the plain ports stay published exactly as before.
 
 **CORS:** through the edge, the UI, the API and both WebSockets share one origin, so
 `SIM_CORS_ALLOW_ORIGINS` needs no entry for the edge. **Audit addresses:** the backend trusts

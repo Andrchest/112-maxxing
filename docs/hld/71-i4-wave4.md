@@ -1629,3 +1629,69 @@ validation report showed the backend's English messages (¶186 «Локализ�
 **Not built (owner questions).** None — the four items are manager-decided.
 
 **HLD gaps.** None found.
+## 71.19.49 I7 E49 — Report timer text, session timer fields, tls plain-port lockdown, test isolation
+
+Manager decisions, final (owner accepted these defaults 2026-09-29): Q-E31-1, Q-E31-2, Q-E27-1.
+
+**C (Q-E31-1): the report shows a rule's ACTUAL timer, not its literal text.** A `DEADLINE` rule
+whose norm is a named per-card timer (`max_offset_timer`, rule R44, I4 E31) writes its
+`name_ru`/`description_ru` against a fixed number of seconds (e.g. «в течение 30 секунд») because
+the scenario document cannot know what a session or lesson entry will later override that timer
+to. `app.application.reports.rule_text.report_rule_text(rule, timers)` rewrites every "<N>
+секунд..." mention to the session's real recorded value (`SESSION_CREATED.timers`, or the
+scenario's own — `app.application.reports.norms.recorded_timers`, the same value the `DEADLINE`
+evaluator itself already scores against), correctly declined (секунда/секунды/секунд). Wired in
+via a new `SessionReportView.timers` field (`assemble_report.py`) and an optional `timers:
+CardTimers | None` parameter on `score_result_view_schema`/`score_report_view_schema`
+(`api/schemas/reports.py`): `None` (the `rescoreSession` preview) leaves every rule's text as the
+scenario wrote it, exactly as before this epic; `getSessionReport` and `getLessonReport` (which
+embeds a `SessionReportView` per card, `api/schemas/lessons.py`) both pass the session's/card's own
+`timers`. Scores, evidence and the checksum are untouched — this module runs only when the report
+is rendered, strictly after the stored `ScoreResult` rows are read. Tests:
+`backend/tests/unit/application/reports/test_rule_text.py` (unchanged at the default, rewritten at
+an override, literal `max_offset_ms` and non-`DEADLINE` rules untouched, declension); the existing
+report/lesson/rescore suites re-run unchanged (400 passed) proving the invariant (score + checksum
+equal before/after).
+
+**D (Q-E31-2): the single-session form gets the lesson form's timer fields.** The lesson form's
+per-entry timer fieldset (`PlanEntry.timers`, I4 E31) is extracted into
+`frontend/src/features/instructor/card-timers.ts` (the draft type, validation, `{ timers }`
+request-field builder — same shape `pass-criteria.ts` already used for the pass/fail draft) and
+`card-timer-fields.tsx` (the `<CardTimerFields>` fieldset, mirroring `PassCriteriaFields`).
+`lesson-create-form.tsx`'s `PlanEntryFields` now renders `<CardTimerFields>` instead of its own
+inline JSX (byte-identical ids, so no test or snapshot moved); `create-session-form.tsx` adds one
+`timerSeconds` draft for the whole session and renders the same component, sent as
+`SessionCreateRequest.timers` (already accepted by the backend since I4 E31 — no backend change).
+Same validation (positive seconds or empty), same "empty means the scenario's default" semantics,
+same "no `timers` key at all when every field is empty" request shape. Tests:
+`create-session-form.test.tsx` — a typed override sends `{ accept_within_ms: 45000 }`, an untouched
+form sends no `timers` key at all.
+
+**E (Q-E27-1): the `tls` profile stops publishing the plain http ports.** New override file
+`infra/docker-compose.tls.yml`, layered by `make up`/`make up-cpu` only when `.env`'s
+`COMPOSE_PROFILES` names `tls` (Makefile's `COMPOSE_TLS_ARGS`, parsed from `.env` with plain shell
+tools, never sourced): `backend`/`frontend` publish no port at all, `livekit` keeps its two WebRTC
+media ports (7881/tcp fallback, 7882/udp — media never goes through the edge) but drops 7880
+(signalling). Requires the compose-spec `!override` merge tag, not a plain `ports: []` or `null`:
+proved empirically that Compose's default merge CONCATENATES a sequence field like `ports:` across
+`-f` files, so only the explicit tag replaces the base list instead of adding to it (a scratch
+`docker compose config` check, before committing to the design). dev/demo (no `tls` profile)
+unaffected — the base file's ports are untouched. `make compose-check` now renders FOUR
+invocations (base / base+gpu, each with and without `docker-compose.tls.yml` layered), all with
+`--profile tls` as before. `docs/RUNBOOK.md`'s HTTPS section note rewritten (the old text warned
+that the plain ports "stay published... a PC that uses them gets no microphone" — no longer true).
+Tests: `backend/tests/unit/infra/test_compose_tls_ports.py` (PyYAML, no Docker daemon, matching
+`test_compose_file.py`'s own convention) — the override touches exactly the three services, backend/
+frontend publish nothing, livekit keeps exactly its two media ports and not 7880.
+
+**Test isolation: `backend/tests/api/test_users.py` failing after `tests/api/admin`.** Both modules
+create users named `alice`/`bob`/`carol` with no per-test uniqueness; `test_users.py`'s fixture
+truncated only the tables ITS OWN tests touch (missed `audit_log`, whose FK to `users` then blocked
+its truncate, and it deleted by name — the ADMIN suite's same-named rows collided first). Fixed in
+`test_users.py`'s isolation fixture: truncate `audit_log` before `users` (`CASCADE` still applies
+if any row survives) — never a synthetic uniqueness suffix on the usernames themselves, since
+several assertions match on the literal names. Proved with
+`pytest backend/tests/api/admin backend/tests/api/test_users.py -p no:randomly -n 0` (was 9 failed,
+now all pass, both directions and together with the whole suite).
+
+`docs/owner-decisions.md`: Q-E31-1, Q-E31-2, Q-E27-1 marked «Сделано (I7 E49)».

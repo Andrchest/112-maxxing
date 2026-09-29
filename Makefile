@@ -19,6 +19,15 @@ COMPOSE_DEV := docker compose -f infra/docker-compose.yml
 COMPOSE_FULL_CPU := docker compose -f infra/docker-compose.yml --env-file .env
 COMPOSE_GPU_FILE := infra/docker-compose.gpu.yml
 COMPOSE_FULL := $(COMPOSE_FULL_CPU) -f $(COMPOSE_GPU_FILE)
+# --- I7 E49 (Q-E27-1): the tls profile stops publishing the plain http ports ------------------
+# `infra/docker-compose.tls.yml` removes the plain http ports (5173/8100/7880) once `.env`'s
+# COMPOSE_PROFILES names `tls` — the same file `make compose-check` renders below. `up`/`down`/
+# `up-cpu`/`down-cpu` layer it in only then (COMPOSE_TLS_ARGS), so dev/demo (no `tls` profile) are
+# unaffected: `.env`'s COMPOSE_PROFILES is read here with plain shell tools (not sourced — it may
+# carry values Make should not evaluate), split on commas, and matched for the exact token `tls`.
+COMPOSE_TLS_FILE := infra/docker-compose.tls.yml
+TLS_PROFILE_ACTIVE := $(shell test -f .env && grep -E '^COMPOSE_PROFILES=' .env | tail -1 | cut -d= -f2- | tr ',' '\n' | grep -qx tls && echo 1)
+COMPOSE_TLS_ARGS := $(if $(TLS_PROFILE_ACTIVE),-f $(COMPOSE_TLS_FILE),)
 # `docker compose --profile qwen3-tts up` starts the additive eighth service too (HLD 60 §9); a
 # plain `make up` starts exactly the SPEC §36 seven. `TTS_COMPOSE_PROFILE=qwen3-tts make up` opts in.
 TTS_COMPOSE_PROFILE ?=
@@ -359,9 +368,14 @@ test: test-backend
 # I7 E52: renders BOTH variants — the base file alone (what `make up-cpu` starts: no `runtime:
 # nvidia`, no GPU device reservation anywhere) and the base file with infra/docker-compose.gpu.yml
 # layered on (what `make up` starts, today's behaviour unchanged).
+# I7 E49 (Q-E27-1): BOTH variants also layer $(COMPOSE_TLS_FILE) — the exact invocation `make up`/
+# `make up-cpu` run once `.env`'s COMPOSE_PROFILES names `tls` (COMPOSE_TLS_ARGS above) — so a typo
+# in the tls port override fails this gate step, not a classroom deploy.
 compose-check:
 	docker compose -f infra/docker-compose.yml --env-file infra/compose.check.env --profile qwen3-tts --profile tls config -q
 	docker compose -f infra/docker-compose.yml -f $(COMPOSE_GPU_FILE) --env-file infra/compose.check.env --profile qwen3-tts --profile tls config -q
+	docker compose -f infra/docker-compose.yml -f $(COMPOSE_TLS_FILE) --env-file infra/compose.check.env --profile qwen3-tts --profile tls config -q
+	docker compose -f infra/docker-compose.yml -f $(COMPOSE_GPU_FILE) -f $(COMPOSE_TLS_FILE) --env-file infra/compose.check.env --profile qwen3-tts --profile tls config -q
 # I4 E27: local CA + server certificate for the `tls` profile's edge proxy (infra/certs/, gitignored).
 # See docs/RUNBOOK.md «HTTPS в классе».
 certs:
@@ -405,9 +419,9 @@ run-voice-agent:
 # for postgres/recordings, so `down` deliberately does NOT take `-v` (same posture as
 # dev-infra-down above: a developer's local database and recordings survive a restart).
 up: profile-env
-	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
+	$(COMPOSE_FULL) $(COMPOSE_TLS_ARGS) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
 down:
-	$(COMPOSE_FULL) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down
+	$(COMPOSE_FULL) $(COMPOSE_TLS_ARGS) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down
 
 # --- I7 E52: no-GPU start (ТЗ ¶171-176; Q&A 09:20 «проверка решений на стандартных бытовых
 # компьютерах») -------------------------------------------------------------------------------
@@ -422,9 +436,9 @@ down:
 # target-specific default below).
 up-cpu: SIM_MODEL_PROFILE = CPU
 up-cpu: profile-env
-	$(COMPOSE_FULL_CPU) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
+	$(COMPOSE_FULL_CPU) $(COMPOSE_TLS_ARGS) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) up -d --wait
 down-cpu:
-	$(COMPOSE_FULL_CPU) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down
+	$(COMPOSE_FULL_CPU) $(COMPOSE_TLS_ARGS) $(if $(TTS_COMPOSE_PROFILE),--profile $(TTS_COMPOSE_PROFILE),) down
 
 # --- E19-A: the SPEC §35/§40 benchmark scripts (HLD 60 §7) ---------------------------------------
 # NEVER part of `gate*`: a benchmark loads real models on a real card, and the gate must stay

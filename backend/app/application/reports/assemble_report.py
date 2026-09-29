@@ -86,6 +86,7 @@ from app.application.reports.norms import (
     card_reaction_times,
     critical_error_count,
     failed_rule_count,
+    recorded_timers,
 )
 from app.application.reports.pass_verdict import session_pass_verdict
 from app.application.reports.resource_timeline import ResourceTimelineEntry, resource_timeline
@@ -112,6 +113,7 @@ from app.application.sessions.start_session import SessionNotFoundError
 from app.domain.common.ids import ScenarioVersionId, SessionId, SnapshotId
 from app.domain.dds.assignment import DDSAssignment
 from app.domain.dds.call import dds_call_ids
+from app.domain.dds.card_status import CardTimers
 from app.domain.enums import RoleType, SessionState
 from app.domain.events.session_event import SessionEvent
 from app.domain.events.types import EventType
@@ -194,6 +196,10 @@ class SessionReportView:
     pass_verdict: PassVerdict | None = None
     """(I5 E38, Q-E9b-3) «Сдал / не сдал» under the session's recorded criteria — derived, never
     stored, never part of `checksum` (module doc). `None` only for a view built without it."""
+    timers: CardTimers = field(default_factory=CardTimers)
+    """(I7 E49, Q-E31-1) `SESSION_CREATED.timers`, or the scenario's own for a log that records
+    none (`norms.recorded_timers`) — the schema mapper reads it to show a `DEADLINE` rule's ACTUAL
+    norm in its text (`app.application.reports.rule_text.report_rule_text`), never the score."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +360,9 @@ class GetSessionReport:
             text_quality=_visible_text_quality(
                 card=card, events=events, visibility=visibility, checker=self._text_checker
             ),
+            # (I7 E49, Q-E31-1) The session's actual recorded timers — the schema mapper uses this
+            # to show a `DEADLINE` rule's real norm in its text, never to move the score.
+            timers=recorded_timers(events, scenario_version.card_timers),
         )
 
     async def unscored(

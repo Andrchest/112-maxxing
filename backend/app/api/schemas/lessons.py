@@ -432,6 +432,9 @@ def lesson_report_schema(view: LessonReportView) -> LessonReportSchema:
                         report.score_report,
                         {rule.rule_id: rule for rule in report.scoring_rules},
                         checksum=report.checksum,
+                        # (I7 E49, Q-E31-1) The card's own recorded timers, same reading as
+                        # `getSessionReport` — a lesson report is a per-card session report.
+                        timers=report.timers,
                     )
                 ),
                 unscored=None if card.unscored is None else unscored_card_schema(card.unscored),

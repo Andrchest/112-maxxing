@@ -24,10 +24,35 @@ from typing import Any
 import httpx
 import pytest
 from app.domain.common.ids import UserId
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tests.api.conftest import auth
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module", autouse=True)
+async def _clean_roster_for_the_exact_counts_below(migrated_engine: AsyncEngine) -> None:
+    """I7 E49: this module's assertions are exact (`total == 4`, an exact username list) and hold
+    only for the five accounts `tests.api.conftest.users` seeds — but `users`/`scenarios` are this
+    whole `tests.api` package's reference data, upserted (never truncated) per test (E9-0), so a
+    module that ran earlier in the same process and created its OWN real, ACTIVE accounts (e.g.
+    `tests/api/admin/test_users.py`'s `createUser`, one per call, on purpose unique per the E28
+    isolation note in its own `_create_body`) leaves them for every module that runs after it to
+    count and list. `TRUNCATE ... CASCADE` also clears `audit_log` (each `createUser` leaves one
+    entry, `ON DELETE RESTRICT`) and every per-session table (already empty here either way,
+    `clean_database` truncates those per test). Once, before this module's first test: the `users`
+    fixture's `ON CONFLICT DO UPDATE` upsert (its own docstring) re-creates the five canonical
+    accounts on that very first test and every one after, so nothing is missing once this runs.
+
+    Proof this was the actual failure (not a coincidence of run order): `pytest
+    backend/tests/api/admin backend/tests/api/test_users.py -p no:randomly -n 0` — 9 failed before
+    this fixture, all pass with it.
+    """
+    async with migrated_engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE users RESTART IDENTITY CASCADE"))
+
 
 USERS_URL = "/api/v1/users"
 

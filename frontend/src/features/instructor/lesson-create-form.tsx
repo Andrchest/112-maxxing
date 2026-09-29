@@ -41,7 +41,6 @@ import {
   queryKeys,
   type ArrivalKind,
   type CardSource,
-  type CardTimersRequest,
   type DdsBrigadeCall,
   type DdsCardCheck,
   type DdsMode,
@@ -61,6 +60,8 @@ import { PassCriteriaFields } from './pass-criteria-fields';
 import { DEFAULT_PASS_CRITERIA_DRAFT, passCriteriaField, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
 import { CategoryChips } from './category-chips';
 import { categoryOptionsOf, matchesCategories } from './scenario-categories';
+import { CardTimerFields } from './card-timer-fields';
+import { NO_TIMER_OVERRIDE, TIMER_KEYS, timerSecondsValid, timersField, type TimerSeconds } from './card-timers';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -173,38 +174,6 @@ function buildGroupRows(
       assignedServiceId: before?.assignedServiceId ?? '',
     };
   });
-}
-
-/** The three per-card timers of `CardTimersRequest`, in the order the form shows them. */
-type TimerKey = keyof CardTimersRequest;
-
-const TIMER_KEYS: readonly TimerKey[] = ['accept_within_ms', 'fill_within_ms', 'not_completed_after_ms'];
-
-const TIMER_LABEL_KEY: Record<TimerKey, keyof typeof ru> = {
-  accept_within_ms: 'lessonFormEntryAcceptTimerLabel',
-  fill_within_ms: 'lessonFormEntryFillTimerLabel',
-  not_completed_after_ms: 'lessonFormEntryNotCompletedTimerLabel',
-};
-
-type TimerSeconds = Record<TimerKey, string>;
-
-const NO_TIMER_OVERRIDE: TimerSeconds = { accept_within_ms: '', fill_within_ms: '', not_completed_after_ms: '' };
-
-/** A typed value is a positive number of seconds; an empty one keeps the scenario's timer. */
-function timerSecondsValid(value: string): boolean {
-  if (value.trim() === '') return true;
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0;
-}
-
-/** `{ timers }` in session ms, or `{}` when every field is empty (the entry sends no `timers`). */
-function timersField(timerSeconds: TimerSeconds): { timers?: CardTimersRequest } {
-  const timers: CardTimersRequest = {};
-  for (const key of TIMER_KEYS) {
-    const value = timerSeconds[key].trim();
-    if (value !== '') timers[key] = Math.round(Number(value) * 1000);
-  }
-  return Object.keys(timers).length > 0 ? { timers } : {};
 }
 
 interface PlanEntryRow {
@@ -450,27 +419,12 @@ function PlanEntryFields({
         <p className="text-xs text-muted-foreground">{t('lessonFormEntryWeightHint')}</p>
       </div>
 
-      <fieldset className="flex flex-col gap-2" data-slot="entry-timers" data-tour="lesson-form-timers">
-        <legend className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          {t('lessonFormEntryTimersLabel')}
-          <Hint text={t('hintLessonTimers')} />
-        </legend>
-        {TIMER_KEYS.map((timerKey) => (
-          <div key={timerKey} className="flex flex-col gap-1.5">
-            <Label htmlFor={`lesson-entry-${row.key}-timer-${timerKey}`}>{t(TIMER_LABEL_KEY[timerKey])}</Label>
-            <Input
-              id={`lesson-entry-${row.key}-timer-${timerKey}`}
-              type="number"
-              min={1}
-              placeholder={t('lessonFormEntryTimerPlaceholder')}
-              value={row.timerSeconds[timerKey]}
-              aria-invalid={!timerSecondsValid(row.timerSeconds[timerKey])}
-              onChange={(event) => onTimersChange({ ...row.timerSeconds, [timerKey]: event.target.value })}
-            />
-          </div>
-        ))}
-        <p className="text-xs text-muted-foreground">{t('lessonFormEntryTimersHint')}</p>
-      </fieldset>
+      <CardTimerFields
+        idPrefix={`lesson-entry-${row.key}`}
+        timerSeconds={row.timerSeconds}
+        onChange={onTimersChange}
+        tourTarget="lesson-form-timers"
+      />
 
       {canRemove ? (
         <Button type="button" variant="outline" size="sm" onClick={onRemove}>

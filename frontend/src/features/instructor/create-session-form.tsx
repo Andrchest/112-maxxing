@@ -30,6 +30,8 @@ import { sessionStateLabelRu } from './instructor-labels';
 import { isVariantSelectable, withoutPickerPhone, type VariantSwitch } from './variant-selection';
 import { PassCriteriaFields } from './pass-criteria-fields';
 import { DEFAULT_PASS_CRITERIA_DRAFT, passCriteriaField, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
+import { CardTimerFields } from './card-timer-fields';
+import { NO_TIMER_OVERRIDE, TIMER_KEYS, timerSecondsValid, timersField, type TimerSeconds } from './card-timers';
 
 const SESSION_MODES: readonly SessionMode[] = [
   'SINGLE_ROLE',
@@ -160,6 +162,10 @@ function ProblemAlert({ error }: { error: unknown }) {
  * trainee(s) -> create -> start. Nothing here computes simulation state; `start` is enabled only
  * from `SessionDetail.state` as returned by `createSession` (D12 design decision #3 — the full
  * `available_actions`-driven UI lands with the session snapshot pages in E8-B/E9/E10).
+ *
+ * I7 E49 (Q-E31-2): the same per-card timer override the lesson form offers per plan entry
+ * (`card-timers.ts` / `CardTimerFields`, same component, same validation, same defaults) — one
+ * draft for the whole session, sent as `SessionCreateRequest.timers`.
  */
 export function CreateSessionForm() {
   const queryClient = useQueryClient();
@@ -171,6 +177,9 @@ export function CreateSessionForm() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   // I5 E38 (Q-E9b-3): the pass/fail criteria — sent only when they differ from the server's defaults.
   const [passDraft, setPassDraft] = useState<PassCriteriaDraft>(DEFAULT_PASS_CRITERIA_DRAFT);
+  // I7 E49 (Q-E31-2): the per-card timer override, same fields/validation as the lesson form's
+  // per-entry ones (`card-timers.ts`) — empty keeps the scenario's value.
+  const [timerSeconds, setTimerSeconds] = useState<TimerSeconds>(NO_TIMER_OVERRIDE);
 
   const scenariosQuery = useQuery({
     queryKey: queryKeys.scenarios.list(),
@@ -319,6 +328,7 @@ export function CreateSessionForm() {
       return;
     }
     if (passCriteriaProblem(passDraft) !== null) return;
+    if (TIMER_KEYS.some((key) => !timerSecondsValid(timerSeconds[key]))) return;
     createMutation.mutate({
       scenario_version_id: versionId,
       session_mode: sessionMode,
@@ -337,6 +347,9 @@ export function CreateSessionForm() {
       time_scale: 1,
       ...(variants ? { variants } : {}),
       ...passCriteriaField(passDraft),
+      // I7 E49 (Q-E31-2): no key at all when nothing is overridden — the request is unchanged
+      // from before this fieldset existed.
+      ...timersField(timerSeconds),
     });
   }
 
@@ -350,6 +363,7 @@ export function CreateSessionForm() {
     participants.length > 0 &&
     participants.every((row) => row.userId.trim() !== '') &&
     passCriteriaProblem(passDraft) === null &&
+    TIMER_KEYS.every((key) => timerSecondsValid(timerSeconds[key])) &&
     !createMutation.isPending;
   const canStart =
     session !== null && session.state === 'READY' && !startMutation.isPending && readinessSatisfied;
@@ -533,6 +547,15 @@ export function CreateSessionForm() {
             ) : null}
           </div>
         ) : null}
+
+        <CardTimerFields
+          idPrefix="instructor-session"
+          timerSeconds={timerSeconds}
+          onChange={(next) => {
+            setTimerSeconds(next);
+            setSession(null);
+          }}
+        />
 
         <PassCriteriaFields
           idPrefix="instructor"
