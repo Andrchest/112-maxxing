@@ -177,3 +177,5 @@ this epic only `999` (echo) answers; ДДС numbers arrive with E6e.
 - `docs/RUNBOOK.md` — the operator runbook (start/stop, preflight, resetting demo data,
   troubleshooting) for a stack that is already running; `docs/DOD_WALK.md` is the SPEC §46
   Definition-of-Done walk's evidence.
+- [`docs/guide/`](docs/guide/README.md) — user guide in Russian for a running stack: trainee,
+  instructor, admin, install (fresh clone to demo) and a developer architecture overview.
