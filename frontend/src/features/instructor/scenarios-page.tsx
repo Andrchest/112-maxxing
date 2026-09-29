@@ -35,7 +35,7 @@ import {
   type UserRole,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import { CategoryChips } from './category-chips';
 import { categoryOptionsOf, matchesCategories } from './scenario-categories';
 import { scenarioIssueMessageRu } from './scenario-issue-ru';
@@ -62,28 +62,89 @@ function readFileText(file: File): Promise<string> {
   });
 }
 
+function scenarioImportErrorRu(error: unknown): string {
+  return error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
+}
+
+// I7 E46c (owner item 6): the same file input takes several files at once. One file behaves
+// exactly as before (choose → «Проверить» → «Импортировать»); more than one skips the validate
+// step and imports every file, one after another, through the same `/scenarios/import` endpoint
+// (no new API) — one bad file never stops the rest.
+type ScenarioBatchStatus = 'uploaded' | 'newVersion' | 'error';
+
+interface ScenarioBatchResult {
+  fileName: string;
+  status: ScenarioBatchStatus;
+  detailRu?: string;
+}
+
+function scenarioBatchResultLabel(result: ScenarioBatchResult): string {
+  if (result.status === 'uploaded') return t('uploadBatchUploadedRu');
+  if (result.status === 'newVersion') return t('uploadBatchNewVersionRu');
+  return `${t('uploadBatchErrorPrefixRu')}: ${result.detailRu ?? t('problemUnknown')}`;
+}
+
 function UploadCard() {
   const [content, setContent] = useState<string | null>(null);
   const [format, setFormat] = useState<'YAML' | 'JSON' | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [extraFiles, setExtraFiles] = useState<File[]>([]);
   const [report, setReport] = useState<ScenarioValidationReport | null>(null);
   const [importedRu, setImportedRu] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [batchResults, setBatchResults] = useState<ScenarioBatchResult[] | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
   const queryClient = useQueryClient();
 
-  async function handleFile(file: File | null): Promise<void> {
+  const isBatch = extraFiles.length > 0;
+
+  async function handleFiles(fileList: FileList | null): Promise<void> {
     setReport(null);
     setImportedRu(null);
     setError(null);
-    if (!file) {
+    setBatchResults(null);
+    const files = fileList ? Array.from(fileList) : [];
+    const [first, ...rest] = files;
+    if (!first) {
       setContent(null);
       setFormat(null);
       setFileName(null);
+      setExtraFiles([]);
       return;
     }
-    setFileName(file.name);
-    setFormat(formatOfFileName(file.name));
-    setContent(await readFileText(file));
+    setFileName(first.name);
+    setFormat(formatOfFileName(first.name));
+    setContent(await readFileText(first));
+    setExtraFiles(rest);
+  }
+
+  async function runBatchImport(): Promise<void> {
+    if (fileName === null || content === null) return;
+    setBatchRunning(true);
+    setBatchResults(null);
+    setError(null);
+    setImportedRu(null);
+    const files = [
+      { name: fileName, content },
+      ...(await Promise.all(extraFiles.map(async (file) => ({ name: file.name, content: await readFileText(file) })))),
+    ];
+    const results: ScenarioBatchResult[] = [];
+    for (const file of files) {
+      const fileFormat = formatOfFileName(file.name);
+      if (fileFormat === null) {
+        results.push({ fileName: file.name, status: 'error', detailRu: t('scenarioUploadNoFile') });
+        continue;
+      }
+      try {
+        const version = await importScenarioVersion({ format: fileFormat, content: file.content, source_path: file.name });
+        results.push({ fileName: file.name, status: version.version === 1 ? 'uploaded' : 'newVersion' });
+      } catch (err) {
+        results.push({ fileName: file.name, status: 'error', detailRu: scenarioImportErrorRu(err) });
+      }
+    }
+    setBatchResults(results);
+    setBatchRunning(false);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.all() });
   }
 
   const validate = useMutation({
@@ -93,7 +154,7 @@ function UploadCard() {
       setImportedRu(null);
     },
     onError: (err: unknown) => {
-      setError(err instanceof ProblemError ? problemMessageRu(err.code as ProblemCode) : t('problemUnknown'));
+      setError(scenarioImportErrorRu(err));
     },
   });
 
@@ -104,7 +165,7 @@ function UploadCard() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.scenarioPicker.all() });
     },
     onError: (err: unknown) => {
-      setError(err instanceof ProblemError ? problemMessageRu(err.code as ProblemCode) : t('problemUnknown'));
+      setError(scenarioImportErrorRu(err));
     },
   });
 
@@ -121,28 +182,40 @@ function UploadCard() {
           <input
             type="file"
             accept=".yaml,.yml,.json"
-            onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
+            multiple
+            onChange={(event) => void handleFiles(event.target.files)}
           />
         </label>
-        {content !== null && format === null ? <p className="text-xs text-destructive">{t('scenarioUploadNoFile')}</p> : null}
+        {content !== null && format === null && !isBatch ? <p className="text-xs text-destructive">{t('scenarioUploadNoFile')}</p> : null}
+        {isBatch ? (
+          <p className="text-xs text-muted-foreground">{t('scenarioBatchFileCount').replace('{n}', String(extraFiles.length + 1))}</p>
+        ) : null}
         <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!hasFile || validate.isPending}
-            onClick={() => validate.mutate()}
-          >
-            {validate.isPending ? t('scenarioUploadValidating') : t('scenarioUploadValidateButton')}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!hasFile || doImport.isPending}
-            onClick={() => doImport.mutate()}
-          >
-            {doImport.isPending ? t('scenarioUploadImporting') : t('scenarioUploadImportButton')}
-          </Button>
+          {isBatch ? (
+            <Button type="button" size="sm" disabled={batchRunning} onClick={() => void runBatchImport()}>
+              {batchRunning ? t('scenarioBatchImporting') : t('scenarioBatchImportButton')}
+            </Button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!hasFile || validate.isPending}
+                onClick={() => validate.mutate()}
+              >
+                {validate.isPending ? t('scenarioUploadValidating') : t('scenarioUploadValidateButton')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!hasFile || doImport.isPending}
+                onClick={() => doImport.mutate()}
+              >
+                {doImport.isPending ? t('scenarioUploadImporting') : t('scenarioUploadImportButton')}
+              </Button>
+            </>
+          )}
           <Hint text={t('hintScenarioFile')} />
         </div>
         {error ? (
@@ -165,6 +238,22 @@ function UploadCard() {
                 ))}
               </ul>
             ) : null}
+          </div>
+        ) : null}
+        {batchResults ? (
+          <div className="rounded-md border border-border p-2 text-sm">
+            <ul className="flex flex-col gap-1">
+              {batchResults.map((result, index) => (
+                <li key={`${result.fileName}-${index}`} className="text-xs text-muted-foreground">
+                  {result.fileName} — {scenarioBatchResultLabel(result)}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-sm font-medium">
+              {t('uploadBatchSummaryRu')
+                .replace('{done}', String(batchResults.filter((result) => result.status !== 'error').length))
+                .replace('{total}', String(batchResults.length))}
+            </p>
           </div>
         ) : null}
       </CardContent>
@@ -192,7 +281,15 @@ function VersionDownloads({ version, slug }: { version: ScenarioVersionListItem;
   const [failed, setFailed] = useState(false);
   const download = useMutation({
     mutationFn: async (format: ScenarioDocumentFormat) => {
-      saveBlob(await getScenarioVersionDocument(version.id, format), `${slug}-v${version.version}.${format}`);
+      const fileName = `${slug}-v${version.version}.${format}`;
+      let blob;
+      try {
+        blob = await getScenarioVersionDocument(version.id, format);
+      } catch (error) {
+        reportDownloadFailed(fileName, error);
+        throw error;
+      }
+      downloadBlob(blob, fileName);
     },
     onMutate: () => setFailed(false),
     onError: () => setFailed(true),

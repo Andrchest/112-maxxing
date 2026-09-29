@@ -31,7 +31,7 @@ import {
   type ReportFileFormat,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 
 // (I7 E46b) CSV first, so `screen.getByRole('button', { name: ru.lessonReportDownloadCsv })`
 // keeps matching exactly one button.
@@ -104,10 +104,12 @@ export function DownloadLessonReportCsvButton({ lessonId }: { lessonId: string }
   async function handleDownload(format: ReportFileFormat) {
     setBusyFormat(format);
     setError(null);
+    const fileName = `lesson-${lessonId}-report.${format}`;
     try {
-      saveBlob(await getLessonReportCsv(lessonId, format), `lesson-${lessonId}-report.${format}`);
+      downloadBlob(await getLessonReportCsv(lessonId, format), fileName);
     } catch (caught) {
       setError(caught);
+      reportDownloadFailed(fileName, caught);
     } finally {
       setBusyFormat(null);
     }

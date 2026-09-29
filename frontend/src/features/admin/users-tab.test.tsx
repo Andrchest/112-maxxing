@@ -122,7 +122,9 @@ describe('UsersTab', () => {
 
       await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
       expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput) === '/api/v1/users/user-1/profile-export')).toBe(true);
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:profile');
+      // I7 E46c: the object URL is now revoked after a delay (S12.04/S13.28 fix), not
+      // synchronously after the click — covered by `shared/lib/download.test.ts`.
+      expect(revokeObjectURL).not.toHaveBeenCalled();
     } finally {
       URL.createObjectURL = original.create;
       URL.revokeObjectURL = original.revoke;

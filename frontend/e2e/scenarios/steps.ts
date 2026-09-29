@@ -647,3 +647,13 @@ export function openSessionReportStep(instructor: Actor, extra: Expectation[]): 
 export function reportRow(page: Page, ctx: ScenarioContext, trainee: Actor = 'newTrainee'): Locator {
   return page.getByRole('row').filter({ hasText: ctx.vars[`${trainee}.username`] ?? '' }).first();
 }
+
+/** I7 E46c: the shared download helper's confirmation toast, after EVERY download the UI starts
+ * (owner item 7). `fileNameOf` reads the downloaded file's name from whatever the step already
+ * put in `ctx.vars`, or returns a literal for a download whose name never varies. */
+export function downloadedToastCheck(fileNameOf: (ctx: ScenarioContext) => string): Expectation {
+  return check('тост «Файл «…» скачан»', async (page, ctx, { expect, timeout }) => {
+    const fileName = fileNameOf(ctx);
+    await expect(page.getByText(`Файл «${fileName}» скачан`)).toBeVisible({ timeout });
+  });
+}

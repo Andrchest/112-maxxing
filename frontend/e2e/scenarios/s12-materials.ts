@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { button, check, heading, scenario, visible, type StepDefinition } from './dsl';
-import { loginSteps, navLink } from './steps';
+import { downloadedToastCheck, loginSteps, navLink } from './steps';
 
 const MEMO = 'Работа с АРМ-112 для ДДС от ОКр';
 const CLASSIFIER = 'Классификатор происшествий v_046_24 (корректировка МВД + Департамент)';
@@ -44,6 +44,7 @@ function downloadStep(title: string, extension: string): StepDefinition {
         if (!name.endsWith(extension)) throw new Error(`скачан «${name}»`);
         await expect(materialRow(page, title)).toContainText(name, { timeout });
       }),
+      downloadedToastCheck((ctx) => ctx.vars.downloaded ?? ''),
     ],
   };
 }

@@ -1,7 +1,7 @@
 // S11: exports: the admin's «Экспорт настроек (XML)» downloads without passwords or keys; the
 // trainee's «Скачать профиль (JSON)» downloads without the password hash.
 import { check, scenario } from './dsl';
-import { loginSteps, navLink } from './steps';
+import { downloadedToastCheck, loginSteps, navLink } from './steps';
 
 export const S11 = scenario(
   'S11',
@@ -38,6 +38,7 @@ export const S11 = scenario(
             if (xml.includes(ctx.credentials(actor).password)) throw new Error(`в файле пароль ${actor}`);
           }
         }),
+        downloadedToastCheck(() => 'settings.xml'),
       ],
     },
     ...loginSteps('trainee', 'TRAINEE', 'стажёра (trainee)'),
@@ -65,6 +66,7 @@ export const S11 = scenario(
           if (/password|hash|argon/i.test(json)) throw new Error('в профиле есть поле пароля или хэша');
           if (json.includes(ctx.credentials('trainee').password)) throw new Error('в профиле пароль');
         }),
+        downloadedToastCheck((ctx) => ctx.vars.jsonName ?? ''),
       ],
     },
   ],

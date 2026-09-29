@@ -219,6 +219,55 @@ describe('ScenariosPage', () => {
     }
   });
 
+  // I7 E46c (owner item 6): several files at once import one after another; one bad file never
+  // stops the rest, and the summary line counts only the ones that made it in.
+  it('imports several files at once, one bad file does not stop the rest', async () => {
+    const user = userEvent.setup();
+    signIn();
+    const scenarioVersion = (version: number) => ({
+      id: `v${version}`,
+      scenario_id: 's1',
+      schema_version: 2,
+      version,
+      title: 'x',
+      description: '',
+      difficulty: 1,
+      role_chain: [],
+      content_sha256: 'abc',
+      created_at: '2026-09-21T00:00:00Z',
+      variants: {
+        supported: { card_source: ['GENERATED_CARD'], dds_mode: ['RESOURCE_PICKER'], dds_card_check: ['OFF'], dds_brigade_call: ['OFF'] },
+        default: { card_source: 'GENERATED_CARD', dds_mode: 'RESOURCE_PICKER', dds_card_check: 'OFF', dds_brigade_call: 'OFF' },
+      },
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST' && String(input).endsWith('/scenarios/import')) {
+        const body = JSON.parse(String(init.body));
+        if (body.source_path === 'bad.json') {
+          return new Response(
+            JSON.stringify({ type: 'about:blank', title: 'x', status: 422, code: 'MATERIAL_TYPE_NOT_ALLOWED' }),
+            { status: 422, headers: { 'content-type': 'application/problem+json' } },
+          );
+        }
+        return jsonResponse(scenarioVersion(1), 201);
+      }
+      return jsonResponse(SCENARIOS_RESPONSE);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    await screen.findByText('Fire test scenario');
+
+    const input = screen.getByLabelText(ru.scenarioUploadFieldLabel) as HTMLInputElement;
+    await user.upload(input, [makeFile('first.json', '{"slug":"a"}'), makeFile('bad.json', '{"slug":"b"}'), makeFile('third.json', '{"slug":"c"}')]);
+
+    await user.click(await screen.findByRole('button', { name: ru.scenarioBatchImportButton }));
+
+    const summary = ru.uploadBatchSummaryRu.replace('{done}', '2').replace('{total}', '3');
+    expect(await screen.findByText(summary)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`bad\\.json.*${ru.uploadBatchErrorPrefixRu}`))).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(ru.uploadBatchUploadedRu))).toHaveLength(2);
+  });
+
   // I7 E53 (G19): a rule number without a Russian template keeps the server's English text.
   it('keeps the English message for a rule number without a Russian template', async () => {
     const user = userEvent.setup();

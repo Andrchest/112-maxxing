@@ -18,7 +18,7 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { getAudioSegment, getAudioSegmentMp3, problemMessageRu, type AudioSegmentRef, type ProblemCode, type TranscriptSegmentView } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import { isTranscriptSegmentPlaying, seekTargetForTranscriptSegment } from '@/shared/media/report-audio';
 import { groupTranscriptByCall } from './call-groups';
 
@@ -118,11 +118,13 @@ export function TranscriptAudioPanel({ sessionId, transcript, audioSegments }: T
     if (!activeAudioSegmentId) return;
     setDownloadError(null);
     setDownloadingMp3(true);
+    const fileName = `${sessionId}-${activeAudioSegmentId}.mp3`;
     try {
       const blob = await getAudioSegmentMp3(sessionId, activeAudioSegmentId);
-      saveBlob(blob, `${sessionId}-${activeAudioSegmentId}.mp3`);
+      downloadBlob(blob, fileName);
     } catch (error) {
       setDownloadError(error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('reportAudioLoadFailed'));
+      reportDownloadFailed(fileName, error, t('reportAudioLoadFailed'));
     } finally {
       setDownloadingMp3(false);
     }

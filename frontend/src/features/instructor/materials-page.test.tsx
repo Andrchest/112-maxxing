@@ -86,6 +86,52 @@ describe('MaterialsPage — instructor materials management (I4 E34, HLD 71 §71
     await waitFor(() => expect(screen.getByText(`manual.pdf · ${ru.materialsArchivedBadge}`)).toBeInTheDocument());
   });
 
+  // I7 E46c (owner item 6): several files at once upload one after another, titled after their
+  // own file names; one bad file never stops the rest and the summary counts only the good ones.
+  it('uploads several files at once, one bad file does not stop the rest', async () => {
+    const user = userEvent.setup();
+    let nextId = 1;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/v1/materials' && method === 'GET') return jsonResponse({ items: [] });
+      if (url === '/api/v1/materials' && method === 'POST') {
+        const body = init?.body as FormData;
+        const file = body.get('file') as File;
+        if (file.name === 'bad.exe') return problemResponse('MATERIAL_TYPE_NOT_ALLOWED', 422);
+        const material = {
+          material_id: `mat-${nextId++}`,
+          title_ru: String(body.get('title_ru')),
+          file_name: file.name,
+          content_type: 'application/pdf',
+          size_bytes: 5,
+          sha256: 'a'.repeat(64),
+          uploaded_by_user_id: 'instr-1',
+          created_at: '2026-09-25T00:00:00Z',
+          archived_at: null,
+        };
+        return jsonResponse(material, 201);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+    await screen.findByText(ru.materialsEmpty);
+
+    await user.upload(screen.getByLabelText(ru.materialsUploadFileLabel), [
+      new File(['%PDF-1.4'], 'first.pdf', { type: 'application/pdf' }),
+      new File(['MZ'], 'bad.exe', { type: 'application/octet-stream' }),
+      new File(['%PDF-1.4'], 'third.pdf', { type: 'application/pdf' }),
+    ]);
+    await user.click(screen.getByRole('button', { name: ru.materialsUploadButton }));
+
+    const summary = ru.uploadBatchSummaryRu.replace('{done}', '2').replace('{total}', '3');
+    expect(await screen.findByText(summary)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`bad\\.exe.*${ru.uploadBatchErrorPrefixRu}`))).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(ru.uploadBatchUploadedRu))).toHaveLength(2);
+  });
+
   it('shows the Russian message for a refused upload', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

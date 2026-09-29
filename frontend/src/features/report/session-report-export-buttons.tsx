@@ -7,7 +7,7 @@ import { Button } from '@/shared/ui/button';
 import { t } from '@/shared/i18n';
 import { getSessionReportExport, problemMessageRu, type ProblemCode, type ReportFileFormat } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 
 const EXPORT_FORMATS: ReadonlyArray<Extract<ReportFileFormat, 'xlsx' | 'pdf'>> = ['xlsx', 'pdf'];
 
@@ -22,10 +22,12 @@ export function SessionReportExportButtons({ sessionId }: { sessionId: string })
   async function handleDownload(format: 'xlsx' | 'pdf') {
     setBusyFormat(format);
     setError(null);
+    const fileName = `session-${sessionId}-report.${format}`;
     try {
-      saveBlob(await getSessionReportExport(sessionId, format), `session-${sessionId}-report.${format}`);
+      downloadBlob(await getSessionReportExport(sessionId, format), fileName);
     } catch (caught) {
       setError(caught);
+      reportDownloadFailed(fileName, caught);
     } finally {
       setBusyFormat(null);
     }

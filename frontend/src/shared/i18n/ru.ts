@@ -1428,4 +1428,18 @@ export const ru = {
   // A generic fallback for any surface besides the login page that might see LOGIN_THROTTLED;
   // the login page itself shows the wait time via `loginThrottledMessageRu` (client.ts).
   problemLoginThrottled: 'Слишком много попыток входа. Подождите и попробуйте снова.',
+
+  // --- I7 E46c: batch upload (owner item 6) + download confirmation (owner item 7, S12) --------
+  // Shared per-file result words for both «Сценарии» and «Материалы» batch upload, and the
+  // «Загружено N из M» summary line — `{current}`/`{total}` style interpolation, same as
+  // `tourStepCounter` (tour-host.tsx).
+  uploadBatchUploadedRu: 'загружен',
+  uploadBatchNewVersionRu: 'новая версия',
+  uploadBatchErrorPrefixRu: 'ошибка',
+  uploadBatchSummaryRu: 'Загружено {done} из {total}',
+  scenarioBatchFileCount: 'Выбрано файлов: {n}',
+  scenarioBatchImportButton: 'Импортировать все',
+  scenarioBatchImporting: 'Импорт файлов…',
+  materialsBatchFileCount: 'Выбрано файлов: {n}',
+  materialsBatchUploading: 'Загрузка файлов…',
 } as const;

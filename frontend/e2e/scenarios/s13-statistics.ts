@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import { button, check, heading, scenario } from './dsl';
 import {
   closeIncidentSteps,
+  downloadedToastCheck,
   fireServiceDoneSteps,
   navLink,
   otherLegsDeclinedSteps,
@@ -73,6 +74,7 @@ export const S13 = scenario(
         check('в файле есть строка нового стажёра (его логин `e2e-<суффикс>-newtrainee`)', async (_page, ctx) => {
           if (!(ctx.vars.csv ?? '').includes(ctx.vars['newTrainee.username'] ?? '')) throw new Error('логина нового стажёра в файле нет');
         }),
+        downloadedToastCheck(() => 'statistics.csv'),
       ],
     },
     {
@@ -88,6 +90,7 @@ export const S13 = scenario(
           if (!(ctx.vars.ratingCsvName ?? '').endsWith('.csv')) throw new Error(`скачан «${ctx.vars.ratingCsvName}»`);
           if (!(ctx.vars.ratingCsv ?? '').includes(ctx.vars['newTrainee.displayName'] ?? '')) throw new Error('нового стажёра в рейтинге нет');
         }),
+        downloadedToastCheck(() => 'trainee-rating.csv'),
       ],
     },
   ],

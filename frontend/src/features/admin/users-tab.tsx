@@ -13,7 +13,7 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import {
   createUser,
   exportUserProfile,
@@ -196,10 +196,12 @@ function DownloadProfileButton({ user }: { user: UserAccountI4 }) {
   async function handleDownload() {
     setDownloading(true);
     setError(null);
+    const fileName = `profile-${user.username}.json`;
     try {
-      saveBlob(await exportUserProfile(user.id), `profile-${user.username}.json`);
+      downloadBlob(await exportUserProfile(user.id), fileName);
     } catch (caught) {
       setError(caught);
+      reportDownloadFailed(fileName, caught);
     } finally {
       setDownloading(false);
     }

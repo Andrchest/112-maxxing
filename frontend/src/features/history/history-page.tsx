@@ -16,7 +16,7 @@ import { useAuthStore } from '@/entities/session';
 import { exportUserProfile, getMyHistory, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
 import { formatTimestampRu } from '@/shared/lib/format-timestamp';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import {
   failedRulesLines,
   formatMeanDeviationMs,
@@ -60,10 +60,12 @@ export function HistoryPage() {
     if (!user) return;
     setProfileDownloading(true);
     setProfileDownloadError(null);
+    const fileName = `profile-${user.username}.json`;
     try {
-      saveBlob(await exportUserProfile(user.id), `profile-${user.username}.json`);
+      downloadBlob(await exportUserProfile(user.id), fileName);
     } catch (error) {
       setProfileDownloadError(error);
+      reportDownloadFailed(fileName, error);
     } finally {
       setProfileDownloading(false);
     }

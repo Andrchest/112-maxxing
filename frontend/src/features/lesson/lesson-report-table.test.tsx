@@ -151,7 +151,9 @@ describe('LessonReportTable', () => {
       expect(url).toBe('/api/v1/lessons/lesson-1/report.csv');
       expect((init.headers as Record<string, string>).Authorization).toBe('Bearer jwt-token');
       expect(createObjectURL).toHaveBeenCalledTimes(1);
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:report');
+      // I7 E46c: the object URL is now revoked after a delay (S12.04/S13.28 fix), not
+      // synchronously after the click — covered by `shared/lib/download.test.ts`.
+      expect(revokeObjectURL).not.toHaveBeenCalled();
     } finally {
       URL.createObjectURL = original.create;
       URL.revokeObjectURL = original.revoke;

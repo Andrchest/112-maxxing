@@ -31,7 +31,7 @@ import {
   type UserRole,
 } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import { failedRulesLines, formatMeanDeviationMs, formatMeanDurationMs, formatPercent } from '@/entities/statistics';
 import { formatPassCount } from '@/entities/pass-verdict';
 
@@ -91,10 +91,12 @@ export function StatisticsPage() {
   async function handleDownload(format: ReportFileFormat) {
     setDownloadingFormat(format);
     setDownloadError(null);
+    const fileName = `statistics.${format}`;
     try {
-      saveBlob(await getTraineeStatisticsCsv(query, format), `statistics.${format}`);
+      downloadBlob(await getTraineeStatisticsCsv(query, format), fileName);
     } catch (error) {
       setDownloadError(error);
+      reportDownloadFailed(fileName, error);
     } finally {
       setDownloadingFormat(null);
     }
@@ -103,10 +105,12 @@ export function StatisticsPage() {
   async function handleRatingDownload(format: ReportFileFormat) {
     setRatingDownloadingFormat(format);
     setRatingDownloadError(null);
+    const fileName = `trainee-rating.${format}`;
     try {
-      saveBlob(await getTraineeRatingCsv(query, format), `trainee-rating.${format}`);
+      downloadBlob(await getTraineeRatingCsv(query, format), fileName);
     } catch (error) {
       setRatingDownloadError(error);
+      reportDownloadFailed(fileName, error);
     } finally {
       setRatingDownloadingFormat(null);
     }

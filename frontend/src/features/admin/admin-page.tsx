@@ -12,7 +12,7 @@ import { t } from '@/shared/i18n';
 import { ru } from '@/shared/i18n/ru';
 import { exportSettingsXml, listAdminAlerts, problemMessageRu, queryKeys, type ProblemCode, type UserRole } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
-import { saveBlob } from '@/shared/lib/download';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import { useAuthStore } from '@/entities/session';
 import { AdminAlertsBadge } from './admin-alerts-badge';
 import { UsersTab } from './users-tab';
@@ -46,9 +46,10 @@ export function AdminPage() {
     setSettingsDownloading(true);
     setSettingsDownloadError(null);
     try {
-      saveBlob(await exportSettingsXml(), 'settings.xml');
+      downloadBlob(await exportSettingsXml(), 'settings.xml');
     } catch (error) {
       setSettingsDownloadError(error);
+      reportDownloadFailed('settings.xml', error);
     } finally {
       setSettingsDownloading(false);
     }

@@ -9,6 +9,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
 import { ProblemError } from '@/shared/lib/api';
+import { downloadBlob, reportDownloadFailed } from '@/shared/lib/download';
 import {
   archiveMaterial,
   getMaterialFile,
@@ -23,22 +24,29 @@ function problemText(error: unknown): string {
   return error instanceof ProblemError ? problemMessageRu(error.code as ProblemCode) : t('problemUnknown');
 }
 
-/** Opens a PDF inline (unless `download`), downloads everything else — `URL.revokeObjectURL`
- * after a delay long enough for the browser to have started acting on it (the same margin
+/** Opens a PDF inline (unless `download`), downloads everything else through the shared
+ * `downloadBlob` helper (I7 E46c) — `URL.revokeObjectURL` for the inline-view branch still waits
+ * out a delay long enough for the browser to have started acting on it (the same margin
  * `report-audio.ts` uses for its own object URLs). I6 FIX1: a PDF also has «Скачать», saving it
- * under its own file name, for a browser (or a tester) that does not show a new tab. */
+ * under its own file name, for a browser (or a tester) that does not show a new tab. Opening a PDF
+ * inline is not a "download" (owner item 7) and gets no confirmation toast; a real download does,
+ * whatever its file type. */
 async function openOrDownload(material: TrainingMaterialView, download = false) {
-  const blob = await getMaterialFile(material.material_id);
-  const url = URL.createObjectURL(blob);
-  if (material.content_type === 'application/pdf' && !download) {
-    window.open(url, '_blank', 'noopener');
-  } else {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = material.file_name;
-    link.click();
+  const isDownload = download || material.content_type !== 'application/pdf';
+  let blob: Blob;
+  try {
+    blob = await getMaterialFile(material.material_id);
+  } catch (error) {
+    if (isDownload) reportDownloadFailed(material.file_name, error);
+    throw error;
   }
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  if (!isDownload) {
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } else {
+    downloadBlob(blob, material.file_name);
+  }
 }
 
 interface MaterialsListProps {

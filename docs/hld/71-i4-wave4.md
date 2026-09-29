@@ -1778,3 +1778,90 @@ Retry-After doubling formula. `LoginGuard.check`/`__init__` take both thresholds
 login_guard()` reads both settings. Tests added: the username counter still locks at 5; the IP
 counter tolerates 5 different usernames failing once each (unit + API); the IP counter locks at
 its own 30 (unit + API).
+
+## 71.19.46c I7 E46c — Batch upload (owner item 6) + download confirmation (owner item 7, S12)
+
+**Purpose.** «Сценарии» and «Материалы» accept several files in one upload, one after another
+through the existing single-file endpoints; every download the UI starts confirms itself with a
+toast once the browser has been handed the file, fixing the real bug behind S12.04/S13.28 failing
+on BASE.
+
+**Design — download confirmation and its root cause.**
+- **Root cause (S12.04/S13.28 on BASE).** `saveBlob` (`frontend/src/shared/lib/download.ts`)
+  appended the anchor, clicked it, then called `URL.revokeObjectURL` on the very next line.
+  `anchor.click()` only *schedules* Chromium's download; it does not start reading the blob before
+  the synchronous handler returns, so the immediate revoke was a race the browser sometimes lost —
+  no `download` event at all, exactly S12.04/S13.28's symptom. Measured with a throwaway Playwright
+  probe against the real admin «Экспорт настроек (XML)» button (same code path as every other
+  `saveBlob` caller): 5 of 10 runs timed out on `page.waitForEvent('download')` before the fix, 0 of
+  10 (then several more clean batches) after moving the revoke behind a 30 s `setTimeout` — the same
+  margin `materials-list.tsx`'s own (separate, never-revoke-raced) anchor code already used. The
+  materials list's own hand-rolled download code is retired in favour of the shared helper.
+  Remaining flakiness observed later against a heavily loaded host (load average 30+, iowait
+  70%+ from concurrent overnight workers) tracked host contention, not this code path — an isolated
+  probe on the same page timed out and succeeded in the same pattern as the shared host's load
+  spiked and settled.
+- **The shared helper** (`frontend/src/shared/lib/download.ts`) is now the one place every download
+  goes through: `downloadBlob(blob, fileName)` runs the fixed anchor flow and shows
+  `toast.success('Файл «<name>» скачан')` (sonner); `reportDownloadFailed(fileName, error,
+  fallbackRu?)` shows `toast.error('Не удалось скачать файл «<name>»: <reason>')`, reading the
+  Russian reason from `ProblemError`/`problemMessageRu` or a caller-supplied fallback (most callers
+  already computed one for their own inline error text). Every existing `saveBlob` call site
+  (materials, scenario version YAML/JSON, statistics/rating CSV, lesson and session report exports,
+  the admin settings XML and profile JSON exports, the report audio MP3) now calls `downloadBlob` /
+  `reportDownloadFailed`. `materials-list.tsx`'s PDF-in-a-new-tab path (`window.open`, not a
+  download) is unchanged and gets no toast.
+
+**Design — batch upload.**
+- **«Сценарии»** (`scenarios-page.tsx`): the file input takes `multiple`; one file behaves exactly
+  as before (choose → «Проверить» → «Импортировать»). More than one file skips the validate step —
+  a per-file dry run would not fit the summary line — and imports every file, one after another,
+  through the same `POST /scenarios/import`; one bad file never stops the rest. Each result is
+  «загружен» (`version === 1`, the response `importScenarioVersion` already returns), «новая
+  версия» (`version > 1`, same slug already existed) or «ошибка: <reason>», followed by «Загружено
+  N из M» (N = non-error results).
+- **«Материалы»** (`materials-page.tsx`): the file input takes `multiple`. A single file keeps the
+  exact previous behaviour — the typed «Название», one `uploadMaterial` call. Several files ignore
+  «Название» (one title cannot fit many files) and title each material after its own file name
+  (extension stripped), uploaded one after another through the same `POST /materials`. Materials
+  have no version concept, so a batch result is only «загружен» or «ошибка: <reason>», same summary
+  line.
+- Drag-and-drop was not built (a plus per the brief, not required); the file input already accepts
+  several files via the OS picker or a multi-file drag onto it (native browser behaviour for
+  `<input type="file" multiple>`, needs no extra code).
+
+**Data / DB / API.** None — no migration, no new endpoint, no schema change (both features reuse
+existing single-file endpoints; the download fix touches no request or response shape).
+
+**i18n.** New `ru.ts` keys (`# --- I7 E46c ---` section): `uploadBatchUploadedRu`,
+`uploadBatchNewVersionRu`, `uploadBatchErrorPrefixRu`, `uploadBatchSummaryRu` (shared by both
+pages, `{done}`/`{total}` interpolation like `tourStepCounter`), `scenarioBatchFileCount`,
+`scenarioBatchImportButton`, `scenarioBatchImporting`, `materialsBatchFileCount`,
+`materialsBatchUploading`. The toast texts themselves stay literal template strings in
+`download.ts` (a `.ts` file, outside the `no-cyrillic-guard` test's `src/app`/`src/features`
+scan), matching the existing precedent in `client.ts`'s `loginThrottledMessageRu`.
+
+**Tests.**
+- `frontend/src/shared/lib/download.test.ts` (new): `downloadBlob` attaches-clicks-confirms and
+  only revokes after the 30 s delay (fake timers); `reportDownloadFailed` for a `ProblemError`, a
+  generic fallback, and a caller-supplied fallback.
+- `scenarios-page.test.tsx` / `materials-page.test.tsx`: a new "several files, one bad file" test
+  each, asserting the summary line and that the bad file's row shows the error prefix while the
+  good ones show «загружен».
+- `history-page.test.tsx` / `admin-page.test.tsx` / `users-tab.test.tsx` /
+  `lesson-report-table.test.tsx`: their existing download tests' synchronous-revoke assertion was
+  replaced with "not revoked (yet)" — the timing itself is covered once, in `download.test.ts`.
+
+**e2e.** `S11`, `S12`, `S13` (every scenario with a real `ctx.download`) gained a
+`downloadedToastCheck` expectation (`steps.ts`) on each download step, reusing `page.getByText`
+the same way `dsl.ts`'s other generic checks (`visible`/`text`) do. `docs/test-scenarios/S11.md`,
+`S12.md`, `S13.md` regenerated (`make e2e-scenarios-doc`); step ids unchanged (an expectation was
+appended to an existing step, no step inserted). `make e2e-scenarios` for `S12,S13` passed against
+a scratch stand (own worktree, ports 8177/5478, scratch DB `sim_e46c` since dropped, redis db 14
+since flushed) — see the root-cause note above for the host-load caveat on repeat runs.
+
+**Not built (owner questions).** None — every choice the brief's CHANGE section left open (per-file
+title source for a materials batch, whether to keep the validate step for a scenario batch, the
+«новая версия» vs «загружен» rule) was a technical implementation detail with an unambiguous
+answer from the existing data model (`ScenarioVersionListItem.version`, materials' lack of a
+version concept), not a product-level one.
