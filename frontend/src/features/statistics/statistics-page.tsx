@@ -130,7 +130,7 @@ export function StatisticsPage() {
       </div>
 
       <Card className="mt-4">
-        <CardHeader className="flex flex-row flex-wrap items-end gap-3">
+        <CardHeader className="flex flex-row flex-wrap items-end gap-3" data-tour="statistics-filters">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="statistics-group">{t('statisticsGroupLabel')}</Label>
             <select

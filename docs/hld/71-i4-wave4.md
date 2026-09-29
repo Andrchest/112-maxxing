@@ -1503,3 +1503,46 @@ new `getSessionReportExport` (`ExportFormatXlsxPdfParam`, `xlsx|pdf`, required).
 
 **Not built (owner questions).** None — every choice CHANGE names is a technical implementation
 detail (endpoint shape, section split, file naming); no product-level question was met.
+## 71.19.56 I7 E56 — In-app tutorial and beginner hints
+
+Owner request (2026-09-29): «добавил туториал в начале. Чтобы он прям в интерфейсе показывал что и
+как делать», plus owner item 6 (beginner hints). Frontend only; no API, schema or migration change,
+no new npm dependency.
+
+- **Guided tour** (`frontend/src/shared/ui/tour/`): `TourHost` is mounted once inside the router
+  (`app/App.tsx`), so a tour survives the page changes it makes; its state is the zustand store
+  `useTourStore` (steps, index, direction, active). For each step it opens the step's `route` if the
+  browser is elsewhere (a route that a guard redirects is treated as a missing target, never a
+  navigation loop), clicks `activate` (e.g. an admin tab), waits up to 3 s for
+  `[data-tour="<target>"]` (non-zero box), scrolls it into view, dims the page around it (a
+  box-shadow spotlight with an amber ring) and shows a popover (`role="dialog"`, `aria-modal`):
+  title, 1–3 sentences, «N из M», «Назад» / «Далее» (last step «Готово») / «Пропустить». A step whose
+  target never shows is skipped in the current direction; `explainIfMissing` shows it as centred
+  text instead (live-console steps when the trainee has no running lesson). `clickOnNext` makes
+  «Далее» follow the highlighted link (the trainee's first running card, the instructor's first
+  lesson). Esc closes, Tab is trapped in the popover, ← / → step, focus returns where it was. The
+  popover goes below / above / beside the target, clamped 16 px inside the viewport; a target too
+  tall for any of those is highlighted by its top part only (`fitBox`) so the popover never covers
+  it. It re-positions on resize, on any scroll (capture) and on a 300 ms layout poll; inside the
+  organizer's light screens (`.reference-light`) the popover takes that theme.
+- **Tours as data**, one file per role (`tours/trainee.ts`, `tours/instructor.ts`,
+  `tours/admin.ts`), Russian texts naming the real labels; `tourPlanFor(role, pathname)` starts the
+  header button's tour from the current page's own segment (an ADMIN on an `/instructor/*` page gets
+  the instructor segment), else from step 1. Targets are `data-tour` attributes only — no control was
+  restyled or moved.
+- **First-login card** (`FirstLoginCard`): bottom-right, `<section aria-label="Первое знакомство">`
+  (not a dialog), «Впервые здесь? Пройдите короткое обучение» with «Начать обучение» / «Не сейчас».
+  Either answer is stored per user id in localStorage (`tour.seen.<id>`, try/catch — no storage just
+  shows the card again). Not rendered on the full-height consoles (their pinned bottom bars sit
+  there); elsewhere `AppShell` adds a bottom spacer while it shows, so nothing stays hidden under it.
+- **Header**: «Обучение» (graduation-cap icon + text) and a user-menu icon button «Меню
+  пользователя» (Radix DropdownMenu from the existing `radix-ui` package) with the checkbox item
+  «Подсказки для новичков» (default off; `tour.hints.<id>` in localStorage).
+- **Beginner hints** (`Hint`): a «?» button next to a field's label (never inside a `<label>`, so the
+  field's accessible name is unchanged), tooltip with one sentence (texts in `ru.ts`, keys `hint*`):
+  ДДС service form «Статус», «Номер наряда», «Комментарий», close dialog «Причина закрытия»; lesson
+  form «Название занятия», «Режим занятия», «Группа», «Сценарий», «Варианты карточки», «Временные
+  рамки карточки», «Вес в отчёте», «Критерии «сдал / не сдал»»; scenario upload (beside
+  «Импортировать»).
+- **Test scenario S17 «Обучение»** (`frontend/e2e/scenarios/s17-tutorial.ts`,
+  `docs/test-scenarios/S17.md`).

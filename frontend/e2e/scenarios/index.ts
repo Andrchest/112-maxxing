@@ -16,5 +16,6 @@ import { S13 } from './s13-statistics';
 import { S14 } from './s14-scenarios';
 import { S15 } from './s15-layout';
 import { S16 } from './s16-demo-limits';
+import { S17 } from './s17-tutorial';
 
-export const ALL_SCENARIOS: Scenario[] = [S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12, S13, S14, S15, S16];
+export const ALL_SCENARIOS: Scenario[] = [S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12, S13, S14, S15, S16, S17];

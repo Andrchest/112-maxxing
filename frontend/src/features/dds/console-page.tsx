@@ -247,7 +247,7 @@ export function DdsConsolePage() {
               <Badge variant="outline" data-slot="dds-stage-badge">
                 {t('ddsStageLabel')}: {ddsStageStateLabelRu(workItem.state)}
               </Badge>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2" data-tour="dds-actions">
                 <StageActionBar sessionId={sessionId} />
                 <CloseDialog sessionId={sessionId} />
                 <CardIssueButton sessionId={sessionId} />
@@ -281,7 +281,7 @@ export function DdsConsolePage() {
       ) : null}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr_340px]">
         <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" data-tour="dds-actions">
             <StageActionBar sessionId={sessionId} />
             <CloseDialog sessionId={sessionId} />
             <CardIssueButton sessionId={sessionId} />
@@ -289,7 +289,7 @@ export function DdsConsolePage() {
           {/* I4 E21: no tab bar in the picker console, so the recipients stay on the card. */}
           <WorkItemPanel showRecipients />
         </div>
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" data-tour="dds-services">
           <ResourceBoard sessionId={sessionId} />
           <DispatchTray sessionId={sessionId} />
         </div>

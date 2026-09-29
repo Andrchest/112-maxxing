@@ -84,7 +84,7 @@ export function TraineeGroupsCard() {
   }
 
   return (
-    <Card data-slot="trainee-groups">
+    <Card data-slot="trainee-groups" data-tour="trainee-groups">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <h2 className="font-heading text-base leading-snug font-medium">{t('traineeGroupsTitle')}</h2>
         {draft === null ? (

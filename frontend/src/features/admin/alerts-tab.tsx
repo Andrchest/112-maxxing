@@ -37,7 +37,7 @@ function BackupStatusCard() {
   const backup = backupQuery.data;
 
   return (
-    <Card data-slot="admin-backup-status">
+    <Card data-slot="admin-backup-status" data-tour="admin-backup-status">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('adminBackupStatusTitle')}</h2>
       </CardHeader>

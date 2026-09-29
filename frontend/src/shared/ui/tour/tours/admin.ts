@@ -1,0 +1,92 @@
+// I7 E56: the administrator's tour («Администратор»). Plain data — edit the Russian texts here
+// freely; `target` ids are the `data-tour` attributes on the pages, `activate` opens the tab first.
+import type { TourStep } from '../types';
+
+export const ADMIN_TOUR: readonly TourStep[] = [
+  {
+    id: 'admin-menu',
+    route: '/admin',
+    target: 'app-nav',
+    title: 'Меню разделов',
+    text: '«Администрирование» — ваш раздел. Остальные пункты меню — разделы преподавателя: они вам тоже открыты.',
+  },
+  {
+    id: 'admin-users',
+    route: '/admin',
+    activate: 'admin-tab-users',
+    target: 'admin-tab-users',
+    title: 'Пользователи',
+    text: 'Во вкладке «Пользователи» — все учётные записи. У каждой есть «Сбросить пароль» и «Заблокировать»; «Поиск по логину» находит нужную.',
+  },
+  {
+    id: 'admin-users-create',
+    route: '/admin',
+    activate: 'admin-tab-users',
+    target: 'admin-users-create',
+    title: 'Новый пользователь',
+    text: '«Создать пользователя» открывает окно: логин, отображаемое имя, роль и пароль. Пароль передайте человеку лично.',
+  },
+  {
+    id: 'admin-audit-log',
+    route: '/admin',
+    activate: 'admin-tab-audit-log',
+    target: 'admin-tab-audit-log',
+    title: 'Журнал',
+    text: '«Журнал» — кто, когда и что делал: входы, неудачные попытки входа, изменения. Фильтр «Действие» и даты сужают список.',
+  },
+  {
+    id: 'admin-usage-stats',
+    route: '/admin',
+    activate: 'admin-tab-usage-stats',
+    target: 'admin-tab-usage-stats',
+    title: 'Статистика',
+    text: '«Статистика» — по дням: входы, активные пользователи, занятия и сессии.',
+  },
+  {
+    id: 'admin-server-load',
+    route: '/admin',
+    activate: 'admin-tab-server-load',
+    target: 'admin-tab-server-load',
+    title: 'Нагрузка',
+    text: '«Нагрузка» — процессор, память, диск и видеокарта сервера сейчас.',
+  },
+  {
+    id: 'admin-errors',
+    route: '/admin',
+    activate: 'admin-tab-errors',
+    target: 'admin-tab-errors',
+    title: 'Ошибки',
+    text: '«Ошибки» — сбои сервера за период; ссылка ведёт к занятию, где ошибка случилась.',
+  },
+  {
+    id: 'admin-alerts',
+    route: '/admin',
+    activate: 'admin-tab-alerts',
+    target: 'admin-tab-alerts',
+    title: 'Оповещения',
+    text: '«Оповещения» — то, что требует внимания: отказ модели, устаревшая резервная копия, повторные неудачные входы. Их число видно и в шапке.',
+  },
+  {
+    id: 'admin-backups',
+    route: '/admin',
+    activate: 'admin-tab-alerts',
+    target: 'admin-backup-status',
+    explainIfMissing: true,
+    title: 'Резервные копии',
+    text: 'Блок «Резервное копирование» показывает, когда завершилась последняя копия и её статус. Если статус не «ОК» — проверьте сервер.',
+  },
+  {
+    id: 'admin-settings',
+    route: '/admin',
+    target: 'admin-settings-export',
+    title: 'Настройки',
+    text: '«Экспорт настроек (XML)» сохраняет текущие настройки системы в файл — например, перед обновлением сервера.',
+  },
+  {
+    id: 'admin-help',
+    route: '/admin',
+    target: 'tour-button',
+    title: 'Если что-то забыли',
+    text: 'Кнопка «Обучение» запускает эту подсказку снова. В меню пользователя (значок справа) можно включить «Подсказки для новичков».',
+  },
+];

@@ -161,7 +161,7 @@ export function WorkItemPanel({ showRecipients = false }: WorkItemPanelProps) {
   }
 
   return (
-    <Card>
+    <Card data-tour="dds-card">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('ddsWorkItemTitle')}</h2>
       </CardHeader>

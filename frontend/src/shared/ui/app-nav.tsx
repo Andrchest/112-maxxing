@@ -65,7 +65,7 @@ export function AppNav({ role }: { role: UserRole }) {
   const { pathname } = useLocation();
   const items = ITEMS_BY_ROLE[role];
   return (
-    <nav aria-label={t('appNavAriaLabel')} className="flex min-w-0 items-center gap-1 overflow-x-auto" data-slot="app-nav">
+    <nav aria-label={t('appNavAriaLabel')} className="flex min-w-0 items-center gap-1 overflow-x-auto" data-slot="app-nav" data-tour="app-nav">
       {items.map((item) => {
         const active = isActive(item, pathname);
         return (

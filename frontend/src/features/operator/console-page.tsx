@@ -297,7 +297,7 @@ export function OperatorConsolePage() {
         <PhoneWidget sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
         <StageActionBar sessionId={sessionId} onCommandNeedsRefresh={() => void snapshotQuery.refetch()} />
       </div>
-      <div>
+      <div data-tour="operator-card">
         {stageState === 'HANDOFF_PREPARATION' ? (
           <HandoffPreparationView sessionId={sessionId} monotonicOffsetMs={snapshot.session.monotonic_offset_ms} />
         ) : (

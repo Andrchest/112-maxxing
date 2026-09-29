@@ -101,7 +101,7 @@ export function HistoryPage() {
 
       {history ? (
         <div className="mt-4 flex flex-col gap-4">
-          <Card>
+          <Card data-tour="history-summary">
             <CardHeader>
               <h2 className="font-heading text-base leading-snug font-medium">{t('historySummaryTitle')}</h2>
             </CardHeader>
@@ -129,7 +129,7 @@ export function HistoryPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card data-tour="history-sessions">
             <CardHeader>
               <h2 className="font-heading text-base leading-snug font-medium">{t('historySessionsTitle')}</h2>
             </CardHeader>

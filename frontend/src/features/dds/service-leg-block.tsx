@@ -18,6 +18,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
 import { t } from '@/shared/i18n';
+import { Hint } from '@/shared/ui/tour';
 import { formatCallDurationMs } from '@/entities/call';
 import { problemMessageRu, setDdsServiceStatus, type DdsLegView, type ProblemCode } from '@/shared/api';
 import { ProblemError } from '@/shared/lib/api';
@@ -177,7 +178,10 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
                     {t('ddsLegProposalFromCall')}
                   </p>
                 ) : null}
-                <Label htmlFor={`dds-leg-${leg.assignment_id}-status`}>{t('ddsLegStatusLabel')}</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`dds-leg-${leg.assignment_id}-status`}>{t('ddsLegStatusLabel')}</Label>
+                  <Hint text={t('hintDdsLegStatus')} />
+                </div>
                 <select
                   id={`dds-leg-${leg.assignment_id}-status`}
                   className="h-7 w-full rounded-lg border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
@@ -191,7 +195,10 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
                     </option>
                   ))}
                 </select>
-                <Label htmlFor={`dds-leg-${leg.assignment_id}-order`}>{t('ddsLegOrderNumberLabel')}</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`dds-leg-${leg.assignment_id}-order`}>{t('ddsLegOrderNumberLabel')}</Label>
+                  <Hint text={t('hintDdsLegOrderNumber')} />
+                </div>
                 <Input
                   id={`dds-leg-${leg.assignment_id}-order`}
                   className="h-7 text-xs"
@@ -199,7 +206,10 @@ export function ServiceLegBlock({ sessionId, leg, expanded, onToggle, onLegUpdat
                   disabled={pending}
                   onChange={(event) => setOrderNumber(event.target.value)}
                 />
-                <Label htmlFor={`dds-leg-${leg.assignment_id}-comment`}>{t('ddsLegCommentLabel')}</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`dds-leg-${leg.assignment_id}-comment`}>{t('ddsLegCommentLabel')}</Label>
+                  <Hint text={t('hintDdsLegComment')} />
+                </div>
                 <Textarea
                   id={`dds-leg-${leg.assignment_id}-comment`}
                   className="min-h-14 text-xs"

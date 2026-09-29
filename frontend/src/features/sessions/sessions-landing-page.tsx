@@ -105,7 +105,7 @@ export function SessionsLandingPage() {
             <Link to="/operator/register">{t('navRegisterLink')}</Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link to="/dds/incidents">{t('navIncidentListLink')}</Link>
+            <Link to="/dds/incidents" data-tour="incident-list-link">{t('navIncidentListLink')}</Link>
           </Button>
         </nav>
       </div>
@@ -124,7 +124,7 @@ export function SessionsLandingPage() {
         {(sessionsQuery.data?.items ?? []).map((session) => {
           const href = consoleHrefFor(session.id, session.my_role_type, session.session_mode);
           return (
-            <li key={session.id}>
+            <li key={session.id} data-tour="sessions-item">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2">
                   <div>
@@ -140,7 +140,10 @@ export function SessionsLandingPage() {
                   </div>
                   {href ? (
                     <Button asChild size="sm">
-                      <Link to={href}>{t('sessionsOpenButton')}</Link>
+                      {/* I7 E56: the tour's «Открыть» step follows the first card that is running now. */}
+                      <Link to={href} data-tour={session.state === 'ACTIVE' ? 'sessions-open' : undefined}>
+                        {t('sessionsOpenButton')}
+                      </Link>
                     </Button>
                   ) : null}
                 </CardHeader>

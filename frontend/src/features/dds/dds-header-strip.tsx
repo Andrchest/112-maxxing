@@ -24,7 +24,7 @@ export function DdsHeaderStrip({ sessionId, workItem }: DdsHeaderStripProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3" data-slot="dds-header-strip">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3" data-slot="dds-header-strip" data-tour="dds-header">
       <div className="flex flex-wrap gap-4">
         {headerFields.map((spec) => (
           <span key={spec.field_path} className="text-sm">

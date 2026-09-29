@@ -65,7 +65,7 @@ export function AdminPage() {
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold tracking-tight">{t('adminPageTitle')}</h1>
         <div className="flex items-center gap-3">
-          <Button type="button" variant="outline" size="sm" disabled={settingsDownloading} onClick={() => void handleSettingsExport()}>
+          <Button type="button" variant="outline" size="sm" disabled={settingsDownloading} onClick={() => void handleSettingsExport()} data-tour="admin-settings-export">
             {settingsDownloading ? t('profileExportDownloading') : t('adminSettingsExportXmlButton')}
           </Button>
         </div>
@@ -78,12 +78,12 @@ export function AdminPage() {
 
       <Tabs defaultValue="users" className="mt-4">
         <TabsList>
-          <TabsTrigger value="users">{t('adminTabUsers')}</TabsTrigger>
-          <TabsTrigger value="audit-log">{t('adminTabAuditLog')}</TabsTrigger>
-          <TabsTrigger value="usage-stats">{t('adminTabUsageStats')}</TabsTrigger>
-          <TabsTrigger value="server-load">{t('adminTabServerLoad')}</TabsTrigger>
-          <TabsTrigger value="errors">{t('adminTabErrors')}</TabsTrigger>
-          <TabsTrigger value="alerts">{t('adminTabAlerts')}</TabsTrigger>
+          <TabsTrigger value="users" data-tour="admin-tab-users">{t('adminTabUsers')}</TabsTrigger>
+          <TabsTrigger value="audit-log" data-tour="admin-tab-audit-log">{t('adminTabAuditLog')}</TabsTrigger>
+          <TabsTrigger value="usage-stats" data-tour="admin-tab-usage-stats">{t('adminTabUsageStats')}</TabsTrigger>
+          <TabsTrigger value="server-load" data-tour="admin-tab-server-load">{t('adminTabServerLoad')}</TabsTrigger>
+          <TabsTrigger value="errors" data-tour="admin-tab-errors">{t('adminTabErrors')}</TabsTrigger>
+          <TabsTrigger value="alerts" data-tour="admin-tab-alerts">{t('adminTabAlerts')}</TabsTrigger>
         </TabsList>
         <TabsContent value="users" className="mt-4">
           <UsersTab />

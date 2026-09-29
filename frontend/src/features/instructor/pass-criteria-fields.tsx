@@ -4,6 +4,7 @@
 // single-session form and the lesson form; the lesson's criteria apply to every card.
 import { Input } from '@/shared/ui/input';
 import { t } from '@/shared/i18n';
+import { Hint } from '@/shared/ui/tour';
 import { maxFailedValid, minScoreValid, passCriteriaProblem, type PassCriteriaDraft } from './pass-criteria';
 
 interface PassCriteriaFieldsProps {
@@ -17,7 +18,10 @@ export function PassCriteriaFields({ idPrefix, draft, onChange }: PassCriteriaFi
   const problem = passCriteriaProblem(draft);
   return (
     <fieldset className="flex flex-col gap-2" data-slot="pass-criteria">
-      <legend className="text-sm font-medium">{t('passCriteriaTitle')}</legend>
+      <legend className="flex items-center gap-1.5 text-sm font-medium">
+        {t('passCriteriaTitle')}
+        <Hint text={t('hintLessonPassCriteria')} />
+      </legend>
       <div className="flex items-center gap-2">
         <input
           id={`${idPrefix}-pass-min-score-on`}

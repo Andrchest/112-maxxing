@@ -47,7 +47,7 @@ function UploadMaterialForm() {
   }
 
   return (
-    <Card data-slot="materials-upload">
+    <Card data-slot="materials-upload" data-tour="materials-upload">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('materialsInstructorTitle')}</h2>
       </CardHeader>

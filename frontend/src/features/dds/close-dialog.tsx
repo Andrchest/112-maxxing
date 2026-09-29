@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
 import { t } from '@/shared/i18n';
+import { Hint } from '@/shared/ui/tour';
 import { ru } from '@/shared/i18n/ru';
 import { useWorkItemStore, hasAvailableAction } from '@/entities/work-item';
 import { closeDdsIncident, problemMessageRu, type ProblemCode, type ClosureReason } from '@/shared/api';
@@ -69,7 +70,10 @@ export function CloseDialog({ sessionId }: CloseDialogProps) {
           <DialogTitle>{t('ddsCloseDialogTitle')}</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-2">
-          <Label htmlFor="close-reason">{t('ddsCloseReasonLabel')}</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="close-reason">{t('ddsCloseReasonLabel')}</Label>
+            <Hint text={t('hintDdsCloseReason')} />
+          </div>
           <select
             id="close-reason"
             className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"

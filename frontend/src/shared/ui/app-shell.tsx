@@ -9,6 +9,7 @@ import type { HealthStatus } from '@/shared/api';
 import { useAuthStore } from '@/entities/session';
 import { LogoutButton } from '@/features/auth/logout-button';
 import { AppNav } from '@/shared/ui/app-nav';
+import { FirstLoginCard, TourButton, UserMenu, useFirstLoginCardShown } from '@/shared/ui/tour';
 
 const CONNECTION_LABEL_KEY: Record<ConnectionStatus, keyof typeof ru> = {
   idle: 'connectionPlaceholder',
@@ -124,6 +125,10 @@ export function AppShell({
 }: AppShellProps) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const user = useAuthStore((state) => state.user);
+  // I7 E56: the first-login card is not offered on the full-height consoles (their pinned bottom
+  // bars live exactly where it would sit); elsewhere the page gets a bottom spacer while it shows,
+  // so nothing can stay hidden beneath it.
+  const firstLoginCardShown = useFirstLoginCardShown() && !fillHeight;
   return (
     <div
       className={`flex min-h-svh flex-col bg-background text-foreground ${referenceTheme ? 'reference-light' : ''}`}
@@ -192,10 +197,17 @@ export function AppShell({
               {t(CONNECTION_LABEL_KEY[connectionStatus ?? 'idle'])}
             </span>
           )}
+          {/* I7 E56: the tutorial's «Обучение» button and the user menu (beginner hints). */}
+          {isAuthenticated ? <TourButton /> : null}
+          {isAuthenticated ? <UserMenu /> : null}
           {isAuthenticated ? <LogoutButton /> : null}
         </div>
       </header>
-      <main className={fillHeight ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex-1 overflow-auto p-4'}>{children}</main>
+      <main className={fillHeight ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex-1 overflow-auto p-4'}>
+        {children}
+        {firstLoginCardShown ? <div aria-hidden="true" className="h-36" data-slot="tour-first-login-spacer" /> : null}
+      </main>
+      {firstLoginCardShown ? <FirstLoginCard /> : null}
     </div>
   );
 }

@@ -27,6 +27,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Card, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { t } from '@/shared/i18n';
+import { Hint } from '@/shared/ui/tour';
 import { ru } from '@/shared/i18n/ru';
 import { ProblemError } from '@/shared/lib/api';
 import { useServiceCatalogStore } from '@/entities/service-catalog';
@@ -307,9 +308,12 @@ function PlanEntryFields({
         {t('lessonFormEntryLabel')} {index + 1}
       </legend>
 
-      <div className="grid gap-2 @lg:grid-cols-2">
+      <div className="grid gap-2 @lg:grid-cols-2" data-tour="lesson-form-scenario">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`lesson-entry-${row.key}-scenario`}>{t('lessonFormEntryScenarioLabel')}</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor={`lesson-entry-${row.key}-scenario`}>{t('lessonFormEntryScenarioLabel')}</Label>
+            <Hint text={t('hintLessonScenario')} />
+          </div>
           <select
             id={`lesson-entry-${row.key}-scenario`}
             className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
@@ -391,8 +395,11 @@ function PlanEntryFields({
       </div>
 
       {row.version && row.variants ? (
-        <fieldset className="flex flex-col gap-2" data-slot="variant-pickers">
-          <legend className="text-xs font-medium text-muted-foreground">{t('lessonFormVariantsLabel')}</legend>
+        <fieldset className="flex flex-col gap-2" data-slot="variant-pickers" data-tour="lesson-form-variants">
+          <legend className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            {t('lessonFormVariantsLabel')}
+            <Hint text={t('hintLessonVariants')} />
+          </legend>
           {VARIANT_SWITCHES.map((variantSwitch) => (
             <div key={variantSwitch} className="flex flex-col gap-1.5">
               <Label htmlFor={`lesson-entry-${row.key}-variant-${variantSwitch}`}>
@@ -421,7 +428,10 @@ function PlanEntryFields({
       ) : null}
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`lesson-entry-${row.key}-weight`}>{t('lessonFormEntryWeightLabel')}</Label>
+        <div className="flex items-center gap-1.5">
+          <Label htmlFor={`lesson-entry-${row.key}-weight`}>{t('lessonFormEntryWeightLabel')}</Label>
+          <Hint text={t('hintLessonWeight')} />
+        </div>
         <Input
           id={`lesson-entry-${row.key}-weight`}
           type="number"
@@ -433,8 +443,11 @@ function PlanEntryFields({
         <p className="text-xs text-muted-foreground">{t('lessonFormEntryWeightHint')}</p>
       </div>
 
-      <fieldset className="flex flex-col gap-2" data-slot="entry-timers">
-        <legend className="text-xs font-medium text-muted-foreground">{t('lessonFormEntryTimersLabel')}</legend>
+      <fieldset className="flex flex-col gap-2" data-slot="entry-timers" data-tour="lesson-form-timers">
+        <legend className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          {t('lessonFormEntryTimersLabel')}
+          <Hint text={t('hintLessonTimers')} />
+        </legend>
         {TIMER_KEYS.map((timerKey) => (
           <div key={timerKey} className="flex flex-col gap-1.5">
             <Label htmlFor={`lesson-entry-${row.key}-timer-${timerKey}`}>{t(TIMER_LABEL_KEY[timerKey])}</Label>
@@ -685,9 +698,12 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           (it may sit full-width or share a row with `LessonsList`, `lessons-page.tsx`), not the
           viewport — the same reason every grid below reads `@lg`/`@4xl` instead of `lg`/`2xl`. */}
       <CardContent className="@container flex flex-col gap-3">
-        <div className="grid gap-3 @lg:grid-cols-2">
+        <div className="grid gap-3 @lg:grid-cols-2" data-tour="lesson-form-basics">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="lesson-title">{t('lessonFormTitleFieldLabel')}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="lesson-title">{t('lessonFormTitleFieldLabel')}</Label>
+              <Hint text={t('hintLessonTitle')} />
+            </div>
             <Input
               id="lesson-title"
               value={title}
@@ -697,7 +713,10 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="lesson-mode">{t('lessonFormModeLabel')}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="lesson-mode">{t('lessonFormModeLabel')}</Label>
+              <Hint text={t('hintLessonMode')} />
+            </div>
             <select
               id="lesson-mode"
               className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
@@ -713,7 +732,10 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="lesson-group">{t('lessonFormGroupLabel')}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="lesson-group">{t('lessonFormGroupLabel')}</Label>
+              <Hint text={t('hintLessonGroup')} />
+            </div>
             <select
               id="lesson-group"
               className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
@@ -770,7 +792,7 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
         </div>
 
         {participants.length > 0 ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2" data-tour="lesson-form-participants">
             <span className="text-sm font-medium">{t('lessonFormParticipantsLabel')}</span>
             {participants.map((row, index) => (
               <div key={index} className="flex flex-col gap-1.5 rounded-md border border-border p-2">
@@ -902,7 +924,9 @@ export function LessonCreateForm({ onCreated }: LessonCreateFormProps) {
           </fieldset>
         ) : null}
 
-        <PassCriteriaFields idPrefix="lesson" draft={passDraft} onChange={setPassDraft} />
+        <div data-tour="lesson-form-criteria">
+          <PassCriteriaFields idPrefix="lesson" draft={passDraft} onChange={setPassDraft} />
+        </div>
 
         <ProblemAlert error={createMutation.error} />
       </CardContent>

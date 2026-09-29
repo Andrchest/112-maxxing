@@ -66,7 +66,7 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button type="button" size="sm">
+        <Button type="button" size="sm" data-tour="admin-users-create">
           {t('adminUsersCreateButton')}
         </Button>
       </DialogTrigger>

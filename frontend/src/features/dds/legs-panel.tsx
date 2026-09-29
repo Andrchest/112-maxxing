@@ -46,6 +46,7 @@ export function LegsPanel({ sessionId }: LegsPanelProps) {
     <div
       className="flex shrink-0 flex-col gap-1 bg-[var(--reference-dds-bar)] px-2 pt-1 pb-2 text-[var(--reference-dds-bar-foreground)]"
       data-slot="dds-services-tab-bar"
+      data-tour="dds-services"
     >
       <span className="text-xs font-semibold tracking-wide uppercase opacity-90">{t('ddsLegsPanelTitle')}:</span>
       {legs.length === 0 ? (

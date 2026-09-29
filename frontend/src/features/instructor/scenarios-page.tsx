@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { t } from '@/shared/i18n';
+import { Hint } from '@/shared/ui/tour';
 import { ru } from '@/shared/i18n/ru';
 import { useAuthStore } from '@/entities/session';
 import {
@@ -99,7 +100,7 @@ function UploadCard() {
   const hasFile = content !== null && format !== null;
 
   return (
-    <Card>
+    <Card data-tour="scenario-upload">
       <CardHeader>
         <h2 className="font-heading text-base leading-snug font-medium">{t('scenarioUploadTitle')}</h2>
       </CardHeader>
@@ -131,6 +132,7 @@ function UploadCard() {
           >
             {doImport.isPending ? t('scenarioUploadImporting') : t('scenarioUploadImportButton')}
           </Button>
+          <Hint text={t('hintScenarioFile')} />
         </div>
         {error ? (
           <p role="alert" className="text-sm text-destructive">

@@ -62,7 +62,7 @@ function LessonsList() {
                 </p>
               </div>
               <Button asChild size="sm" variant="outline">
-                <Link to={`/instructor/lessons/${lesson.lesson_id}`}>{t('lessonsListOpenButton')}</Link>
+                <Link to={`/instructor/lessons/${lesson.lesson_id}`} data-tour="lessons-open">{t('lessonsListOpenButton')}</Link>
               </Button>
             </li>
           ))}
